@@ -41,4 +41,3 @@ def test_trace_sink_protocol_is_runtime_checkable() -> None:
 
     assert isinstance(Sink(), TraceSink)
 
-

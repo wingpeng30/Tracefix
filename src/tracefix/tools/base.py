@@ -1,4 +1,4 @@
-"""Provider-neutral tool descriptions, results, and registry."""
+"""与供应商无关的工具描述、执行结果和注册表。"""
 
 from __future__ import annotations
 
@@ -14,6 +14,8 @@ from tracefix.messages import ToolCall
 
 
 class ReservedToolName(StrEnum):
+    """TraceFix 保留的五个基础工具名称。"""
+
     SEARCH_CODE = "search_code"
     READ_FILE = "read_file"
     APPLY_PATCH = "apply_patch"
@@ -25,6 +27,8 @@ RESERVED_TOOL_NAMES = frozenset(member.value for member in ReservedToolName)
 
 
 class ToolSpec(BaseModel):
+    """发送给模型的工具名称、用途和 JSON 参数模式。"""
+
     model_config = ConfigDict(extra="forbid")
 
     name: str = Field(min_length=1, pattern=r"^[A-Za-z_][A-Za-z0-9_-]*$")
@@ -51,6 +55,8 @@ class ToolSpec(BaseModel):
 
 
 class ToolResult(BaseModel):
+    """一次工具调用产生的结构化结果。"""
+
     model_config = ConfigDict(extra="forbid")
 
     call_id: str = Field(min_length=1)
@@ -74,17 +80,21 @@ class ToolResult(BaseModel):
 
 
 class BaseTool(ABC):
+    """所有同步工具都必须实现的最小协议。"""
+
     @property
     @abstractmethod
     def spec(self) -> ToolSpec:
-        """Return the model-visible tool definition."""
+        """返回模型可见的工具定义。"""
 
     @abstractmethod
     def execute(self, call: ToolCall) -> ToolResult:
-        """Execute one validated call synchronously."""
+        """同步执行一次经过验证的工具调用。"""
 
 
 class ToolRegistry:
+    """按稳定名称保存工具实例，并拒绝重复注册。"""
+
     def __init__(self, tools: Iterable[BaseTool] = ()) -> None:
         self._tools: dict[str, BaseTool] = {}
         for tool in tools:
@@ -119,4 +129,3 @@ class ToolRegistry:
 
     def specs(self) -> tuple[ToolSpec, ...]:
         return tuple(tool.spec.model_copy(deep=True) for tool in self._tools.values())
-

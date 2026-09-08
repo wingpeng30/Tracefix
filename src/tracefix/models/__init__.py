@@ -5,4 +5,3 @@ from tracefix.models.litellm_adapter import LiteLLMAdapter
 
 __all__ = ["BaseLLM", "LLMConfig", "LLMResponse", "LiteLLMAdapter", "TokenUsage"]
 
-

@@ -1,6 +1,13 @@
-"""TraceFix public API."""
+"""TraceFix 公共 API。"""
 
-from tracefix.agent import AgentConfig, AgentState, AgentStatus, BaseAgent
+from tracefix.agent import (
+    DEFAULT_SYSTEM_PROMPT,
+    AgentConfig,
+    AgentState,
+    AgentStatus,
+    BaseAgent,
+    MinimalAgent,
+)
 from tracefix.exceptions import (
     AgentCompleted,
     AgentError,
@@ -31,18 +38,25 @@ from tracefix.messages import Message, MessageHistory, MessageRole, ToolCall
 from tracefix.models import BaseLLM, LiteLLMAdapter, LLMConfig, LLMResponse, TokenUsage
 from tracefix.tools import (
     RESERVED_TOOL_NAMES,
+    ApplyPatchTool,
     BaseTool,
+    GetGitDiffTool,
+    ReadFileTool,
     ReservedToolName,
+    RunTestsTool,
+    SearchCodeTool,
     ToolRegistry,
     ToolResult,
     ToolSpec,
+    create_default_tool_registry,
 )
 from tracefix.tracing import TraceEvent, TraceEventType, TraceSink
 
-__version__ = "0.0.1"
+__version__ = "0.1.0"
 
 __all__ = [
     "RESERVED_TOOL_NAMES",
+    "DEFAULT_SYSTEM_PROMPT",
     "AgentCompleted",
     "AgentConfig",
     "AgentError",
@@ -50,9 +64,11 @@ __all__ = [
     "AgentLimitExceeded",
     "AgentState",
     "AgentStatus",
+    "ApplyPatchTool",
     "BaseAgent",
     "BaseLLM",
     "BaseTool",
+    "GetGitDiffTool",
     "LLMAuthenticationError",
     "LLMConfig",
     "LLMContextWindowError",
@@ -63,11 +79,15 @@ __all__ = [
     "LLMResponseFormatError",
     "LLMTimeoutError",
     "LiteLLMAdapter",
+    "MinimalAgent",
     "Message",
     "MessageHistory",
     "MessageProtocolError",
     "MessageRole",
     "ReservedToolName",
+    "ReadFileTool",
+    "RunTestsTool",
+    "SearchCodeTool",
     "StepLimitExceeded",
     "TestLimitExceeded",
     "TimeLimitExceeded",
@@ -89,6 +109,5 @@ __all__ = [
     "TraceProtocolError",
     "TraceSink",
     "__version__",
+    "create_default_tool_registry",
 ]
-
-

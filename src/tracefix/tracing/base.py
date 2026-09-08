@@ -1,4 +1,4 @@
-"""Provider-neutral trace events and output sink protocol."""
+"""与输出介质无关的轨迹事件和接收器协议。"""
 
 from __future__ import annotations
 
@@ -11,6 +11,8 @@ from pydantic import BaseModel, ConfigDict, Field, JsonValue, model_validator
 
 
 class TraceEventType(StrEnum):
+    """Agent 生命周期中可观测的稳定事件类型。"""
+
     TASK_STARTED = "task_started"
     MESSAGE_ADDED = "message_added"
     MODEL_REQUESTED = "model_requested"
@@ -23,6 +25,8 @@ class TraceEventType(StrEnum):
 
 
 class TraceEvent(BaseModel):
+    """可安全 JSON 序列化的一条 Agent 轨迹事件。"""
+
     model_config = ConfigDict(extra="forbid")
 
     id: str = Field(default_factory=lambda: uuid4().hex, min_length=1)
@@ -41,9 +45,10 @@ class TraceEvent(BaseModel):
 
 @runtime_checkable
 class TraceSink(Protocol):
+    """轨迹事件接收器需要实现的同步协议。"""
+
     def write(self, event: TraceEvent) -> None:
-        """Persist or forward one event."""
+        """持久化或转发一条事件。"""
 
     def close(self) -> None:
-        """Release sink resources."""
-
+        """释放接收器持有的资源。"""

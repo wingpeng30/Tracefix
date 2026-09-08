@@ -1,4 +1,4 @@
-"""Provider-neutral language-model interface."""
+"""与模型供应商无关的语言模型接口。"""
 
 from __future__ import annotations
 
@@ -12,6 +12,8 @@ from tracefix.tools.base import ToolSpec
 
 
 class LLMConfig(BaseModel):
+    """一次模型适配器使用的稳定配置。"""
+
     model_config = ConfigDict(extra="forbid", validate_assignment=True)
 
     model_name: str = Field(min_length=1)
@@ -31,6 +33,8 @@ class LLMConfig(BaseModel):
 
 
 class TokenUsage(BaseModel):
+    """模型调用产生的输入、输出 Token 和美元成本。"""
+
     model_config = ConfigDict(extra="forbid")
 
     input_tokens: int = Field(default=0, ge=0)
@@ -40,6 +44,8 @@ class TokenUsage(BaseModel):
 
 
 class LLMResponse(BaseModel):
+    """供应商响应经过规范化后的 TraceFix 响应。"""
+
     model_config = ConfigDict(extra="forbid")
 
     message: Message
@@ -56,7 +62,7 @@ class LLMResponse(BaseModel):
 
 
 class BaseLLM(ABC):
-    """Synchronous LLM contract used by a single-agent control loop."""
+    """供单 Agent 控制循环使用的同步 LLM 协议。"""
 
     def __init__(self, config: LLMConfig) -> None:
         self.config = config
@@ -67,6 +73,4 @@ class BaseLLM(ABC):
         messages: Sequence[Message],
         tools: Sequence[ToolSpec] = (),
     ) -> LLMResponse:
-        """Generate one assistant response for the supplied conversation."""
-
-
+        """根据完整对话和可用工具生成一条 assistant 响应。"""

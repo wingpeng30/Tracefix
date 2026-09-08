@@ -111,4 +111,3 @@ def test_append_is_atomic_when_a_later_call_id_is_duplicate() -> None:
 
     assert len(history) == 2
     assert history.pending_tool_call_ids == frozenset()
-

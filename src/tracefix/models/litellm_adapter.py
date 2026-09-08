@@ -1,4 +1,4 @@
-"""LiteLLM-backed implementation of the TraceFix model contract."""
+"""基于 LiteLLM 实现的 TraceFix 模型适配层。"""
 
 from __future__ import annotations
 
@@ -29,7 +29,7 @@ def _get(value: Any, key: str, default: Any = None) -> Any:
 
 
 class LiteLLMAdapter(BaseLLM):
-    """Normalize LiteLLM chat completions into TraceFix types."""
+    """把 LiteLLM Chat Completion 规范化为 TraceFix 强类型对象。"""
 
     def __init__(self, config: LLMConfig, *, client: Any | None = None) -> None:
         super().__init__(config)
@@ -213,4 +213,3 @@ class LiteLLMAdapter(BaseLLM):
             str(error),
             context={"provider_error": error.__class__.__name__},
         )
-

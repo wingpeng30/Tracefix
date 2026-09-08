@@ -1,4 +1,4 @@
-"""Agent configuration, state, and lifecycle contract."""
+"""Agent 配置、运行状态与生命周期协议。"""
 
 from __future__ import annotations
 
@@ -11,9 +11,17 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from tracefix.messages import MessageHistory
 from tracefix.models.base import BaseLLM
 from tracefix.tools.base import ToolRegistry
+from tracefix.tracing.base import TraceSink
+
+DEFAULT_SYSTEM_PROMPT = """你是 TraceFix，一个负责修复 Python 仓库问题的 Coding Agent。
+请先理解问题并使用提供的工具检查仓库，再以尽量小且正确的补丁完成修复。
+修改代码后应运行相关测试，并检查最终 Git diff。
+当你确认任务已经完成时，请返回不包含工具调用的最终说明。"""
 
 
 class AgentStatus(StrEnum):
+    """Agent 对外可见的生命周期状态。"""
+
     CREATED = "created"
     RUNNING = "running"
     COMPLETED = "completed"
@@ -22,8 +30,11 @@ class AgentStatus(StrEnum):
 
 
 class AgentConfig(BaseModel):
+    """单次 Agent 运行使用的提示词和资源预算。"""
+
     model_config = ConfigDict(extra="forbid", validate_assignment=True)
 
+    system_prompt: str = Field(default=DEFAULT_SYSTEM_PROMPT, min_length=1)
     max_steps: int = Field(default=30, ge=1)
     max_input_tokens: int = Field(default=80_000, ge=1)
     max_output_tokens: int = Field(default=20_000, ge=1)
@@ -32,6 +43,8 @@ class AgentConfig(BaseModel):
 
 
 class AgentState(BaseModel):
+    """一次任务运行过程中持续累计的可序列化状态。"""
+
     model_config = ConfigDict(extra="forbid", validate_assignment=True)
 
     status: AgentStatus = AgentStatus.CREATED
@@ -39,10 +52,12 @@ class AgentState(BaseModel):
     step_count: int = Field(default=0, ge=0)
     input_tokens: int = Field(default=0, ge=0)
     output_tokens: int = Field(default=0, ge=0)
+    cost_usd: float = Field(default=0.0, ge=0)
     test_runs: int = Field(default=0, ge=0)
     started_at: datetime | None = None
     finished_at: datetime | None = None
     stop_reason: str | None = None
+    final_output: str | None = None
 
     @model_validator(mode="after")
     def validate_timestamps(self) -> AgentState:
@@ -56,30 +71,31 @@ class AgentState(BaseModel):
 
 
 class BaseAgent(ABC):
-    """Dependency-owning base class; subclasses define the control loop."""
+    """持有 Agent 依赖的基类，具体控制循环由子类实现。"""
 
     def __init__(
         self,
         llm: BaseLLM,
         tools: ToolRegistry | None = None,
         config: AgentConfig | None = None,
+        trace_sink: TraceSink | None = None,
     ) -> None:
         self.llm = llm
         self.tools = tools or ToolRegistry()
         self.config = config or AgentConfig()
+        self.trace_sink = trace_sink
         self.history = MessageHistory()
         self.state = AgentState()
 
     def reset(self) -> None:
-        """Reset task-local state while preserving configured dependencies."""
+        """重置单次任务状态，同时保留模型、工具和追踪器依赖。"""
         self.history = MessageHistory()
         self.state = AgentState()
 
     @abstractmethod
     def run(self, task: str) -> AgentState:
-        """Run a task to a terminal state."""
+        """运行一个任务，直到进入终止状态。"""
 
     @abstractmethod
     def step(self) -> None:
-        """Perform one model/tool interaction step."""
-
+        """执行一次模型请求以及该响应包含的工具调用。"""

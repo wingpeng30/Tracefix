@@ -1,4 +1,4 @@
-"""Provider-neutral conversation messages and validated history."""
+"""与模型供应商无关的对话消息和强校验历史。"""
 
 from __future__ import annotations
 
@@ -18,6 +18,8 @@ def _utc_now() -> datetime:
 
 
 class MessageRole(StrEnum):
+    """模型对话支持的四种标准消息角色。"""
+
     SYSTEM = "system"
     USER = "user"
     ASSISTANT = "assistant"
@@ -25,6 +27,8 @@ class MessageRole(StrEnum):
 
 
 class ToolCall(BaseModel):
+    """模型请求执行的一次结构化工具调用。"""
+
     model_config = ConfigDict(extra="forbid")
 
     id: str = Field(min_length=1)
@@ -33,6 +37,8 @@ class ToolCall(BaseModel):
 
 
 class Message(BaseModel):
+    """带有时间、元数据和工具关联信息的标准消息。"""
+
     model_config = ConfigDict(extra="forbid")
 
     id: str = Field(default_factory=lambda: uuid4().hex, min_length=1)
@@ -76,7 +82,7 @@ _MESSAGE_LIST_ADAPTER = TypeAdapter(list[Message])
 
 
 class MessageHistory:
-    """Ordered history with cross-message tool-call correlation checks."""
+    """有序消息历史，并跨消息校验工具调用与结果的对应关系。"""
 
     def __init__(self, messages: Iterable[Message] = ()) -> None:
         self._messages: list[Message] = []
@@ -127,7 +133,7 @@ class MessageHistory:
         self.extend((message,))
 
     def extend(self, messages: Iterable[Message]) -> None:
-        """Append messages atomically; leave this history unchanged if validation fails."""
+        """原子地追加多条消息；任何校验失败都不会改变原历史。"""
         candidates = [message.model_copy(deep=True) for message in messages]
         staged = object.__new__(MessageHistory)
         staged._messages = [message.model_copy(deep=True) for message in self._messages]
@@ -158,4 +164,3 @@ class MessageHistory:
     @classmethod
     def from_json(cls, value: str | bytes) -> MessageHistory:
         return cls(_MESSAGE_LIST_ADAPTER.validate_json(value))
-

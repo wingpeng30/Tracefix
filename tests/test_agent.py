@@ -22,6 +22,7 @@ class StubAgent(BaseAgent):
 
 def test_agent_config_defaults() -> None:
     config = AgentConfig()
+    assert "TraceFix" in config.system_prompt
     assert config.max_steps == 30
     assert config.max_input_tokens == 80_000
     assert config.max_output_tokens == 20_000
@@ -50,6 +51,8 @@ def test_subclass_receives_dependencies_and_resets_state() -> None:
     assert agent.llm is llm
     assert agent.state.status is AgentStatus.CREATED
     assert agent.state.task is None
+    assert agent.state.cost_usd == 0
+    assert agent.state.final_output is None
     assert len(agent.history) == 0
 
 
@@ -64,4 +67,3 @@ def test_agents_have_isolated_state() -> None:
 def test_agent_state_requires_consistent_aware_timestamps() -> None:
     with pytest.raises(ValidationError):
         AgentState(started_at=datetime(2026, 1, 1))
-

@@ -153,4 +153,3 @@ def test_provider_exception_is_mapped_and_chained() -> None:
 def test_model_config_rejects_reserved_overrides() -> None:
     with pytest.raises(ValueError):
         LLMConfig(model_name="provider/model", extra_kwargs={"model": "other"})
-

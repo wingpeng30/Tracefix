@@ -80,4 +80,3 @@ def test_tool_models_validate_schema_and_result_state() -> None:
     result = ToolResult(call_id="1", tool_name="ok", success=True, output={"matches": 2})
     assert result.model_dump(mode="json")["output"] == {"matches": 2}
 
-

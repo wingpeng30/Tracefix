@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "tracefix-agent"
-version = "0.0.1"
+version = "0.1.0"
 description = "图检索驱动、测试闭环的 Coding Agent 核心框架"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -38,6 +38,7 @@ branch = true
 source = ["tracefix"]
 
 [tool.coverage.report]
+fail_under = 90
 show_missing = true
 skip_covered = true
 
@@ -47,5 +48,3 @@ target-version = "py311"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
-
-
