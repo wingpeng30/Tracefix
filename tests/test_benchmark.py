@@ -6,19 +6,24 @@ from tracefix import (
     BaseLLM,
     BenchmarkConfig,
     BenchmarkRunner,
+    ContextManager,
     LLMConfig,
     LLMResponse,
     Message,
+    MessageHistory,
     MessageRole,
+    ReadFileTool,
     RunTestsTool,
     TokenUsage,
     ToolCall,
+    ToolRegistry,
     TraceFixRunner,
     load_benchmark_tasks,
 )
 from tracefix.exceptions import BenchmarkError
 
 TASKS_DIR = Path(__file__).parents[1] / "benchmarks" / "tasks"
+LONG_TASKS_DIR = Path(__file__).parents[1] / "benchmarks" / "long_context_tasks"
 BASELINE_PATH = Path(__file__).parents[1] / "benchmarks" / "baselines" / "v0.2.0.json"
 EXPERIMENT_PATH = (
     Path(__file__).parents[1]
@@ -61,6 +66,75 @@ def test_all_benchmark_tasks_fail_initially_and_gold_patch_passes(tmp_path) -> N
 
         after = tests.execute(_call(tests, f"after-{task.id}", command=task.test_command))
         assert after.success, f"{task.id} 标准补丁后应该通过: {after.output}"
+
+
+def test_long_context_tasks_generate_contracts_and_gold_patch_passes(tmp_path) -> None:
+    """长上下文任务应安全生成足量契约，且标准补丁证明任务可解。"""
+    tasks = load_benchmark_tasks(LONG_TASKS_DIR)
+    assert len(tasks) == 2
+
+    for task in tasks:
+        repo = task.prepare_source_repository(tmp_path / task.id)
+        contracts = sorted((repo / "contracts").glob("*.md"))
+        assert len(contracts) == 24
+        assert all(path.stat().st_size > 6_000 for path in contracts)
+
+        tests = RunTestsTool(repo)
+        before = tests.execute(_call(tests, f"long-before-{task.id}", command="pytest -q"))
+        assert not before.success
+        applied = ApplyPatchTool(repo).execute(
+            _call(
+                ApplyPatchTool(repo),
+                f"long-patch-{task.id}",
+                patch=task.gold_patch_path.read_text(encoding="utf-8"),
+            )
+        )
+        assert applied.success
+        after = tests.execute(_call(tests, f"long-after-{task.id}", command="pytest -q"))
+        assert after.success
+
+
+def test_long_context_fixture_crosses_default_32k_compaction_trigger(tmp_path) -> None:
+    """完整读取一题的 24 份契约后，应自然超过生产 32k 软阈值。"""
+    task = load_benchmark_tasks(LONG_TASKS_DIR, limit=1)[0]
+    repo = task.prepare_source_repository(tmp_path / task.id)
+    reader = ReadFileTool(repo)
+    history = MessageHistory(
+        [
+            Message(role=MessageRole.SYSTEM, content="测试系统提示"),
+            Message(role=MessageRole.USER, content=task.description),
+        ]
+    )
+    # 与真实任务约束一致：每轮读取四份，形成六个可整体折叠的工具批次。
+    for batch_start in range(1, 25, 4):
+        calls = tuple(
+            ToolCall(
+                id=f"read-contract-{index}",
+                name="read_file",
+                arguments={"path": f"contracts/region_{index:02d}.md"},
+            )
+            for index in range(batch_start, batch_start + 4)
+        )
+        history.append(Message(role=MessageRole.ASSISTANT, tool_calls=calls))
+        for call in calls:
+            result = reader.execute(call)
+            history.append(
+                Message(
+                    role=MessageRole.TOOL,
+                    content=result.model_dump_json(),
+                    tool_call_id=call.id,
+                )
+            )
+
+    view = ContextManager().prepare(
+        history.snapshot(),
+        ToolRegistry([reader]).specs(),
+    )
+
+    assert view.estimated_tokens_before > 32_000
+    assert view.tool_results_pruned == 0
+    assert view.compacted is True
+    assert view.estimated_tokens_after < view.estimated_tokens_before
 
 
 def test_checked_in_baseline_is_complete_and_sanitized() -> None:

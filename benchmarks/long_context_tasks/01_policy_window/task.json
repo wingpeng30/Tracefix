@@ -1,0 +1,19 @@
+{
+  "id": "long_policy_window",
+  "title": "跨区域策略窗口审计",
+  "description": "policy.resolve_window 在临界上界错误地拒绝请求。仓库迁移留下了 24 份按区域拆分的契约文档 contracts/region_01.md 到 contracts/region_24.md；这些文档共同定义兼容性要求，不能只依据公开测试。请先逐份完整读取全部 24 份契约；为避免一次混合过多区域证据，每轮最多读取 4 份，分批完成审计。确认共同边界语义后，再定位实现、做最小修复、运行 pytest，并检查最终 Diff。",
+  "test_command": "pytest -q",
+  "expected_files": ["policy.py"],
+  "generated_text_series": [
+    {
+      "directory": "contracts",
+      "filename_prefix": "region_",
+      "filename_suffix": ".md",
+      "count": 24,
+      "lines_per_file": 38,
+      "header_template": "# Region {index02} compatibility contract",
+      "line_template": "Audit clause {line} for region {index02}: preserve inclusive customer-visible boundaries, deterministic decisions, existing return types, and backward-compatible behavior across migrated policy data.",
+      "footer_template": "Decision note for region {index02}: a value equal to the configured upper boundary remains inside the accepted window; values greater than it are outside."
+    }
+  ]
+}

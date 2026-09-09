@@ -25,6 +25,36 @@ from tracefix.runtime import (
 from tracefix.tools import RunTestsTool, ToolResult
 
 
+class GeneratedTextSeries(BaseModel):
+    """为长上下文基准声明一组可复现、无可执行代码的文本文件。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    directory: str
+    filename_prefix: str = "document_"
+    filename_suffix: str = ".md"
+    count: int = Field(ge=1, le=64)
+    lines_per_file: int = Field(ge=1, le=200)
+    header_template: str = ""
+    line_template: str = Field(min_length=1)
+    footer_template: str = ""
+
+    @model_validator(mode="after")
+    def validate_paths_and_names(self) -> GeneratedTextSeries:
+        """限制生成位置和文件名，防止任务清单借生成器逃逸目录。"""
+        directory = Path(self.directory)
+        if (
+            directory.is_absolute()
+            or ".." in directory.parts
+            or any(part.casefold() == ".git" for part in directory.parts)
+        ):
+            raise ValueError("generated text directory must be a safe relative path")
+        for value in (self.filename_prefix, self.filename_suffix):
+            if not value or any(separator in value for separator in ("/", "\\", "\x00")):
+                raise ValueError("generated text filename parts cannot contain separators")
+        return self
+
+
 class BenchmarkTask(BaseModel):
     """一个磁盘基准任务的描述、测试命令和标准答案位置。"""
 
@@ -37,6 +67,7 @@ class BenchmarkTask(BaseModel):
     expected_files: tuple[str, ...] = Field(min_length=1)
     repository_dir: str = "repo"
     gold_patch: str = "gold.patch"
+    generated_text_series: tuple[GeneratedTextSeries, ...] = ()
     task_dir: Path
 
     @model_validator(mode="after")
@@ -120,6 +151,8 @@ class BenchmarkTask(BaseModel):
                 context={"task_id": self.id, "path": str(target)},
             ) from exc
 
+        self._materialize_generated_text(target)
+
         self._run_git(["init", "--quiet"], target)
         self._run_git(["add", "--all"], target)
         self._run_git(
@@ -136,6 +169,54 @@ class BenchmarkTask(BaseModel):
             target,
         )
         return target
+
+    def _materialize_generated_text(self, target: Path) -> None:
+        """根据受限清单生成长文档；这里只做文本替换，不执行任务内代码。"""
+        for series in self.generated_text_series:
+            directory = (target / series.directory).resolve()
+            if not directory.is_relative_to(target):
+                raise BenchmarkError(
+                    "generated text directory escapes repository",
+                    context={"task_id": self.id, "directory": series.directory},
+                )
+            directory.mkdir(parents=True, exist_ok=True)
+            for index in range(1, series.count + 1):
+                filename = f"{series.filename_prefix}{index:02d}{series.filename_suffix}"
+                path = (directory / filename).resolve()
+                if not path.is_relative_to(target) or path.exists():
+                    raise BenchmarkError(
+                        "generated text path is unsafe or already exists",
+                        context={"task_id": self.id, "path": str(path)},
+                    )
+                lines: list[str] = []
+                if series.header_template:
+                    lines.append(self._render_generated_template(series.header_template, index))
+                lines.extend(
+                    self._render_generated_template(series.line_template, index, line=line)
+                    for line in range(1, series.lines_per_file + 1)
+                )
+                if series.footer_template:
+                    lines.append(self._render_generated_template(series.footer_template, index))
+                try:
+                    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+                except OSError as exc:
+                    raise BenchmarkError(
+                        f"cannot generate benchmark text: {exc}",
+                        context={"task_id": self.id, "path": str(path)},
+                    ) from exc
+
+    @staticmethod
+    def _render_generated_template(
+        template: str,
+        index: int,
+        *,
+        line: int | None = None,
+    ) -> str:
+        """只替换固定占位符，避免引入通用模板执行能力。"""
+        value = template.replace("{index}", str(index)).replace(
+            "{index02}", f"{index:02d}"
+        )
+        return value.replace("{line}", str(line)) if line is not None else value
 
     @staticmethod
     def _run_git(arguments: list[str], cwd: Path) -> None:

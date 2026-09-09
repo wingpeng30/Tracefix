@@ -1,0 +1,19 @@
+{
+  "id": "long_route_normalization",
+  "title": "跨服务路由规范化审计",
+  "description": "routing.normalize_route 对带首尾空白和 Unicode 大小写变体的路由标识产生不一致结果。24 个上游服务的兼容契约位于 contracts/service_01.md 到 contracts/service_24.md，公开测试只展示一个症状。请先逐份完整读取全部 24 份契约；为避免一次混合过多服务证据，每轮最多读取 4 份，分批完成审计。综合兼容性约束后，再定位实现、做最小修复、运行 pytest，并检查最终 Diff。",
+  "test_command": "pytest -q",
+  "expected_files": ["routing.py"],
+  "generated_text_series": [
+    {
+      "directory": "contracts",
+      "filename_prefix": "service_",
+      "filename_suffix": ".md",
+      "count": 24,
+      "lines_per_file": 38,
+      "header_template": "# Upstream service {index02} routing contract",
+      "line_template": "Compatibility clause {line} for service {index02}: normalization must remain locale-independent, whitespace-tolerant, Unicode-safe, deterministic, and suitable for stable dictionary lookup after migrations.",
+      "footer_template": "Normalization note for service {index02}: trim surrounding whitespace first and then apply Unicode case folding; do not alter internal separators."
+    }
+  ]
+}

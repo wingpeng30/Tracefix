@@ -264,3 +264,6 @@ python -m compileall -q src tests
 下一阶段会用相同模型、任务和预算离线确认修复后，再分别用 32k 生产阈值和关闭压缩运行
 受控 A/B；之后增加 Repository Indexer、AST 符号关系和错误栈驱动检索。本版本不包含
 LLM 摘要、RAG、多 Agent、Docker 或前端。
+
+用于该 A/B 的可复现压力任务、设计边界和命令见
+[`benchmarks/long_context_tasks/README.md`](benchmarks/long_context_tasks/README.md)。
