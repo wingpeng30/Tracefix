@@ -1,0 +1,109 @@
+{
+  "schema_version": 1,
+  "experiment_id": "tracefix-v0.3.1-context-32k-ab-long-context-2",
+  "tracefix_version": "0.3.1",
+  "tracefix_commit": "247a88121c7a35acc52fd9b1809e90f07949b6d9",
+  "model_name": "deepseek/deepseek-v4-flash",
+  "task_suite": "benchmarks/long_context_tasks",
+  "task_kind": "controlled_synthetic_long_context",
+  "task_count": 2,
+  "budgets": {
+    "max_steps": 20,
+    "max_input_tokens": 400000,
+    "max_output_tokens": 16000,
+    "wall_time_seconds": 600,
+    "max_test_runs": 4
+  },
+  "usd_cny_rate": 7.2,
+  "control": {
+    "started_at": "2026-09-09T13:19:40.87552Z",
+    "context_enabled": false,
+    "resolved_count": 2,
+    "agent_completed_count": 2,
+    "input_tokens": 370387,
+    "output_tokens": 5135,
+    "steps": 24,
+    "agent_test_runs": 2,
+    "tool_calls": 68,
+    "failed_tool_calls": 0,
+    "exact_duplicate_tool_calls": 0,
+    "duration_seconds": 47.891,
+    "cost_usd": 0.03506432,
+    "cost_cny_estimate": 0.2524631,
+    "cost_complete": true,
+    "context_metrics": {
+      "preparation_count": 24,
+      "compaction_count": 0,
+      "tool_results_pruned": 0,
+      "messages_compacted": 0,
+      "batches_compacted": 0,
+      "estimated_tokens_saved": 0
+    },
+    "tasks": [
+      {"id":"long_policy_window","resolved":true,"agent_status":"completed","steps":11,"input_tokens":260867,"output_tokens":1989,"test_runs":1,"tool_calls":32,"contract_reads":24,"full_contract_reads":24,"duration_seconds":23.313,"cost_usd":0.024327664,"cost_cny_estimate":0.17515918,"compaction_count":0,"estimated_tokens_saved":0,"changed_files":["policy.py"]},
+      {"id":"long_route_normalization","resolved":true,"agent_status":"completed","steps":13,"input_tokens":109520,"output_tokens":3146,"test_runs":1,"tool_calls":36,"contract_reads":24,"full_contract_reads":4,"duration_seconds":24.578,"cost_usd":0.010736656,"cost_cny_estimate":0.07730392,"compaction_count":0,"estimated_tokens_saved":0,"changed_files":["routing.py"]}
+    ]
+  },
+  "treatment": {
+    "started_at": "2026-09-09T13:21:01.259939Z",
+    "context_enabled": true,
+    "compaction_trigger_tokens": 32000,
+    "retain_ratio": 0.375,
+    "resolved_count": 2,
+    "agent_completed_count": 2,
+    "input_tokens": 185587,
+    "output_tokens": 4598,
+    "steps": 22,
+    "agent_test_runs": 2,
+    "tool_calls": 65,
+    "failed_tool_calls": 0,
+    "exact_duplicate_tool_calls": 0,
+    "duration_seconds": 41.985,
+    "cost_usd": 0.031672856,
+    "cost_cny_estimate": 0.22804456,
+    "cost_complete": true,
+    "context_metrics": {
+      "preparation_count": 22,
+      "compaction_count": 5,
+      "tool_results_pruned": 41,
+      "messages_compacted": 160,
+      "batches_compacted": 37,
+      "estimated_tokens_saved": 228165
+    },
+    "tasks": [
+      {"id":"long_policy_window","resolved":true,"agent_status":"completed","steps":12,"input_tokens":105154,"output_tokens":1969,"test_runs":1,"tool_calls":34,"contract_reads":24,"full_contract_reads":24,"duration_seconds":23.281,"cost_usd":0.023075096,"cost_cny_estimate":0.16614069,"compaction_count":5,"tool_results_pruned":9,"messages_compacted":160,"batches_compacted":37,"estimated_tokens_saved":205709,"changed_files":["policy.py"]},
+      {"id":"long_route_normalization","resolved":true,"agent_status":"completed","steps":10,"input_tokens":80433,"output_tokens":2629,"test_runs":1,"tool_calls":31,"contract_reads":24,"full_contract_reads":4,"duration_seconds":18.704,"cost_usd":0.00859776,"cost_cny_estimate":0.06190387,"compaction_count":0,"tool_results_pruned":32,"messages_compacted":0,"batches_compacted":0,"estimated_tokens_saved":22456,"changed_files":["routing.py"]}
+    ]
+  },
+  "aggregate_effect": {
+    "resolved_rate_delta": 0.0,
+    "input_tokens_delta": -184800,
+    "input_tokens_change_ratio": -0.49893587,
+    "output_tokens_delta": -537,
+    "output_tokens_change_ratio": -0.10457644,
+    "steps_delta": -2,
+    "steps_change_ratio": -0.08333333,
+    "tool_calls_delta": -3,
+    "tool_calls_change_ratio": -0.04411765,
+    "duration_seconds_delta": -5.906,
+    "duration_change_ratio": -0.12332171,
+    "cost_usd_delta": -0.003391464,
+    "cost_change_ratio": -0.09672124,
+    "cost_cny_delta": -0.02441854
+  },
+  "findings": [
+    "Both groups resolved both tasks and completed normally without failed or duplicate tool calls.",
+    "The treatment reduced provider-reported input tokens by 49.89% while preserving resolved rate.",
+    "The strongest paired evidence is long_policy_window: both runs fully read all 24 contracts, the treatment used one more model step, yet input tokens fell by 59.69% after five history compactions.",
+    "long_route_normalization did not fold history; it only pruned oversized tool results, and also used three fewer model steps, so its 26.56% token reduction is confounded by stochastic trajectory differences.",
+    "Token reduction did not translate proportionally to cost reduction; the stored response usage cannot separate cache-hit, cache-miss, input, and output pricing effects.",
+    "tool_results_pruned is a cumulative per-request operation count, not a count of unique tool result messages."
+  ],
+  "limitations": [
+    "There are only two controlled synthetic tasks and one stochastic run per condition.",
+    "The task instruction deliberately requires batched contract inspection to exercise long-context behavior.",
+    "One treatment task changed its search trajectory, so aggregate deltas cannot be attributed exclusively to compaction.",
+    "The suite does not represent real GitHub Issue or SWE-bench performance.",
+    "Local paths, secrets, raw model responses, test stdout, workspaces, and full trajectories are excluded."
+  ]
+}

@@ -37,6 +37,12 @@ REGRESSION_PATH = (
     / "experiments"
     / "v0.3.1-agent-loop-regression.json"
 )
+CONTEXT_AB_PATH = (
+    Path(__file__).parents[1]
+    / "benchmarks"
+    / "experiments"
+    / "v0.3.1-context-32k-ab.json"
+)
 
 
 def _call(tool, call_id: str, **arguments):
@@ -187,6 +193,28 @@ def test_checked_in_agent_loop_regression_is_consistent_and_sanitized() -> None:
     assert sum(item["tool_calls"] for item in tasks) == aggregate["tool_calls"]
     assert aggregate["failed_tool_calls"] == 0
     assert aggregate["context_metrics"]["compaction_count"] == 0
+    assert "d:\\tracefix" not in serialized
+    assert "api_key" not in serialized
+    assert "trajectory.jsonl" not in serialized
+
+
+def test_checked_in_32k_ab_experiment_is_consistent_and_sanitized() -> None:
+    """A/B 记录的聚合值、配对任务和脱敏边界必须保持可复核。"""
+    import json
+
+    payload = json.loads(CONTEXT_AB_PATH.read_text(encoding="utf-8"))
+    serialized = json.dumps(payload).casefold()
+    control = payload["control"]
+    treatment = payload["treatment"]
+    assert payload["tracefix_commit"] == "247a88121c7a35acc52fd9b1809e90f07949b6d9"
+    assert control["resolved_count"] == treatment["resolved_count"] == 2
+    assert [item["id"] for item in control["tasks"]] == [
+        item["id"] for item in treatment["tasks"]
+    ]
+    assert sum(item["input_tokens"] for item in control["tasks"]) == 370_387
+    assert sum(item["input_tokens"] for item in treatment["tasks"]) == 185_587
+    assert treatment["context_metrics"]["compaction_count"] == 5
+    assert payload["aggregate_effect"]["input_tokens_delta"] == -184_800
     assert "d:\\tracefix" not in serialized
     assert "api_key" not in serialized
     assert "trajectory.jsonl" not in serialized
