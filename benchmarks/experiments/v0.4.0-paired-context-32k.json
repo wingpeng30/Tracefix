@@ -1,0 +1,156 @@
+{
+  "schema_version": 1,
+  "experiment_id": "paired-20260909T173341Z-cc67d8c7",
+  "date_completed_asia_shanghai": "2026-09-10",
+  "tracefix_version": "0.4.0",
+  "tracefix_commit": "2c3de4ed3062f4fa9813244d54974afd9b93d9eb",
+  "tracefix_worktree_dirty": false,
+  "model": "deepseek/deepseek-v4-flash",
+  "dependencies": {
+    "python": "3.12.5",
+    "platform": "Windows-11-AMD64",
+    "pydantic": "2.13.5",
+    "litellm": "1.75.5.post2",
+    "python-dotenv": "1.2.3"
+  },
+  "design": {
+    "tasks": 4,
+    "repetitions_per_task_per_arm": 3,
+    "trial_count": 24,
+    "order_by_repetition": ["C/T", "T/C", "C/T"],
+    "control": "context compaction disabled",
+    "treatment": "context compaction enabled with 32000 token trigger",
+    "request_views_recorded": true,
+    "budgets": {
+      "max_steps": 20,
+      "max_input_tokens": 120000,
+      "max_output_tokens": 12000,
+      "wall_time_seconds": 600,
+      "max_test_runs": 6
+    },
+    "usd_cny_rate": 7.2
+  },
+  "task_hashes": {
+    "config_precedence": "634f772550d102261d15d68aa5fbc22a329a793ca04a604c4864b11539d069ed",
+    "event_merge": "45bbc7ad127452eab83c62d1b71bec5ebd1be954110c62a8e87adf9bede8f33d",
+    "retry_pipeline": "3a58ebb3ceffbdd3f7b45a388461ad518069fcf9f2a8c75575ae5fb373b7a5f3",
+    "shipping_route": "6566390de3baeba4d00bff4fa3dc0b06c8338a7c62d51ed27e0d872e1d0ee6ca"
+  },
+  "control": {
+    "trials": 12,
+    "resolved": 12,
+    "agent_completed": 12,
+    "public_tests_passed": 12,
+    "independent_tests_passed": 12,
+    "tests_modified": 0,
+    "input_tokens": 254975,
+    "output_tokens": 21533,
+    "steps": 68,
+    "agent_test_runs": 13,
+    "cost_usd": 0.051895504,
+    "cost_cny_estimate": 0.37364763,
+    "tool_calls": 138,
+    "exact_parameter_repeats": 1,
+    "file_rereads": 0,
+    "failed_tool_calls": 1,
+    "history_compactions": 0,
+    "tool_result_pruning_events": 0
+  },
+  "treatment": {
+    "trials": 12,
+    "resolved": 12,
+    "agent_completed": 12,
+    "public_tests_passed": 12,
+    "independent_tests_passed": 12,
+    "tests_modified": 0,
+    "input_tokens": 265145,
+    "output_tokens": 21982,
+    "steps": 70,
+    "agent_test_runs": 12,
+    "cost_usd": 0.053091496,
+    "cost_cny_estimate": 0.38225877,
+    "tool_calls": 147,
+    "exact_parameter_repeats": 0,
+    "file_rereads": 0,
+    "failed_tool_calls": 0,
+    "history_compactions": 0,
+    "tool_result_pruning_events": 0,
+    "post_compaction_failed_tool_calls": 0,
+    "unresolved_after_compaction": 0
+  },
+  "paired_observed_delta_treatment_minus_control": {
+    "resolved": 0,
+    "input_tokens": 10170,
+    "input_tokens_percent": 3.9886,
+    "output_tokens": 449,
+    "cost_usd": 0.001195992,
+    "cost_percent": 2.3046,
+    "steps": 2,
+    "tool_calls": 9
+  },
+  "tasks": [
+    {
+      "id": "config_precedence",
+      "control_input_tokens": [17128, 17467, 20210],
+      "treatment_input_tokens": [17515, 16610, 23661],
+      "control_steps": [5, 5, 6],
+      "treatment_steps": [5, 5, 6],
+      "control_resolved": [true, true, true],
+      "treatment_resolved": [true, true, true],
+      "treatment_max_estimated_context_tokens": 5372,
+      "treatment_history_compactions": 0
+    },
+    {
+      "id": "event_merge",
+      "control_input_tokens": [21514, 44147, 28495],
+      "treatment_input_tokens": [27714, 30922, 37482],
+      "control_steps": [6, 9, 7],
+      "treatment_steps": [7, 7, 9],
+      "control_resolved": [true, true, true],
+      "treatment_resolved": [true, true, true],
+      "treatment_max_estimated_context_tokens": 8326,
+      "treatment_history_compactions": 0
+    },
+    {
+      "id": "retry_pipeline",
+      "control_input_tokens": [18652, 19148, 19449],
+      "treatment_input_tokens": [18864, 18691, 24757],
+      "control_steps": [5, 5, 5],
+      "treatment_steps": [5, 5, 6],
+      "control_resolved": [true, true, true],
+      "treatment_resolved": [true, true, true],
+      "treatment_max_estimated_context_tokens": 5487,
+      "treatment_history_compactions": 0
+    },
+    {
+      "id": "shipping_route",
+      "control_input_tokens": [16292, 16217, 16256],
+      "treatment_input_tokens": [16364, 16327, 16238],
+      "control_steps": [5, 5, 5],
+      "treatment_steps": [5, 5, 5],
+      "control_resolved": [true, true, true],
+      "treatment_resolved": [true, true, true],
+      "treatment_max_estimated_context_tokens": 4582,
+      "treatment_history_compactions": 0
+    }
+  ],
+  "not_triggered_tasks": [
+    "config_precedence",
+    "event_merge",
+    "retry_pipeline",
+    "shipping_route"
+  ],
+  "invalid_preflight_excluded": {
+    "trials": 8,
+    "reason": "pytest-generated tests/__pycache__ bytecode was incorrectly classified as a modified test file",
+    "public_tests_passed": 8,
+    "independent_tests_passed": 8,
+    "cost_usd": 0.044234544,
+    "cost_cny_estimate": 0.31848872
+  },
+  "decision": {
+    "selected_feature": null,
+    "reason": "No formal trial failed and no treatment trial reached the 32k history compaction trigger. The data cannot support choosing summary improvements, AST/Repo Map, or a stronger Patch Verifier.",
+    "next_evidence_needed": "Use larger real repositories or semantic tasks whose natural tool trajectory exceeds 32k, then classify failures with the same independent acceptance signals."
+  }
+}

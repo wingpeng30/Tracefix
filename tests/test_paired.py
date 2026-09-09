@@ -21,6 +21,12 @@ from tracefix import (
 )
 
 CONTEXT_TASKS_DIR = Path(__file__).parents[1] / "benchmarks" / "context_tasks"
+PAIRED_RECORD = (
+    Path(__file__).parents[1]
+    / "benchmarks"
+    / "experiments"
+    / "v0.4.0-paired-context-32k.json"
+)
 
 
 class _GoldPatchLLM(BaseLLM):
@@ -132,3 +138,20 @@ def test_paired_runner_alternates_arms_and_writes_partial_summary(tmp_path, monk
     assert summary.treatment_not_triggered_task_ids == ("config_precedence",)
     assert Path(summary.summary_path).is_file()
     assert all(trial.result.run.agent_config.record_request_views for trial in summary.trials)
+
+
+def test_checked_in_paired_record_is_consistent_and_reports_no_trigger() -> None:
+    """正式记录必须保留配对重复和否定性结论，且不含本机原始产物。"""
+    payload = json.loads(PAIRED_RECORD.read_text(encoding="utf-8"))
+    serialized = json.dumps(payload).casefold()
+    assert payload["tracefix_commit"] == "2c3de4ed3062f4fa9813244d54974afd9b93d9eb"
+    assert payload["design"]["trial_count"] == 24
+    assert payload["control"]["resolved"] == payload["treatment"]["resolved"] == 12
+    assert payload["control"]["input_tokens"] == 254_975
+    assert payload["treatment"]["input_tokens"] == 265_145
+    assert payload["treatment"]["history_compactions"] == 0
+    assert len(payload["not_triggered_tasks"]) == 4
+    assert payload["decision"]["selected_feature"] is None
+    assert "d:\\tracefix" not in serialized
+    assert "api_key" not in serialized
+    assert "trajectory.jsonl" not in serialized

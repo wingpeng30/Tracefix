@@ -147,3 +147,9 @@ Verifier，避免后续功能建立在裸字典和不稳定异常上。
 判定。新增 `paired-eval`，按 C/T、T/C 顺序交替运行至少三次，并从 JSONL 轨迹统计文件
 重读、重复调用、失败工具、工具结果裁剪、真实历史折叠及折叠后失败。代码实现说明见
 [`tasks/v0.4.0-independent-verification-and-paired-eval.md`](tasks/v0.4.0-independent-verification-and-paired-eval.md)。
+
+正式实验在 commit `2c3de4e` 上交替运行 24 次，两组均 12/12，但 32k 组真实折叠为 0；
+不能把 +3.99% 输入 Token 波动解释为压缩影响。实验数据、无效预运行费用和下一功能决策见
+[`experiments/v0.4.0-paired-context-32k.md`](experiments/v0.4.0-paired-context-32k.md)。
+
+最终自动化验收为 `136 passed`、覆盖率 `91.76%`，Ruff、compileall 与 Git diff 检查通过。

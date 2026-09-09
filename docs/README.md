@@ -24,6 +24,10 @@
   独立验收、测试篡改检测与交替重复实验框架说明。
 - [`experiments/v0.3.2-fixture-validation.md`](experiments/v0.3.2-fixture-validation.md)：
   多文件任务初始失败、标准补丁和隐藏测试的离线验收记录。
+- [`experiments/v0.4.0-paired-context-32k.md`](experiments/v0.4.0-paired-context-32k.md)：
+  24 次交替配对实验、未触发 32k 的否定性结论与下一功能决策。
+- [`experiments/v0.4.0-paired-context-32k.md`](experiments/v0.4.0-paired-context-32k.md)：
+  四道多文件任务上每组三次的交替实验，以及“没有触发 32k”的否定性结论。
 
 机器可读、已脱敏的指标保存在 `benchmarks/baselines/` 和 `benchmarks/experiments/`。
 完整工作区、模型消息和轨迹只保存在被 Git 忽略的本机 `runs/` 中。

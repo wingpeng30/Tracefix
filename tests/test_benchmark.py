@@ -406,6 +406,62 @@ def test_test_file_and_pytest_configuration_changes_are_detected(tmp_path, monke
     )
 
 
+def test_modified_public_test_prevents_resolved_even_when_all_tests_pass(
+    tmp_path, monkeypatch
+) -> None:
+    """测试篡改是独立否决条件，不能被公开或隐藏测试成功覆盖。"""
+    task = load_benchmark_tasks(CONTEXT_TASKS_DIR, limit=1)[0]
+    gold = task.gold_patch_path.read_text(encoding="utf-8")
+    test_patch = """*** Begin Patch
+*** Update File: tests/test_resolver.py
+@@
+ from config import resolve_config
++# Agent 不应修改测试，即使只是无害注释。
+*** End Patch"""
+
+    class TestModifyingLLM(BaseLLM):
+        def __init__(self, config):
+            super().__init__(config)
+            self.calls = 0
+
+        def complete(self, messages, tools=()):
+            self.calls += 1
+            calls = ()
+            if self.calls == 1:
+                calls = (
+                    ToolCall(id="source", name="apply_patch", arguments={"patch": gold}),
+                    ToolCall(id="test", name="apply_patch", arguments={"patch": test_patch}),
+                )
+            return LLMResponse(
+                message=Message(
+                    role=MessageRole.ASSISTANT,
+                    content=None if calls else "完成",
+                    tool_calls=calls,
+                ),
+                usage=TokenUsage(input_tokens=3, output_tokens=2, total_tokens=5),
+                model_name=self.config.model_name,
+            )
+
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-test-modification-123456")
+    summary = BenchmarkRunner(TraceFixRunner(TestModifyingLLM)).run(
+        BenchmarkConfig(
+            tasks_dir=CONTEXT_TASKS_DIR,
+            output_dir=tmp_path / "mutation-runs",
+            limit=1,
+            env_file=None,
+        )
+    )
+    result = summary.results[0]
+    assert result.agent_completed
+    assert result.public_tests_passed
+    assert result.independent_tests_passed
+    assert result.tests_modified
+    assert result.changed_test_files == ("tests/test_resolver.py",)
+    assert not result.resolved
+    assert summary.tests_modified_count == 1
+    assert summary.resolved_count == 0
+
+
 def test_benchmark_loader_rejects_missing_unknown_and_unsafe_tasks(tmp_path) -> None:
     import json
 
