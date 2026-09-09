@@ -1,0 +1,36 @@
+{
+  "id": "pylint-dev__pylint-8898",
+  "title": "Preserve commas inside regular-expression quantifiers",
+  "source_dataset": "SWE-bench/SWE-bench_Verified",
+  "dataset_split": "test",
+  "repo": "pylint-dev/pylint",
+  "repo_url": "https://github.com/pylint-dev/pylint.git",
+  "issue_url": "https://github.com/pylint-dev/pylint/issues/8898",
+  "base_commit": "1f8c4d9eb185c16a2c1d881c054f015e1c2eb334",
+  "environment_setup_commit": "a0ce6e424e3a208f3aed1cbf6e16c40853bec3c0",
+  "upstream_version": "3.0",
+  "issue_created_at": "2023-07-29T21:53:59Z",
+  "evaluation_backend": "swebench_docker",
+  "problem_statement_kind": "curated_excerpt",
+  "problem_statement_kind": "curated_excerpt",
+  "problem_statement_file": "problem.md",
+  "gold_patch_file": "gold.patch",
+  "test_patch_file": "test.patch",
+  "fail_to_pass": [
+    "tests/config/test_config.py::test_csv_regex_error"
+  ],
+  "pass_to_pass_count": 18,
+  "expected_source_files": [
+    "pylint/config/argument.py",
+    "pylint/utils/__init__.py",
+    "pylint/utils/utils.py"
+  ],
+  "expected_test_files": [
+    "tests/config/test_config.py"
+  ],
+  "hashes": {
+    "problem_statement": "5af5227156c93f62c386556ecb922915c21cb940368ddb81118f95a620de6224",
+    "gold_patch": "1ef5ef80b29bcfb5902b6818e58a576cf6d97b66fb7b354fa1392451954a6c98",
+    "test_patch": "0fa5d0f2e19d994ed7a5b0450f502b986cb3dc862f83ee7cbc96676210012b10"
+  }
+}

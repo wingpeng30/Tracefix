@@ -62,6 +62,12 @@ from tracefix.paired import (
     analyze_trajectory,
 )
 from tracefix.provenance import RunProvenance, collect_run_provenance, task_sha256
+from tracefix.real_benchmark import (
+    RealIssueTask,
+    RealTaskArtifactHashes,
+    RealTaskValidation,
+    load_real_issue_tasks,
+)
 from tracefix.runtime import (
     DEFAULT_MODEL_NAME,
     DEFAULT_USD_CNY_RATE,
@@ -142,6 +148,9 @@ __all__ = [
     "RunConfigurationError",
     "RunResult",
     "RunProvenance",
+    "RealIssueTask",
+    "RealTaskArtifactHashes",
+    "RealTaskValidation",
     "ReadFileTool",
     "RunTestsTool",
     "SearchCodeTool",
@@ -172,6 +181,7 @@ __all__ = [
     "create_default_tool_registry",
     "load_benchmark_tasks",
     "load_environment_file",
+    "load_real_issue_tasks",
     "collect_run_provenance",
     "task_sha256",
     "analyze_trajectory",

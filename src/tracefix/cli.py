@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import sys
 from pathlib import Path
@@ -15,6 +16,7 @@ from tracefix.benchmark import BenchmarkConfig, BenchmarkRunner
 from tracefix.context import ContextConfig
 from tracefix.exceptions import TraceFixError
 from tracefix.paired import PairedExperimentConfig, PairedExperimentRunner
+from tracefix.real_benchmark import load_real_issue_tasks
 from tracefix.runtime import (
     DEFAULT_MODEL_NAME,
     DEFAULT_USD_CNY_RATE,
@@ -145,6 +147,27 @@ def build_parser() -> argparse.ArgumentParser:
         "--repetitions", type=int, default=3, help="每题每组重复次数，至少 3"
     )
     _add_shared_options(paired_parser)
+
+    real_parser = subparsers.add_parser(
+        "validate-real-tasks", help="校验真实 GitHub Issue 任务的哈希与固定提交"
+    )
+    real_parser.add_argument(
+        "--tasks", type=Path, default=Path("benchmarks/real_tasks"), help="真实任务目录"
+    )
+    real_parser.add_argument(
+        "--task-id", action="append", default=[], help="只校验指定任务，可重复传入"
+    )
+    real_parser.add_argument(
+        "--with-checkout",
+        action="store_true",
+        help="联网克隆上游固定提交，并执行组合补丁预检",
+    )
+    real_parser.add_argument(
+        "--checkout-dir",
+        type=Path,
+        default=Path("runs/real-task-validation"),
+        help="联网校验的临时检出根目录",
+    )
     return parser
 
 
@@ -274,6 +297,19 @@ def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
     try:
+        if args.command == "validate-real-tasks":
+            tasks = load_real_issue_tasks(args.tasks, task_ids=tuple(args.task_id))
+            validations = []
+            for task in tasks:
+                validation = task.validate_artifacts()
+                if args.with_checkout:
+                    checkout = task.prepare_checkout(args.checkout_dir / task.id)
+                    validation = task.validate_checkout(checkout)
+                validations.append(validation.model_dump(mode="json"))
+            # 输出结构化 JSON，便于把一次联网校验的结果直接归档。
+            print(json.dumps(validations, ensure_ascii=False, indent=2))
+            return 0
+
         shared = _resolve_shared(args)
         if args.command == "run":
             result = TraceFixRunner().run(

@@ -1,0 +1,36 @@
+{
+  "id": "pytest-dev__pytest-8399",
+  "title": "Hide generated xunit and unittest fixtures by default",
+  "source_dataset": "SWE-bench/SWE-bench_Verified",
+  "dataset_split": "test",
+  "repo": "pytest-dev/pytest",
+  "repo_url": "https://github.com/pytest-dev/pytest.git",
+  "issue_url": "https://github.com/pytest-dev/pytest/issues/8399",
+  "base_commit": "6e7dc8bac831cd8cf7a53b08efa366bd84f0c0fe",
+  "environment_setup_commit": "634312b14a45db8d60d72016e01294284e3a18d4",
+  "upstream_version": "6.3",
+  "issue_created_at": "2021-03-04T17:52:17Z",
+  "evaluation_backend": "swebench_docker",
+  "problem_statement_kind": "curated_excerpt",
+  "problem_statement_kind": "curated_excerpt",
+  "problem_statement_file": "problem.md",
+  "gold_patch_file": "gold.patch",
+  "test_patch_file": "test.patch",
+  "fail_to_pass": [
+    "testing/test_unittest.py::test_fixtures_setup_setUpClass_issue8394"
+  ],
+  "pass_to_pass_count": 59,
+  "expected_source_files": [
+    "src/_pytest/python.py",
+    "src/_pytest/unittest.py"
+  ],
+  "expected_test_files": [
+    "testing/test_nose.py",
+    "testing/test_unittest.py"
+  ],
+  "hashes": {
+    "problem_statement": "9eb8cd9107951554a9ded79e3ddce663e7e1ba6096d95d20583b779d0717cb22",
+    "gold_patch": "fcc0962e001dbc5c6c718a885b0a3369af3b018b942d3574675c51ecdc59eff2",
+    "test_patch": "506cca658cf270e5ef62256ea4261cd6557ed8368317a97d715123486fa1ddd6"
+  }
+}

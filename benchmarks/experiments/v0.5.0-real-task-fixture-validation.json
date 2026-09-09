@@ -1,0 +1,53 @@
+{
+  "schema_version": 1,
+  "recorded_at": "2026-09-10T02:22:43+08:00",
+  "tracefix_base_release": "v0.4.0",
+  "tracefix_base_commit": "007520a714b8eb5b8a133c76ba83e5b046439041",
+  "working_version": "0.5.0",
+  "source_dataset": "SWE-bench/SWE-bench_Verified",
+  "dataset_split": "test",
+  "validation": {
+    "artifact_hashes_checked": true,
+    "patch_file_sets_checked": true,
+    "base_commits_checked_out": true,
+    "combined_git_apply_check": true,
+    "dependencies_installed": false,
+    "tests_executed": false,
+    "model_runs": 0,
+    "model_cost_usd": 0.0
+  },
+  "automated_acceptance": {
+    "pytest_passed": 145,
+    "coverage_percent": 91.04,
+    "coverage_threshold_percent": 90.0,
+    "ruff_check": "passed",
+    "compileall": "passed"
+  },
+  "tasks": [
+    {
+      "id": "pytest-dev__pytest-8399",
+      "base_commit": "6e7dc8bac831cd8cf7a53b08efa366bd84f0c0fe",
+      "source_file_count": 2,
+      "hidden_test_file_count": 2,
+      "checkout_valid": true,
+      "combined_patch_applicable": true
+    },
+    {
+      "id": "pylint-dev__pylint-8898",
+      "base_commit": "1f8c4d9eb185c16a2c1d881c054f015e1c2eb334",
+      "source_file_count": 3,
+      "hidden_test_file_count": 1,
+      "checkout_valid": true,
+      "combined_patch_applicable": true
+    },
+    {
+      "id": "sphinx-doc__sphinx-9461",
+      "base_commit": "939c7bb7ff7c53a4d27df067cea637540f0e1dad",
+      "source_file_count": 3,
+      "hidden_test_file_count": 4,
+      "checkout_valid": true,
+      "combined_patch_applicable": true
+    }
+  ],
+  "interpretation": "This is fixture and patch applicability validation, not a model-quality experiment. Full FAIL_TO_PASS/PASS_TO_PASS execution requires the SWE-bench Docker harness."
+}

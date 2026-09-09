@@ -1,0 +1,41 @@
+{
+  "id": "sphinx-doc__sphinx-9461",
+  "title": "Document class properties in autodoc",
+  "source_dataset": "SWE-bench/SWE-bench_Verified",
+  "dataset_split": "test",
+  "repo": "sphinx-doc/sphinx",
+  "repo_url": "https://github.com/sphinx-doc/sphinx.git",
+  "issue_url": "https://github.com/sphinx-doc/sphinx/issues/9461",
+  "base_commit": "939c7bb7ff7c53a4d27df067cea637540f0e1dad",
+  "environment_setup_commit": "336605b8e4b14c5da9f4d872fb730dc6894edb77",
+  "upstream_version": "4.2",
+  "issue_created_at": "2021-07-17T06:31:58Z",
+  "evaluation_backend": "swebench_docker",
+  "problem_statement_kind": "curated_excerpt",
+  "problem_statement_kind": "curated_excerpt",
+  "problem_statement_file": "problem.md",
+  "gold_patch_file": "gold.patch",
+  "test_patch_file": "test.patch",
+  "fail_to_pass": [
+    "tests/test_domain_py.py::test_pyproperty",
+    "tests/test_ext_autodoc_autoclass.py::test_properties",
+    "tests/test_ext_autodoc_autoproperty.py::test_class_properties"
+  ],
+  "pass_to_pass_count": 59,
+  "expected_source_files": [
+    "sphinx/domains/python.py",
+    "sphinx/ext/autodoc/__init__.py",
+    "sphinx/util/inspect.py"
+  ],
+  "expected_test_files": [
+    "tests/roots/test-ext-autodoc/target/properties.py",
+    "tests/test_domain_py.py",
+    "tests/test_ext_autodoc_autoclass.py",
+    "tests/test_ext_autodoc_autoproperty.py"
+  ],
+  "hashes": {
+    "problem_statement": "be9f66e01088b2fe3523b6aa9ef7e6560bb30d4f64bec65738316814c7969aa3",
+    "gold_patch": "7d1179fe5a6a26c54c163617df88820365178e66ae74d95505c93586deaf7b27",
+    "test_patch": "010d231b9ad23cca12d162a5ae8403414f4b7377c59bc22628f98aa7ad8eeb75"
+  }
+}

@@ -153,3 +153,16 @@ Verifier，避免后续功能建立在裸字典和不稳定异常上。
 [`experiments/v0.4.0-paired-context-32k.md`](experiments/v0.4.0-paired-context-32k.md)。
 
 最终自动化验收为 `136 passed`、覆盖率 `91.76%`，Ruff、compileall 与 Git diff 检查通过。
+
+## V0.5.0：真实 GitHub Issue 任务接口
+
+基于已发布的 `v0.4.0`（commit `007520a`），新增 SWE-bench Verified 真实任务清单、固定提交
+克隆、任务文件 SHA-256、gold/test patch 文件集合校验和隐藏测试补丁接入点。首批三题来自
+pytest、Pylint 和 Sphinx，gold patch 均实际修改多个源码文件；源码不纳入本仓库。
+
+本轮只做任务夹具与补丁可应用性验证，未运行模型或官方 Docker 测试，因此不产生费用，
+也不形成解决率结论。完整说明见
+[`tasks/v0.5.0-real-github-issue-tasks.md`](tasks/v0.5.0-real-github-issue-tasks.md)。
+
+本轮完整自动化验收为 `145 passed`、覆盖率 `91.04%`，Ruff 与 compileall 通过；三个上游
+固定提交均成功检出，三个隐藏测试补丁与 gold patch 组合均通过 `git apply --check`。

@@ -6,7 +6,7 @@ Token 预算下，通过仓库结构检索、动态上下文和测试驱动的�
 
 完整的版本代码说明与实验索引见 [`docs/README.md`](docs/README.md)。
 
-当前开发版本为 **0.4.0**。它已经具备一条可真实运行的最小闭环，并新增确定性上下文管理：
+已发布稳定版本为 **v0.4.0**；当前工作版本为 **0.5.0**。它已经具备一条可真实运行的最小闭环，并新增确定性上下文管理：
 完整轨迹始终保留，模型请求视图会按压力裁剪超长工具输出并折叠较早轮次。
 
 ## 当前能力
@@ -25,6 +25,7 @@ Token 预算下，通过仓库结构检索、动态上下文和测试驱动的�
 - 可选保存脱敏的实际模型请求视图，并提供 4 道带隐藏测试的多文件语义任务。
 - 独立记录 Agent 完成、公开测试、隐藏验收和测试文件篡改四类信号。
 - 支持关闭压缩与 32k 压缩的交替、至少三次重复配对实验。
+- 3 道来自 SWE-bench Verified、gold 实际修改多个源码文件的真实 Issue 任务。
 
 ## 架构
 
@@ -42,6 +43,11 @@ tracefix CLI
             ├── 合成任务准备
             ├── TraceFixRunner
             └── Agent 外独立 pytest 判定
+
+RealIssueTask ── 固定 GitHub repo/base commit
+    ├── problem.md（Agent 可见）
+    ├── test.patch（结束后隐藏验收）
+    └── gold.patch（仅用于可解性校验）
 ```
 
 Agent 内部的测试调用用于获得修复反馈；评测器最后执行的测试只负责判断 `resolved`，不会
@@ -137,8 +143,7 @@ Agent 是否正常结束、公开测试、独立隐藏测试、测试文件修�
 CLI 参数优先于 `TRACEFIX_*` 环境变量，环境变量优先于代码默认值。DeepSeek 默认关闭思考
 模式。需要检查压缩后的实际供应商输入时，可加 `--record-request-views`；该选项会增大
 `trajectory.jsonl`，默认关闭，且记录只做凭据脱敏，不应直接公开含业务代码的轨迹。
-模式；`thinking` 会按照 DeepSeek 的 OpenAI 兼容协议经由 `extra_body` 发送。当前消息协议尚未
-保存思考模式工具轮次要求的 `reasoning_content`。
+当前消息协议尚未保存思考模式工具轮次要求的 `reasoning_content`。
 
 ## 上下文压缩
 
@@ -189,6 +194,28 @@ tracefix eval `
 
 自动化测试会验证所有任务在初始状态失败、应用 gold patch 后通过。gold patch 不会提供给
 真实 Agent。
+
+## 真实 GitHub Issue 任务
+
+首批任务位于 [`benchmarks/real_tasks/`](benchmarks/real_tasks/)，分别来自 pytest、Pylint
+和 Sphinx。它们固定 SWE-bench Verified 的 base commit、开发者补丁和隐藏测试补丁，gold
+实际修改 2～3 个源码文件。上游源码按需克隆，不提交到本仓库。
+
+```powershell
+# 离线检查 SHA-256 与补丁文件集合
+.\.venv\Scripts\python.exe -m tracefix.cli validate-real-tasks `
+  --tasks benchmarks/real_tasks
+
+# 联网检出固定 commit，并联合预检 test.patch + gold.patch
+.\.venv\Scripts\python.exe -m tracefix.cli validate-real-tasks `
+  --tasks benchmarks/real_tasks `
+  --with-checkout `
+  --checkout-dir runs/real-task-validation-new
+```
+
+当前机器没有 Docker，本版尚未运行官方 SWE-bench 测试，也没有形成真实任务解决率。详细
+边界和验证证据见
+[`docs/tasks/v0.5.0-real-github-issue-tasks.md`](docs/tasks/v0.5.0-real-github-issue-tasks.md)。
 
 ## v0.2.0 Baseline
 
@@ -288,8 +315,9 @@ python -m compileall -q src tests
 
 ## 后续版本
 
-下一阶段会用相同模型、任务和预算离线确认修复后，再分别用 32k 生产阈值和关闭压缩运行
-受控 A/B；之后增加 Repository Indexer、AST 符号关系和错误栈驱动检索。本版本不包含
+下一阶段应先接入 SWE-bench Docker harness，验证三个真实任务的初始失败、gold 通过和
+PASS_TO_PASS 无回归；再用相同模型、任务、代码和预算比较关闭压缩与 32k 压缩。之后根据
+失败归因决定改进摘要、Repository Indexer/AST Repo Map 或 Patch Verifier。本版本不包含
 LLM 摘要、RAG、多 Agent、Docker 或前端。
 
 用于该 A/B 的可复现压力任务、设计边界和命令见
