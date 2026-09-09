@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "experiment_id": "v0.3.2-context-task-fixture-validation",
+  "date": "2026-09-10",
+  "kind": "offline_fixture_validation",
+  "tracefix_version": "0.3.2",
+  "model_calls": 0,
+  "input_tokens": 0,
+  "output_tokens": 0,
+  "cost_usd": 0.0,
+  "tasks": [
+    {"id": "config_precedence", "initial_failed": true, "gold_applied": true, "visible_and_hidden_passed": true},
+    {"id": "event_merge", "initial_failed": true, "gold_applied": true, "visible_and_hidden_passed": true},
+    {"id": "retry_pipeline", "initial_failed": true, "gold_applied": true, "visible_and_hidden_passed": true},
+    {"id": "shipping_route", "initial_failed": true, "gold_applied": true, "visible_and_hidden_passed": true}
+  ],
+  "aggregate": {
+    "task_count": 4,
+    "initial_failure_count": 4,
+    "gold_apply_success_count": 4,
+    "visible_and_hidden_pass_count": 4
+  },
+  "limitations": [
+    "No real LLM was called.",
+    "This validates fixture consistency, not agent resolved rate or compaction quality."
+  ]
+}

@@ -6,7 +6,7 @@ Token 预算下，通过仓库结构检索、动态上下文和测试驱动的�
 
 完整的版本代码说明与实验索引见 [`docs/README.md`](docs/README.md)。
 
-当前版本为 **0.3.1**。它已经具备一条可真实运行的最小闭环，并新增确定性上下文管理：
+当前版本为 **0.3.2**。它已经具备一条可真实运行的最小闭环，并新增确定性上下文管理：
 完整轨迹始终保留，模型请求视图会按压力裁剪超长工具输出并折叠较早轮次。
 
 ## 当前能力
@@ -21,6 +21,8 @@ Token 预算下，通过仓库结构检索、动态上下文和测试驱动的�
 - 10 个可复现的合成 Python Bug 与串行 baseline 评测入口。
 - 不调用额外模型的工具结果裁剪、历史折叠和压缩指标。
 - 常见模型补丁格式兼容、失败补丁去重与测试通过后的确定性收尾提示。
+- 每次运行自动保存 TraceFix commit/脏状态、任务哈希、模型参数与依赖版本。
+- 可选保存脱敏的实际模型请求视图，并提供 4 道带隐藏测试的多文件语义任务。
 
 ## 架构
 
@@ -83,6 +85,7 @@ TRACEFIX_CONTEXT_ENABLED=true
 TRACEFIX_CONTEXT_WINDOW_TOKENS=1000000
 TRACEFIX_CONTEXT_TRIGGER_TOKENS=32000
 TRACEFIX_CONTEXT_RETAIN_RATIO=0.375
+TRACEFIX_RECORD_REQUEST_VIEWS=false
 ```
 
 `.env` 已被 Git 忽略。TraceFix 不提供 `--api-key` 参数，避免密钥进入 Shell 历史；密钥也
@@ -118,6 +121,8 @@ tracefix run --repo D:\repos\example --task-file issue.md
 ```
 
 CLI 参数优先于 `TRACEFIX_*` 环境变量，环境变量优先于代码默认值。DeepSeek 默认关闭思考
+模式。需要检查压缩后的实际供应商输入时，可加 `--record-request-views`；该选项会增大
+`trajectory.jsonl`，默认关闭，且记录只做凭据脱敏，不应直接公开含业务代码的轨迹。
 模式；`thinking` 会按照 DeepSeek 的 OpenAI 兼容协议经由 `extra_body` 发送。当前消息协议尚未
 保存思考模式工具轮次要求的 `reasoning_content`。
 

@@ -122,3 +122,21 @@ Verifier，避免后续功能建立在裸字典和不稳定异常上。
 - `python -m compileall -q src tests` 通过
 
 真实 API 原始产物位于本机 `runs/`，不会提交 Git；脱敏实验数据和解释已经纳入仓库。
+
+## V0.3.2：实验可追溯性与语义型多文件任务
+
+本版为每次 `run` 自动生成 `RunProvenance`：记录 TraceFix 源码版本、commit、工作区脏状态、
+任务 SHA-256、实际 LiteLLM 参数、Python/平台和直接依赖版本。该清单同时写入
+`result.json` 与轨迹首条 `run_provenance` 事件，配置或认证失败也尽量保留。
+
+`--record-request-views` / `TRACEFIX_RECORD_REQUEST_VIEWS=true` 可额外写入
+`model_request_view`。该事件保存压缩后真正传给模型的消息和工具定义，统一清理凭据；完整
+`MessageHistory` 不变。由于事件可能明显增大轨迹，生产默认关闭。
+
+新增 `benchmarks/context_tasks/` 下四道任务，并扩展 `BenchmarkTask.hidden_tests_dir`。隐藏测试
+只在 Agent 结束后复制进运行工作区，既不进入模型上下文，也不占 Agent 测试预算。详细设计、
+非目标和接口影响见 [`tasks/v0.3.2-traceability-and-context-tasks.md`](tasks/v0.3.2-traceability-and-context-tasks.md)，
+离线验证见 [`experiments/v0.3.2-fixture-validation.md`](experiments/v0.3.2-fixture-validation.md)。
+
+发布前自动化验收：`130 passed`，总覆盖率 `91.14%`，`ruff check .` 与
+`python -m compileall -q src tests` 均通过。本版没有产生真实模型费用。

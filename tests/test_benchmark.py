@@ -24,6 +24,7 @@ from tracefix.exceptions import BenchmarkError
 
 TASKS_DIR = Path(__file__).parents[1] / "benchmarks" / "tasks"
 LONG_TASKS_DIR = Path(__file__).parents[1] / "benchmarks" / "long_context_tasks"
+CONTEXT_TASKS_DIR = Path(__file__).parents[1] / "benchmarks" / "context_tasks"
 BASELINE_PATH = Path(__file__).parents[1] / "benchmarks" / "baselines" / "v0.2.0.json"
 EXPERIMENT_PATH = (
     Path(__file__).parents[1]
@@ -42,6 +43,12 @@ CONTEXT_AB_PATH = (
     / "benchmarks"
     / "experiments"
     / "v0.3.1-context-32k-ab.json"
+)
+FIXTURE_VALIDATION_PATH = (
+    Path(__file__).parents[1]
+    / "benchmarks"
+    / "experiments"
+    / "v0.3.2-fixture-validation.json"
 )
 
 
@@ -143,6 +150,44 @@ def test_long_context_fixture_crosses_default_32k_compaction_trigger(tmp_path) -
     assert view.estimated_tokens_after < view.estimated_tokens_before
 
 
+def test_multifile_context_tasks_fail_initially_and_pass_visible_and_hidden_tests(
+    tmp_path,
+) -> None:
+    """四道任务必须真实跨文件，并由 Agent 不可见的测试约束完整语义。"""
+    import shutil
+
+    tasks = load_benchmark_tasks(CONTEXT_TASKS_DIR)
+    assert len(tasks) == 4
+    assert len({task.description for task in tasks}) == 4
+
+    for task in tasks:
+        repo = task.prepare_source_repository(tmp_path / task.id)
+        assert task.hidden_tests_path is not None
+        assert len(list(repo.rglob("*.py"))) >= 5
+        tests = RunTestsTool(repo)
+        before = tests.execute(_call(tests, f"before-{task.id}", command="pytest -q"))
+        assert not before.success, f"{task.id} 初始测试应该失败"
+
+        patcher = ApplyPatchTool(repo)
+        applied = patcher.execute(
+            _call(
+                patcher,
+                f"patch-{task.id}",
+                patch=task.gold_patch_path.read_text(encoding="utf-8"),
+            )
+        )
+        assert applied.success, f"{task.id}: {applied.error} {applied.output}"
+        shutil.copytree(task.hidden_tests_path, repo / ".tracefix_verification")
+        after = tests.execute(
+            _call(
+                tests,
+                f"after-{task.id}",
+                command="pytest -q tests .tracefix_verification",
+            )
+        )
+        assert after.success, f"{task.id} 标准补丁后应该通过: {after.output}"
+
+
 def test_checked_in_baseline_is_complete_and_sanitized() -> None:
     """版本化 Baseline 只包含复现实验所需的脱敏聚合数据。"""
     import json
@@ -220,6 +265,21 @@ def test_checked_in_32k_ab_experiment_is_consistent_and_sanitized() -> None:
     assert "trajectory.jsonl" not in serialized
 
 
+def test_checked_in_multifile_fixture_validation_is_consistent() -> None:
+    """离线记录必须明确区分 gold 验收与真实 Agent 解决率。"""
+    import json
+
+    payload = json.loads(FIXTURE_VALIDATION_PATH.read_text(encoding="utf-8"))
+    tasks = payload["tasks"]
+    assert payload["kind"] == "offline_fixture_validation"
+    assert payload["model_calls"] == 0
+    assert len(tasks) == 4
+    assert all(item["initial_failed"] for item in tasks)
+    assert all(item["gold_applied"] for item in tasks)
+    assert all(item["visible_and_hidden_passed"] for item in tasks)
+    assert payload["aggregate"]["visible_and_hidden_pass_count"] == 4
+
+
 class GoldPatchLLM(BaseLLM):
     def __init__(self, config: LLMConfig, patch: str) -> None:
         super().__init__(config)
@@ -275,6 +335,38 @@ def test_benchmark_runner_limits_tasks_verifies_patch_and_writes_summary(
     assert summary.context_metrics.preparation_count == 2
     assert summary.results[0].verification.success
     assert Path(summary.summary_path).is_file()
+
+
+def test_benchmark_runner_uses_hidden_tests_without_exposing_them_to_agent(
+    tmp_path, monkeypatch
+) -> None:
+    """隐藏测试仅在最终验证阶段出现，并明确标注判定类型。"""
+    task = load_benchmark_tasks(CONTEXT_TASKS_DIR, limit=1)[0]
+    patch = task.gold_patch_path.read_text(encoding="utf-8")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-hidden-benchmark-test-123456")
+    runner = TraceFixRunner(lambda config: GoldPatchLLM(config, patch))
+
+    summary = BenchmarkRunner(runner).run(
+        BenchmarkConfig(
+            tasks_dir=CONTEXT_TASKS_DIR,
+            output_dir=tmp_path / "hidden-runs",
+            limit=1,
+            env_file=None,
+            agent_config=AgentConfig(max_steps=4, max_test_runs=2),
+        )
+    )
+
+    result = summary.results[0]
+    assert result.resolved is True
+    assert result.verification_kind == "visible_and_hidden"
+    assert result.verification.metadata["verification_kind"] == "visible_and_hidden"
+    workspace = Path(result.run.workspace)
+    verification_dirs = list(workspace.glob(".tracefix_verification_*"))
+    assert len(verification_dirs) == 1 and verification_dirs[0].is_dir()
+    # 最终 patch 在隐藏测试复制前收集，不会把评测答案混进 Agent 产物。
+    assert ".tracefix_verification" not in Path(result.run.diff_path).read_text(
+        encoding="utf-8"
+    )
 
 
 def test_benchmark_loader_rejects_missing_unknown_and_unsafe_tasks(tmp_path) -> None:

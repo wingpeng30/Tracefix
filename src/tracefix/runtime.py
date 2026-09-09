@@ -24,6 +24,7 @@ from tracefix.exceptions import (
 )
 from tracefix.messages import ToolCall
 from tracefix.models import BaseLLM, LiteLLMAdapter, LLMConfig
+from tracefix.provenance import RunProvenance, collect_run_provenance
 from tracefix.tools import GetGitDiffTool, create_default_tool_registry
 from tracefix.tracing import JSONLTraceSink, TraceEvent, TraceEventType
 
@@ -115,6 +116,7 @@ class RunResult(BaseModel):
     result_path: str
     agent_config: AgentConfig
     context_metrics: ContextMetrics = Field(default_factory=ContextMetrics)
+    provenance: RunProvenance
     error: dict[str, JsonValue] | None = None
 
     @model_validator(mode="after")
@@ -163,25 +165,41 @@ class TraceFixRunner:
         patch = ""
         sink: JSONLTraceSink | None = None
         agent: MinimalAgent | None = None
+        llm_config = LLMConfig(
+            model_name=config.model_name,
+            temperature=0.0,
+            max_output_tokens=config.per_request_output_tokens,
+            timeout_seconds=config.llm_timeout_seconds,
+            max_retries=config.llm_max_retries,
+            extra_kwargs={},
+        )
+        provenance = collect_run_provenance(config.task, llm_config)
 
         try:
             sink = JSONLTraceSink(trace_path)
             load_environment_file(config.env_file)
+            llm_config = llm_config.model_copy(
+                update={"extra_kwargs": self._provider_kwargs(config.model_name)}
+            )
+            model_parameters = sanitize_payload(llm_config.model_dump(mode="json"))
+            assert isinstance(model_parameters, dict)
+            # Git 状态必须反映运行开始前的 TraceFix，而不能被刚创建的轨迹文件污染。
+            provenance = provenance.model_copy(
+                update={"model_parameters": model_parameters}
+            )
+            sink.write(
+                TraceEvent(
+                    event_type=TraceEventType.RUN_PROVENANCE,
+                    task_id=run_id,
+                    step=0,
+                    payload={"provenance": provenance.model_dump(mode="json")},
+                )
+            )
             self._validate_credentials(config.model_name)
             source, source_commit = self._validate_source_repository(config.repo)
             source_repo = str(source)
             workspace = self._clone_repository(source, workspace_path)
 
-            llm_config = LLMConfig(
-                model_name=config.model_name,
-                temperature=0.0,
-                max_output_tokens=config.per_request_output_tokens,
-                timeout_seconds=config.llm_timeout_seconds,
-                max_retries=config.llm_max_retries,
-                # DeepSeek 思考模式的工具轮次需要额外保存 reasoning_content；
-                # V0.2 暂时关闭思考，保持当前消息协议稳定。
-                extra_kwargs=self._provider_kwargs(config.model_name),
-            )
             llm = self._llm_factory(llm_config)
             tools = create_default_tool_registry(
                 workspace,
@@ -259,6 +277,7 @@ class TraceFixRunner:
             result_path=str(result_path),
             agent_config=config.agent_config.model_copy(deep=True),
             context_metrics=state.context_metrics.model_copy(deep=True),
+            provenance=provenance,
             error=error,
         )
         result_path.write_text(result.model_dump_json(indent=2), encoding="utf-8")

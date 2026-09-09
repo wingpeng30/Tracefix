@@ -67,13 +67,17 @@ class BenchmarkTask(BaseModel):
     expected_files: tuple[str, ...] = Field(min_length=1)
     repository_dir: str = "repo"
     gold_patch: str = "gold.patch"
+    hidden_tests_dir: str | None = None
     generated_text_series: tuple[GeneratedTextSeries, ...] = ()
     task_dir: Path
 
     @model_validator(mode="after")
     def validate_relative_paths(self) -> BenchmarkTask:
         """清单中的路径只能指向任务目录内部。"""
-        for value in (*self.expected_files, self.repository_dir, self.gold_patch):
+        values = [*self.expected_files, self.repository_dir, self.gold_patch]
+        if self.hidden_tests_dir is not None:
+            values.append(self.hidden_tests_dir)
+        for value in values:
             path = Path(value)
             if path.is_absolute() or ".." in path.parts:
                 raise ValueError(f"benchmark paths must be relative: {value}")
@@ -88,6 +92,13 @@ class BenchmarkTask(BaseModel):
     def gold_patch_path(self) -> Path:
         """返回能让参考测试通过的标准补丁路径。"""
         return (self.task_dir / self.gold_patch).resolve()
+
+    @property
+    def hidden_tests_path(self) -> Path | None:
+        """返回不会复制给 Agent、仅供评测器最终判定的测试目录。"""
+        if self.hidden_tests_dir is None:
+            return None
+        return (self.task_dir / self.hidden_tests_dir).resolve()
 
     @classmethod
     def load(cls, task_dir: str | Path) -> BenchmarkTask:
@@ -117,6 +128,8 @@ class BenchmarkTask(BaseModel):
                 for index, value in enumerate(task.expected_files)
             },
         }
+        if task.hidden_tests_path is not None:
+            checked_paths["hidden_tests_dir"] = task.hidden_tests_path
         for label, path in checked_paths.items():
             if not path.is_relative_to(root):
                 raise BenchmarkError(
@@ -132,6 +145,11 @@ class BenchmarkTask(BaseModel):
             raise BenchmarkError(
                 "benchmark gold patch is missing",
                 context={"task_id": task.id, "path": str(task.gold_patch_path)},
+            )
+        if task.hidden_tests_path is not None and not task.hidden_tests_path.is_dir():
+            raise BenchmarkError(
+                "benchmark hidden tests directory is missing",
+                context={"task_id": task.id, "path": str(task.hidden_tests_path)},
             )
         return task
 
@@ -270,6 +288,7 @@ class BenchmarkTaskResult(BaseModel):
     resolved: bool
     run: RunResult
     verification: ToolResult | None = None
+    verification_kind: str = "visible"
 
 
 class BenchmarkSummary(BaseModel):
@@ -374,6 +393,9 @@ class BenchmarkRunner:
                     resolved=bool(verification and verification.success),
                     run=run_result,
                     verification=verification,
+                    verification_kind=(
+                        "visible_and_hidden" if task.hidden_tests_path else "visible"
+                    ),
                 )
             )
             # 每个任务后写一次汇总，长批次被中断时仍可读取已完成结果。
@@ -394,13 +416,36 @@ class BenchmarkRunner:
         """在 Agent 循环之外运行参考测试，不占用 Agent 测试预算。"""
         if run.workspace is None:
             return None
-        tool = RunTestsTool(Path(run.workspace), default_timeout_seconds=120)
-        return tool.execute(
+        workspace = Path(run.workspace)
+        command = task.test_command
+        if task.hidden_tests_path is not None:
+            # 隐藏测试只在 Agent 完成后复制，模型的 search/read 工具无法提前看到。
+            verification_dir = workspace / f".tracefix_verification_{uuid4().hex}"
+            try:
+                shutil.copytree(task.hidden_tests_path, verification_dir)
+            except OSError as exc:
+                raise BenchmarkError(
+                    f"cannot prepare hidden verification tests: {exc}",
+                    context={"task_id": task.id},
+                ) from exc
+            command = f"pytest -q tests {verification_dir.name}"
+        tool = RunTestsTool(workspace, default_timeout_seconds=120)
+        result = tool.execute(
             ToolCall(
                 id=f"verify-{task.id}",
                 name=tool.spec.name,
-                arguments={"command": task.test_command, "timeout_seconds": 120},
+                arguments={"command": command, "timeout_seconds": 120},
             )
+        )
+        return result.model_copy(
+            update={
+                "metadata": {
+                    **result.metadata,
+                    "verification_kind": (
+                        "visible_and_hidden" if task.hidden_tests_path else "visible"
+                    ),
+                }
+            }
         )
 
     @staticmethod

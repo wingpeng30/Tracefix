@@ -1,0 +1,29 @@
+diff --git a/delivery/runner.py b/delivery/runner.py
+--- a/delivery/runner.py
++++ b/delivery/runner.py
+@@ -4,6 +4,7 @@
+ from typing import TypeVar
+ 
+ from delivery.backoff import delay_for_retry
++from delivery.classification import is_retryable
+ from delivery.policy import RetryPolicy
+ 
+ T = TypeVar("T")
+@@ -16,13 +17,15 @@ def run_with_retry(
+ ) -> T:
+     """执行 operation，在策略允许时重试。"""
+-    # BUG：range 只执行 max_retries 次，并且所有异常都会被重试。
+-    for attempt in range(policy.max_retries):
++    for attempt in range(policy.max_retries + 1):
+         try:
+             return operation()
+-        except Exception:
+-            # BUG：attempt 从 0 开始，不符合 delay_for_retry 的 1-based 契约。
+-            sleep(delay_for_retry(attempt))
+-    return operation()
++        except Exception as error:
++            if not is_retryable(error) or attempt >= policy.max_retries:
++                raise
++            # 第一次失败触发第 1 次重试，因此将零基 attempt 转为一基编号。
++            sleep(delay_for_retry(attempt + 1))
++    raise AssertionError("retry loop must return or raise")

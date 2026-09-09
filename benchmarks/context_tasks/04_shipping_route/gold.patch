@@ -1,0 +1,20 @@
+diff --git a/shipping/selector.py b/shipping/selector.py
+--- a/shipping/selector.py
++++ b/shipping/selector.py
+@@ -1,11 +1,14 @@
+ """物流路线选择入口。"""
+ 
++from shipping.eligibility import is_eligible
+ from shipping.models import Order, Route
++from shipping.ranking import ranking_key
+ 
+ 
+ def choose_route(order: Order, routes: list[Route]) -> Route | None:
+     """没有满足全部硬约束的路线时返回 None。"""
+-    if not routes:
++    eligible = [route for route in routes if is_eligible(order, route)]
++    if not eligible:
+         return None
+-    # BUG：当前实现没有先做资格过滤，同价时也只比较了承运商名称。
+-    return min(routes, key=lambda route: (route.price_cents, route.carrier.casefold()))
++    return min(eligible, key=ranking_key)

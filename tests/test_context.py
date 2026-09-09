@@ -284,3 +284,76 @@ def test_agent_uses_compacted_view_while_full_history_and_trace_remain() -> None
     event_types = [event.event_type for event in sink.events]
     assert TraceEventType.CONTEXT_PREPARED in event_types
     assert TraceEventType.CONTEXT_COMPACTED in event_types
+
+
+def test_optional_request_view_records_actual_compacted_messages_and_redacts_secret(
+    monkeypatch,
+) -> None:
+    """请求视图应等于模型输入，同时不泄漏环境中的非 sk- 形式密钥。"""
+    class Sink:
+        def __init__(self):
+            self.events = []
+
+        def write(self, event):
+            self.events.append(event)
+
+        def close(self):
+            pass
+
+    secret = "deepseek-secret-without-standard-prefix"
+    monkeypatch.setenv("DEEPSEEK_API_KEY", secret)
+    llm = _ScriptedLLM(
+        [_response(call_id="one"), _response(call_id="two"), _response(content="完成")]
+    )
+    sink = Sink()
+    agent = MinimalAgent(
+        llm,
+        ToolRegistry([_VerboseTool()]),
+        AgentConfig(
+            record_request_views=True,
+            context=ContextConfig(
+                compaction_trigger_tokens=300,
+                context_window_tokens=10_000,
+                retain_ratio=0.2,
+                tool_result_threshold_chars=4_000,
+                tool_result_head_chars=1_000,
+                tool_result_tail_chars=300,
+            ),
+        ),
+        sink,
+    )
+    agent.run(f"修复问题；临时凭据为 {secret}")
+
+    views = [
+        event for event in sink.events
+        if event.event_type is TraceEventType.MODEL_REQUEST_VIEW
+    ]
+    assert len(views) == len(llm.requests) == 3
+    assert views[-1].payload["context"]["compacted"] is True
+    assert any(
+        message.get("metadata", {}).get("tracefix_context_summary")
+        for message in views[-1].payload["messages"]
+    )
+    serialized = json.dumps([event.model_dump(mode="json") for event in views])
+    assert secret not in serialized
+    assert "<redacted>" in serialized
+    # 完整内存历史不因审计视图而发生裁剪或替换。
+    assert secret in (agent.history.snapshot()[1].content or "")
+
+
+def test_request_view_is_disabled_by_default() -> None:
+    class Sink:
+        def __init__(self):
+            self.events = []
+
+        def write(self, event):
+            self.events.append(event)
+
+        def close(self):
+            pass
+
+    sink = Sink()
+    MinimalAgent(_ScriptedLLM([_response(content="完成")]), trace_sink=sink).run("修复")
+    assert not any(
+        event.event_type is TraceEventType.MODEL_REQUEST_VIEW for event in sink.events
+    )

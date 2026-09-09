@@ -1,0 +1,8 @@
+{
+  "id": "shipping_route",
+  "title": "多约束物流路由选择",
+  "description": "shipping.choose_route 会选中不满足订单约束的便宜路线，并且同价路线的排序不符合业务约定。区域、温控、重量和排序规则位于不同模块。请阅读这些契约、做最小修复并运行测试，不要修改测试。",
+  "test_command": "pytest -q",
+  "expected_files": ["shipping/selector.py"],
+  "hidden_tests_dir": "hidden_tests"
+}

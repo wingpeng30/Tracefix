@@ -164,6 +164,7 @@ def test_cli_context_options_override_environment(tmp_path, monkeypatch) -> None
             "3000",
             "--context-retain-ratio",
             "0.4",
+            "--record-request-views",
             "--env-file",
             str(tmp_path / "missing.env"),
         ]
@@ -174,6 +175,7 @@ def test_cli_context_options_override_environment(tmp_path, monkeypatch) -> None
     assert context.context_window_tokens == 1_000_000
     assert context.compaction_trigger_tokens == 3_000
     assert context.retain_ratio == 0.4
+    assert captured[0].agent_config.record_request_views is True
 
 
 def test_cli_rejects_invalid_context_boolean_environment(tmp_path, monkeypatch) -> None:

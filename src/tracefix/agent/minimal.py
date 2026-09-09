@@ -134,6 +134,27 @@ class MinimalAgent(BaseAgent):
                     "batches_compacted": context_view.batches_compacted,
                 },
             )
+        if self.config.record_request_views:
+            # 这是供应商实际收到的压缩视图，而非完整历史。事件默认关闭，避免轨迹
+            # 体积翻倍；开启时仍统一经过 _emit 的凭据脱敏。
+            self._emit(
+                TraceEventType.MODEL_REQUEST_VIEW,
+                {
+                    "schema_version": 1,
+                    "sanitized": True,
+                    "messages": [
+                        message.model_dump(mode="json")
+                        for message in context_view.messages
+                    ],
+                    "tools": [spec.model_dump(mode="json") for spec in tool_specs],
+                    "context": {
+                        "estimated_tokens_before": context_view.estimated_tokens_before,
+                        "estimated_tokens_after": context_view.estimated_tokens_after,
+                        "compacted": context_view.compacted,
+                        "tool_results_pruned": context_view.tool_results_pruned,
+                    },
+                },
+            )
         self._emit(
             TraceEventType.MODEL_REQUESTED,
             {

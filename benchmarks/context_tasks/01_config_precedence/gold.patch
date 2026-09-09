@@ -1,0 +1,21 @@
+diff --git a/config/resolver.py b/config/resolver.py
+--- a/config/resolver.py
++++ b/config/resolver.py
+@@ -16,8 +16,15 @@ def resolve_config(
+     environment = read_environment(environ)
+     resolved = {}
+     for key, default in DEFAULTS.items():
+-        # BUG：or 会把合法的 False、0 和空字符串误判为缺失。
+-        value = request.get(key) or tenant_value(tenant, key) or environment.get(key) or default
++        if key in request and request[key] is not None:
++            value = request[key]
++        else:
++            tenant_override = tenant_value(tenant, key)
++            if tenant_override is not None:
++                value = tenant_override
++            elif key in environment:
++                value = environment[key]
++            else:
++                value = default
+         resolved[key] = coerce(key, value)
+     return resolved

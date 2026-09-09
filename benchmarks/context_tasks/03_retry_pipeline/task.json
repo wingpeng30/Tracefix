@@ -1,0 +1,8 @@
+{
+  "id": "retry_pipeline",
+  "title": "重试预算、分类与退避调度",
+  "description": "delivery.run_with_retry 的尝试次数、错误分类和退避索引存在偏差：部分永久错误被重试，瞬时错误的 sleep 序列也不符合约定。相关语义分散在 delivery 包内。请阅读实现与契约、做最小修复并运行测试，不要修改测试。",
+  "test_command": "pytest -q",
+  "expected_files": ["delivery/runner.py"],
+  "hidden_tests_dir": "hidden_tests"
+}

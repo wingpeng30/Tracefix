@@ -5,7 +5,7 @@
 
 ## 项目历程
 
-- [`development-history.md`](development-history.md)：从 V0 接口骨架到 V0.3.1 长上下文
+- [`development-history.md`](development-history.md)：从 V0 接口骨架到 V0.3.2 实验可追溯性
   A/B 的代码说明、设计取舍、验证结果和 Git 版本。
 
 ## 实验记录
@@ -18,6 +18,10 @@
   补丁协议与 Agent 收尾修复后的 10/10 回归。
 - [`experiments/v0.3.1-context-32k-ab.md`](experiments/v0.3.1-context-32k-ab.md)：关闭压缩
   与生产 32k 阈值的真实 API 对照。
+- [`tasks/v0.3.2-traceability-and-context-tasks.md`](tasks/v0.3.2-traceability-and-context-tasks.md)：
+  运行溯源、实际请求视图和四道多文件任务的实现说明。
+- [`experiments/v0.3.2-fixture-validation.md`](experiments/v0.3.2-fixture-validation.md)：
+  多文件任务初始失败、标准补丁和隐藏测试的离线验收记录。
 
 机器可读、已脱敏的指标保存在 `benchmarks/baselines/` 和 `benchmarks/experiments/`。
 完整工作区、模型消息和轨迹只保存在被 Git 忽略的本机 `runs/` 中。

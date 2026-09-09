@@ -45,6 +45,7 @@ class AgentConfig(BaseModel):
     max_output_tokens: int = Field(default=20_000, ge=1)
     wall_time_seconds: int = Field(default=1_200, ge=1)
     max_test_runs: int = Field(default=8, ge=1)
+    record_request_views: bool = False
     context: ContextConfig = Field(default_factory=ContextConfig)
 
 

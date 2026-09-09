@@ -1,0 +1,8 @@
+{
+  "id": "config_precedence",
+  "title": "多来源配置优先级与显式假值",
+  "description": "配置解析器在 request、tenant、environment 和 defaults 多来源合并时行为错误：显式的 false/0 被低优先级值覆盖，空白环境变量也被当成有效值。请阅读 config 包中各来源的契约，做最小修复并运行测试。不要修改测试。",
+  "test_command": "pytest -q",
+  "expected_files": ["config/resolver.py"],
+  "hidden_tests_dir": "hidden_tests"
+}

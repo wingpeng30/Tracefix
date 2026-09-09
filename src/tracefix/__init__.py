@@ -1,5 +1,6 @@
 """TraceFix 公共 API。"""
 
+from tracefix._version import __version__
 from tracefix.agent import (
     DEFAULT_SYSTEM_PROMPT,
     AgentConfig,
@@ -50,6 +51,7 @@ from tracefix.exceptions import (
 )
 from tracefix.messages import Message, MessageHistory, MessageRole, ToolCall
 from tracefix.models import BaseLLM, LiteLLMAdapter, LLMConfig, LLMResponse, TokenUsage
+from tracefix.provenance import RunProvenance, collect_run_provenance, task_sha256
 from tracefix.runtime import (
     DEFAULT_MODEL_NAME,
     DEFAULT_USD_CNY_RATE,
@@ -73,8 +75,6 @@ from tracefix.tools import (
     create_default_tool_registry,
 )
 from tracefix.tracing import JSONLTraceSink, TraceEvent, TraceEventType, TraceSink
-
-__version__ = "0.3.1"
 
 __all__ = [
     "RESERVED_TOOL_NAMES",
@@ -125,6 +125,7 @@ __all__ = [
     "RunConfig",
     "RunConfigurationError",
     "RunResult",
+    "RunProvenance",
     "ReadFileTool",
     "RunTestsTool",
     "SearchCodeTool",
@@ -154,4 +155,6 @@ __all__ = [
     "create_default_tool_registry",
     "load_benchmark_tasks",
     "load_environment_file",
+    "collect_run_provenance",
+    "task_sha256",
 ]

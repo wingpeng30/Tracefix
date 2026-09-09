@@ -149,8 +149,13 @@ def test_runner_clones_runs_agent_writes_artifacts_and_converts_cost(tmp_path, m
     assert secret not in result_text + trace_text
     assert json.loads(result_text)["status"] == "completed"
     assert json.loads(result_text)["context_metrics"]["preparation_count"] == 2
+    stored = json.loads(result_text)
+    assert stored["provenance"]["task_sha256"] == result.provenance.task_sha256
+    assert stored["provenance"]["model_parameters"]["temperature"] == 0.0
+    assert "pydantic" in stored["provenance"]["dependency_versions"]
     event_types = [json.loads(line)["event_type"] for line in trace_text.splitlines()]
-    assert event_types[0] == "task_started"
+    assert event_types[0] == "run_provenance"
+    assert event_types[1] == "task_started"
     assert event_types[-1] == "task_finished"
 
 
@@ -359,6 +364,14 @@ def test_runtime_validation_errors_are_explicit(tmp_path) -> None:
         "diff_path": "diff",
         "result_path": "result",
         "agent_config": AgentConfig(),
+        "provenance": {
+            "tracefix_version": "test",
+            "task_sha256": "0" * 64,
+            "model_parameters": {},
+            "python_version": "3.12",
+            "platform": "test",
+            "dependency_versions": {},
+        },
     }
     with pytest.raises(ValidationError):
         RunResult(**{**base, "finished_at": now - timedelta(seconds=1)})

@@ -12,6 +12,7 @@
 | V0.3.1 Agent Loop 回归 | 相同 10 题 | 10/10 | 110,060 | 53 | ¥0.12353363 | 验证补丁和收尾修复 |
 | V0.3.1 32k A/B 对照组 | 2 个长上下文任务 | 2/2 | 370,387 | 24 | ¥0.25246310 | 完全关闭压缩 |
 | V0.3.1 32k A/B 实验组 | 相同 2 题 | 2/2 | 185,587 | 22 | ¥0.22804456 | 生产阈值机制验证 |
+| V0.3.2 夹具验收 | 4 个多文件任务 | 4/4 gold | 0 | 0 | ¥0 | 仅验证任务定义自洽 |
 
 ## V0.2.0 Baseline
 
@@ -56,6 +57,11 @@
   能作为机制验证。两题、每组一次的结果不能外推为真实 Issue 平均收益。
 
 ## 指标解释注意事项
+
+V0.3.2 多文件任务的离线验收数据见
+[`../../benchmarks/experiments/v0.3.2-fixture-validation.json`](../../benchmarks/experiments/v0.3.2-fixture-validation.json)，
+解释见 [`v0.3.2-fixture-validation.md`](v0.3.2-fixture-validation.md)。这里的 4/4 指标准补丁
+通过公开与隐藏测试，不是 Agent resolved rate。
 
 - `input_tokens` 是每次模型请求完整上下文的累计值，不只是原始题目长度。
 - `estimated_tokens_saved` 来自本地估算器，只用于压缩决策，不能替代供应商 usage。

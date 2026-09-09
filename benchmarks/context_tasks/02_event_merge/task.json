@@ -1,0 +1,8 @@
+{
+  "id": "event_merge",
+  "title": "跨来源事件的稳定合并",
+  "description": "merge_events 合并来自多个来源的事件时，输出顺序不稳定且同一事件的冲突选择错误。身份规范、胜者比较、payload 合并规则分散在 events 包中。请定位根因、做最小修复并运行测试，不要修改测试。",
+  "test_command": "pytest -q",
+  "expected_files": ["events/merge.py"],
+  "hidden_tests_dir": "hidden_tests"
+}

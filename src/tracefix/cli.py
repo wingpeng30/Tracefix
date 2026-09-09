@@ -97,6 +97,12 @@ def _add_shared_options(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--context-retain-ratio", type=float, help="折叠后保留近期轮次的比例"
     )
+    parser.add_argument(
+        "--record-request-views",
+        action="store_true",
+        default=None,
+        help="在轨迹中保存脱敏后的实际模型请求视图（默认关闭）",
+    )
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -172,6 +178,11 @@ def _resolve_shared(args: argparse.Namespace) -> dict[str, Any]:
             ),
             max_test_runs=_number_or_default(
                 args.max_test_runs, "TRACEFIX_MAX_TEST_RUNS", int, 8
+            ),
+            record_request_views=(
+                args.record_request_views
+                if args.record_request_views is not None
+                else _env_bool("TRACEFIX_RECORD_REQUEST_VIEWS", False)
             ),
             context=ContextConfig(
                 enabled=(

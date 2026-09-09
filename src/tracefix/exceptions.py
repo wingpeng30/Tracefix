@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import re
 from collections.abc import Mapping
 from typing import Any
@@ -45,7 +46,13 @@ def sanitize_payload(value: Any) -> Any:
         return [sanitize_payload(item) for item in value]
     if isinstance(value, str):
         # 部分供应商异常可能把凭据混入错误文本，额外清理常见 sk- 前缀。
-        return _SECRET_VALUE_PATTERN.sub("<redacted>", value)
+        sanitized = _SECRET_VALUE_PATTERN.sub("<redacted>", value)
+        # 请求视图可能包含模型输入的任意文本。除常见前缀外，还要清理当前
+        # 进程中名称明确属于凭据的环境变量值，避免非 sk- 形式的 Key 落盘。
+        for key, secret in os.environ.items():
+            if _is_sensitive_key(key) and len(secret) >= 8:
+                sanitized = sanitized.replace(secret, "<redacted>")
+        return sanitized
     if value is None or isinstance(value, (int, float, bool)):
         return value
     return repr(value)
