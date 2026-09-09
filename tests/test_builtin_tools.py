@@ -250,6 +250,84 @@ def test_apply_patch_checks_then_modifies_file(git_workspace: Path) -> None:
     assert second.error == "patch validation failed"
 
 
+def test_apply_patch_accepts_begin_patch_update_format(git_workspace: Path) -> None:
+    """回归真实轨迹中 DeepSeek 生成的无行号 Begin Patch 格式。"""
+    patch = """*** Begin Patch
+*** Update File: sample.py
+@@
+-    return a - b  # BUG
++    return a + b
+*** End Patch"""
+
+    result = ApplyPatchTool(git_workspace).execute(
+        ToolCall(id="patch-begin", name="apply_patch", arguments={"patch": patch})
+    )
+
+    assert result.success is True
+    assert result.output["changed_files"] == ["sample.py"]
+    assert "return a + b" in (git_workspace / "sample.py").read_text(encoding="utf-8")
+
+
+def test_apply_patch_recounts_incorrect_unified_hunk_lengths(git_workspace: Path) -> None:
+    """hunk 内容可匹配时，模型写错的行数元数据不应导致补丁失败。"""
+    patch = """diff --git a/sample.py b/sample.py
+--- a/sample.py
++++ b/sample.py
+@@ -1,9 +1,9 @@
+ def add(a, b):
+-    return a - b  # BUG
++    return a + b
+"""
+
+    result = ApplyPatchTool(git_workspace).execute(
+        ToolCall(id="patch-recount", name="apply_patch", arguments={"patch": patch})
+    )
+
+    assert result.success is True
+    assert "return a + b" in (git_workspace / "sample.py").read_text(encoding="utf-8")
+
+
+def test_apply_patch_strips_accidental_end_marker(git_workspace: Path) -> None:
+    patch = """--- a/sample.py
++++ b/sample.py
+@@ -1,2 +1,2 @@
+ def add(a, b):
+-    return a - b  # BUG
++    return a + b
+*** End Patch"""
+    result = ApplyPatchTool(git_workspace).execute(
+        ToolCall(id="patch-marker", name="apply_patch", arguments={"patch": patch})
+    )
+    assert result.success is True
+
+
+def test_begin_patch_rejects_unsafe_or_unmatched_updates(git_workspace: Path) -> None:
+    original = (git_workspace / "sample.py").read_text(encoding="utf-8")
+    unsafe = """*** Begin Patch
+*** Update File: ../outside.py
+@@
+-old
++new
+*** End Patch"""
+    unmatched = """*** Begin Patch
+*** Update File: sample.py
+@@
+-text that is not present
++replacement
+*** End Patch"""
+
+    for index, patch in enumerate((unsafe, unmatched)):
+        with pytest.raises(ToolValidationError):
+            ApplyPatchTool(git_workspace).execute(
+                ToolCall(
+                    id=f"patch-begin-invalid-{index}",
+                    name="apply_patch",
+                    arguments={"patch": patch},
+                )
+            )
+        assert (git_workspace / "sample.py").read_text(encoding="utf-8") == original
+
+
 def test_apply_patch_rejects_path_traversal(git_workspace: Path) -> None:
     patch = """diff --git a/../outside.txt b/../outside.txt
 --- /dev/null

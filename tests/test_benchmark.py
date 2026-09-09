@@ -20,6 +20,12 @@ from tracefix.exceptions import BenchmarkError
 
 TASKS_DIR = Path(__file__).parents[1] / "benchmarks" / "tasks"
 BASELINE_PATH = Path(__file__).parents[1] / "benchmarks" / "baselines" / "v0.2.0.json"
+EXPERIMENT_PATH = (
+    Path(__file__).parents[1]
+    / "benchmarks"
+    / "experiments"
+    / "v0.3.0-context-3k.json"
+)
 
 
 def _call(tool, call_id: str, **arguments):
@@ -63,6 +69,26 @@ def test_checked_in_baseline_is_complete_and_sanitized() -> None:
     assert sum(item["output_tokens"] for item in payload["tasks"]) == 8_982
     assert "d:\\tracefix" not in serialized
     assert "api_key" not in serialized
+
+
+def test_checked_in_context_experiment_is_consistent_and_sanitized() -> None:
+    """压力实验只固化指标与结论，不提交本机路径或原始模型内容。"""
+    import json
+
+    payload = json.loads(EXPERIMENT_PATH.read_text(encoding="utf-8"))
+    serialized = json.dumps(payload).casefold()
+    aggregate = payload["aggregate"]
+    assert payload["tracefix_version"] == "0.3.0"
+    assert payload["context"]["compaction_trigger_tokens"] == 3_000
+    assert len(payload["tasks"]) == 10
+    assert sum(item["resolved"] for item in payload["tasks"]) == 7
+    assert sum(item["input_tokens"] for item in payload["tasks"]) == 203_390
+    assert sum(item["tool_calls"] for item in payload["tasks"]) == 101
+    assert aggregate["exact_duplicate_tool_calls"] == 23
+    assert aggregate["context_metrics"]["estimated_tokens_saved"] == 17_973
+    assert "d:\\tracefix" not in serialized
+    assert "api_key" not in serialized
+    assert "trajectory.jsonl" not in serialized
 
 
 class GoldPatchLLM(BaseLLM):

@@ -1,0 +1,92 @@
+{
+  "schema_version": 1,
+  "experiment_id": "tracefix-v0.3.0-context-3k-synthetic-10",
+  "tracefix_version": "0.3.0",
+  "tracefix_commit": "66df9fa1ebfb4a9e5f0a67c90f7ad3d00b3969e1",
+  "recorded_at": "2026-09-09T12:07:53.048912Z",
+  "model_name": "deepseek/deepseek-v4-flash",
+  "task_suite": "benchmarks/tasks",
+  "task_kind": "synthetic_python_bugs",
+  "baseline_id": "tracefix-v0.2.0-synthetic-10",
+  "context": {
+    "enabled": true,
+    "context_window_tokens": 1000000,
+    "compaction_trigger_tokens": 3000,
+    "retain_ratio": 0.4,
+    "tool_result_threshold_chars": 8192,
+    "tool_result_head_chars": 4096,
+    "tool_result_tail_chars": 1024
+  },
+  "budgets": {
+    "max_steps": 12,
+    "max_input_tokens": 40000,
+    "max_output_tokens": 8000,
+    "wall_time_seconds": 300,
+    "max_test_runs": 4
+  },
+  "usd_cny_rate": 7.2,
+  "aggregate": {
+    "task_count": 10,
+    "resolved_count": 7,
+    "resolved_rate": 0.7,
+    "input_tokens": 203390,
+    "output_tokens": 9808,
+    "steps": 84,
+    "agent_test_runs": 7,
+    "duration_seconds": 120.14,
+    "tool_calls": 101,
+    "exact_duplicate_tool_calls": 23,
+    "cost_usd": 0.03482344,
+    "cost_cny_estimate": 0.25072877,
+    "cost_complete": true,
+    "tool_counts": {
+      "apply_patch": 35,
+      "get_git_diff": 12,
+      "read_file": 28,
+      "run_tests": 7,
+      "search_code": 19
+    },
+    "context_metrics": {
+      "preparation_count": 84,
+      "compaction_count": 19,
+      "tool_results_pruned": 0,
+      "messages_compacted": 348,
+      "batches_compacted": 154,
+      "estimated_tokens_saved": 17973
+    }
+  },
+  "comparison_to_baseline": {
+    "resolved_count_delta": -3,
+    "resolved_rate_delta": -0.3,
+    "input_tokens_delta": 18660,
+    "input_tokens_change_ratio": 0.10101445,
+    "steps_delta": 10,
+    "exact_duplicate_tool_calls_delta": 17,
+    "cost_cny_delta": 0.0693208,
+    "cost_cny_change_ratio": 0.38212653
+  },
+  "tasks": [
+    {"id":"empty_sequence","resolved":true,"agent_status":"completed","stop_reason":"agent_completed","steps":5,"input_tokens":9552,"output_tokens":494,"test_runs":1,"duration_seconds":10.922,"tool_calls":7,"exact_duplicate_tool_calls":0,"cost_usd":0.001528752,"cost_cny_estimate":0.01100701,"compaction_count":0,"estimated_tokens_saved":0,"changed_files":["parser.py"]},
+    {"id":"inclusive_range","resolved":true,"agent_status":"completed","stop_reason":"agent_completed","steps":5,"input_tokens":8965,"output_tokens":465,"test_runs":1,"duration_seconds":6.407,"tool_calls":6,"exact_duplicate_tool_calls":0,"cost_usd":0.001395776,"cost_cny_estimate":0.01004959,"compaction_count":0,"estimated_tokens_saved":0,"changed_files":["ranges.py"]},
+    {"id":"case_lookup","resolved":true,"agent_status":"completed","stop_reason":"agent_completed","steps":6,"input_tokens":12680,"output_tokens":596,"test_runs":1,"duration_seconds":7.922,"tool_calls":7,"exact_duplicate_tool_calls":0,"cost_usd":0.001785568,"cost_cny_estimate":0.01285609,"compaction_count":0,"estimated_tokens_saved":0,"changed_files":["lookup.py"]},
+    {"id":"stable_unique","resolved":true,"agent_status":"completed","stop_reason":"agent_completed","steps":5,"input_tokens":9953,"output_tokens":545,"test_runs":1,"duration_seconds":6.109,"tool_calls":7,"exact_duplicate_tool_calls":0,"cost_usd":0.001663456,"cost_cny_estimate":0.01197688,"compaction_count":0,"estimated_tokens_saved":0,"changed_files":["collections_utils.py"]},
+    {"id":"none_default","resolved":true,"agent_status":"completed","stop_reason":"agent_completed","steps":6,"input_tokens":12015,"output_tokens":622,"test_runs":1,"duration_seconds":7.984,"tool_calls":7,"exact_duplicate_tool_calls":0,"cost_usd":0.001690872,"cost_cny_estimate":0.01217428,"compaction_count":0,"estimated_tokens_saved":0,"changed_files":["settings.py"]},
+    {"id":"date_boundary","resolved":true,"agent_status":"completed","stop_reason":"agent_completed","steps":9,"input_tokens":21259,"output_tokens":791,"test_runs":1,"duration_seconds":11.546,"tool_calls":10,"exact_duplicate_tool_calls":2,"cost_usd":0.002927744,"cost_cny_estimate":0.02107976,"compaction_count":1,"estimated_tokens_saved":802,"changed_files":["dates.py"]},
+    {"id":"nested_lookup","resolved":false,"agent_status":"interrupted","stop_reason":"step_limit_exceeded","steps":12,"input_tokens":30443,"output_tokens":1453,"test_runs":0,"duration_seconds":16.891,"tool_calls":14,"exact_duplicate_tool_calls":4,"cost_usd":0.0052252,"cost_cny_estimate":0.03762144,"compaction_count":4,"estimated_tokens_saved":3838,"changed_files":[]},
+    {"id":"file_extension","resolved":false,"agent_status":"interrupted","stop_reason":"step_limit_exceeded","steps":12,"input_tokens":31962,"output_tokens":1739,"test_runs":0,"duration_seconds":18.297,"tool_calls":15,"exact_duplicate_tool_calls":6,"cost_usd":0.005889384,"cost_cny_estimate":0.04240356,"compaction_count":4,"estimated_tokens_saved":3479,"changed_files":[]},
+    {"id":"pagination","resolved":true,"agent_status":"interrupted","stop_reason":"step_limit_exceeded","steps":12,"input_tokens":32057,"output_tokens":1180,"test_runs":1,"duration_seconds":15.187,"tool_calls":14,"exact_duplicate_tool_calls":4,"cost_usd":0.005138776,"cost_cny_estimate":0.03699919,"compaction_count":4,"estimated_tokens_saved":3809,"changed_files":["pagination.py"]},
+    {"id":"retry_count","resolved":false,"agent_status":"interrupted","stop_reason":"step_limit_exceeded","steps":12,"input_tokens":34504,"output_tokens":1923,"test_runs":0,"duration_seconds":18.875,"tool_calls":14,"exact_duplicate_tool_calls":7,"cost_usd":0.007577912,"cost_cny_estimate":0.05456097,"compaction_count":6,"estimated_tokens_saved":6045,"changed_files":[]}
+  ],
+  "findings": [
+    "The 3k threshold reduced estimated request-view tokens, but extra recovery steps outweighed the saving in provider-reported input tokens.",
+    "Three unresolved tasks proposed the correct repair direction but repeatedly failed to apply syntactically incompatible patches.",
+    "The first patch failure in each unresolved task happened before the first context compaction; compaction was not the initial cause.",
+    "Pagination passed independent verification but did not emit a final answer before the step limit.",
+    "This result is a deliberately aggressive compaction experiment and must not replace the 32k production default."
+  ],
+  "limitations": [
+    "The suite contains small synthetic Python bugs.",
+    "Resolved rate must not be presented as real GitHub Issue or SWE-bench performance.",
+    "Local paths, secrets, raw model responses, test stdout, workspaces, and full trajectories are excluded."
+  ]
+}

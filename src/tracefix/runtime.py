@@ -308,6 +308,13 @@ class TraceFixRunner:
             ["rev-parse", "--show-toplevel"], cwd=requested, purpose="locate repository"
         )
         root = Path(root_result.stdout.strip()).resolve()
+        # Runner 要求调用方明确传入仓库根目录。若静默接受仓库内任意子目录，
+        # 临时测试目录可能意外继承外层仓库，进而绕过“不是仓库”的校验。
+        if root != requested:
+            raise WorkspaceError(
+                "source repository path must be the Git repository root",
+                context={"requested": str(requested), "repository_root": str(root)},
+            )
         commit = cls._run_git(
             ["rev-parse", "--verify", "HEAD"], cwd=root, purpose="read source commit"
         ).stdout.strip()

@@ -19,6 +19,7 @@ from tracefix import (
     TokenUsage,
     ToolCall,
     TraceFixRunner,
+    WorkspaceError,
 )
 
 
@@ -363,3 +364,13 @@ def test_runtime_validation_errors_are_explicit(tmp_path) -> None:
         RunResult(**{**base, "finished_at": now - timedelta(seconds=1)})
     with pytest.raises(ValidationError):
         RunResult(**{**base, "cost_complete": False, "cost_cny_estimate": 1.0})
+
+
+def test_runtime_rejects_a_subdirectory_of_a_git_repository(tmp_path: Path) -> None:
+    """显式仓库根约束避免临时目录意外继承外层 Git 仓库。"""
+    repo = _make_repo(tmp_path)
+    nested = repo / "nested"
+    nested.mkdir()
+
+    with pytest.raises(WorkspaceError, match="Git repository root"):
+        TraceFixRunner._validate_source_repository(nested)

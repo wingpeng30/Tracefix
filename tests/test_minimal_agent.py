@@ -323,6 +323,95 @@ def test_mismatched_and_crashing_tools_become_failed_results() -> None:
     assert second["metadata"]["error"]["context"]["error_type"] == "RuntimeError"
 
 
+def test_duplicate_failed_patch_is_not_executed_twice_and_prompts_recovery() -> None:
+    """真实失败轨迹中的完全重复补丁应被短路，并给出一次恢复提示。"""
+
+    class FailingPatchTool(RecordingTool):
+        def execute(self, call: ToolCall) -> ToolResult:
+            self.calls.append(call)
+            return ToolResult(
+                call_id=call.id,
+                tool_name=self.name,
+                success=False,
+                error="patch validation failed",
+            )
+
+    tool = FailingPatchTool(name="apply_patch")
+    arguments = {"patch": "invalid but identical"}
+    llm = ScriptedLLM(
+        [
+            response(
+                calls=(ToolCall(id="patch-1", name="apply_patch", arguments=arguments),)
+            ),
+            response(
+                calls=(ToolCall(id="patch-2", name="apply_patch", arguments=arguments),)
+            ),
+            response(content="改用其他方案"),
+        ]
+    )
+    agent = MinimalAgent(llm, ToolRegistry([tool]))
+
+    state = agent.run("修复补丁失败")
+
+    assert state.status is AgentStatus.COMPLETED
+    assert len(tool.calls) == 1
+    duplicate = json.loads(agent.history.snapshot()[5].content or "")
+    assert duplicate["metadata"]["duplicate"] is True
+    recovery = agent.history.snapshot()[6]
+    assert recovery.role is MessageRole.USER
+    assert recovery.metadata["kind"] == "patch_recovery"
+    assert any(message.metadata.get("kind") == "patch_recovery" for message in llm.requests[2][0])
+
+
+def test_passing_tests_and_nonempty_diff_prompt_agent_to_finish() -> None:
+    """完成验证闭环后应明确提示收尾，避免已解决任务耗尽步骤。"""
+
+    @dataclass
+    class ResultTool(BaseTool):
+        name: str
+        output: dict
+
+        @property
+        def spec(self) -> ToolSpec:
+            return ToolSpec(name=self.name, description="结果工具")
+
+        def execute(self, call: ToolCall) -> ToolResult:
+            return ToolResult(
+                call_id=call.id,
+                tool_name=self.name,
+                success=True,
+                output=self.output,
+            )
+
+    llm = ScriptedLLM(
+        [
+            response(
+                calls=(
+                    ToolCall(id="tests-ok", name="run_tests"),
+                    ToolCall(id="diff-ok", name="get_git_diff"),
+                )
+            ),
+            response(content="修复和测试均已完成"),
+        ]
+    )
+    registry = ToolRegistry(
+        [
+            ResultTool("run_tests", {"returncode": 0}),
+            ResultTool("get_git_diff", {"diff": "--- a/a.py\n+++ b/a.py\n"}),
+        ]
+    )
+    agent = MinimalAgent(llm, registry)
+
+    state = agent.run("修复并验证")
+
+    assert state.status is AgentStatus.COMPLETED
+    assert state.test_runs == 1
+    reminder = agent.history.snapshot()[-2]
+    assert reminder.role is MessageRole.USER
+    assert reminder.metadata["kind"] == "ready_to_finish"
+    assert any(message.metadata.get("kind") == "ready_to_finish" for message in llm.requests[1][0])
+
+
 @pytest.mark.parametrize(
     ("config", "first_usage", "expected_kind"),
     [

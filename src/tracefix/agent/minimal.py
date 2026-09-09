@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import time
 from datetime import UTC, datetime
 from typing import Any
@@ -38,6 +39,13 @@ class MinimalAgent(BaseAgent):
             raise AgentError("task cannot be empty")
 
         self.reset()
+        # 以下运行期记忆只服务于确定性失败恢复，不进入持久化 AgentState。
+        self._failed_apply_calls: dict[str, str] = {}
+        self._consecutive_apply_failures = 0
+        self._patch_recovery_reminder_sent = False
+        self._tests_passed = False
+        self._diff_nonempty = False
+        self._finish_reminder_sent = False
         self._task_id = uuid4().hex
         self._started_monotonic = time.monotonic()
         self.state.task = task
@@ -187,12 +195,41 @@ class MinimalAgent(BaseAgent):
 
             self._append_tool_result(result)
 
+        # 提示只能在本轮全部 tool result 写回后追加，否则会违反消息配对协议。
+        self._append_patch_recovery_reminder_if_needed()
+        self._append_finish_reminder_if_ready()
         self._check_time_budget()
 
     def _execute_tool(self, call: ToolCall) -> ToolResult:
         """执行一个工具；可恢复错误会被转换成结构化失败结果。"""
         self._emit(TraceEventType.TOOL_CALLED, {"call": call.model_dump(mode="json")})
         started = time.monotonic()
+        signature = self._tool_signature(call)
+
+        # 对完全相同且已经失败的补丁不再重复调用 Git。模型仍会收到一个合法的
+        # tool result，因而既节省步骤内开销，也不会留下悬空调用 ID。
+        if (
+            call.name == ReservedToolName.APPLY_PATCH.value
+            and signature in self._failed_apply_calls
+        ):
+            result = ToolResult(
+                call_id=call.id,
+                tool_name=call.name,
+                success=False,
+                error="duplicate failed patch call was not executed",
+                metadata={
+                    "duplicate": True,
+                    "original_call_id": self._failed_apply_calls[signature],
+                    "recommendation": (
+                        "不要重复相同补丁；请重新读取目标文件，并使用标准 unified diff "
+                        "或 *** Begin Patch / *** Update File 格式。"
+                    ),
+                },
+                duration_ms=(time.monotonic() - started) * 1000,
+            )
+            self._record_tool_outcome(call, result, signature)
+            return result
+
         try:
             tool = self.tools.get(call.name)
             result = tool.execute(call)
@@ -206,9 +243,8 @@ class MinimalAgent(BaseAgent):
                         "actual_tool_name": result.tool_name,
                     },
                 )
-            return result
         except ToolError as exc:
-            return ToolResult(
+            result = ToolResult(
                 call_id=call.id,
                 tool_name=call.name,
                 success=False,
@@ -221,7 +257,7 @@ class MinimalAgent(BaseAgent):
                 f"unexpected tool error: {exc}",
                 context={"tool_name": call.name, "error_type": type(exc).__name__},
             )
-            return ToolResult(
+            result = ToolResult(
                 call_id=call.id,
                 tool_name=call.name,
                 success=False,
@@ -229,6 +265,79 @@ class MinimalAgent(BaseAgent):
                 metadata={"error": wrapped.to_dict()},
                 duration_ms=(time.monotonic() - started) * 1000,
             )
+        self._record_tool_outcome(call, result, signature)
+        return result
+
+    @staticmethod
+    def _tool_signature(call: ToolCall) -> str:
+        """生成稳定调用签名，用于识别参数完全相同的失败补丁。"""
+        arguments = json.dumps(
+            call.arguments,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        return f"{call.name}:{arguments}"
+
+    def _record_tool_outcome(
+        self,
+        call: ToolCall,
+        result: ToolResult,
+        signature: str,
+    ) -> None:
+        """记录影响失败恢复和正常收尾的少量确定性事实。"""
+        if call.name == ReservedToolName.APPLY_PATCH.value:
+            if result.success:
+                self._consecutive_apply_failures = 0
+                # 文件再次改变后，旧的测试和 Diff 结论都已经过期。
+                self._tests_passed = False
+                self._diff_nonempty = False
+                self._finish_reminder_sent = False
+            else:
+                self._failed_apply_calls.setdefault(signature, call.id)
+                self._consecutive_apply_failures += 1
+            return
+
+        if call.name == ReservedToolName.RUN_TESTS.value:
+            self._tests_passed = result.success
+            return
+
+        if call.name == ReservedToolName.GET_GIT_DIFF.value and result.success:
+            output = result.output if isinstance(result.output, dict) else {}
+            self._diff_nonempty = bool(str(output.get("diff", "")).strip())
+
+    def _append_patch_recovery_reminder_if_needed(self) -> None:
+        """连续补丁失败后给出一次明确恢复路径，阻断无信息重试。"""
+        if self._consecutive_apply_failures < 2 or self._patch_recovery_reminder_sent:
+            return
+        self._append_message(
+            Message(
+                role=MessageRole.USER,
+                content=(
+                    "系统恢复提示：apply_patch 已连续失败。不要再次提交相同或近似的补丁。"
+                    "请先根据错误重新读取目标文件，核对上下文；随后使用标准 Git unified "
+                    "diff，或 *** Begin Patch / *** Update File: <相对路径> / @@ 更新块。"
+                ),
+                metadata={"kind": "patch_recovery", "failures": self._consecutive_apply_failures},
+            )
+        )
+        self._patch_recovery_reminder_sent = True
+
+    def _append_finish_reminder_if_ready(self) -> None:
+        """测试通过且已有改动时提示模型收尾，避免解决后继续消耗步骤。"""
+        if not (self._tests_passed and self._diff_nonempty) or self._finish_reminder_sent:
+            return
+        self._append_message(
+            Message(
+                role=MessageRole.USER,
+                content=(
+                    "系统验证提示：最近一次测试已经通过，且 get_git_diff 显示存在非空改动。"
+                    "若没有新的反例需要处理，请停止调用工具，直接给出修改与测试结果的最终说明。"
+                ),
+                metadata={"kind": "ready_to_finish"},
+            )
+        )
+        self._finish_reminder_sent = True
 
     def _append_tool_result(self, result: ToolResult) -> None:
         """把工具结果转换成模型可消费的 tool 消息并写入轨迹。"""

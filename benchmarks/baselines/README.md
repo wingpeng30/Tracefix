@@ -9,3 +9,6 @@ Python Bug 任务和统一预算，后续实验必须保持这些条件不变。
 
 字段 `exact_duplicate_tool_calls` 只统计工具名和 JSON 参数完全一致的重复调用，不把
 语义相似但参数不同的调用判定为重复。
+
+压力实验不属于 Baseline，统一保存在 `benchmarks/experiments/`。V0.3.0 的 3k 压缩实验
+及其失败分析见 `docs/experiments/v0.3.0-context-3k.md`。

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import difflib
 import os
 import re
 import shlex
@@ -361,11 +362,14 @@ class _ApplyPatchArgs(BaseModel):
 
 
 class ApplyPatchTool(_WorkspaceTool):
-    """预检并应用标准 unified diff 文本补丁。"""
+    """预检并应用 Git unified diff 或常见的 Begin Patch 更新补丁。"""
 
     _SPEC = ToolSpec(
         name=ReservedToolName.APPLY_PATCH.value,
-        description="使用 git apply 预检并应用 unified diff 补丁。",
+        description=(
+            "使用 git apply 预检并应用补丁。patch 可传标准 Git unified diff，"
+            "也可传 *** Begin Patch / *** Update File: path / @@ 格式的文件更新块。"
+        ),
         input_schema=_ApplyPatchArgs.model_json_schema(),
     )
 
@@ -374,9 +378,12 @@ class ApplyPatchTool(_WorkspaceTool):
         started = time.monotonic()
         args = self._validate_call(call, _ApplyPatchArgs)
         assert isinstance(args, _ApplyPatchArgs)
-        changed_files = self._validate_patch_paths(args.patch)
+        # 先把模型常见的 Begin Patch 格式转换为标准 diff。转换只操作内存，
+        # 路径或上下文不合法时不会提前写文件。
+        patch = self._normalize_patch(args.patch)
+        changed_files = self._validate_patch_paths(patch)
 
-        checked = self._run_git_apply(args.patch, check=True)
+        checked = self._run_git_apply(patch, check=True)
         if checked.returncode != 0:
             stdout, _ = _truncate_text(checked.stdout, self.max_output_chars)
             stderr, _ = _truncate_text(checked.stderr, self.max_output_chars)
@@ -389,7 +396,7 @@ class ApplyPatchTool(_WorkspaceTool):
                 duration_ms=(time.monotonic() - started) * 1000,
             )
 
-        applied = self._run_git_apply(args.patch, check=False)
+        applied = self._run_git_apply(patch, check=False)
         if applied.returncode != 0:
             stdout, _ = _truncate_text(applied.stdout, self.max_output_chars)
             stderr, _ = _truncate_text(applied.stderr, self.max_output_chars)
@@ -412,6 +419,156 @@ class ApplyPatchTool(_WorkspaceTool):
             },
             duration_ms=(time.monotonic() - started) * 1000,
         )
+
+    def _normalize_patch(self, patch: str) -> str:
+        """把受支持的模型补丁规范化为可交给 Git 的 unified diff。"""
+        stripped = patch.strip()
+        if stripped.startswith("*** Begin Patch"):
+            return self._convert_begin_patch(stripped)
+
+        # 模型偶尔会在标准 diff 末尾误带 Codex 结束标记。它不是 diff 内容，
+        # 可以确定性移除；其他未知控制行仍交由 git apply 拒绝。
+        lines = patch.splitlines()
+        while lines and not lines[-1].strip():
+            lines.pop()
+        if lines and lines[-1].strip() == "*** End Patch":
+            lines.pop()
+        return "\n".join(lines) + "\n"
+
+    def _convert_begin_patch(self, patch: str) -> str:
+        """将仅包含 Update File 的 Begin Patch 安全转换为标准 diff。"""
+        lines = patch.splitlines()
+        if not lines or lines[0].strip() != "*** Begin Patch":
+            raise ToolValidationError("invalid Begin Patch header")
+        if len(lines) < 3 or lines[-1].strip() != "*** End Patch":
+            raise ToolValidationError("Begin Patch is missing *** End Patch")
+
+        index = 1
+        converted: list[str] = []
+        updated_files = 0
+        while index < len(lines) - 1:
+            directive = lines[index]
+            if not directive.startswith("*** Update File: "):
+                raise ToolValidationError(
+                    "only *** Update File is supported inside Begin Patch",
+                    context={"directive": directive},
+                )
+            relative_name = directive.removeprefix("*** Update File: ").strip()
+            path = _resolve_path(self.workspace, relative_name, must_exist=True)
+            if not path.is_file():
+                raise ToolValidationError(
+                    "Update File target must be a regular file",
+                    context={"path": relative_name},
+                )
+
+            index += 1
+            body: list[str] = []
+            while index < len(lines) - 1 and not lines[index].startswith("*** "):
+                body.append(lines[index])
+                index += 1
+            if not body:
+                raise ToolValidationError(
+                    "Update File section cannot be empty",
+                    context={"path": relative_name},
+                )
+
+            original = path.read_text(encoding="utf-8")
+            updated = self._apply_update_hunks(original, body, relative_name)
+            if updated == original:
+                raise ToolValidationError(
+                    "patch does not change the target file",
+                    context={"path": relative_name},
+                )
+            # difflib 负责生成准确的 hunk 范围；之后仍由 Git 做完整预检。
+            diff = difflib.unified_diff(
+                original.splitlines(),
+                updated.splitlines(),
+                fromfile=f"a/{Path(relative_name).as_posix()}",
+                tofile=f"b/{Path(relative_name).as_posix()}",
+                lineterm="",
+            )
+            converted.extend(diff)
+            updated_files += 1
+
+        if updated_files == 0:
+            raise ToolValidationError("Begin Patch does not contain any Update File section")
+        return "\n".join(converted) + "\n"
+
+    @staticmethod
+    def _apply_update_hunks(original: str, body: list[str], relative_name: str) -> str:
+        """按上下文匹配更新块；找不到或匹配不唯一时拒绝猜测。"""
+        current = original.splitlines()
+        had_final_newline = original.endswith(("\n", "\r"))
+        index = 0
+        search_from = 0
+        hunk_count = 0
+
+        while index < len(body):
+            header = body[index]
+            if not header.startswith("@@"):
+                raise ToolValidationError(
+                    "Update File content must start with an @@ hunk",
+                    context={"path": relative_name, "line": header},
+                )
+            index += 1
+            hunk: list[str] = []
+            while index < len(body) and not body[index].startswith("@@"):
+                line = body[index]
+                if line == "\\ No newline at end of file":
+                    index += 1
+                    continue
+                if not line or line[0] not in {" ", "+", "-"}:
+                    raise ToolValidationError(
+                        "invalid line in Update File hunk",
+                        context={"path": relative_name, "line": line},
+                    )
+                hunk.append(line)
+                index += 1
+
+            old_lines = [line[1:] for line in hunk if line[0] in {" ", "-"}]
+            new_lines = [line[1:] for line in hunk if line[0] in {" ", "+"}]
+            if not old_lines:
+                raise ToolValidationError(
+                    "Update File hunk needs context or removed lines",
+                    context={"path": relative_name},
+                )
+
+            candidates = [
+                offset
+                for offset in range(search_from, len(current) - len(old_lines) + 1)
+                if current[offset : offset + len(old_lines)] == old_lines
+            ]
+            # 若标准范围头给出了旧起始行，优先使用它消除重复上下文的歧义。
+            match = re.match(r"@@\s+-(\d+)", header)
+            hinted = int(match.group(1)) - 1 if match else None
+            if hinted is not None and hinted in candidates:
+                target = hinted
+            elif len(candidates) == 1:
+                target = candidates[0]
+            elif not candidates:
+                raise ToolValidationError(
+                    "Update File hunk context was not found",
+                    context={"path": relative_name, "hunk": header},
+                )
+            else:
+                raise ToolValidationError(
+                    "Update File hunk context is ambiguous",
+                    context={"path": relative_name, "hunk": header},
+                )
+
+            current[target : target + len(old_lines)] = new_lines
+            search_from = target + len(new_lines)
+            hunk_count += 1
+
+        if hunk_count == 0:
+            raise ToolValidationError(
+                "Update File section does not contain any hunks",
+                context={"path": relative_name},
+            )
+        updated = "\n".join(current)
+        if had_final_newline:
+            updated += "\n"
+        return updated
 
     def _validate_patch_paths(self, patch: str) -> list[str]:
         """提取补丁头中的路径并拒绝二进制补丁或仓库外路径。"""
@@ -449,7 +606,9 @@ class ApplyPatchTool(_WorkspaceTool):
 
     def _run_git_apply(self, patch: str, *, check: bool) -> subprocess.CompletedProcess[str]:
         """通过标准输入传递补丁，避免生成临时文件或发生 Shell 插值。"""
-        command = ["git", "apply", "--whitespace=nowarn"]
+        # --recount 只重算 hunk 行数，不放宽上下文匹配；可恢复模型常见的
+        # “修改内容正确但 @@ 行数写错”问题，同时维持 check-before-write。
+        command = ["git", "apply", "--whitespace=nowarn", "--recount"]
         if check:
             command.append("--check")
         command.append("-")
