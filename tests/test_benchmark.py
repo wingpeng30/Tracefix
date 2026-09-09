@@ -26,6 +26,12 @@ EXPERIMENT_PATH = (
     / "experiments"
     / "v0.3.0-context-3k.json"
 )
+REGRESSION_PATH = (
+    Path(__file__).parents[1]
+    / "benchmarks"
+    / "experiments"
+    / "v0.3.1-agent-loop-regression.json"
+)
 
 
 def _call(tool, call_id: str, **arguments):
@@ -86,6 +92,27 @@ def test_checked_in_context_experiment_is_consistent_and_sanitized() -> None:
     assert sum(item["tool_calls"] for item in payload["tasks"]) == 101
     assert aggregate["exact_duplicate_tool_calls"] == 23
     assert aggregate["context_metrics"]["estimated_tokens_saved"] == 17_973
+    assert "d:\\tracefix" not in serialized
+    assert "api_key" not in serialized
+    assert "trajectory.jsonl" not in serialized
+
+
+def test_checked_in_agent_loop_regression_is_consistent_and_sanitized() -> None:
+    """V0.3.1 回归记录必须与聚合值一致，并排除本机运行信息。"""
+    import json
+
+    payload = json.loads(REGRESSION_PATH.read_text(encoding="utf-8"))
+    serialized = json.dumps(payload).casefold()
+    aggregate = payload["aggregate"]
+    tasks = payload["tasks"]
+    assert payload["tracefix_version"] == "0.3.1"
+    assert len(tasks) == 10
+    assert sum(item["resolved"] for item in tasks) == 10
+    assert sum(item["input_tokens"] for item in tasks) == aggregate["input_tokens"]
+    assert sum(item["output_tokens"] for item in tasks) == aggregate["output_tokens"]
+    assert sum(item["tool_calls"] for item in tasks) == aggregate["tool_calls"]
+    assert aggregate["failed_tool_calls"] == 0
+    assert aggregate["context_metrics"]["compaction_count"] == 0
     assert "d:\\tracefix" not in serialized
     assert "api_key" not in serialized
     assert "trajectory.jsonl" not in serialized

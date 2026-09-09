@@ -12,3 +12,6 @@ Python Bug 任务和统一预算，后续实验必须保持这些条件不变。
 
 压力实验不属于 Baseline，统一保存在 `benchmarks/experiments/`。V0.3.0 的 3k 压缩实验
 及其失败分析见 `docs/experiments/v0.3.0-context-3k.md`。
+
+`v0.3.1-agent-loop-regression.json` 固化补丁协议与收尾修复后的 10 题回归结果。该轮没有
+实际触发上下文折叠，因此只作为 Agent Loop 回归证据，不作为压缩效果证据。

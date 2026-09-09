@@ -1,0 +1,93 @@
+{
+  "schema_version": 1,
+  "experiment_id": "tracefix-v0.3.1-agent-loop-regression-synthetic-10",
+  "tracefix_version": "0.3.1",
+  "tracefix_commit": "6f3ff29fbe5632e891582f0f8869c0ca33c44023",
+  "recorded_at": "2026-09-09T12:33:05Z",
+  "model_name": "deepseek/deepseek-v4-flash",
+  "task_suite": "benchmarks/tasks",
+  "task_kind": "synthetic_python_bugs",
+  "baseline_id": "tracefix-v0.2.0-synthetic-10",
+  "context": {
+    "enabled": true,
+    "context_window_tokens": 1000000,
+    "compaction_trigger_tokens": 3000,
+    "retain_ratio": 0.4,
+    "compaction_triggered": false
+  },
+  "budgets": {
+    "max_steps": 12,
+    "max_input_tokens": 40000,
+    "max_output_tokens": 8000,
+    "wall_time_seconds": 300,
+    "max_test_runs": 4
+  },
+  "usd_cny_rate": 7.2,
+  "aggregate": {
+    "task_count": 10,
+    "resolved_count": 10,
+    "resolved_rate": 1.0,
+    "agent_completed_count": 10,
+    "input_tokens": 110060,
+    "output_tokens": 5393,
+    "steps": 53,
+    "agent_test_runs": 10,
+    "duration_seconds": 74.312,
+    "tool_calls": 66,
+    "exact_duplicate_tool_calls": 0,
+    "failed_tool_calls": 0,
+    "begin_patch_calls": 10,
+    "ready_to_finish_hints": 10,
+    "cost_usd": 0.017157448,
+    "cost_cny_estimate": 0.12353363,
+    "cost_complete": true,
+    "tool_counts": {
+      "apply_patch": 10,
+      "get_git_diff": 10,
+      "read_file": 20,
+      "run_tests": 10,
+      "search_code": 16
+    },
+    "context_metrics": {
+      "preparation_count": 53,
+      "compaction_count": 0,
+      "tool_results_pruned": 0,
+      "messages_compacted": 0,
+      "batches_compacted": 0,
+      "estimated_tokens_saved": 0
+    }
+  },
+  "comparison_to_v0_2_baseline": {
+    "resolved_rate_delta": 0.0,
+    "input_tokens_change_ratio": -0.40415742,
+    "output_tokens_change_ratio": -0.39957693,
+    "steps_change_ratio": -0.28378378,
+    "tool_calls_change_ratio": -0.24137931,
+    "duration_change_ratio": -0.20560924,
+    "cost_change_ratio": -0.31899932
+  },
+  "tasks": [
+    {"id":"empty_sequence","resolved":true,"agent_status":"completed","steps":5,"input_tokens":9326,"output_tokens":425,"test_runs":1,"duration_seconds":10.593,"tool_calls":6,"cost_usd":0.001883512,"cost_cny_estimate":0.01356129,"changed_files":["parser.py"]},
+    {"id":"inclusive_range","resolved":true,"agent_status":"completed","steps":5,"input_tokens":9366,"output_tokens":432,"test_runs":1,"duration_seconds":6.828,"tool_calls":6,"cost_usd":0.0014196,"cost_cny_estimate":0.01022112,"changed_files":["ranges.py"]},
+    {"id":"case_lookup","resolved":true,"agent_status":"completed","steps":5,"input_tokens":10224,"output_tokens":513,"test_runs":1,"duration_seconds":7.015,"tool_calls":7,"cost_usd":0.0016314,"cost_cny_estimate":0.01174608,"changed_files":["lookup.py"]},
+    {"id":"stable_unique","resolved":true,"agent_status":"completed","steps":5,"input_tokens":10304,"output_tokens":507,"test_runs":1,"duration_seconds":5.907,"tool_calls":7,"cost_usd":0.001604152,"cost_cny_estimate":0.01154989,"changed_files":["collections_utils.py"]},
+    {"id":"none_default","resolved":true,"agent_status":"completed","steps":5,"input_tokens":9823,"output_tokens":521,"test_runs":1,"duration_seconds":6.797,"tool_calls":7,"cost_usd":0.001574576,"cost_cny_estimate":0.01133695,"changed_files":["settings.py"]},
+    {"id":"date_boundary","resolved":true,"agent_status":"completed","steps":5,"input_tokens":9678,"output_tokens":403,"test_runs":1,"duration_seconds":6.25,"tool_calls":6,"cost_usd":0.001464072,"cost_cny_estimate":0.01054132,"changed_files":["dates.py"]},
+    {"id":"nested_lookup","resolved":true,"agent_status":"completed","steps":5,"input_tokens":10404,"output_tokens":653,"test_runs":1,"duration_seconds":7.016,"tool_calls":7,"cost_usd":0.001786344,"cost_cny_estimate":0.01286168,"changed_files":["nested.py"]},
+    {"id":"file_extension","resolved":true,"agent_status":"completed","steps":6,"input_tokens":12423,"output_tokens":790,"test_runs":1,"duration_seconds":8.375,"tool_calls":6,"cost_usd":0.001983096,"cost_cny_estimate":0.01427829,"changed_files":["paths.py"]},
+    {"id":"pagination","resolved":true,"agent_status":"completed","steps":6,"input_tokens":14089,"output_tokens":529,"test_runs":1,"duration_seconds":7.875,"tool_calls":7,"cost_usd":0.001880864,"cost_cny_estimate":0.01354222,"changed_files":["pagination.py"]},
+    {"id":"retry_count","resolved":true,"agent_status":"completed","steps":6,"input_tokens":14423,"output_tokens":620,"test_runs":1,"duration_seconds":7.656,"tool_calls":7,"cost_usd":0.001929832,"cost_cny_estimate":0.01389479,"changed_files":["retry.py"]}
+  ],
+  "findings": [
+    "All ten Begin Patch calls applied successfully on the first attempt.",
+    "Every task ran tests, inspected a non-empty diff, received a ready-to-finish hint, and completed normally.",
+    "No tool call failed and no exact duplicate call occurred.",
+    "No request reached the 3k local compaction trigger, so this run validates the agent-loop fix rather than context compaction."
+  ],
+  "limitations": [
+    "The suite contains small synthetic Python bugs.",
+    "One stochastic run per version cannot isolate the contribution of each simultaneous harness change.",
+    "Resolved rate must not be presented as real GitHub Issue or SWE-bench performance.",
+    "Local paths, secrets, raw model responses, test stdout, workspaces, and full trajectories are excluded."
+  ]
+}
