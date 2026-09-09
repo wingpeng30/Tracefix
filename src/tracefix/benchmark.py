@@ -502,6 +502,9 @@ class BenchmarkRunner:
             path = Path(value)
             parts = {part.casefold() for part in path.parts}
             name = path.name.casefold()
+            # pytest 与 Python 自动生成的缓存不是 Agent 补丁，不能误判为测试篡改。
+            if "__pycache__" in parts or ".pytest_cache" in parts or path.suffix == ".pyc":
+                continue
             if (
                 "tests" in parts
                 or name.startswith("test_")

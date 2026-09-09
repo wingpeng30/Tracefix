@@ -395,6 +395,7 @@ def test_test_file_and_pytest_configuration_changes_are_detected(tmp_path, monke
             "changed_files": (
                 "config/resolver.py",
                 "tests/test_resolver.py",
+                "tests/__pycache__/test_resolver.cpython-312.pyc",
                 "pyproject.toml",
             )
         }
