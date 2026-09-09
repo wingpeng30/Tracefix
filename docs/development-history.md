@@ -140,3 +140,10 @@ Verifier，避免后续功能建立在裸字典和不稳定异常上。
 
 发布前自动化验收：`130 passed`，总覆盖率 `91.14%`，`ruff check .` 与
 `python -m compileall -q src tests` 均通过。本版没有产生真实模型费用。
+
+## V0.4.0：独立验收与重复配对实验
+
+将 Agent 正常结束、公开测试、隐藏验收和测试篡改拆为独立指标；`resolved` 采用四项联合
+判定。新增 `paired-eval`，按 C/T、T/C 顺序交替运行至少三次，并从 JSONL 轨迹统计文件
+重读、重复调用、失败工具、工具结果裁剪、真实历史折叠及折叠后失败。代码实现说明见
+[`tasks/v0.4.0-independent-verification-and-paired-eval.md`](tasks/v0.4.0-independent-verification-and-paired-eval.md)。

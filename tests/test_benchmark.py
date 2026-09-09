@@ -358,14 +358,50 @@ def test_benchmark_runner_uses_hidden_tests_without_exposing_them_to_agent(
 
     result = summary.results[0]
     assert result.resolved is True
+    assert result.agent_completed is True
+    assert result.public_tests_passed is True
+    assert result.independent_tests_passed is True
+    assert result.tests_modified is False
     assert result.verification_kind == "visible_and_hidden"
-    assert result.verification.metadata["verification_kind"] == "visible_and_hidden"
+    assert result.public_verification.metadata["verification_kind"] == "public"
+    assert result.independent_verification.metadata["verification_kind"] == (
+        "independent_hidden"
+    )
     workspace = Path(result.run.workspace)
     verification_dirs = list(workspace.glob(".tracefix_verification_*"))
     assert len(verification_dirs) == 1 and verification_dirs[0].is_dir()
     # 最终 patch 在隐藏测试复制前收集，不会把评测答案混进 Agent 产物。
     assert ".tracefix_verification" not in Path(result.run.diff_path).read_text(
         encoding="utf-8"
+    )
+
+
+def test_test_file_and_pytest_configuration_changes_are_detected(tmp_path, monkeypatch) -> None:
+    """测试或发现配置的修改必须单独暴露，不能只看 pytest 退出码。"""
+    task = load_benchmark_tasks(CONTEXT_TASKS_DIR, limit=1)[0]
+    patch = task.gold_patch_path.read_text(encoding="utf-8")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-test-change-detection-123456")
+    runner = TraceFixRunner(lambda config: GoldPatchLLM(config, patch))
+    summary = BenchmarkRunner(runner).run(
+        BenchmarkConfig(
+            tasks_dir=CONTEXT_TASKS_DIR,
+            output_dir=tmp_path / "runs",
+            limit=1,
+            env_file=None,
+        )
+    )
+    changed_run = summary.results[0].run.model_copy(
+        update={
+            "changed_files": (
+                "config/resolver.py",
+                "tests/test_resolver.py",
+                "pyproject.toml",
+            )
+        }
+    )
+    assert BenchmarkRunner._changed_test_files(task, changed_run) == (
+        "pyproject.toml",
+        "tests/test_resolver.py",
     )
 
 

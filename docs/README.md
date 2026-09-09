@@ -20,6 +20,8 @@
   与生产 32k 阈值的真实 API 对照。
 - [`tasks/v0.3.2-traceability-and-context-tasks.md`](tasks/v0.3.2-traceability-and-context-tasks.md)：
   运行溯源、实际请求视图和四道多文件任务的实现说明。
+- [`tasks/v0.4.0-independent-verification-and-paired-eval.md`](tasks/v0.4.0-independent-verification-and-paired-eval.md)：
+  独立验收、测试篡改检测与交替重复实验框架说明。
 - [`experiments/v0.3.2-fixture-validation.md`](experiments/v0.3.2-fixture-validation.md)：
   多文件任务初始失败、标准补丁和隐藏测试的离线验收记录。
 

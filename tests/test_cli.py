@@ -99,6 +99,36 @@ def test_cli_eval_uses_environment_defaults_and_returns_nonzero_for_unresolved(
     assert "0/1" in capsys.readouterr().out
 
 
+def test_cli_paired_eval_builds_three_repeat_experiment(tmp_path, monkeypatch, capsys) -> None:
+    captured = []
+
+    class FakePairedRunner:
+        def run(self, config):
+            captured.append(config)
+            return SimpleNamespace(
+                control=SimpleNamespace(resolved_count=3, trial_count=3),
+                treatment=SimpleNamespace(resolved_count=2, trial_count=3),
+                summary_path="paired-summary.json",
+            )
+
+    monkeypatch.setattr("tracefix.cli.PairedExperimentRunner", FakePairedRunner)
+    code = main(
+        [
+            "paired-eval",
+            "--tasks",
+            str(tmp_path),
+            "--repetitions",
+            "3",
+            "--env-file",
+            str(tmp_path / "missing.env"),
+        ]
+    )
+    assert code == 0
+    assert captured[0].repetitions == 3
+    assert captured[0].trigger_tokens == 32_000
+    assert "关闭压缩 3/3" in capsys.readouterr().out
+
+
 def test_cli_reports_invalid_numeric_environment(tmp_path, monkeypatch, capsys) -> None:
     monkeypatch.setenv("TRACEFIX_USD_CNY_RATE", "not-a-number")
 

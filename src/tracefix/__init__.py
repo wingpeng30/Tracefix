@@ -51,6 +51,16 @@ from tracefix.exceptions import (
 )
 from tracefix.messages import Message, MessageHistory, MessageRole, ToolCall
 from tracefix.models import BaseLLM, LiteLLMAdapter, LLMConfig, LLMResponse, TokenUsage
+from tracefix.paired import (
+    ArmAggregate,
+    ExperimentArm,
+    PairedExperimentConfig,
+    PairedExperimentRunner,
+    PairedExperimentSummary,
+    PairedTrial,
+    TrajectoryMetrics,
+    analyze_trajectory,
+)
 from tracefix.provenance import RunProvenance, collect_run_provenance, task_sha256
 from tracefix.runtime import (
     DEFAULT_MODEL_NAME,
@@ -121,6 +131,12 @@ __all__ = [
     "MessageHistory",
     "MessageProtocolError",
     "MessageRole",
+    "ExperimentArm",
+    "ArmAggregate",
+    "PairedExperimentConfig",
+    "PairedExperimentRunner",
+    "PairedExperimentSummary",
+    "PairedTrial",
     "ReservedToolName",
     "RunConfig",
     "RunConfigurationError",
@@ -150,6 +166,7 @@ __all__ = [
     "TraceFixRunner",
     "TraceProtocolError",
     "TraceSink",
+    "TrajectoryMetrics",
     "WorkspaceError",
     "__version__",
     "create_default_tool_registry",
@@ -157,4 +174,5 @@ __all__ = [
     "load_environment_file",
     "collect_run_provenance",
     "task_sha256",
+    "analyze_trajectory",
 ]

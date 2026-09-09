@@ -11,7 +11,7 @@ from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, model_validator
 
-from tracefix.agent import AgentConfig
+from tracefix.agent import AgentConfig, AgentStatus
 from tracefix.context import ContextMetrics
 from tracefix.exceptions import BenchmarkError, sanitize_payload
 from tracefix.messages import ToolCall
@@ -279,7 +279,7 @@ class BenchmarkConfig(BaseModel):
 
 
 class BenchmarkTaskResult(BaseModel):
-    """单个任务的 Agent 运行结果和独立测试判定。"""
+    """单个任务的 Agent、公开测试与独立验收三层判定。"""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -287,6 +287,14 @@ class BenchmarkTaskResult(BaseModel):
     title: str
     resolved: bool
     run: RunResult
+    agent_completed: bool
+    public_tests_passed: bool
+    independent_tests_passed: bool | None = None
+    tests_modified: bool = False
+    changed_test_files: tuple[str, ...] = ()
+    public_verification: ToolResult | None = None
+    independent_verification: ToolResult | None = None
+    # 保留旧字段作为公开测试结果别名，方便已有分析脚本平滑迁移。
     verification: ToolResult | None = None
     verification_kind: str = "visible"
 
@@ -303,6 +311,10 @@ class BenchmarkSummary(BaseModel):
     task_count: int = Field(ge=0)
     resolved_count: int = Field(ge=0)
     resolved_rate: float = Field(ge=0, le=1)
+    agent_completed_count: int = Field(ge=0)
+    public_tests_passed_count: int = Field(ge=0)
+    independent_tests_passed_count: int = Field(ge=0)
+    tests_modified_count: int = Field(ge=0)
     total_input_tokens: int = Field(ge=0)
     total_output_tokens: int = Field(ge=0)
     total_steps: int = Field(ge=0)
@@ -385,14 +397,39 @@ class BenchmarkRunner:
                     agent_config=config.agent_config.model_copy(deep=True),
                 )
             )
-            verification = self._verify(task, run_result)
+            public_verification, independent_verification = self._verify(
+                task, run_result
+            )
+            changed_test_files = self._changed_test_files(task, run_result)
+            agent_completed = run_result.status is AgentStatus.COMPLETED
+            public_passed = bool(public_verification and public_verification.success)
+            independent_passed = (
+                bool(independent_verification and independent_verification.success)
+                if task.hidden_tests_path is not None
+                else None
+            )
+            # resolved 要求 Agent 正常结束、公开测试通过、未篡改测试；若任务有
+            # 隐藏验收，还必须独立验收通过。三个信号仍分别保存，不能互相替代。
+            resolved = (
+                agent_completed
+                and public_passed
+                and not changed_test_files
+                and independent_passed is not False
+            )
             results.append(
                 BenchmarkTaskResult(
                     task_id=task.id,
                     title=task.title,
-                    resolved=bool(verification and verification.success),
+                    resolved=resolved,
                     run=run_result,
-                    verification=verification,
+                    agent_completed=agent_completed,
+                    public_tests_passed=public_passed,
+                    independent_tests_passed=independent_passed,
+                    tests_modified=bool(changed_test_files),
+                    changed_test_files=changed_test_files,
+                    public_verification=public_verification,
+                    independent_verification=independent_verification,
+                    verification=public_verification,
                     verification_kind=(
                         "visible_and_hidden" if task.hidden_tests_path else "visible"
                     ),
@@ -412,12 +449,24 @@ class BenchmarkRunner:
         return summary
 
     @staticmethod
-    def _verify(task: BenchmarkTask, run: RunResult) -> ToolResult | None:
-        """在 Agent 循环之外运行参考测试，不占用 Agent 测试预算。"""
+    def _verify(
+        task: BenchmarkTask, run: RunResult
+    ) -> tuple[ToolResult | None, ToolResult | None]:
+        """分别运行公开测试和 Agent 不可见的独立验收。"""
         if run.workspace is None:
-            return None
+            return None, None
         workspace = Path(run.workspace)
-        command = task.test_command
+        tool = RunTestsTool(workspace, default_timeout_seconds=120)
+        public_result = tool.execute(
+            ToolCall(
+                id=f"verify-public-{task.id}",
+                name=tool.spec.name,
+                arguments={"command": task.test_command, "timeout_seconds": 120},
+            )
+        ).model_copy(
+            update={"metadata": {"verification_kind": "public"}}
+        )
+        independent_result: ToolResult | None = None
         if task.hidden_tests_path is not None:
             # 隐藏测试只在 Agent 完成后复制，模型的 search/read 工具无法提前看到。
             verification_dir = workspace / f".tracefix_verification_{uuid4().hex}"
@@ -428,25 +477,38 @@ class BenchmarkRunner:
                     f"cannot prepare hidden verification tests: {exc}",
                     context={"task_id": task.id},
                 ) from exc
-            command = f"pytest -q tests {verification_dir.name}"
-        tool = RunTestsTool(workspace, default_timeout_seconds=120)
-        result = tool.execute(
-            ToolCall(
-                id=f"verify-{task.id}",
-                name=tool.spec.name,
-                arguments={"command": command, "timeout_seconds": 120},
+            independent_result = tool.execute(
+                ToolCall(
+                    id=f"verify-independent-{task.id}",
+                    name=tool.spec.name,
+                    arguments={
+                        "command": f"pytest -q {verification_dir.name}",
+                        "timeout_seconds": 120,
+                    },
+                )
+            ).model_copy(
+                update={"metadata": {"verification_kind": "independent_hidden"}}
             )
-        )
-        return result.model_copy(
-            update={
-                "metadata": {
-                    **result.metadata,
-                    "verification_kind": (
-                        "visible_and_hidden" if task.hidden_tests_path else "visible"
-                    ),
-                }
-            }
-        )
+        return public_result, independent_result
+
+    @staticmethod
+    def _changed_test_files(
+        task: BenchmarkTask, run: RunResult
+    ) -> tuple[str, ...]:
+        """识别测试与测试发现配置的净修改，防止通过篡改验收。"""
+        protected_config_names = {"pytest.ini", "pyproject.toml", "setup.cfg", "tox.ini"}
+        changed: list[str] = []
+        for value in run.changed_files:
+            path = Path(value)
+            parts = {part.casefold() for part in path.parts}
+            name = path.name.casefold()
+            if (
+                "tests" in parts
+                or name.startswith("test_")
+                or name in protected_config_names
+            ):
+                changed.append(path.as_posix())
+        return tuple(sorted(set(changed)))
 
     @staticmethod
     def _build_summary(
@@ -496,6 +558,12 @@ class BenchmarkRunner:
             task_count=len(results),
             resolved_count=resolved,
             resolved_rate=resolved / len(results) if results else 0.0,
+            agent_completed_count=sum(item.agent_completed for item in results),
+            public_tests_passed_count=sum(item.public_tests_passed for item in results),
+            independent_tests_passed_count=sum(
+                item.independent_tests_passed is True for item in results
+            ),
+            tests_modified_count=sum(item.tests_modified for item in results),
             total_input_tokens=sum(item.run.input_tokens for item in results),
             total_output_tokens=sum(item.run.output_tokens for item in results),
             total_steps=sum(item.run.step_count for item in results),

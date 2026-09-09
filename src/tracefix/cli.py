@@ -14,6 +14,7 @@ from tracefix.agent import AgentConfig, AgentStatus
 from tracefix.benchmark import BenchmarkConfig, BenchmarkRunner
 from tracefix.context import ContextConfig
 from tracefix.exceptions import TraceFixError
+from tracefix.paired import PairedExperimentConfig, PairedExperimentRunner
 from tracefix.runtime import (
     DEFAULT_MODEL_NAME,
     DEFAULT_USD_CNY_RATE,
@@ -129,6 +130,21 @@ def build_parser() -> argparse.ArgumentParser:
         "--task-id", action="append", default=[], help="只运行指定任务，可重复传入"
     )
     _add_shared_options(eval_parser)
+
+    paired_parser = subparsers.add_parser(
+        "paired-eval", help="交替运行关闭压缩与 32k 压缩的重复实验"
+    )
+    paired_parser.add_argument(
+        "--tasks", type=Path, default=Path("benchmarks/context_tasks"), help="任务目录"
+    )
+    paired_parser.add_argument("--limit", type=int, help="只运行排序后的前 N 个任务")
+    paired_parser.add_argument(
+        "--task-id", action="append", default=[], help="只运行指定任务，可重复传入"
+    )
+    paired_parser.add_argument(
+        "--repetitions", type=int, default=3, help="每题每组重复次数，至少 3"
+    )
+    _add_shared_options(paired_parser)
     return parser
 
 
@@ -268,13 +284,32 @@ def main(argv: list[str] | None = None) -> int:
                 return 0
             return 2 if result.status is AgentStatus.INTERRUPTED else 1
 
-        summary = BenchmarkRunner().run(
-            BenchmarkConfig(
-                tasks_dir=args.tasks,
-                limit=args.limit,
-                task_ids=tuple(args.task_id),
-                **shared,
+        benchmark_config = BenchmarkConfig(
+            tasks_dir=args.tasks,
+            limit=args.limit,
+            task_ids=tuple(args.task_id),
+            **shared,
+        )
+        if args.command == "paired-eval":
+            summary = PairedExperimentRunner().run(
+                PairedExperimentConfig(
+                    benchmark=benchmark_config,
+                    repetitions=args.repetitions,
+                    trigger_tokens=32_000,
+                )
             )
+            print(
+                "配对实验完成: "
+                f"关闭压缩 {summary.control.resolved_count}/"
+                f"{summary.control.trial_count}；"
+                f"32k 压缩 {summary.treatment.resolved_count}/"
+                f"{summary.treatment.trial_count}"
+            )
+            print(f"汇总文件: {summary.summary_path}")
+            return 0
+
+        summary = BenchmarkRunner().run(
+            benchmark_config
         )
         print(
             f"评测完成: {summary.resolved_count}/{summary.task_count} "
