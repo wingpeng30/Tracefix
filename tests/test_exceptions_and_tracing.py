@@ -8,8 +8,9 @@ from tracefix import (
 
 
 def test_exception_is_structured_and_redacts_secrets() -> None:
+    secret = "sk-direct-message-secret"
     error = LLMAuthenticationError(
-        "bad credentials",
+        f"bad credentials: {secret}",
         context={"api_key": "secret-value", "nested": {"authorization": "Bearer token"}},
     )
     payload = error.to_dict()
@@ -17,6 +18,8 @@ def test_exception_is_structured_and_redacts_secrets() -> None:
     assert payload["code"] == "llm_authentication_error"
     assert payload["context"]["api_key"] == "<redacted>"
     assert payload["context"]["nested"]["authorization"] == "<redacted>"
+    assert secret not in str(error)
+    assert "<redacted>" in payload["message"]
 
 
 def test_trace_event_is_json_serializable() -> None:
@@ -40,4 +43,3 @@ def test_trace_sink_protocol_is_runtime_checkable() -> None:
             pass
 
     assert isinstance(Sink(), TraceSink)
-

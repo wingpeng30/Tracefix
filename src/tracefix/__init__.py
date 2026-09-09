@@ -8,11 +8,20 @@ from tracefix.agent import (
     BaseAgent,
     MinimalAgent,
 )
+from tracefix.benchmark import (
+    BenchmarkConfig,
+    BenchmarkRunner,
+    BenchmarkSummary,
+    BenchmarkTask,
+    BenchmarkTaskResult,
+    load_benchmark_tasks,
+)
 from tracefix.exceptions import (
     AgentCompleted,
     AgentError,
     AgentInterrupted,
     AgentLimitExceeded,
+    BenchmarkError,
     LLMAuthenticationError,
     LLMContextWindowError,
     LLMError,
@@ -21,6 +30,7 @@ from tracefix.exceptions import (
     LLMResponseFormatError,
     LLMTimeoutError,
     MessageProtocolError,
+    RunConfigurationError,
     StepLimitExceeded,
     TestLimitExceeded,
     TimeLimitExceeded,
@@ -33,9 +43,18 @@ from tracefix.exceptions import (
     ToolValidationError,
     TraceFixError,
     TraceProtocolError,
+    WorkspaceError,
 )
 from tracefix.messages import Message, MessageHistory, MessageRole, ToolCall
 from tracefix.models import BaseLLM, LiteLLMAdapter, LLMConfig, LLMResponse, TokenUsage
+from tracefix.runtime import (
+    DEFAULT_MODEL_NAME,
+    DEFAULT_USD_CNY_RATE,
+    RunConfig,
+    RunResult,
+    TraceFixRunner,
+    load_environment_file,
+)
 from tracefix.tools import (
     RESERVED_TOOL_NAMES,
     ApplyPatchTool,
@@ -50,13 +69,15 @@ from tracefix.tools import (
     ToolSpec,
     create_default_tool_registry,
 )
-from tracefix.tracing import TraceEvent, TraceEventType, TraceSink
+from tracefix.tracing import JSONLTraceSink, TraceEvent, TraceEventType, TraceSink
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 __all__ = [
     "RESERVED_TOOL_NAMES",
+    "DEFAULT_MODEL_NAME",
     "DEFAULT_SYSTEM_PROMPT",
+    "DEFAULT_USD_CNY_RATE",
     "AgentCompleted",
     "AgentConfig",
     "AgentError",
@@ -68,6 +89,12 @@ __all__ = [
     "BaseAgent",
     "BaseLLM",
     "BaseTool",
+    "BenchmarkConfig",
+    "BenchmarkError",
+    "BenchmarkRunner",
+    "BenchmarkSummary",
+    "BenchmarkTask",
+    "BenchmarkTaskResult",
     "GetGitDiffTool",
     "LLMAuthenticationError",
     "LLMConfig",
@@ -78,6 +105,7 @@ __all__ = [
     "LLMResponse",
     "LLMResponseFormatError",
     "LLMTimeoutError",
+    "JSONLTraceSink",
     "LiteLLMAdapter",
     "MinimalAgent",
     "Message",
@@ -85,6 +113,9 @@ __all__ = [
     "MessageProtocolError",
     "MessageRole",
     "ReservedToolName",
+    "RunConfig",
+    "RunConfigurationError",
+    "RunResult",
     "ReadFileTool",
     "RunTestsTool",
     "SearchCodeTool",
@@ -106,8 +137,12 @@ __all__ = [
     "TraceEvent",
     "TraceEventType",
     "TraceFixError",
+    "TraceFixRunner",
     "TraceProtocolError",
     "TraceSink",
+    "WorkspaceError",
     "__version__",
     "create_default_tool_registry",
+    "load_benchmark_tasks",
+    "load_environment_file",
 ]

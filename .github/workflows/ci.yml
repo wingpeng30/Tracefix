@@ -1,0 +1,41 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  quality:
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 配置 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: 安装项目与测试依赖
+        env:
+          PIP_INDEX_URL: https://pypi.tuna.tsinghua.edu.cn/simple
+        run: python -m pip install -e ".[dev,llm]"
+
+      - name: 运行测试与覆盖率检查
+        run: python -m pytest --cov=tracefix --cov-report=term-missing
+
+      - name: 运行 Ruff 静态检查
+        run: python -m ruff check .
+
+      - name: 检查 Python 文件可编译性
+        run: python -m compileall -q src tests

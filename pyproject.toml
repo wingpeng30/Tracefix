@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "tracefix-agent"
-version = "0.1.0"
+version = "0.2.0"
 description = "图检索驱动、测试闭环的 Coding Agent 核心框架"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -16,13 +16,18 @@ dependencies = [
 
 [project.optional-dependencies]
 llm = [
-    "litellm>=1.75.5,!=1.82.7,!=1.82.8",
+    # 固定为当前实际验证过的版本，避免不同机器解析到行为差异较大的新版本。
+    "litellm==1.75.5.post2",
+    "python-dotenv>=1.0,<2",
 ]
 dev = [
     "pytest>=8.0",
     "pytest-cov>=5.0",
     "ruff>=0.9",
 ]
+
+[project.scripts]
+tracefix = "tracefix.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

@@ -1,0 +1,7 @@
+{
+  "id": "stable_unique",
+  "title": "稳定去重",
+  "description": "collections_utils.stable_unique 去重后必须保持首次出现顺序，但当前集合实现会打乱顺序。修复并运行测试。",
+  "test_command": "pytest -q",
+  "expected_files": ["collections_utils.py"]
+}

@@ -1,0 +1,7 @@
+{
+  "id": "retry_count",
+  "title": "重试次数语义",
+  "description": "retry.run_with_retries 的 max_retries 表示首次尝试之后允许的重试次数，但当前总尝试次数少一次。修复并运行测试。",
+  "test_command": "pytest -q",
+  "expected_files": ["retry.py"]
+}

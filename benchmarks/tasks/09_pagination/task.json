@@ -1,0 +1,7 @@
+{
+  "id": "pagination",
+  "title": "分页尾项",
+  "description": "pagination.page_items 每页应返回 page_size 个元素，但当前切片总会少一个。修复且保留从 1 开始的页码语义，并运行测试。",
+  "test_command": "pytest -q",
+  "expected_files": ["pagination.py"]
+}

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping
 from typing import Any
 
@@ -13,6 +14,20 @@ _SENSITIVE_KEYS = {
     "password",
     "secret",
 }
+_SENSITIVE_KEY_SUFFIXES = (
+    "_access_token",
+    "_api_key",
+    "_credential",
+    "_password",
+    "_secret",
+)
+_SECRET_VALUE_PATTERN = re.compile(r"\bsk-[A-Za-z0-9_-]{8,}\b")
+
+
+def _is_sensitive_key(value: str) -> bool:
+    """识别供应商前缀形式的密钥字段，例如 DEEPSEEK_API_KEY。"""
+    normalized = value.casefold()
+    return normalized in _SENSITIVE_KEYS or normalized.endswith(_SENSITIVE_KEY_SUFFIXES)
 
 
 def sanitize_payload(value: Any) -> Any:
@@ -21,14 +36,17 @@ def sanitize_payload(value: Any) -> Any:
         return {
             str(key): (
                 "<redacted>"
-                if str(key).lower() in _SENSITIVE_KEYS
+                if _is_sensitive_key(str(key))
                 else sanitize_payload(item)
             )
             for key, item in value.items()
         }
     if isinstance(value, (list, tuple)):
         return [sanitize_payload(item) for item in value]
-    if value is None or isinstance(value, (str, int, float, bool)):
+    if isinstance(value, str):
+        # 部分供应商异常可能把凭据混入错误文本，额外清理常见 sk- 前缀。
+        return _SECRET_VALUE_PATTERN.sub("<redacted>", value)
+    if value is None or isinstance(value, (int, float, bool)):
         return value
     return repr(value)
 
@@ -39,7 +57,9 @@ class TraceFixError(Exception):
     code = "tracefix_error"
 
     def __init__(self, message: str = "", *, context: Mapping[str, Any] | None = None) -> None:
-        self.message = message or self.__class__.__name__
+        # 异常文本也可能来自供应商；在对象创建时脱敏，避免直接打印异常时泄漏密钥。
+        sanitized_message = sanitize_payload(message or self.__class__.__name__)
+        self.message = str(sanitized_message)
         self.context = sanitize_payload(dict(context or {}))
         super().__init__(self.message)
 
@@ -188,3 +208,21 @@ class TraceProtocolError(TraceFixError):
     """轨迹事件或接收器不符合协议。"""
 
     code = "trace_protocol_error"
+
+
+class RunConfigurationError(TraceFixError):
+    """运行入口的环境变量、密钥或参数组合不完整。"""
+
+    code = "run_configuration_error"
+
+
+class WorkspaceError(TraceFixError):
+    """隔离工作区无法校验、创建或读取。"""
+
+    code = "workspace_error"
+
+
+class BenchmarkError(TraceFixError):
+    """基准任务定义或批量评测过程不符合约定。"""
+
+    code = "benchmark_error"

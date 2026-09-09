@@ -1,0 +1,162 @@
+from pathlib import Path
+
+from tracefix import (
+    AgentConfig,
+    ApplyPatchTool,
+    BaseLLM,
+    BenchmarkConfig,
+    BenchmarkRunner,
+    LLMConfig,
+    LLMResponse,
+    Message,
+    MessageRole,
+    RunTestsTool,
+    TokenUsage,
+    ToolCall,
+    TraceFixRunner,
+    load_benchmark_tasks,
+)
+from tracefix.exceptions import BenchmarkError
+
+TASKS_DIR = Path(__file__).parents[1] / "benchmarks" / "tasks"
+
+
+def _call(tool, call_id: str, **arguments):
+    return ToolCall(id=call_id, name=tool.spec.name, arguments=arguments)
+
+
+def test_all_benchmark_tasks_fail_initially_and_gold_patch_passes(tmp_path) -> None:
+    tasks = load_benchmark_tasks(TASKS_DIR)
+    assert len(tasks) == 10
+
+    for task in tasks:
+        repo = task.prepare_source_repository(tmp_path / task.id)
+        tests = RunTestsTool(repo)
+        before = tests.execute(_call(tests, f"before-{task.id}", command=task.test_command))
+        assert not before.success, f"{task.id} 初始测试应该失败"
+
+        patcher = ApplyPatchTool(repo)
+        applied = patcher.execute(
+            _call(
+                patcher,
+                f"patch-{task.id}",
+                patch=task.gold_patch_path.read_text(encoding="utf-8"),
+            )
+        )
+        assert applied.success, f"{task.id}: {applied.error} {applied.output}"
+        assert set(applied.output["changed_files"]) == set(task.expected_files)
+
+        after = tests.execute(_call(tests, f"after-{task.id}", command=task.test_command))
+        assert after.success, f"{task.id} 标准补丁后应该通过: {after.output}"
+
+
+class GoldPatchLLM(BaseLLM):
+    def __init__(self, config: LLMConfig, patch: str) -> None:
+        super().__init__(config)
+        self.patch = patch
+        self.calls = 0
+
+    def complete(self, messages, tools=()):
+        self.calls += 1
+        if self.calls == 1:
+            message = Message(
+                role=MessageRole.ASSISTANT,
+                tool_calls=(
+                    ToolCall(
+                        id="gold-patch",
+                        name="apply_patch",
+                        arguments={"patch": self.patch},
+                    ),
+                ),
+            )
+        else:
+            message = Message(role=MessageRole.ASSISTANT, content="修复完成")
+        return LLMResponse(
+            message=message,
+            usage=TokenUsage(input_tokens=3, output_tokens=2, total_tokens=5, cost_usd=0.001),
+            model_name=self.config.model_name,
+        )
+
+
+def test_benchmark_runner_limits_tasks_verifies_patch_and_writes_summary(
+    tmp_path, monkeypatch
+) -> None:
+    task = load_benchmark_tasks(TASKS_DIR, limit=1)[0]
+    patch = task.gold_patch_path.read_text(encoding="utf-8")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-benchmark-test-123456")
+    runner = TraceFixRunner(lambda config: GoldPatchLLM(config, patch))
+
+    summary = BenchmarkRunner(runner).run(
+        BenchmarkConfig(
+            tasks_dir=TASKS_DIR,
+            output_dir=tmp_path / "runs",
+            limit=1,
+            env_file=None,
+            agent_config=AgentConfig(max_steps=4, max_test_runs=2),
+        )
+    )
+
+    assert summary.task_count == 1
+    assert summary.resolved_count == 1
+    assert summary.resolved_rate == 1
+    assert summary.total_input_tokens == 6
+    assert summary.total_output_tokens == 4
+    assert summary.total_cost_cny_estimate == 0.0144
+    assert summary.results[0].verification.success
+    assert Path(summary.summary_path).is_file()
+
+
+def test_benchmark_loader_rejects_missing_unknown_and_unsafe_tasks(tmp_path) -> None:
+    import json
+
+    import pytest
+
+    with pytest.raises(BenchmarkError):
+        load_benchmark_tasks(tmp_path / "missing")
+    with pytest.raises(BenchmarkError):
+        load_benchmark_tasks(TASKS_DIR, task_ids=("unknown",))
+
+    task_dir = tmp_path / "unsafe"
+    task_dir.mkdir()
+    (task_dir / "task.json").write_text(
+        json.dumps(
+            {
+                "id": "unsafe",
+                "title": "unsafe",
+                "description": "unsafe",
+                "expected_files": ["../secret.py"],
+            }
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(BenchmarkError):
+        load_benchmark_tasks(tmp_path)
+
+
+def test_benchmark_task_checks_artifacts_and_existing_destination(tmp_path) -> None:
+    import json
+
+    import pytest
+
+    task_dir = tmp_path / "task"
+    task_dir.mkdir()
+    manifest = {
+        "id": "fixture",
+        "title": "fixture",
+        "description": "fixture",
+        "expected_files": ["module.py"],
+    }
+    (task_dir / "task.json").write_text(json.dumps(manifest), encoding="utf-8")
+    with pytest.raises(BenchmarkError, match="repository"):
+        load_benchmark_tasks(tmp_path)
+
+    (task_dir / "repo").mkdir()
+    with pytest.raises(BenchmarkError, match="gold patch"):
+        load_benchmark_tasks(tmp_path)
+
+    (task_dir / "gold.patch").write_text("patch", encoding="utf-8")
+    task = load_benchmark_tasks(tmp_path)[0]
+    destination = tmp_path / "exists"
+    destination.mkdir()
+    with pytest.raises(BenchmarkError, match="already exists"):
+        task.prepare_source_repository(destination)

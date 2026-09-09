@@ -1,0 +1,7 @@
+{
+  "id": "date_boundary",
+  "title": "日期边界",
+  "description": "dates.is_in_window 应把起止日期都视为有效范围，但当前排除了边界。修复实现并运行测试。",
+  "test_command": "pytest -q",
+  "expected_files": ["dates.py"]
+}

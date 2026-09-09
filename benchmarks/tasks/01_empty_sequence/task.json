@@ -1,0 +1,7 @@
+{
+  "id": "empty_sequence",
+  "title": "空序列解析",
+  "description": "parser.first_token 在 tokens 为空时会抛出 IndexError。请让空输入返回 None，同时保持非空输入行为不变，并运行测试。",
+  "test_command": "pytest -q",
+  "expected_files": ["parser.py"]
+}

@@ -1,0 +1,7 @@
+{
+  "id": "none_default",
+  "title": "None 配置默认值",
+  "description": "settings.read_timeout 在 timeout 缺失或显式为 None 时都应返回默认值 30，但当前 None 会直接返回。修复并运行测试。",
+  "test_command": "pytest -q",
+  "expected_files": ["settings.py"]
+}

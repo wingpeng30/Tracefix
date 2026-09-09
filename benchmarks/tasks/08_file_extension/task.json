@@ -1,0 +1,7 @@
+{
+  "id": "file_extension",
+  "title": "文件扩展名规范化",
+  "description": "paths.file_extension 应返回不带点的小写扩展名；没有扩展名或仅为隐藏文件名时返回空字符串。修复并运行测试。",
+  "test_command": "pytest -q",
+  "expected_files": ["paths.py"]
+}

@@ -14,9 +14,11 @@ from tracefix.tools.base import ToolRegistry
 from tracefix.tracing.base import TraceSink
 
 DEFAULT_SYSTEM_PROMPT = """你是 TraceFix，一个负责修复 Python 仓库问题的 Coding Agent。
-请先理解问题并使用提供的工具检查仓库，再以尽量小且正确的补丁完成修复。
-修改代码后应运行相关测试，并检查最终 Git diff。
-当你确认任务已经完成时，请返回不包含工具调用的最终说明。"""
+请先理解问题，再使用 search_code 和 read_file 定位相关实现，不要猜测文件内容。
+使用 apply_patch 提交尽量小且聚焦根因的补丁；除非任务明确要求，否则不要修改、删除或跳过测试。
+修改后应使用 run_tests 运行最相关的测试，并使用 get_git_diff 检查最终改动。
+如果工具失败，请根据结构化错误调整方案，不要机械重复相同调用。
+只有确认实现和测试结果后，才返回不包含工具调用的最终说明；说明应概括修改和测试结果。"""
 
 
 class AgentStatus(StrEnum):
@@ -53,6 +55,7 @@ class AgentState(BaseModel):
     input_tokens: int = Field(default=0, ge=0)
     output_tokens: int = Field(default=0, ge=0)
     cost_usd: float = Field(default=0.0, ge=0)
+    cost_complete: bool = True
     test_runs: int = Field(default=0, ge=0)
     started_at: datetime | None = None
     finished_at: datetime | None = None

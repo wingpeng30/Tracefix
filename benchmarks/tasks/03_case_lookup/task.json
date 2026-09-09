@@ -1,0 +1,7 @@
+{
+  "id": "case_lookup",
+  "title": "大小写无关查找",
+  "description": "lookup.find_value 的键查找应忽略大小写并保留原映射值；当前只能精确匹配。修复实现并运行测试。",
+  "test_command": "pytest -q",
+  "expected_files": ["lookup.py"]
+}

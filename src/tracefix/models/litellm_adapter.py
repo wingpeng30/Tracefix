@@ -158,7 +158,12 @@ class LiteLLMAdapter(BaseLLM):
         input_tokens = int(_get(usage, "prompt_tokens", 0) or 0)
         output_tokens = int(_get(usage, "completion_tokens", 0) or 0)
         total_tokens = int(_get(usage, "total_tokens", input_tokens + output_tokens) or 0)
-        cost = self._calculate_cost(client, response)
+        cost = self._calculate_cost(
+            client,
+            response,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+        )
         return TokenUsage(
             input_tokens=input_tokens,
             output_tokens=output_tokens,
@@ -166,16 +171,43 @@ class LiteLLMAdapter(BaseLLM):
             cost_usd=cost,
         )
 
-    def _calculate_cost(self, client: Any, response: Any) -> float | None:
-        try:
-            direct = getattr(client, "completion_cost", None)
-            if callable(direct):
+    def _calculate_cost(
+        self,
+        client: Any,
+        response: Any,
+        *,
+        input_tokens: int,
+        output_tokens: int,
+    ) -> float | None:
+        """优先读取响应费用，失败时仍使用 LiteLLM 自带价格表估算。"""
+        direct = getattr(client, "completion_cost", None)
+        if callable(direct):
+            try:
                 return float(direct(completion_response=response))
-            calculator = getattr(getattr(client, "cost_calculator", None), "completion_cost", None)
-            if callable(calculator):
+            except Exception:
+                # 新模型可能已能请求，但旧版 completion_cost 还不能识别响应中的模型别名。
+                pass
+
+        calculator = getattr(getattr(client, "cost_calculator", None), "completion_cost", None)
+        if callable(calculator):
+            try:
                 return float(calculator(response, model=self.config.model_name))
-        except Exception:
-            return None
+            except Exception:
+                pass
+
+        per_token = getattr(client, "cost_per_token", None)
+        if callable(per_token):
+            try:
+                input_cost, output_cost = per_token(
+                    model=self.config.model_name,
+                    prompt_tokens=input_tokens,
+                    completion_tokens=output_tokens,
+                    # LiteLLM 可从原始 usage 中识别缓存命中 Token，避免按普通输入价高估。
+                    usage_object=_get(response, "usage"),
+                )
+                return float(input_cost) + float(output_cost)
+            except Exception:
+                pass
         return None
 
     @staticmethod

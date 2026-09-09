@@ -293,7 +293,11 @@ class MinimalAgent(BaseAgent):
         """累计一次已成功解析的模型调用用量。"""
         self.state.input_tokens += usage.input_tokens
         self.state.output_tokens += usage.output_tokens
-        self.state.cost_usd += usage.cost_usd or 0.0
+        if usage.cost_usd is None:
+            # 未知费用不能冒充为零；保留已知部分并标记汇总不完整。
+            self.state.cost_complete = False
+        else:
+            self.state.cost_usd += usage.cost_usd
 
     def _add_usage_dict(self, usage: dict[str, Any]) -> None:
         """从格式错误上下文中尽力恢复可计费的 usage。"""
@@ -307,6 +311,8 @@ class MinimalAgent(BaseAgent):
         cost = usage.get("cost_usd")
         if isinstance(cost, (int, float)) and cost >= 0:
             self.state.cost_usd += float(cost)
+        else:
+            self.state.cost_complete = False
 
     def _append_message(self, message: Message) -> None:
         """追加消息并同步发送追踪事件。"""

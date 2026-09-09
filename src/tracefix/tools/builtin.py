@@ -33,6 +33,7 @@ _SKIPPED_DIRECTORIES = frozenset(
     }
 )
 _SHELL_CONTROL_PATTERN = re.compile(r"[|&;<>`\r\n]")
+_SENSITIVE_ENV_MARKERS = ("API_KEY", "ACCESS_TOKEN", "PASSWORD", "SECRET", "CREDENTIAL")
 
 
 def _truncate_text(value: str, limit: int) -> tuple[str, bool]:
@@ -51,6 +52,24 @@ def _decode_timeout_output(value: str | bytes | None) -> str:
     if isinstance(value, bytes):
         return value.decode("utf-8", errors="replace")
     return value or ""
+
+
+def _sanitized_subprocess_env() -> dict[str, str]:
+    """复制必要环境并移除模型密钥，避免被目标仓库的测试代码读取。"""
+    safe = dict(os.environ)
+    for name in tuple(safe):
+        normalized = name.upper()
+        if any(marker in normalized for marker in _SENSITIVE_ENV_MARKERS):
+            safe.pop(name, None)
+    return safe
+
+
+def _is_blocked_secret_file(name: str) -> bool:
+    """阻止真实 dotenv 文件，同时允许公开的 .env.example 模板。"""
+    normalized = name.casefold()
+    return normalized == ".env" or (
+        normalized.startswith(".env.") and normalized != ".env.example"
+    )
 
 
 def _resolve_workspace(workspace: str | Path) -> Path:
@@ -100,6 +119,11 @@ def _resolve_path(
     if any(part.casefold() == ".git" or part == ".." for part in relative.parts):
         raise ToolValidationError(
             "path traversal and .git access are not allowed",
+            context={"path": value},
+        )
+    if _is_blocked_secret_file(relative.name):
+        raise ToolValidationError(
+            "secret environment files cannot be accessed",
             context={"path": value},
         )
 
@@ -201,6 +225,8 @@ class SearchCodeTool(_WorkspaceTool):
                 continue
             relative = path.relative_to(self.workspace)
             if any(part in _SKIPPED_DIRECTORIES for part in relative.parts):
+                continue
+            if _is_blocked_secret_file(relative.name):
                 continue
             # glob 可能命中符号链接文件，读取前再次解析以阻止链接逃逸。
             path = _resolve_path(self.workspace, relative.as_posix(), must_exist=True)
@@ -428,19 +454,24 @@ class ApplyPatchTool(_WorkspaceTool):
             command.append("--check")
         command.append("-")
         try:
-            return subprocess.run(
+            # Windows 文本管道会把 LF 转成 CRLF，使补丁上下文凭空多出 \r；
+            # 直接发送 UTF-8 字节可让相同 gold patch 跨平台稳定应用。
+            raw = subprocess.run(
                 command,
                 cwd=self.workspace,
-                input=patch,
+                input=patch.encode("utf-8"),
                 capture_output=True,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
                 timeout=30,
                 check=False,
             )
         except (OSError, subprocess.SubprocessError) as exc:
             raise ToolExecutionError(f"cannot run git apply: {exc}") from exc
+        return subprocess.CompletedProcess(
+            args=raw.args,
+            returncode=raw.returncode,
+            stdout=raw.stdout.decode("utf-8", errors="replace"),
+            stderr=raw.stderr.decode("utf-8", errors="replace"),
+        )
 
 
 class _RunTestsArgs(BaseModel):
@@ -483,6 +514,7 @@ class RunTestsTool(_WorkspaceTool):
             completed = subprocess.run(
                 command,
                 cwd=self.workspace,
+                env=_sanitized_subprocess_env(),
                 capture_output=True,
                 text=True,
                 encoding="utf-8",

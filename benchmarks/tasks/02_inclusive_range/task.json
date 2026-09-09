@@ -1,0 +1,7 @@
+{
+  "id": "inclusive_range",
+  "title": "闭区间边界",
+  "description": "ranges.numbers_between 应返回包含 start 和 end 的整数闭区间，但当前漏掉了 end。修复实现并运行测试。",
+  "test_command": "pytest -q",
+  "expected_files": ["ranges.py"]
+}

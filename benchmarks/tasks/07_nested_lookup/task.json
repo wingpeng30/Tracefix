@@ -1,0 +1,7 @@
+{
+  "id": "nested_lookup",
+  "title": "嵌套键安全读取",
+  "description": "nested.get_nested 在路径缺失时应返回调用者给出的 default，而不是抛出 KeyError。修复并运行测试。",
+  "test_command": "pytest -q",
+  "expected_files": ["nested.py"]
+}
