@@ -8,6 +8,7 @@ from tracefix.agent.base import (
     BaseAgent,
 )
 from tracefix.agent.minimal import MinimalAgent
+from tracefix.context import ContextConfig, ContextManager, ContextMetrics, ContextView
 
 __all__ = [
     "DEFAULT_SYSTEM_PROMPT",
@@ -15,5 +16,9 @@ __all__ = [
     "AgentState",
     "AgentStatus",
     "BaseAgent",
+    "ContextConfig",
+    "ContextManager",
+    "ContextMetrics",
+    "ContextView",
     "MinimalAgent",
 ]

@@ -12,6 +12,7 @@ from pydantic import ValidationError
 
 from tracefix.agent import AgentConfig, AgentStatus
 from tracefix.benchmark import BenchmarkConfig, BenchmarkRunner
+from tracefix.context import ContextConfig
 from tracefix.exceptions import TraceFixError
 from tracefix.runtime import (
     DEFAULT_MODEL_NAME,
@@ -39,6 +40,19 @@ def _first(value: Any, env_name: str, default: Any) -> Any:
         return value
     env_value = os.getenv(env_name)
     return env_value if env_value not in {None, ""} else default
+
+
+def _env_bool(name: str, default: bool) -> bool:
+    """解析常用布尔环境变量拼写，拒绝含糊值。"""
+    value = os.getenv(name)
+    if value is None or not value.strip():
+        return default
+    normalized = value.strip().casefold()
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "off"}:
+        return False
+    raise ValueError(f"环境变量 {name} 必须是布尔值")
 
 
 def _number_or_default(
@@ -71,6 +85,17 @@ def _add_shared_options(parser: argparse.ArgumentParser) -> None:
         "--per-request-output-tokens",
         type=int,
         help="单次模型响应的最大输出 Token",
+    )
+    parser.add_argument(
+        "--no-context-compaction",
+        action="store_true",
+        default=None,
+        help="关闭工具结果裁剪和历史折叠，用于运行未压缩对照组",
+    )
+    parser.add_argument("--context-window-tokens", type=int, help="模型单次请求硬窗口")
+    parser.add_argument("--context-trigger-tokens", type=int, help="历史折叠软阈值")
+    parser.add_argument(
+        "--context-retain-ratio", type=float, help="折叠后保留近期轮次的比例"
     )
 
 
@@ -148,6 +173,31 @@ def _resolve_shared(args: argparse.Namespace) -> dict[str, Any]:
             max_test_runs=_number_or_default(
                 args.max_test_runs, "TRACEFIX_MAX_TEST_RUNS", int, 8
             ),
+            context=ContextConfig(
+                enabled=(
+                    not args.no_context_compaction
+                    if args.no_context_compaction is not None
+                    else _env_bool("TRACEFIX_CONTEXT_ENABLED", True)
+                ),
+                context_window_tokens=_number_or_default(
+                    args.context_window_tokens,
+                    "TRACEFIX_CONTEXT_WINDOW_TOKENS",
+                    int,
+                    1_000_000,
+                ),
+                compaction_trigger_tokens=_number_or_default(
+                    args.context_trigger_tokens,
+                    "TRACEFIX_CONTEXT_TRIGGER_TOKENS",
+                    int,
+                    32_000,
+                ),
+                retain_ratio=_number_or_default(
+                    args.context_retain_ratio,
+                    "TRACEFIX_CONTEXT_RETAIN_RATIO",
+                    float,
+                    0.375,
+                ),
+            ),
         ),
     }
 
@@ -167,6 +217,13 @@ def _print_run_result(result: Any) -> None:
     print(f"状态: {result.status.value}")
     print(f"步骤: {result.step_count}")
     print(f"Token: 输入 {result.input_tokens} / 输出 {result.output_tokens}")
+    context_metrics = result.context_metrics
+    print(
+        "上下文: "
+        f"折叠 {context_metrics.compaction_count} 次 / "
+        f"裁剪工具结果 {context_metrics.tool_results_pruned} 次 / "
+        f"估算节省 {context_metrics.estimated_tokens_saved} Token"
+    )
     if result.cost_complete:
         print(
             f"费用: ${result.cost_usd:.8f} / 约 ¥{result.cost_cny_estimate:.8f} "

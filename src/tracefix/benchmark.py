@@ -12,6 +12,7 @@ from uuid import uuid4
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, model_validator
 
 from tracefix.agent import AgentConfig
+from tracefix.context import ContextMetrics
 from tracefix.exceptions import BenchmarkError, sanitize_payload
 from tracefix.messages import ToolCall
 from tracefix.runtime import (
@@ -210,6 +211,7 @@ class BenchmarkSummary(BaseModel):
     cost_complete: bool
     usd_cny_rate: float = Field(gt=0)
     total_cost_cny_estimate: float | None = Field(default=None, ge=0)
+    context_metrics: ContextMetrics = Field(default_factory=ContextMetrics)
     results: tuple[BenchmarkTaskResult, ...]
     summary_path: str
 
@@ -340,6 +342,26 @@ class BenchmarkRunner:
         }
         sanitized = sanitize_payload(payload)
         assert isinstance(sanitized, dict)
+        context_metrics = ContextMetrics(
+            preparation_count=sum(
+                item.run.context_metrics.preparation_count for item in results
+            ),
+            compaction_count=sum(
+                item.run.context_metrics.compaction_count for item in results
+            ),
+            tool_results_pruned=sum(
+                item.run.context_metrics.tool_results_pruned for item in results
+            ),
+            messages_compacted=sum(
+                item.run.context_metrics.messages_compacted for item in results
+            ),
+            batches_compacted=sum(
+                item.run.context_metrics.batches_compacted for item in results
+            ),
+            estimated_tokens_saved=sum(
+                item.run.context_metrics.estimated_tokens_saved for item in results
+            ),
+        )
         return BenchmarkSummary(
             batch_id=batch_id,
             started_at=started_at,
@@ -358,6 +380,7 @@ class BenchmarkRunner:
             total_cost_cny_estimate=(
                 round(total_usd * usd_cny_rate, 8) if cost_complete else None
             ),
+            context_metrics=context_metrics,
             results=tuple(results),
             summary_path=str(summary_path),
         )

@@ -19,6 +19,7 @@ from tracefix import (
 from tracefix.exceptions import BenchmarkError
 
 TASKS_DIR = Path(__file__).parents[1] / "benchmarks" / "tasks"
+BASELINE_PATH = Path(__file__).parents[1] / "benchmarks" / "baselines" / "v0.2.0.json"
 
 
 def _call(tool, call_id: str, **arguments):
@@ -48,6 +49,20 @@ def test_all_benchmark_tasks_fail_initially_and_gold_patch_passes(tmp_path) -> N
 
         after = tests.execute(_call(tests, f"after-{task.id}", command=task.test_command))
         assert after.success, f"{task.id} 标准补丁后应该通过: {after.output}"
+
+
+def test_checked_in_baseline_is_complete_and_sanitized() -> None:
+    """版本化 Baseline 只包含复现实验所需的脱敏聚合数据。"""
+    import json
+
+    payload = json.loads(BASELINE_PATH.read_text(encoding="utf-8"))
+    serialized = json.dumps(payload).casefold()
+    assert payload["tracefix_version"] == "0.2.0"
+    assert len(payload["tasks"]) == 10
+    assert sum(item["input_tokens"] for item in payload["tasks"]) == 184_730
+    assert sum(item["output_tokens"] for item in payload["tasks"]) == 8_982
+    assert "d:\\tracefix" not in serialized
+    assert "api_key" not in serialized
 
 
 class GoldPatchLLM(BaseLLM):
@@ -102,6 +117,7 @@ def test_benchmark_runner_limits_tasks_verifies_patch_and_writes_summary(
     assert summary.total_input_tokens == 6
     assert summary.total_output_tokens == 4
     assert summary.total_cost_cny_estimate == 0.0144
+    assert summary.context_metrics.preparation_count == 2
     assert summary.results[0].verification.success
     assert Path(summary.summary_path).is_file()
 

@@ -1,0 +1,58 @@
+{
+  "schema_version": 1,
+  "baseline_id": "tracefix-v0.2.0-synthetic-10",
+  "tracefix_version": "0.2.0",
+  "tracefix_commit": "657fdc1714daa1f7197c309628a27f22f113899e",
+  "recorded_at": "2026-09-09T04:25:51.426286Z",
+  "model_name": "deepseek/deepseek-v4-flash",
+  "context_compaction_enabled": false,
+  "task_suite": "benchmarks/tasks",
+  "task_kind": "synthetic_python_bugs",
+  "budgets": {
+    "max_steps": 12,
+    "max_input_tokens": 40000,
+    "max_output_tokens": 8000,
+    "wall_time_seconds": 300,
+    "max_test_runs": 4
+  },
+  "usd_cny_rate": 7.2,
+  "aggregate": {
+    "task_count": 10,
+    "resolved_count": 10,
+    "resolved_rate": 1.0,
+    "input_tokens": 184730,
+    "output_tokens": 8982,
+    "steps": 74,
+    "agent_test_runs": 10,
+    "duration_seconds": 93.546,
+    "tool_calls": 87,
+    "exact_duplicate_tool_calls": 6,
+    "cost_usd": 0.025195552,
+    "cost_cny_estimate": 0.18140797,
+    "cost_complete": true,
+    "tool_counts": {
+      "apply_patch": 24,
+      "get_git_diff": 12,
+      "read_file": 22,
+      "run_tests": 10,
+      "search_code": 19
+    }
+  },
+  "tasks": [
+    {"id":"empty_sequence","resolved":true,"steps":5,"input_tokens":9667,"output_tokens":498,"test_runs":1,"duration_seconds":10.875,"tool_calls":7,"exact_duplicate_tool_calls":0,"cost_usd":0.001584632,"cost_cny_estimate":0.01140935},
+    {"id":"inclusive_range","resolved":true,"steps":6,"input_tokens":11435,"output_tokens":476,"test_runs":1,"duration_seconds":5.954,"tool_calls":6,"exact_duplicate_tool_calls":0,"cost_usd":0.001897288,"cost_cny_estimate":0.01366047},
+    {"id":"case_lookup","resolved":true,"steps":5,"input_tokens":9890,"output_tokens":558,"test_runs":1,"duration_seconds":5.969,"tool_calls":7,"exact_duplicate_tool_calls":0,"cost_usd":0.001707424,"cost_cny_estimate":0.01229345},
+    {"id":"stable_unique","resolved":true,"steps":5,"input_tokens":9941,"output_tokens":538,"test_runs":1,"duration_seconds":6.5,"tool_calls":7,"exact_duplicate_tool_calls":0,"cost_usd":0.001648936,"cost_cny_estimate":0.01187234},
+    {"id":"none_default","resolved":true,"steps":6,"input_tokens":12579,"output_tokens":648,"test_runs":1,"duration_seconds":6.562,"tool_calls":7,"exact_duplicate_tool_calls":0,"cost_usd":0.001864296,"cost_cny_estimate":0.01342293},
+    {"id":"date_boundary","resolved":true,"steps":10,"input_tokens":26377,"output_tokens":1018,"test_runs":1,"duration_seconds":10.14,"tool_calls":11,"exact_duplicate_tool_calls":1,"cost_usd":0.002971016,"cost_cny_estimate":0.02139132},
+    {"id":"nested_lookup","resolved":true,"steps":11,"input_tokens":33649,"output_tokens":1537,"test_runs":1,"duration_seconds":13.953,"tool_calls":12,"exact_duplicate_tool_calls":2,"cost_usd":0.003965792,"cost_cny_estimate":0.0285537},
+    {"id":"file_extension","resolved":true,"steps":10,"input_tokens":26663,"output_tokens":1281,"test_runs":1,"duration_seconds":11.046,"tool_calls":12,"exact_duplicate_tool_calls":3,"cost_usd":0.003389488,"cost_cny_estimate":0.02440431},
+    {"id":"pagination","resolved":true,"steps":10,"input_tokens":30264,"output_tokens":1691,"test_runs":1,"duration_seconds":14.485,"tool_calls":11,"exact_duplicate_tool_calls":0,"cost_usd":0.003988344,"cost_cny_estimate":0.02871608},
+    {"id":"retry_count","resolved":true,"steps":6,"input_tokens":14265,"output_tokens":737,"test_runs":1,"duration_seconds":8.062,"tool_calls":7,"exact_duplicate_tool_calls":0,"cost_usd":0.002178336,"cost_cny_estimate":0.01568402}
+  ],
+  "limitations": [
+    "The suite contains small synthetic Python bugs.",
+    "Resolved rate must not be presented as real GitHub Issue or SWE-bench performance.",
+    "No raw provider response, local path, secret, workspace, or full trajectory is included."
+  ]
+}

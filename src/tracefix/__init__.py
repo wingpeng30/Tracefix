@@ -16,12 +16,15 @@ from tracefix.benchmark import (
     BenchmarkTaskResult,
     load_benchmark_tasks,
 )
+from tracefix.context import ContextConfig, ContextManager, ContextMetrics, ContextView
 from tracefix.exceptions import (
     AgentCompleted,
     AgentError,
     AgentInterrupted,
     AgentLimitExceeded,
     BenchmarkError,
+    ContextBudgetExceeded,
+    ContextError,
     LLMAuthenticationError,
     LLMContextWindowError,
     LLMError,
@@ -71,7 +74,7 @@ from tracefix.tools import (
 )
 from tracefix.tracing import JSONLTraceSink, TraceEvent, TraceEventType, TraceSink
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 
 __all__ = [
     "RESERVED_TOOL_NAMES",
@@ -95,6 +98,12 @@ __all__ = [
     "BenchmarkSummary",
     "BenchmarkTask",
     "BenchmarkTaskResult",
+    "ContextBudgetExceeded",
+    "ContextConfig",
+    "ContextError",
+    "ContextManager",
+    "ContextMetrics",
+    "ContextView",
     "GetGitDiffTool",
     "LLMAuthenticationError",
     "LLMConfig",

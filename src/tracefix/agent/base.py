@@ -8,6 +8,7 @@ from enum import StrEnum
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from tracefix.context import ContextConfig, ContextManager, ContextMetrics
 from tracefix.messages import MessageHistory
 from tracefix.models.base import BaseLLM
 from tracefix.tools.base import ToolRegistry
@@ -42,6 +43,7 @@ class AgentConfig(BaseModel):
     max_output_tokens: int = Field(default=20_000, ge=1)
     wall_time_seconds: int = Field(default=1_200, ge=1)
     max_test_runs: int = Field(default=8, ge=1)
+    context: ContextConfig = Field(default_factory=ContextConfig)
 
 
 class AgentState(BaseModel):
@@ -61,6 +63,7 @@ class AgentState(BaseModel):
     finished_at: datetime | None = None
     stop_reason: str | None = None
     final_output: str | None = None
+    context_metrics: ContextMetrics = Field(default_factory=ContextMetrics)
 
     @model_validator(mode="after")
     def validate_timestamps(self) -> AgentState:
@@ -89,11 +92,13 @@ class BaseAgent(ABC):
         self.trace_sink = trace_sink
         self.history = MessageHistory()
         self.state = AgentState()
+        self.context_manager = ContextManager(self.config.context.model_copy(deep=True))
 
     def reset(self) -> None:
         """重置单次任务状态，同时保留模型、工具和追踪器依赖。"""
         self.history = MessageHistory()
         self.state = AgentState()
+        self.context_manager = ContextManager(self.config.context.model_copy(deep=True))
 
     @abstractmethod
     def run(self, task: str) -> AgentState:

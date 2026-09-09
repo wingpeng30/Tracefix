@@ -2,6 +2,7 @@ from types import SimpleNamespace
 
 from tracefix.agent import AgentStatus
 from tracefix.cli import main
+from tracefix.context import ContextMetrics
 
 
 def _run_result(status: AgentStatus = AgentStatus.COMPLETED):
@@ -18,6 +19,7 @@ def _run_result(status: AgentStatus = AgentStatus.COMPLETED):
         diff_path="patch.diff",
         final_output="done",
         error=None,
+        context_metrics=ContextMetrics(),
     )
 
 
@@ -135,6 +137,58 @@ def test_cli_does_not_silently_replace_out_of_range_environment_value(
 
     assert code == 2
     assert "max_steps" in capsys.readouterr().err
+
+
+def test_cli_context_options_override_environment(tmp_path, monkeypatch) -> None:
+    """CLI 显式值覆盖环境变量，关闭开关可以构造未压缩对照组。"""
+    captured = []
+
+    class FakeRunner:
+        def run(self, config):
+            captured.append(config)
+            return _run_result()
+
+    monkeypatch.setattr("tracefix.cli.TraceFixRunner", FakeRunner)
+    monkeypatch.setenv("TRACEFIX_CONTEXT_TRIGGER_TOKENS", "64000")
+    code = main(
+        [
+            "run",
+            "--repo",
+            str(tmp_path),
+            "--task",
+            "fix",
+            "--no-context-compaction",
+            "--context-window-tokens",
+            "1000000",
+            "--context-trigger-tokens",
+            "3000",
+            "--context-retain-ratio",
+            "0.4",
+            "--env-file",
+            str(tmp_path / "missing.env"),
+        ]
+    )
+    assert code == 0
+    context = captured[0].agent_config.context
+    assert context.enabled is False
+    assert context.context_window_tokens == 1_000_000
+    assert context.compaction_trigger_tokens == 3_000
+    assert context.retain_ratio == 0.4
+
+
+def test_cli_rejects_invalid_context_boolean_environment(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("TRACEFIX_CONTEXT_ENABLED", "sometimes")
+    assert main(
+        [
+            "run",
+            "--repo",
+            str(tmp_path),
+            "--task",
+            "fix",
+            "--env-file",
+            str(tmp_path / "missing.env"),
+        ]
+    ) == 2
 
 
 def test_cli_direct_task_reports_interruption_and_incomplete_cost(

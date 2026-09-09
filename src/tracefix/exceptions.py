@@ -204,6 +204,18 @@ class MessageProtocolError(TraceFixError):
     code = "message_protocol_error"
 
 
+class ContextError(TraceFixError):
+    """上下文估算、裁剪或折叠过程不符合约定。"""
+
+    code = "context_error"
+
+
+class ContextBudgetExceeded(ContextError):
+    """最小安全请求仍超过配置的模型硬窗口。"""
+
+    code = "context_budget_exceeded"
+
+
 class TraceProtocolError(TraceFixError):
     """轨迹事件或接收器不符合协议。"""
 

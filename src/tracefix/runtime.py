@@ -14,6 +14,7 @@ from uuid import uuid4
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, model_validator
 
 from tracefix.agent import AgentConfig, AgentState, AgentStatus, MinimalAgent
+from tracefix.context import ContextMetrics
 from tracefix.exceptions import (
     RunConfigurationError,
     TraceFixError,
@@ -113,6 +114,7 @@ class RunResult(BaseModel):
     diff_path: str
     result_path: str
     agent_config: AgentConfig
+    context_metrics: ContextMetrics = Field(default_factory=ContextMetrics)
     error: dict[str, JsonValue] | None = None
 
     @model_validator(mode="after")
@@ -256,6 +258,7 @@ class TraceFixRunner:
             diff_path=str(diff_path),
             result_path=str(result_path),
             agent_config=config.agent_config.model_copy(deep=True),
+            context_metrics=state.context_metrics.model_copy(deep=True),
             error=error,
         )
         result_path.write_text(result.model_dump_json(indent=2), encoding="utf-8")

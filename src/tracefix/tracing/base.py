@@ -15,6 +15,8 @@ class TraceEventType(StrEnum):
 
     TASK_STARTED = "task_started"
     MESSAGE_ADDED = "message_added"
+    CONTEXT_PREPARED = "context_prepared"
+    CONTEXT_COMPACTED = "context_compacted"
     MODEL_REQUESTED = "model_requested"
     MODEL_RESPONDED = "model_responded"
     TOOL_CALLED = "tool_called"

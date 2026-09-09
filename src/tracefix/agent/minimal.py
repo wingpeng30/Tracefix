@@ -96,13 +96,47 @@ class MinimalAgent(BaseAgent):
 
         self._check_pre_request_budgets()
         self.state.step_count += 1
+        tool_specs = self.tools.specs()
+        context_view = self.context_manager.prepare(self.history.snapshot(), tool_specs)
+        self.state.context_metrics.add_view(context_view)
+        self._emit(
+            TraceEventType.CONTEXT_PREPARED,
+            {
+                "estimated_tokens_before": context_view.estimated_tokens_before,
+                "estimated_tokens_after": context_view.estimated_tokens_after,
+                "original_message_count": context_view.original_message_count,
+                "request_message_count": context_view.request_message_count,
+                "tool_results_pruned": context_view.tool_results_pruned,
+                "messages_compacted": context_view.messages_compacted,
+                "batches_compacted": context_view.batches_compacted,
+                "compacted": context_view.compacted,
+            },
+        )
+        if context_view.compacted or context_view.tool_results_pruned:
+            self._emit(
+                TraceEventType.CONTEXT_COMPACTED,
+                {
+                    "estimated_tokens_saved": max(
+                        0,
+                        context_view.estimated_tokens_before
+                        - context_view.estimated_tokens_after,
+                    ),
+                    "tool_results_pruned": context_view.tool_results_pruned,
+                    "messages_compacted": context_view.messages_compacted,
+                    "batches_compacted": context_view.batches_compacted,
+                },
+            )
         self._emit(
             TraceEventType.MODEL_REQUESTED,
-            {"message_count": len(self.history), "tool_names": list(self.tools.names)},
+            {
+                "message_count": context_view.request_message_count,
+                "tool_names": list(self.tools.names),
+            },
         )
 
         try:
-            response = self.llm.complete(self.history.snapshot(), self.tools.specs())
+            # 压缩仅影响供应商请求；self.history 仍保留完整审计轨迹。
+            response = self.llm.complete(context_view.messages, tool_specs)
         except LLMResponseFormatError as exc:
             # 响应解析失败也可能已经产生费用；尽量从异常上下文追回 usage。
             usage = exc.context.get("usage")
