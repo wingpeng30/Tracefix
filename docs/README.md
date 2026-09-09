@@ -1,0 +1,37 @@
+# TraceFix 文档索引
+
+本目录保存代码演进、实验解释和后续任务记录。README 首页只保留当前使用方法与主要结果，
+完整的历史和证据从这里进入。
+
+## 项目历程
+
+- [`development-history.md`](development-history.md)：从 V0 接口骨架到 V0.3.1 长上下文
+  A/B 的代码说明、设计取舍、验证结果和 Git 版本。
+
+## 实验记录
+
+- [`experiments/README.md`](experiments/README.md)：所有 Baseline、压力实验、回归实验和
+  A/B 的统一索引与结论边界。
+- [`experiments/v0.3.0-context-3k.md`](experiments/v0.3.0-context-3k.md)：3k 压缩压力
+  实验、7/10 失败分析和修复启示。
+- [`experiments/v0.3.1-agent-loop-regression.md`](experiments/v0.3.1-agent-loop-regression.md)：
+  补丁协议与 Agent 收尾修复后的 10/10 回归。
+- [`experiments/v0.3.1-context-32k-ab.md`](experiments/v0.3.1-context-32k-ab.md)：关闭压缩
+  与生产 32k 阈值的真实 API 对照。
+
+机器可读、已脱敏的指标保存在 `benchmarks/baselines/` 和 `benchmarks/experiments/`。
+完整工作区、模型消息和轨迹只保存在被 Git 忽略的本机 `runs/` 中。
+
+## 留档规范
+
+从当前版本开始，每项代码任务结束时至少记录：
+
+1. 任务目标、实际改动、关键设计取舍和明确非目标。
+2. 涉及的主要模块、公共接口和兼容性影响。
+3. pytest、覆盖率、Ruff、compileall 或其他相关验证。
+4. 若有实验，记录模型、任务、预算、对照条件、Token、费用、成功率和局限。
+5. 对应 commit、tag，以及是否已经推送远程。
+
+代码任务说明进入 `development-history.md` 或单独的 `docs/tasks/` 文档；实验解释进入
+`docs/experiments/`，结构化数据进入 `benchmarks/experiments/`。聊天中的结论不能作为
+唯一留档。
