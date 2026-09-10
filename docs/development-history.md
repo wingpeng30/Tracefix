@@ -165,6 +165,12 @@ pytest、Pylint 和 Sphinx，gold patch 均实际修改多个源码文件；源�
 在 base 上失败、gold 后通过；仍未执行官方 Docker PASS_TO_PASS，也不形成 Agent 解决率结论。完整说明见
 [`tasks/v0.5.0-real-github-issue-tasks.md`](tasks/v0.5.0-real-github-issue-tasks.md)。
 
-当前自动化验收为 `152 passed`、覆盖率达到 90% 门槛，Ruff 与 compileall 通过；三个上游
+当前自动化验收为 `155 passed`、覆盖率达到 90% 门槛，Ruff 与 compileall 通过；三个上游
 固定提交均成功检出，三个隐藏测试补丁与 gold patch 组合均通过 `git apply --check`，且
 3/3 base 隐藏验收失败、3/3 gold 隐藏验收通过。
+
+32k 单次预筛选固定在 commit `6a5537f`，三题最大单次请求估算为 13,972～28,257 Token，
+0/3 发生历史折叠，因此按预注册门槛跳过正式配对实验。三题合计 751,769 输入 Token、
+9,471 输出 Token，费用 `$0.04610248` / 约 `¥0.33193786`。主要失败是搜索和跨文件定位，
+下一主功能确定为 AST 符号索引与确定性 Repo Map；详细解释见
+[`experiments/v0.5.0-real-issue-32k-prescreen.md`](experiments/v0.5.0-real-issue-32k-prescreen.md)。

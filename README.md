@@ -229,6 +229,11 @@ tracefix eval `
 当前机器没有 Docker，因此尚未执行官方完整 `PASS_TO_PASS`；这仍不是 Agent 解决率。详细边界和验证证据见
 [`docs/tasks/v0.5.0-real-github-issue-tasks.md`](docs/tasks/v0.5.0-real-github-issue-tasks.md)。
 
+首次 32k 预筛选在固定 commit `6a5537f` 上完成：三题最大单次请求估算为 13.9k～28.3k，
+0/3 触发历史折叠，所以没有继续花费 18 次正式配对实验。Pylint/Sphinx 主要卡在文件定位，
+pytest 虽形成补丁闭环却修改测试且未过隐藏验收；下一主功能据此选择 AST Repo Map。完整数据
+与解释见 [`docs/experiments/v0.5.0-real-issue-32k-prescreen.md`](docs/experiments/v0.5.0-real-issue-32k-prescreen.md)。
+
 ## v0.2.0 Baseline
 
 2026-09-09 使用 `deepseek/deepseek-v4-flash` 完成全部 10 个合成任务。评测器只以 Agent

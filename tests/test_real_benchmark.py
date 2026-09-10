@@ -16,6 +16,12 @@ REAL_VALIDATION_PATH = (
     / "experiments"
     / "v0.5.0-real-task-fixture-validation.json"
 )
+REAL_PRESCREEN_PATH = (
+    Path(__file__).parents[1]
+    / "benchmarks"
+    / "experiments"
+    / "v0.5.0-real-issue-32k-prescreen.json"
+)
 
 
 GOLD_PATCH = """diff --git a/pkg/a.py b/pkg/a.py
@@ -207,6 +213,19 @@ def test_checked_in_real_task_validation_has_honest_boundaries() -> None:
     assert payload["validation"]["all_gold_hidden_tests_passed"] is True
     assert all(task["test_environment_fingerprint"] for task in payload["tasks"])
     assert payload["validation"]["model_runs"] == 0
+    assert "d:\\tracefix" not in serialized
+    assert "api_key" not in serialized
+
+
+def test_checked_in_real_prescreen_is_sanitized_and_did_not_fake_ab() -> None:
+    payload = json.loads(REAL_PRESCREEN_PATH.read_text(encoding="utf-8"))
+    serialized = json.dumps(payload).casefold()
+
+    assert payload["aggregate"]["task_count"] == 3
+    assert payload["aggregate"]["eligible_task_count"] == 0
+    assert payload["aggregate"]["history_compaction_count"] == 0
+    assert payload["aggregate"]["formal_paired_experiment_started"] is False
+    assert payload["decision"]["formal_paired_experiment"] == "skipped"
     assert "d:\\tracefix" not in serialized
     assert "api_key" not in serialized
 

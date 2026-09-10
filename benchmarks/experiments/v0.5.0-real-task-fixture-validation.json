@@ -19,7 +19,7 @@
     "model_cost_usd": 0.0
   },
   "automated_acceptance": {
-    "pytest_passed": 152,
+    "pytest_passed": 155,
     "coverage_percent": 90.0,
     "coverage_threshold_percent": 90.0,
     "ruff_check": "passed",
