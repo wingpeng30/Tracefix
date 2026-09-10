@@ -83,7 +83,7 @@ def _resolve_workspace(workspace: str | Path) -> Path:
         )
     try:
         result = subprocess.run(
-            ["git", "rev-parse", "--verify", "HEAD"],
+            ["git", "-c", "core.longpaths=true", "rev-parse", "--verify", "HEAD"],
             cwd=root,
             capture_output=True,
             text=True,
@@ -608,7 +608,15 @@ class ApplyPatchTool(_WorkspaceTool):
         """通过标准输入传递补丁，避免生成临时文件或发生 Shell 插值。"""
         # --recount 只重算 hunk 行数，不放宽上下文匹配；可恢复模型常见的
         # “修改内容正确但 @@ 行数写错”问题，同时维持 check-before-write。
-        command = ["git", "apply", "--whitespace=nowarn", "--recount"]
+        # Agent 工作区可能处于多层实验目录，长路径配置必须覆盖真正写补丁的命令。
+        command = [
+            "git",
+            "-c",
+            "core.longpaths=true",
+            "apply",
+            "--whitespace=nowarn",
+            "--recount",
+        ]
         if check:
             command.append("--check")
         command.append("-")
@@ -877,7 +885,7 @@ class GetGitDiffTool(_WorkspaceTool):
         """使用参数数组调用 Git，避免路径或参数进入 Shell。"""
         try:
             return subprocess.run(
-                ["git", *arguments],
+                ["git", "-c", "core.longpaths=true", *arguments],
                 cwd=self.workspace,
                 capture_output=True,
                 text=True,

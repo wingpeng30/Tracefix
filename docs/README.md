@@ -26,6 +26,8 @@
   三道 SWE-bench Verified 多源码文件任务、固定提交和隐藏补丁接口。
 - [`tasks/v0.5.1-windows-ci-portability.md`](tasks/v0.5.1-windows-ci-portability.md)：
   Windows CI 的任务哈希与深层临时目录 Git 兼容修复。
+- [`tasks/v0.5.2-runner-longpaths.md`](tasks/v0.5.2-runner-longpaths.md)：
+  将 Windows 长路径兼容补齐到 Agent Runner 与 Git 工具链。
 - [`experiments/v0.3.2-fixture-validation.md`](experiments/v0.3.2-fixture-validation.md)：
   多文件任务初始失败、标准补丁和隐藏测试的离线验收记录。
 - [`experiments/v0.4.0-paired-context-32k.md`](experiments/v0.4.0-paired-context-32k.md)：

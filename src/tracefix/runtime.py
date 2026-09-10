@@ -382,7 +382,9 @@ class TraceFixRunner:
         """以参数数组执行 Git，并统一映射启动失败和非零退出码。"""
         try:
             result = subprocess.run(
-                ["git", *arguments],
+                # run 目录会嵌套批次、任务和独立 workspace；Windows CI 下可能
+                # 超过传统 MAX_PATH。命令级配置不会污染用户全局 Git 设置。
+                ["git", "-c", "core.longpaths=true", *arguments],
                 cwd=cwd,
                 capture_output=True,
                 text=True,

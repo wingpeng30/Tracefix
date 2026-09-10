@@ -182,7 +182,17 @@ pytest、Pylint 和 Sphinx，gold patch 均实际修改多个源码文件；源�
 让 Git clone/add/apply 碰到传统 Windows 路径长度限制。
 
 V0.5.1 将任务身份哈希定义为“UTF-8 内容 + 统一 LF”的规范化 SHA-256；除换行外的任何
-内容变化仍会使校验失败。所有内部 Git 子进程使用命令级
+内容变化仍会使校验失败。任务准备和真实实验器的内部 Git 子进程使用命令级
 `-c core.longpaths=true`，不依赖也不修改用户的全局 Git 设置。新增 CRLF/LF 等价测试、任务
 清单不变量和危险补丁路径测试，使完整验收达到 `168 passed`、总覆盖率 `90.74%`；Ruff、
-compileall 与 diff 检查通过。本补丁不重跑模型实验，也不改写 V0.5.0 的实验数据。
+compileall 与 diff 检查通过。本补丁不重跑模型实验，也不改写 V0.5.0 的实验数据。首次修复后
+CI 由 3 个失败降至 1 个，暴露 Runner 二次 clone 与工具层 Git 命令仍未开启长路径。
+
+## V0.5.2：补齐 Runner 与工具层长路径
+
+将命令级 `core.longpaths=true` 扩展到 `TraceFixRunner` 的仓库检查与隔离 clone、
+`ApplyPatchTool`、`GetGitDiffTool` 以及工具注册前的 Git 仓库检查。这样从任务源仓库准备、
+Agent 工作区创建、补丁应用到最终 Diff 收集都使用同一跨平台策略。
+
+本版是 V0.5.1 的发布修复续版，不进行 DeepSeek 实验，也不改变 V0.5.0 已保存的预筛选数据。
+详细说明见 [`tasks/v0.5.2-runner-longpaths.md`](tasks/v0.5.2-runner-longpaths.md)。
