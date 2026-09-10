@@ -174,3 +174,15 @@ pytest、Pylint 和 Sphinx，gold patch 均实际修改多个源码文件；源�
 9,471 输出 Token，费用 `$0.04610248` / 约 `¥0.33193786`。主要失败是搜索和跨文件定位，
 下一主功能确定为 AST 符号索引与确定性 Repo Map；详细解释见
 [`experiments/v0.5.0-real-issue-32k-prescreen.md`](experiments/v0.5.0-real-issue-32k-prescreen.md)。
+
+## V0.5.1：Windows CI 可移植性修复
+
+`v0.5.0` 在本机 155 项测试通过，但 GitHub Windows Runner 暴露了两项环境差异：Git
+检出把 LF 转成 CRLF，导致真实任务文本工件的字节哈希变化；CI 的多层 pytest 临时目录还会
+让 Git clone/add/apply 碰到传统 Windows 路径长度限制。
+
+V0.5.1 将任务身份哈希定义为“UTF-8 内容 + 统一 LF”的规范化 SHA-256；除换行外的任何
+内容变化仍会使校验失败。所有内部 Git 子进程使用命令级
+`-c core.longpaths=true`，不依赖也不修改用户的全局 Git 设置。新增 CRLF/LF 等价测试、任务
+清单不变量和危险补丁路径测试，使完整验收达到 `168 passed`、总覆盖率 `90.74%`；Ruff、
+compileall 与 diff 检查通过。本补丁不重跑模型实验，也不改写 V0.5.0 的实验数据。

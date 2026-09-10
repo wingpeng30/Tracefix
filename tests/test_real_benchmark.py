@@ -8,6 +8,7 @@ import pytest
 from tracefix import RealIssueTask, load_real_issue_tasks
 from tracefix.cli import main
 from tracefix.exceptions import BenchmarkError
+from tracefix.real_benchmark import _sha256
 
 REAL_TASKS_DIR = Path(__file__).parents[1] / "benchmarks" / "real_tasks"
 REAL_VALIDATION_PATH = (
@@ -58,7 +59,8 @@ def _git(repo: Path, *arguments: str) -> str:
 
 
 def _digest(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
+    text = path.read_text(encoding="utf-8").replace("\r\n", "\n").replace("\r", "\n")
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
 def _make_task(tmp_path: Path) -> tuple[Path, Path, str]:
@@ -143,6 +145,16 @@ def test_real_task_rejects_artifact_drift(tmp_path) -> None:
         RealIssueTask.load(task_dir)
 
 
+def test_real_task_hash_is_stable_across_lf_and_crlf(tmp_path) -> None:
+    """Git 自动换行转换不能让同一个任务在 Windows CI 中变成另一道题。"""
+    lf = tmp_path / "lf.patch"
+    crlf = tmp_path / "crlf.patch"
+    lf.write_bytes(b"line one\nline two\n")
+    crlf.write_bytes(b"line one\r\nline two\r\n")
+
+    assert _sha256(lf) == _sha256(crlf)
+
+
 def test_real_task_checkout_is_pinned_and_combined_patches_apply(tmp_path) -> None:
     task_dir, upstream, commit = _make_task(tmp_path)
     task = RealIssueTask.load(task_dir)
@@ -186,6 +198,79 @@ def test_real_task_manifest_rejects_noncanonical_issue_url(tmp_path) -> None:
 
     with pytest.raises(BenchmarkError, match="issue_url"):
         RealIssueTask.load(task_dir)
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "error"),
+    [
+        ("repo_url", "https://example.com/repo.git", "repo_url"),
+        ("expected_source_files", ["pkg/a.py", "pkg/a.py"], "duplicate"),
+        ("expected_test_files", ["pkg/a.py"], "overlap"),
+        (
+            "related_context_files",
+            ["pkg/a.py", "pkg/b.py", "pkg/c.py", "pkg/d.py", "pkg/d.py"],
+            "duplicate",
+        ),
+        (
+            "related_context_files",
+            ["pkg/a.py", "pkg/c.py", "pkg/d.py", "pkg/e.py", "pkg/f.py"],
+            "include every gold source",
+        ),
+        ("test_command", "tox -e py", "must use pytest"),
+        ("problem_statement_file", "../problem.md", "safe repository-relative"),
+    ],
+)
+def test_real_task_manifest_rejects_unsafe_or_inconsistent_fields(
+    tmp_path, field, value, error
+) -> None:
+    """任务身份、路径和文件集合约束必须在读取工件前失败。"""
+    task_dir, _, _ = _make_task(tmp_path)
+    manifest = task_dir / "task.json"
+    payload = json.loads(manifest.read_text(encoding="utf-8"))
+    payload[field] = value
+    manifest.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(BenchmarkError, match=error):
+        RealIssueTask.load(task_dir)
+
+
+@pytest.mark.parametrize(
+    ("content", "error"),
+    [
+        ("not a patch\n", "no git diff headers"),
+        ("diff --git a/pkg/a.py b/pkg/b.py\n", "renames are not supported"),
+        ("diff --git a/../a.py b/../a.py\n", "safe repository-relative"),
+    ],
+)
+def test_patch_path_parser_rejects_invalid_headers(tmp_path, content, error) -> None:
+    """隐藏验收与 gold patch 不能借路径或改名逃出固定任务边界。"""
+    patch = tmp_path / "invalid.patch"
+    patch.write_text(content, encoding="utf-8")
+
+    with pytest.raises(BenchmarkError, match=error):
+        RealIssueTask._patch_paths(patch)
+
+
+def test_real_task_loader_rejects_missing_and_empty_directories(tmp_path) -> None:
+    """任务根目录必须存在且至少含一份清单。"""
+    with pytest.raises(BenchmarkError, match="does not exist"):
+        load_real_issue_tasks(tmp_path / "missing")
+
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    with pytest.raises(BenchmarkError, match="no real issue tasks"):
+        load_real_issue_tasks(empty)
+
+
+def test_prepare_checkout_refuses_existing_destination(tmp_path) -> None:
+    """真实任务检出不得覆盖已有目录。"""
+    task_dir, _, _ = _make_task(tmp_path)
+    task = RealIssueTask.load(task_dir)
+    destination = tmp_path / "existing"
+    destination.mkdir()
+
+    with pytest.raises(BenchmarkError, match="already exists"):
+        task.prepare_checkout(destination)
 
 
 def test_checked_in_real_tasks_are_multifile_and_hash_pinned() -> None:

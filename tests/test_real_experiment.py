@@ -60,7 +60,8 @@ def _run_git(repo: Path, *arguments: str) -> str:
 
 
 def _digest(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
+    text = path.read_text(encoding="utf-8").replace("\r\n", "\n").replace("\r", "\n")
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
 def _fixture(tmp_path: Path) -> tuple[RealIssueTask, Path]:

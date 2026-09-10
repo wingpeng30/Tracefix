@@ -537,7 +537,9 @@ def _git(arguments: list[str], cwd: Path) -> None:
     """执行实验器内部的固定 Git 操作，并统一保留可诊断错误。"""
     try:
         result = subprocess.run(
-            ["git", *arguments],
+            # 真实任务会经历多层实验目录和 clone；在 Windows CI 中需要为每条
+            # Git 命令显式开启长路径，同时避免改写宿主机的全局 Git 配置。
+            ["git", "-c", "core.longpaths=true", *arguments],
             cwd=cwd,
             capture_output=True,
             text=True,

@@ -241,7 +241,9 @@ class BenchmarkTask(BaseModel):
         """执行任务准备所需 Git 命令，不修改用户的全局 Git 配置。"""
         try:
             result = subprocess.run(
-                ["git", *arguments],
+                # GitHub Windows Runner 的 pytest 临时目录可能超过传统 MAX_PATH。
+                # 使用单次命令配置，不污染开发者机器或 CI 账号的全局设置。
+                ["git", "-c", "core.longpaths=true", *arguments],
                 cwd=cwd,
                 capture_output=True,
                 text=True,

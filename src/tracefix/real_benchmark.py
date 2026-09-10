@@ -18,14 +18,21 @@ _PATCH_HEADER = re.compile(r"^diff --git a/(.+) b/(.+)$", re.MULTILINE)
 
 
 def _sha256(path: Path) -> str:
-    """按文件原始字节计算摘要，换行变化也会被识别。"""
+    """按规范化 UTF-8 文本计算摘要，避免 Git 的 CRLF/LF 转换改变任务身份。
+
+    真实任务的三个工件都是文本。Windows 上 ``core.autocrlf`` 可能在检出时
+    将仓库中的 LF 改为 CRLF；若直接散列原始字节，同一 Git commit 会在不同
+    平台得到不同摘要。这里仅统一换行符，不忽略空白或其他内容变化。
+    """
     try:
-        return hashlib.sha256(path.read_bytes()).hexdigest()
-    except OSError as exc:
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeError) as exc:
         raise BenchmarkError(
             f"cannot read real task artifact: {exc}",
             context={"path": str(path)},
         ) from exc
+    normalized = text.replace("\r\n", "\n").replace("\r", "\n")
+    return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
 
 
 def _safe_relative_path(value: str, *, field: str) -> Path:
@@ -328,7 +335,9 @@ class RealIssueTask(BaseModel):
         """以 shell=False 执行固定 Git 参数，并把错误转为稳定基准异常。"""
         try:
             result = subprocess.run(
-                ["git", *arguments],
+                # CI 的临时目录层级很深。命令级开启 longpaths，既不依赖也不修改
+                # 用户全局 Git 配置，并兼容 Windows 传统 260 字符路径限制。
+                ["git", "-c", "core.longpaths=true", *arguments],
                 cwd=cwd,
                 capture_output=True,
                 text=True,
