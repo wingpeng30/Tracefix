@@ -275,6 +275,8 @@ class BenchmarkConfig(BaseModel):
     llm_timeout_seconds: float = Field(default=120.0, gt=0)
     llm_max_retries: int = Field(default=2, ge=0)
     per_request_output_tokens: int = Field(default=4_096, ge=1)
+    test_python_executable: Path | None = None
+    test_pythonpath_entries: tuple[Path, ...] = ()
     agent_config: AgentConfig = Field(default_factory=AgentConfig)
 
 
@@ -394,6 +396,8 @@ class BenchmarkRunner:
                     llm_timeout_seconds=config.llm_timeout_seconds,
                     llm_max_retries=config.llm_max_retries,
                     per_request_output_tokens=config.per_request_output_tokens,
+                    test_python_executable=config.test_python_executable,
+                    test_pythonpath_entries=config.test_pythonpath_entries,
                     agent_config=config.agent_config.model_copy(deep=True),
                 )
             )

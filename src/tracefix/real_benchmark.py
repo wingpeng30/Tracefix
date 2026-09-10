@@ -59,6 +59,7 @@ class RealTaskValidation(BaseModel):
     artifacts_valid: bool
     source_files: tuple[str, ...]
     test_files: tuple[str, ...]
+    related_files_checked: int = Field(default=0, ge=0)
     checkout_valid: bool | None = None
     checkout_commit: str | None = None
     combined_patch_applicable: bool | None = None
@@ -81,15 +82,17 @@ class RealIssueTask(BaseModel):
     upstream_version: str = Field(min_length=1)
     issue_created_at: datetime
     evaluation_backend: str = "swebench_docker"
-    problem_statement_kind: Literal["verbatim", "curated_excerpt"]
     problem_statement_kind: Literal["verbatim", "curated_excerpt"] = "verbatim"
     problem_statement_file: str = "problem.md"
     gold_patch_file: str = "gold.patch"
     test_patch_file: str = "test.patch"
+    test_pythonpath_dirs: tuple[str, ...] = ()
     fail_to_pass: tuple[str, ...] = Field(min_length=1)
+    test_command: str = Field(min_length=1)
     pass_to_pass_count: int = Field(ge=0)
     expected_source_files: tuple[str, ...] = Field(min_length=2)
     expected_test_files: tuple[str, ...] = Field(min_length=1)
+    related_context_files: tuple[str, ...] = Field(min_length=5, max_length=10)
     hashes: RealTaskArtifactHashes
     task_dir: Path
 
@@ -107,12 +110,24 @@ class RealIssueTask(BaseModel):
         )
         for value in artifact_paths:
             _safe_relative_path(value, field="artifact file")
-        for value in (*self.expected_source_files, *self.expected_test_files):
+        for value in self.test_pythonpath_dirs:
+            _safe_relative_path(value, field="test pythonpath directory")
+        for value in (
+            *self.expected_source_files,
+            *self.expected_test_files,
+            *self.related_context_files,
+        ):
             _safe_relative_path(value, field="expected files")
         if len(set(self.expected_source_files)) != len(self.expected_source_files):
             raise ValueError("expected_source_files contains duplicate paths")
         if set(self.expected_source_files).intersection(self.expected_test_files):
             raise ValueError("source and hidden-test files must not overlap")
+        if len(set(self.related_context_files)) != len(self.related_context_files):
+            raise ValueError("related_context_files contains duplicate paths")
+        if not set(self.expected_source_files).issubset(self.related_context_files):
+            raise ValueError("related_context_files must include every gold source file")
+        if not self.test_command.startswith(("pytest ", "python -m pytest ")):
+            raise ValueError("test_command must use pytest")
         return self
 
     @property
@@ -167,7 +182,19 @@ class RealIssueTask(BaseModel):
                     context={"task_id": task.id, "field": label, "path": str(path)},
                 )
         task.validate_artifacts()
+        for relative in task.test_pythonpath_dirs:
+            path = (root / relative).resolve()
+            if not path.is_relative_to(root) or not path.is_dir():
+                raise BenchmarkError(
+                    "test PYTHONPATH directory is missing or escapes its task directory",
+                    context={"task_id": task.id, "path": str(path)},
+                )
         return task
+
+    @property
+    def test_pythonpath_paths(self) -> tuple[Path, ...]:
+        """返回只提供给测试解释器、不会复制到 Agent 工作区的引导目录。"""
+        return tuple((self.task_dir / value).resolve() for value in self.test_pythonpath_dirs)
 
     @staticmethod
     def _patch_paths(path: Path) -> tuple[str, ...]:
@@ -263,6 +290,14 @@ class RealIssueTask(BaseModel):
                 "checkout does not match real task base commit",
                 context={"task_id": self.id, "expected": self.base_commit, "actual": head},
             )
+        missing_related = [
+            value for value in self.related_context_files if not (root / value).is_file()
+        ]
+        if missing_related:
+            raise BenchmarkError(
+                "related context files are missing from the pinned checkout",
+                context={"task_id": self.id, "missing": missing_related},
+            )
         # 两个补丁一次性交给 git apply --check，才能证明组合后也不存在上下文冲突。
         self._run_git(
             ["apply", "--check", str(self.test_patch_path), str(self.gold_patch_path)],
@@ -275,6 +310,7 @@ class RealIssueTask(BaseModel):
                 "checkout_valid": True,
                 "checkout_commit": head,
                 "combined_patch_applicable": True,
+                "related_files_checked": len(self.related_context_files),
             }
         )
 

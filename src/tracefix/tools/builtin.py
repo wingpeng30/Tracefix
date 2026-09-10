@@ -655,25 +655,67 @@ class RunTestsTool(_WorkspaceTool):
         *,
         max_output_chars: int = 20_000,
         default_timeout_seconds: float = 120,
+        python_executable: str | Path | None = None,
+        pythonpath_entries: tuple[Path, ...] = (),
     ) -> None:
         super().__init__(workspace, max_output_chars=max_output_chars)
         if default_timeout_seconds <= 0:
             raise ValueError("default_timeout_seconds must be positive")
         self.default_timeout_seconds = default_timeout_seconds
+        # Agent 进程和历史项目测试环境可以使用不同 Python；默认保持原有行为。
+        self.python_executable = str(
+            Path(python_executable).expanduser().resolve()
+            if python_executable is not None
+            else Path(sys.executable).resolve()
+        )
+        self.pythonpath_entries = tuple(
+            Path(entry).expanduser().resolve() for entry in pythonpath_entries
+        )
+        if any(not entry.is_dir() for entry in self.pythonpath_entries):
+            raise ValueError("test PYTHONPATH entries must be existing directories")
 
     def execute(self, call: ToolCall) -> ToolResult:
         """执行 pytest，并把失败和超时作为模型可以继续处理的结果返回。"""
         started = time.monotonic()
         args = self._validate_call(call, _RunTestsArgs)
         assert isinstance(args, _RunTestsArgs)
-        command = self._parse_command(args.command)
+        command = self._parse_command(args.command, self.python_executable)
         timeout = args.timeout_seconds or self.default_timeout_seconds
 
         try:
+            environment = _sanitized_subprocess_env()
+            # 源码布局项目（如 pytest 的 src/）必须优先导入 Agent 修改后的工作区，
+            # 不能误用测试虚拟环境中为准备依赖而安装的旧 editable package。
+            import_roots = [str(self.workspace)]
+            if (self.workspace / "src").is_dir():
+                import_roots.insert(0, str(self.workspace / "src"))
+            import_roots[0:0] = [str(path) for path in self.pythonpath_entries]
+            inherited_pythonpath = environment.get("PYTHONPATH")
+            if inherited_pythonpath:
+                # 继承值可能本身包含多个目录，必须作为原始字符串拼接，不能把
+                # 整串内容错误地解释成单个 Path。
+                import_roots.append(inherited_pythonpath)
+            environment["PYTHONPATH"] = os.pathsep.join(import_roots)
+            # 临时目录必须位于仓库内：部分项目的嵌套 pytest 会沿父目录寻找
+            # pyproject，放到仓库外可能误读 TraceFix 自身配置。通过仅修改本克隆
+            # 的 .git/info/exclude 隐藏副产物，不改变受测源码或共享 .gitignore。
+            test_tmp = self.workspace / ".tracefix-test-tmp"
+            test_tmp.mkdir(parents=True, exist_ok=True)
+            exclude = self.workspace / ".git" / "info" / "exclude"
+            if exclude.is_file():
+                current = exclude.read_text(encoding="utf-8", errors="replace")
+                marker = ".tracefix-test-tmp/"
+                if marker not in current.splitlines():
+                    with exclude.open("a", encoding="utf-8") as stream:
+                        if current and not current.endswith("\n"):
+                            stream.write("\n")
+                        stream.write(f"{marker}\n")
+            environment["TMP"] = str(test_tmp)
+            environment["TEMP"] = str(test_tmp)
             completed = subprocess.run(
                 command,
                 cwd=self.workspace,
-                env=_sanitized_subprocess_env(),
+                env=environment,
                 capture_output=True,
                 text=True,
                 encoding="utf-8",
@@ -728,7 +770,7 @@ class RunTestsTool(_WorkspaceTool):
             ) from exc
 
     @staticmethod
-    def _parse_command(command: str) -> list[str]:
+    def _parse_command(command: str, python_executable: str | None = None) -> list[str]:
         """只接受 pytest 形态，并明确拒绝 Shell 控制语法。"""
         if not command.strip() or _SHELL_CONTROL_PATTERN.search(command):
             raise ToolValidationError("test command contains disallowed shell syntax")
@@ -754,9 +796,12 @@ class RunTestsTool(_WorkspaceTool):
                 context={"command": command},
             )
         # 裸 pytest 入口不会在所有平台都把 cwd 加入 sys.path；统一到当前解释器。
+        selected_python = python_executable or sys.executable
         if direct_pytest:
-            return [sys.executable, "-m", "pytest", *parts[1:]]
-        return parts
+            return [selected_python, "-m", "pytest", *parts[1:]]
+        # 即使模型写了 python/python3/py，也统一替换为任务配置的解释器，确保
+        # 同一实验组不会因 PATH 差异悄悄切换测试环境。
+        return [selected_python, *parts[1:]]
 
 
 class _GetGitDiffArgs(BaseModel):
@@ -870,6 +915,8 @@ def create_default_tool_registry(
     *,
     max_output_chars: int = 20_000,
     test_timeout_seconds: float = 120,
+    test_python_executable: str | Path | None = None,
+    test_pythonpath_entries: tuple[Path, ...] = (),
 ) -> ToolRegistry:
     """为一个已有初始提交的 Git 仓库创建五工具注册表。"""
     root = _resolve_workspace(workspace)
@@ -882,6 +929,8 @@ def create_default_tool_registry(
                 root,
                 max_output_chars=max_output_chars,
                 default_timeout_seconds=test_timeout_seconds,
+                python_executable=test_python_executable,
+                pythonpath_entries=test_pythonpath_entries,
             ),
             GetGitDiffTool(root, max_output_chars=max_output_chars),
         ]

@@ -12,13 +12,13 @@
   "issue_created_at": "2023-07-29T21:53:59Z",
   "evaluation_backend": "swebench_docker",
   "problem_statement_kind": "curated_excerpt",
-  "problem_statement_kind": "curated_excerpt",
   "problem_statement_file": "problem.md",
   "gold_patch_file": "gold.patch",
   "test_patch_file": "test.patch",
   "fail_to_pass": [
     "tests/config/test_config.py::test_csv_regex_error"
   ],
+  "test_command": "pytest -q -p no:cacheprovider --basetemp=.tracefix-test-tmp tests/config/test_config.py::test_csv_regex_error",
   "pass_to_pass_count": 18,
   "expected_source_files": [
     "pylint/config/argument.py",
@@ -26,6 +26,15 @@
     "pylint/utils/utils.py"
   ],
   "expected_test_files": [
+    "tests/config/test_config.py"
+  ],
+  "related_context_files": [
+    "pylint/config/argument.py",
+    "pylint/config/arguments_manager.py",
+    "pylint/config/config_initialization.py",
+    "pylint/utils/utils.py",
+    "pylint/utils/__init__.py",
+    "pylint/lint/run.py",
     "tests/config/test_config.py"
   ],
   "hashes": {

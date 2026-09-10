@@ -211,10 +211,22 @@ tracefix eval `
   --tasks benchmarks/real_tasks `
   --with-checkout `
   --checkout-dir runs/real-task-validation-new
+
+# 不调用模型：验证 base 的隐藏用例失败、gold 后通过
+.\.venv\Scripts\python.exe -m tracefix.cli validate-real-behavior `
+  --tasks benchmarks/real_tasks `
+  --source-root runs/real-task-validation `
+  --test-env-root runs/real-task-envs-v2
+
+# 每题只运行一次 32k 组，并记录脱敏模型请求视图
+.\.venv\Scripts\python.exe -m tracefix.cli real-prescreen `
+  --tasks benchmarks/real_tasks `
+  --source-root runs/real-task-validation `
+  --test-env-root runs/real-task-envs-v2
 ```
 
-当前机器没有 Docker，本版尚未运行官方 SWE-bench 测试，也没有形成真实任务解决率。详细
-边界和验证证据见
+三个任务已在独立 Python 3.9 环境中验证：清单里的隐藏用例均在 base 上失败、gold 后通过。
+当前机器没有 Docker，因此尚未执行官方完整 `PASS_TO_PASS`；这仍不是 Agent 解决率。详细边界和验证证据见
 [`docs/tasks/v0.5.0-real-github-issue-tasks.md`](docs/tasks/v0.5.0-real-github-issue-tasks.md)。
 
 ## v0.2.0 Baseline
@@ -315,10 +327,10 @@ python -m compileall -q src tests
 
 ## 后续版本
 
-下一阶段应先接入 SWE-bench Docker harness，验证三个真实任务的初始失败、gold 通过和
-PASS_TO_PASS 无回归；再用相同模型、任务、代码和预算比较关闭压缩与 32k 压缩。之后根据
-失败归因决定改进摘要、Repository Indexer/AST Repo Map 或 Patch Verifier。本版本不包含
-LLM 摘要、RAG、多 Agent、Docker 或前端。
+当前阶段先做三题各一次的 32k 触发预筛选。只有至少三题真实折叠、请求达到 32k、读取五个
+业务相关文件并形成补丁测试闭环时，才执行每题每组 3 次的正式配对实验。否则按失败归因选择
+摘要、Repository Indexer/AST Repo Map、Patch Verifier 或工具去重。Docker 可用后仍需补跑
+官方 PASS_TO_PASS。本版本不包含 LLM 摘要、RAG、多 Agent、Docker 或前端。
 
 用于该 A/B 的可复现压力任务、设计边界和命令见
 [`benchmarks/long_context_tasks/README.md`](benchmarks/long_context_tasks/README.md)。

@@ -12,7 +12,6 @@
   "issue_created_at": "2021-07-17T06:31:58Z",
   "evaluation_backend": "swebench_docker",
   "problem_statement_kind": "curated_excerpt",
-  "problem_statement_kind": "curated_excerpt",
   "problem_statement_file": "problem.md",
   "gold_patch_file": "gold.patch",
   "test_patch_file": "test.patch",
@@ -21,6 +20,7 @@
     "tests/test_ext_autodoc_autoclass.py::test_properties",
     "tests/test_ext_autodoc_autoproperty.py::test_class_properties"
   ],
+  "test_command": "pytest -q -p no:cacheprovider --basetemp=.tracefix-test-tmp tests/test_domain_py.py::test_pyproperty tests/test_ext_autodoc_autoclass.py::test_properties tests/test_ext_autodoc_autoproperty.py::test_class_properties",
   "pass_to_pass_count": 59,
   "expected_source_files": [
     "sphinx/domains/python.py",
@@ -31,6 +31,15 @@
     "tests/roots/test-ext-autodoc/target/properties.py",
     "tests/test_domain_py.py",
     "tests/test_ext_autodoc_autoclass.py",
+    "tests/test_ext_autodoc_autoproperty.py"
+  ],
+  "related_context_files": [
+    "sphinx/domains/python.py",
+    "sphinx/ext/autodoc/__init__.py",
+    "sphinx/ext/autodoc/importer.py",
+    "sphinx/util/inspect.py",
+    "sphinx/pycode/ast.py",
+    "tests/test_domain_py.py",
     "tests/test_ext_autodoc_autoproperty.py"
   ],
   "hashes": {

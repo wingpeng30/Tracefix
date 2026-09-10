@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "recorded_at": "2026-09-10T02:22:43+08:00",
+  "recorded_at": "2026-09-10T09:00:00+08:00",
   "tracefix_base_release": "v0.4.0",
   "tracefix_base_commit": "007520a714b8eb5b8a133c76ba83e5b046439041",
   "working_version": "0.5.0",
@@ -11,14 +11,16 @@
     "patch_file_sets_checked": true,
     "base_commits_checked_out": true,
     "combined_git_apply_check": true,
-    "dependencies_installed": false,
-    "tests_executed": false,
+    "dependencies_installed": true,
+    "tests_executed": true,
+    "all_initial_hidden_tests_failed": true,
+    "all_gold_hidden_tests_passed": true,
     "model_runs": 0,
     "model_cost_usd": 0.0
   },
   "automated_acceptance": {
-    "pytest_passed": 145,
-    "coverage_percent": 91.04,
+    "pytest_passed": 152,
+    "coverage_percent": 90.0,
     "coverage_threshold_percent": 90.0,
     "ruff_check": "passed",
     "compileall": "passed"
@@ -29,25 +31,40 @@
       "base_commit": "6e7dc8bac831cd8cf7a53b08efa366bd84f0c0fe",
       "source_file_count": 2,
       "hidden_test_file_count": 2,
+      "related_context_file_count": 7,
       "checkout_valid": true,
-      "combined_patch_applicable": true
+      "combined_patch_applicable": true,
+      "initial_hidden_failed": true,
+      "gold_hidden_passed": true,
+      "test_python": "3.9.21",
+      "test_environment_fingerprint": "35465a2f7a6b7b1c6202c75cf2fd288879b5ffea0eca12c6f930a31dc339924f"
     },
     {
       "id": "pylint-dev__pylint-8898",
       "base_commit": "1f8c4d9eb185c16a2c1d881c054f015e1c2eb334",
       "source_file_count": 3,
       "hidden_test_file_count": 1,
+      "related_context_file_count": 7,
       "checkout_valid": true,
-      "combined_patch_applicable": true
+      "combined_patch_applicable": true,
+      "initial_hidden_failed": true,
+      "gold_hidden_passed": true,
+      "test_python": "3.9.21",
+      "test_environment_fingerprint": "3ef6bb5156837d48915ec44d392775480b6b4e39be081f3e0def92ba530050be"
     },
     {
       "id": "sphinx-doc__sphinx-9461",
       "base_commit": "939c7bb7ff7c53a4d27df067cea637540f0e1dad",
       "source_file_count": 3,
       "hidden_test_file_count": 4,
+      "related_context_file_count": 7,
       "checkout_valid": true,
-      "combined_patch_applicable": true
+      "combined_patch_applicable": true,
+      "initial_hidden_failed": true,
+      "gold_hidden_passed": true,
+      "test_python": "3.9.21",
+      "test_environment_fingerprint": "5bf0e29c13c4d918cdfa401a4a8533b3cb41ee851e491af568f7184dc26741d8"
     }
   ],
-  "interpretation": "This is fixture and patch applicability validation, not a model-quality experiment. Full FAIL_TO_PASS/PASS_TO_PASS execution requires the SWE-bench Docker harness."
+  "interpretation": "All selected FAIL_TO_PASS tests fail on the pinned base and pass with the gold patch in isolated Python 3.9 environments. This is a local compatibility-harness validation, not a model-quality result and not a full SWE-bench PASS_TO_PASS Docker evaluation."
 }

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+import sys
 import time
 from collections.abc import Callable
 from datetime import UTC, datetime
@@ -24,7 +25,11 @@ from tracefix.exceptions import (
 )
 from tracefix.messages import ToolCall
 from tracefix.models import BaseLLM, LiteLLMAdapter, LLMConfig
-from tracefix.provenance import RunProvenance, collect_run_provenance
+from tracefix.provenance import (
+    RunProvenance,
+    collect_run_provenance,
+    inspect_test_environment,
+)
 from tracefix.tools import GetGitDiffTool, create_default_tool_registry
 from tracefix.tracing import JSONLTraceSink, TraceEvent, TraceEventType
 
@@ -71,6 +76,8 @@ class RunConfig(BaseModel):
     llm_timeout_seconds: float = Field(default=120.0, gt=0)
     llm_max_retries: int = Field(default=2, ge=0)
     per_request_output_tokens: int = Field(default=4_096, ge=1)
+    test_python_executable: Path | None = None
+    test_pythonpath_entries: tuple[Path, ...] = ()
     agent_config: AgentConfig = Field(default_factory=AgentConfig)
 
     @model_validator(mode="after")
@@ -185,7 +192,13 @@ class TraceFixRunner:
             assert isinstance(model_parameters, dict)
             # Git 状态必须反映运行开始前的 TraceFix，而不能被刚创建的轨迹文件污染。
             provenance = provenance.model_copy(
-                update={"model_parameters": model_parameters}
+                update={
+                    "model_parameters": model_parameters,
+                    "test_environment": inspect_test_environment(
+                        config.test_python_executable or sys.executable,
+                        pythonpath_entries=config.test_pythonpath_entries,
+                    ),
+                }
             )
             sink.write(
                 TraceEvent(
@@ -204,6 +217,8 @@ class TraceFixRunner:
             tools = create_default_tool_registry(
                 workspace,
                 test_timeout_seconds=min(120.0, float(config.agent_config.wall_time_seconds)),
+                test_python_executable=config.test_python_executable,
+                test_pythonpath_entries=config.test_pythonpath_entries,
             )
             agent = MinimalAgent(
                 llm,

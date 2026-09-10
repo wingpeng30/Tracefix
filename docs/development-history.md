@@ -160,9 +160,11 @@ Verifier，避免后续功能建立在裸字典和不稳定异常上。
 克隆、任务文件 SHA-256、gold/test patch 文件集合校验和隐藏测试补丁接入点。首批三题来自
 pytest、Pylint 和 Sphinx，gold patch 均实际修改多个源码文件；源码不纳入本仓库。
 
-本轮只做任务夹具与补丁可应用性验证，未运行模型或官方 Docker 测试，因此不产生费用，
-也不形成解决率结论。完整说明见
+随后加入历史项目独立 Python 3.9 测试环境、环境依赖指纹、测试 bootstrap 哈希、
+`validate-real-behavior`、32k 预筛选和受门槛保护的真实配对实验器。三题清单中的隐藏用例均
+在 base 上失败、gold 后通过；仍未执行官方 Docker PASS_TO_PASS，也不形成 Agent 解决率结论。完整说明见
 [`tasks/v0.5.0-real-github-issue-tasks.md`](tasks/v0.5.0-real-github-issue-tasks.md)。
 
-本轮完整自动化验收为 `145 passed`、覆盖率 `91.04%`，Ruff 与 compileall 通过；三个上游
-固定提交均成功检出，三个隐藏测试补丁与 gold patch 组合均通过 `git apply --check`。
+当前自动化验收为 `152 passed`、覆盖率达到 90% 门槛，Ruff 与 compileall 通过；三个上游
+固定提交均成功检出，三个隐藏测试补丁与 gold patch 组合均通过 `git apply --check`，且
+3/3 base 隐藏验收失败、3/3 gold 隐藏验收通过。

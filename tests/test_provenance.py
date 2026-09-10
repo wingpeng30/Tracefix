@@ -1,6 +1,15 @@
 import subprocess
+import sys
+from pathlib import Path
 
-from tracefix import LLMConfig, collect_run_provenance, task_sha256
+import pytest
+
+from tracefix import (
+    LLMConfig,
+    collect_run_provenance,
+    inspect_test_environment,
+    task_sha256,
+)
 
 
 def _git(repo, *arguments):
@@ -56,3 +65,31 @@ def test_provenance_handles_install_without_git_metadata(tmp_path) -> None:
     provenance = collect_run_provenance("task", config, project_root=tmp_path)
     assert provenance.tracefix_commit is None
     assert provenance.tracefix_worktree_dirty is None
+
+
+def test_test_environment_fingerprint_includes_pythonpath_artifacts(tmp_path) -> None:
+    bootstrap = tmp_path / "bootstrap"
+    bootstrap.mkdir()
+    (bootstrap / "sitecustomize.py").write_text("VALUE = 1\n", encoding="utf-8")
+
+    first = inspect_test_environment(
+        Path(sys.executable), pythonpath_entries=(bootstrap,)
+    )
+    (bootstrap / "sitecustomize.py").write_text("VALUE = 2\n", encoding="utf-8")
+    second = inspect_test_environment(
+        Path(sys.executable), pythonpath_entries=(bootstrap,)
+    )
+
+    assert first.python_version
+    assert first.dependency_versions["pydantic"]
+    assert first.pythonpath_artifacts["bootstrap"] != second.pythonpath_artifacts["bootstrap"]
+    assert first.fingerprint_sha256 != second.fingerprint_sha256
+
+
+def test_test_environment_rejects_missing_interpreter_and_artifact(tmp_path) -> None:
+    with pytest.raises(ValueError, match="executable"):
+        inspect_test_environment(tmp_path / "missing-python")
+    with pytest.raises(ValueError, match="PYTHONPATH"):
+        inspect_test_environment(
+            Path(sys.executable), pythonpath_entries=(tmp_path / "missing-dir",)
+        )

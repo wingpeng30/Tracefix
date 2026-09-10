@@ -22,8 +22,9 @@
 - Agent 只应收到固定 base commit 的仓库和 `problem.md`。
 - `gold.patch` 是分析与可解性证明，绝不能复制到 Agent 工作区或模型上下文。
 - `test.patch` 只允许在 Agent 结束后由评测器应用。
-- 完整评测应使用 SWE-bench Docker harness 执行 `FAIL_TO_PASS` 与 `PASS_TO_PASS`；当前机器
-  没有 Docker，因此本版只证明固定提交可检出、两个补丁可联合应用，没有声称测试已通过。
+- 当前机器没有 Docker；本地 Python 3.9 兼容 harness 已证明三题的 `FAIL_TO_PASS` 均在 base
+  失败并在 gold 后通过。它不是官方 `PASS_TO_PASS` 全回归，也不是 Agent 成功率结果。
+- 每题列出的 7 个 `related_context_files` 只用于实验后衡量有效文件覆盖，不会提示给 Agent。
 
 ## 校验
 
@@ -33,6 +34,27 @@
 .\.venv\Scripts\python.exe -m tracefix.cli validate-real-tasks `
   --tasks benchmarks/real_tasks
 ```
+
+本地行为验收（不调用模型）：
+
+```powershell
+.\.venv\Scripts\python.exe -m tracefix.cli validate-real-behavior `
+  --tasks benchmarks/real_tasks `
+  --source-root runs/real-task-validation `
+  --test-env-root runs/real-task-envs-v2
+```
+
+32k 单次预筛选（每题调用真实模型一次完整 Agent 轨迹）：
+
+```powershell
+.\.venv\Scripts\python.exe -m tracefix.cli real-prescreen `
+  --tasks benchmarks/real_tasks `
+  --source-root runs/real-task-validation `
+  --test-env-root runs/real-task-envs-v2
+```
+
+只有预筛选 JSON 中至少三题 `eligible_for_paired=true` 时，才允许把该文件传给
+`real-paired-eval`。这个硬门槛避免在没有发生压缩的信息轨迹上做昂贵的伪对照。
 
 联网克隆三个上游提交并执行 `git apply --check`：
 

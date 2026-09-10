@@ -61,6 +61,8 @@ def _make_task(tmp_path: Path) -> tuple[Path, Path, str]:
     (upstream / "tests").mkdir()
     (upstream / "pkg" / "a.py").write_text("VALUE = 0\n", encoding="utf-8")
     (upstream / "pkg" / "b.py").write_text("ENABLED = False\n", encoding="utf-8")
+    for name in ("c.py", "d.py", "e.py"):
+        (upstream / "pkg" / name).write_text("# related context\n", encoding="utf-8")
     _git(upstream, "init", "--quiet")
     _git(upstream, "add", "--all")
     _git(
@@ -93,9 +95,17 @@ def _make_task(tmp_path: Path) -> tuple[Path, Path, str]:
         "issue_created_at": "2024-01-01T00:00:00Z",
         "problem_statement_kind": "curated_excerpt",
         "fail_to_pass": ["tests/test_hidden.py"],
+        "test_command": "pytest -q tests/test_hidden.py",
         "pass_to_pass_count": 2,
         "expected_source_files": ["pkg/a.py", "pkg/b.py"],
         "expected_test_files": ["tests/test_hidden.py"],
+        "related_context_files": [
+            "pkg/a.py",
+            "pkg/b.py",
+            "pkg/c.py",
+            "pkg/d.py",
+            "pkg/e.py"
+        ],
         "hashes": {
             "problem_statement": _digest(task_dir / "problem.md"),
             "gold_patch": _digest(task_dir / "gold.patch"),
@@ -192,7 +202,10 @@ def test_checked_in_real_task_validation_has_honest_boundaries() -> None:
     assert len(payload["tasks"]) == 3
     assert all(task["checkout_valid"] for task in payload["tasks"])
     assert all(task["combined_patch_applicable"] for task in payload["tasks"])
-    assert payload["validation"]["tests_executed"] is False
+    assert payload["validation"]["tests_executed"] is True
+    assert payload["validation"]["all_initial_hidden_tests_failed"] is True
+    assert payload["validation"]["all_gold_hidden_tests_passed"] is True
+    assert all(task["test_environment_fingerprint"] for task in payload["tasks"])
     assert payload["validation"]["model_runs"] == 0
     assert "d:\\tracefix" not in serialized
     assert "api_key" not in serialized

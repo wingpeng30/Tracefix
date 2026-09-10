@@ -17,6 +17,13 @@ from tracefix.context import ContextConfig
 from tracefix.exceptions import TraceFixError
 from tracefix.paired import PairedExperimentConfig, PairedExperimentRunner
 from tracefix.real_benchmark import load_real_issue_tasks
+from tracefix.real_experiment import (
+    RealExperimentConfig,
+    RealPairedExperimentRunner,
+    RealPrescreenRunner,
+    RealPrescreenSummary,
+    validate_real_task_behavior,
+)
 from tracefix.runtime import (
     DEFAULT_MODEL_NAME,
     DEFAULT_USD_CNY_RATE,
@@ -88,6 +95,18 @@ def _add_shared_options(parser: argparse.ArgumentParser) -> None:
         "--per-request-output-tokens",
         type=int,
         help="单次模型响应的最大输出 Token",
+    )
+    parser.add_argument(
+        "--test-python",
+        type=Path,
+        help="运行被测仓库 pytest 的独立 Python 解释器",
+    )
+    parser.add_argument(
+        "--test-pythonpath",
+        type=Path,
+        action="append",
+        default=None,
+        help="额外测试引导目录，可重复传入；仅提供给 pytest 子进程",
     )
     parser.add_argument(
         "--no-context-compaction",
@@ -168,7 +187,56 @@ def build_parser() -> argparse.ArgumentParser:
         default=Path("runs/real-task-validation"),
         help="联网校验的临时检出根目录",
     )
+
+    behavior_parser = subparsers.add_parser(
+        "validate-real-behavior", help="验证真实任务原始失败且标准补丁通过"
+    )
+    _add_real_task_locations(behavior_parser)
+    behavior_parser.add_argument(
+        "--output-dir",
+        type=Path,
+        default=Path("runs/real-task-behavior-validation"),
+        help="一次性验收副本目录",
+    )
+
+    prescreen_parser = subparsers.add_parser(
+        "real-prescreen", help="真实 Issue 的单次 32k 压缩触发预筛选"
+    )
+    _add_real_task_locations(prescreen_parser)
+    _add_shared_options(prescreen_parser)
+
+    real_paired_parser = subparsers.add_parser(
+        "real-paired-eval", help="只对至少三道已入选真实任务执行正式配对实验"
+    )
+    _add_real_task_locations(real_paired_parser)
+    real_paired_parser.add_argument(
+        "--prescreen-summary", type=Path, required=True, help="预筛选 summary JSON"
+    )
+    real_paired_parser.add_argument("--repetitions", type=int, default=3)
+    _add_shared_options(real_paired_parser)
     return parser
+
+
+def _add_real_task_locations(parser: argparse.ArgumentParser) -> None:
+    """添加真实任务清单、固定源码和独立测试环境的位置参数。"""
+    parser.add_argument(
+        "--tasks", type=Path, default=Path("benchmarks/real_tasks"), help="真实任务目录"
+    )
+    parser.add_argument(
+        "--source-root",
+        type=Path,
+        default=Path("runs/real-task-validation"),
+        help="按任务 ID 保存的固定提交源码",
+    )
+    parser.add_argument(
+        "--test-env-root",
+        type=Path,
+        default=Path("runs/real-task-envs-v2"),
+        help="按任务 ID 保存的独立 Python 测试环境",
+    )
+    parser.add_argument(
+        "--task-id", action="append", default=[], help="只选择指定真实任务，可重复传入"
+    )
 
 
 def _resolve_shared(args: argparse.Namespace) -> dict[str, Any]:
@@ -201,6 +269,24 @@ def _resolve_shared(args: argparse.Namespace) -> dict[str, Any]:
             "TRACEFIX_PER_REQUEST_OUTPUT_TOKENS",
             int,
             4_096,
+        ),
+        "test_python_executable": (
+            Path(value)
+            if (
+                value := _first(
+                    args.test_python, "TRACEFIX_TEST_PYTHON", None
+                )
+            )
+            else None
+        ),
+        "test_pythonpath_entries": tuple(
+            args.test_pythonpath
+            if args.test_pythonpath is not None
+            else (
+                Path(value)
+                for value in os.getenv("TRACEFIX_TEST_PYTHONPATH", "").split(os.pathsep)
+                if value
+            )
         ),
         "agent_config": AgentConfig(
             max_steps=_number_or_default(
@@ -310,6 +396,25 @@ def main(argv: list[str] | None = None) -> int:
             print(json.dumps(validations, ensure_ascii=False, indent=2))
             return 0
 
+        if args.command == "validate-real-behavior":
+            tasks = load_real_issue_tasks(args.tasks, task_ids=tuple(args.task_id))
+            validations = []
+            for task in tasks:
+                validation = validate_real_task_behavior(
+                    task,
+                    source=(args.source_root / task.id).resolve(),
+                    test_python=_real_task_python(args.test_env_root, task.id),
+                    output_dir=args.output_dir.resolve(),
+                )
+                validations.append(validation.model_dump(mode="json"))
+            result_path = args.output_dir.resolve() / "behavior-validation.json"
+            result_path.write_text(
+                json.dumps(validations, ensure_ascii=False, indent=2), encoding="utf-8"
+            )
+            print(json.dumps(validations, ensure_ascii=False, indent=2))
+            print(f"验收记录: {result_path}", file=sys.stderr)
+            return 0
+
         shared = _resolve_shared(args)
         if args.command == "run":
             result = TraceFixRunner().run(
@@ -319,6 +424,38 @@ def main(argv: list[str] | None = None) -> int:
             if result.status is AgentStatus.COMPLETED:
                 return 0
             return 2 if result.status is AgentStatus.INTERRUPTED else 1
+
+        if args.command in {"real-prescreen", "real-paired-eval"}:
+            # 真实任务按题选择独立解释器和 bootstrap，因此不采用 shared 中的
+            # 单一 test-python 参数；其余模型与预算字段保持完全一致。
+            shared.pop("test_python_executable", None)
+            shared.pop("test_pythonpath_entries", None)
+            real_config = RealExperimentConfig(
+                tasks_dir=args.tasks,
+                source_root=args.source_root,
+                test_env_root=args.test_env_root,
+                task_ids=tuple(args.task_id),
+                **shared,
+            )
+            if args.command == "real-prescreen":
+                summary = RealPrescreenRunner().run(real_config)
+                print(
+                    f"真实任务预筛选完成: {len(summary.eligible_task_ids)}/"
+                    f"{len(summary.results)} 达到正式实验门槛"
+                )
+                print(f"汇总文件: {summary.summary_path}")
+                return 0
+            payload = RealPrescreenSummary.model_validate_json(
+                args.prescreen_summary.read_text(encoding="utf-8")
+            )
+            summary = RealPairedExperimentRunner().run_paired(
+                real_config,
+                eligible_task_ids=payload.eligible_task_ids,
+                repetitions=args.repetitions,
+            )
+            print(f"真实任务配对实验完成: {len(summary.trials)} trials")
+            print(f"汇总文件: {summary.summary_path}")
+            return 0
 
         benchmark_config = BenchmarkConfig(
             tasks_dir=args.tasks,
@@ -356,6 +493,19 @@ def main(argv: list[str] | None = None) -> int:
     except (TraceFixError, ValidationError, ValueError) as exc:
         print(f"TraceFix 错误: {exc}", file=sys.stderr)
         return 2
+
+
+def _real_task_python(root: Path, task_id: str) -> Path:
+    """按平台定位一个真实任务的独立虚拟环境解释器。"""
+    environment = root.expanduser().resolve() / task_id
+    candidates = (
+        environment / "Scripts" / "python.exe",
+        environment / "bin" / "python",
+    )
+    for candidate in candidates:
+        if candidate.is_file():
+            return candidate
+    raise ValueError(f"找不到任务 {task_id} 的测试解释器：{environment}")
 
 
 if __name__ == "__main__":

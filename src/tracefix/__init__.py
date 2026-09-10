@@ -61,12 +61,30 @@ from tracefix.paired import (
     TrajectoryMetrics,
     analyze_trajectory,
 )
-from tracefix.provenance import RunProvenance, collect_run_provenance, task_sha256
+from tracefix.provenance import (
+    RunProvenance,
+    TestEnvironmentProvenance,
+    collect_run_provenance,
+    inspect_test_environment,
+    task_sha256,
+)
 from tracefix.real_benchmark import (
     RealIssueTask,
     RealTaskArtifactHashes,
     RealTaskValidation,
     load_real_issue_tasks,
+)
+from tracefix.real_experiment import (
+    RealExperimentConfig,
+    RealPairedExperimentRunner,
+    RealPairedExperimentSummary,
+    RealPrescreenRunner,
+    RealPrescreenSummary,
+    RealTaskBehaviorValidation,
+    RealTrajectoryMetrics,
+    RealTrialResult,
+    analyze_real_trajectory,
+    validate_real_task_behavior,
 )
 from tracefix.runtime import (
     DEFAULT_MODEL_NAME,
@@ -148,9 +166,18 @@ __all__ = [
     "RunConfigurationError",
     "RunResult",
     "RunProvenance",
+    "TestEnvironmentProvenance",
     "RealIssueTask",
     "RealTaskArtifactHashes",
     "RealTaskValidation",
+    "RealExperimentConfig",
+    "RealPairedExperimentRunner",
+    "RealPairedExperimentSummary",
+    "RealPrescreenRunner",
+    "RealPrescreenSummary",
+    "RealTaskBehaviorValidation",
+    "RealTrajectoryMetrics",
+    "RealTrialResult",
     "ReadFileTool",
     "RunTestsTool",
     "SearchCodeTool",
@@ -183,6 +210,9 @@ __all__ = [
     "load_environment_file",
     "load_real_issue_tasks",
     "collect_run_provenance",
+    "inspect_test_environment",
     "task_sha256",
     "analyze_trajectory",
+    "analyze_real_trajectory",
+    "validate_real_task_behavior",
 ]

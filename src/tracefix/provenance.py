@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import platform
 import subprocess
 from importlib.metadata import PackageNotFoundError, version
@@ -28,6 +29,96 @@ class RunProvenance(BaseModel):
     python_version: str
     platform: str
     dependency_versions: dict[str, str | None]
+    test_environment: TestEnvironmentProvenance | None = None
+
+
+class TestEnvironmentProvenance(BaseModel):
+    """被测仓库独立 Python 环境的版本清单与稳定指纹。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    python_version: str
+    executable_name: str
+    dependency_versions: dict[str, str]
+    pythonpath_artifacts: dict[str, str] = Field(default_factory=dict)
+    fingerprint_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+
+def inspect_test_environment(
+    executable: str | Path,
+    *,
+    pythonpath_entries: tuple[Path, ...] = (),
+) -> TestEnvironmentProvenance:
+    """用目标解释器读取发行包版本，不导入被测仓库或执行其代码。"""
+    path = Path(executable).expanduser().resolve()
+    if not path.is_file():
+        raise ValueError(f"test Python executable does not exist: {path}")
+    script = (
+        "import importlib.metadata as m,json,platform;"
+        "d={};"
+        "[(d.__setitem__((x.metadata.get('Name') or x.metadata.get('Summary') or 'unknown'),"
+        "x.version)) for x in m.distributions()];"
+        "print(json.dumps({'python_version':platform.python_version(),"
+        "'dependency_versions':dict(sorted(d.items(),key=lambda x:x[0].casefold()))}))"
+    )
+    try:
+        result = subprocess.run(
+            [str(path), "-I", "-c", script],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=30,
+            check=False,
+            shell=False,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise ValueError(f"cannot inspect test Python environment: {exc}") from exc
+    if result.returncode != 0:
+        raise ValueError(
+            f"cannot inspect test Python environment: {result.stderr.strip()}"
+        )
+    try:
+        payload = json.loads(result.stdout)
+        versions = {str(key): str(value) for key, value in payload["dependency_versions"].items()}
+        python_version = str(payload["python_version"])
+    except (KeyError, TypeError, json.JSONDecodeError) as exc:
+        raise ValueError("test Python environment returned invalid metadata") from exc
+    artifacts = {
+        entry.name: _directory_sha256(entry.expanduser().resolve())
+        for entry in pythonpath_entries
+    }
+    fingerprint_payload = json.dumps(
+        {
+            "python_version": python_version,
+            "dependency_versions": versions,
+            "pythonpath_artifacts": artifacts,
+        },
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return TestEnvironmentProvenance(
+        python_version=python_version,
+        executable_name=path.name,
+        dependency_versions=versions,
+        pythonpath_artifacts=artifacts,
+        fingerprint_sha256=hashlib.sha256(fingerprint_payload.encode("utf-8")).hexdigest(),
+    )
+
+
+def _directory_sha256(path: Path) -> str:
+    """对额外测试引导目录做稳定摘要，不把本机绝对路径写入结果。"""
+    if not path.is_dir():
+        raise ValueError(f"test PYTHONPATH entry does not exist: {path}")
+    digest = hashlib.sha256()
+    files = sorted(item for item in path.rglob("*") if item.is_file())
+    for item in files:
+        digest.update(item.relative_to(path).as_posix().encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(item.read_bytes())
+        digest.update(b"\0")
+    return digest.hexdigest()
 
 
 def task_sha256(task: str) -> str:

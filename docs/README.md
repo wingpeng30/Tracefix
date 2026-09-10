@@ -29,7 +29,7 @@
 - [`experiments/v0.4.0-paired-context-32k.md`](experiments/v0.4.0-paired-context-32k.md)：
   24 次交替配对实验、未触发 32k 的否定性结论与下一功能决策。
 - [`../benchmarks/experiments/v0.5.0-real-task-fixture-validation.json`](../benchmarks/experiments/v0.5.0-real-task-fixture-validation.json)：
-  三个真实任务固定提交与补丁可应用性的机器可读验证记录。
+  三个真实任务固定提交、补丁可应用性、base 失败/gold 通过和测试环境指纹的机器可读记录。
 
 机器可读、已脱敏的指标保存在 `benchmarks/baselines/` 和 `benchmarks/experiments/`。
 完整工作区、模型消息和轨迹只保存在被 Git 忽略的本机 `runs/` 中。
