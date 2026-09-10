@@ -195,4 +195,6 @@ CI 由 3 个失败降至 1 个，暴露 Runner 二次 clone 与工具层 Git 命
 Agent 工作区创建、补丁应用到最终 Diff 收集都使用同一跨平台策略。
 
 本版是 V0.5.1 的发布修复续版，不进行 DeepSeek 实验，也不改变 V0.5.0 已保存的预筛选数据。
-详细说明见 [`tasks/v0.5.2-runner-longpaths.md`](tasks/v0.5.2-runner-longpaths.md)。
+本地完整验收为 `168 passed`、总覆盖率 `90.74%`，Ruff、compileall 与 diff 检查通过。
+GitHub Actions Run #7 也在 Windows Python 3.11/3.12 两个作业成功通过；详细说明见
+[`tasks/v0.5.2-runner-longpaths.md`](tasks/v0.5.2-runner-longpaths.md)。
