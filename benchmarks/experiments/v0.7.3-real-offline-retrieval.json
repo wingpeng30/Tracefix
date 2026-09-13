@@ -1,0 +1,11 @@
+{
+  "experiment": "v0.7.3-real-offline-retrieval",
+  "date": "2026-09-13",
+  "purpose": "offline structural screening; no LLM calls",
+  "summary_path": "runs/retrieval-eval-20260913T082846Z-3e6a8039/summary.json",
+  "task_count": 3,
+  "tasks": ["pylint-dev__pylint-8898", "pytest-dev__pytest-8399", "sphinx-doc__sphinx-9461"],
+  "baseline": {"hit_at_1": 0.333333333333333, "hit_at_5": 0.666666666666667, "mrr": 0.444444444444444},
+  "repo_map": {"hit_at_1": 0.666666666666667, "hit_at_5": 1.0, "mrr": 0.833333333333333},
+  "conclusion": "Repo Map improves offline file localization on this three-task sample; this does not imply higher Agent resolution rate."
+}

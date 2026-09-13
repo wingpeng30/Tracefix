@@ -61,6 +61,9 @@ Agent 不可见的隐藏验收。Repo Map 将首次读取目标文件的平均�
 验收，却只形成约 4–6k 的单次请求、没有发生折叠。这证明“多文件”本身不足以构成压缩实验；
 它们保留为准确率基准、拒绝进入压缩 A/B。完整数据与纳入标准见
 [`experiments/v0.7.3-natural-multifile-screen.md`](experiments/v0.7.3-natural-multifile-screen.md)。
+同日对三个真实 Issue 做离线结构筛选，Repo Map 将 Hit@1 从 33.3% 提升至 66.7%，Hit@5 从
+66.7% 提升至 100%，MRR 从 0.444 提升至 0.833；这是定位指标，不是 Agent 修复率结论。详见
+[`experiments/v0.7.3-real-offline-retrieval.md`](experiments/v0.7.3-real-offline-retrieval.md)。
 
 ## 版本总览
 
