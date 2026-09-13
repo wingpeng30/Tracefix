@@ -28,9 +28,7 @@
   ],
   "related_context_files": [
     "sphinx/ext/autodoc/typehints.py",
-    "tests/test_ext_autodoc_configs.py",
-    "sphinx/ext/autodoc/__init__.py",
-    "sphinx/ext/autodoc/__init__.pyi"
+    "tests/test_ext_autodoc_configs.py"
   ],
   "hashes": {
     "problem_statement": "ec42a659cf88e4be0bcb0b2ef418a57804e28a8ef4ef32659fe92abfc95f665b",

@@ -43,8 +43,7 @@
     "pylint/pyreverse/inspector.py",
     "pylint/pyreverse/utils.py",
     "pylint/pyreverse/writer.py",
-    "tests/unittest_pyreverse_writer.py",
-    "pylint/pyreverse/__init__.py"
+    "tests/unittest_pyreverse_writer.py"
   ],
   "hashes": {
     "problem_statement": "1063099828aeeacebfc53c30685b582300effb7b59574cd5f94bf3cefa00ace1",

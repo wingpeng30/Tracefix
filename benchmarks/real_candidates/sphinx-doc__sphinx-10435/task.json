@@ -28,9 +28,7 @@
   ],
   "related_context_files": [
     "sphinx/writers/latex.py",
-    "tests/test_build_latex.py",
-    "sphinx/writers/__init__.py",
-    "sphinx/writers/__init__.pyi"
+    "tests/test_build_latex.py"
   ],
   "hashes": {
     "problem_statement": "0570ee51a381375e1d7cf73809446a73e0ce26f01742a06da36d0d46500b77f1",

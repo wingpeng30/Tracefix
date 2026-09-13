@@ -33,9 +33,7 @@
   ],
   "related_context_files": [
     "requests/auth.py",
-    "test_requests.py",
-    "requests/__init__.py",
-    "requests/__init__.pyi"
+    "test_requests.py"
   ],
   "hashes": {
     "problem_statement": "90d541e87a05a5135b7ee242c82702e5cad1e2cae9e5571fcbc032d7d6d80682",

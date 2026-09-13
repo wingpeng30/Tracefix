@@ -28,9 +28,7 @@
   ],
   "related_context_files": [
     "sphinx/directives/code.py",
-    "tests/test_directive_code.py",
-    "sphinx/directives/__init__.py",
-    "sphinx/directives/__init__.pyi"
+    "tests/test_directive_code.py"
   ],
   "hashes": {
     "problem_statement": "70b6b0feace8aab81a314775f5f05b9905bed61a344ac490a3173f13ff5a782c",

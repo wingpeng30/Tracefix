@@ -30,8 +30,7 @@
   "related_context_files": [
     "pylint/config/__init__.py",
     "setup.cfg",
-    "tests/lint/unittest_lint.py",
-    "pylint/config/__init__.pyi"
+    "tests/lint/unittest_lint.py"
   ],
   "hashes": {
     "problem_statement": "395bcc4416ce0df3efc8563bf0f1b7db0df75e92ee6ff1dd354146bcb9d82403",

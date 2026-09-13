@@ -50,9 +50,7 @@
   "related_context_files": [
     "pylint/checkers/variables.py",
     "pylint/constants.py",
-    "tests/checkers/unittest_variables.py",
-    "pylint/checkers/__init__.py",
-    "pylint/checkers/__init__.pyi"
+    "tests/checkers/unittest_variables.py"
   ],
   "hashes": {
     "problem_statement": "3a15517e96657a1f4c7e3f2c42f6646f8ea333d67cd36bc8cb351682ab8bba80",

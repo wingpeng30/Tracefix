@@ -20,8 +20,7 @@
     "pylint/pyreverse/inspector.py",
     "pylint/pyreverse/utils.py",
     "pylint/pyreverse/writer.py",
-    "tests/unittest_pyreverse_writer.py",
-    "pylint/pyreverse/__init__.py"
+    "tests/unittest_pyreverse_writer.py"
   ],
   "source_file_count": 4,
   "test_file_count": 1,

@@ -14,9 +14,7 @@
   ],
   "related_files": [
     "sphinx/directives/code.py",
-    "tests/test_directive_code.py",
-    "sphinx/directives/__init__.py",
-    "sphinx/directives/__init__.pyi"
+    "tests/test_directive_code.py"
   ],
   "source_file_count": 1,
   "test_file_count": 1,

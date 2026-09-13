@@ -14,9 +14,7 @@
   ],
   "related_files": [
     "sphinx/writers/latex.py",
-    "tests/test_build_latex.py",
-    "sphinx/writers/__init__.py",
-    "sphinx/writers/__init__.pyi"
+    "tests/test_build_latex.py"
   ],
   "source_file_count": 1,
   "test_file_count": 1,

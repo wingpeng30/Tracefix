@@ -33,9 +33,7 @@
   ],
   "related_context_files": [
     "requests/sessions.py",
-    "test_requests.py",
-    "requests/__init__.py",
-    "requests/__init__.pyi"
+    "test_requests.py"
   ],
   "hashes": {
     "problem_statement": "eacde5d201658474274cce4558b5d2b8ae74d9fcc2ad6ddc76aaf003b2160b8a",
