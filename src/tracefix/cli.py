@@ -522,7 +522,11 @@ def main(argv: list[str] | None = None) -> int:
             for task in tasks:
                 validation = task.validate_artifacts()
                 if args.with_checkout:
-                    checkout = task.prepare_checkout(args.checkout_dir / task.id)
+                    checkout = (args.checkout_dir / task.id).resolve()
+                    # 联网检出可能在中途被终端中断。若目录已经存在，先严格验证
+                    # 它是否仍是该任务的固定 commit，而不是要求用户改用新目录。
+                    if not checkout.exists():
+                        checkout = task.prepare_checkout(checkout)
                     validation = task.validate_checkout(checkout)
                 validations.append(validation.model_dump(mode="json"))
             # 输出结构化 JSON，便于把一次联网校验的结果直接归档。
