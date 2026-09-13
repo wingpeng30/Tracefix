@@ -184,7 +184,7 @@ class _SearchCodeArgs(BaseModel):
     path: str = "."
     glob: str = "**/*"
     case_sensitive: bool = False
-    max_results: int = Field(default=50, ge=1, le=200)
+    max_results: int = Field(default=20, ge=1, le=200)
 
 
 class SearchCodeTool(_WorkspaceTool):
@@ -209,7 +209,7 @@ class SearchCodeTool(_WorkspaceTool):
             candidates = [base]
         else:
             try:
-                candidates = sorted(base.glob(args.glob))
+                candidates = sorted(base.glob(args.glob), key=_search_path_priority)
             except (OSError, ValueError) as exc:
                 raise ToolValidationError(
                     f"invalid search glob: {exc}", context={"glob": args.glob}
@@ -242,12 +242,17 @@ class SearchCodeTool(_WorkspaceTool):
 
             searched_files += 1
             text = raw.decode("utf-8", errors="replace")
+            matches_in_file = 0
             for line_number, line in enumerate(text.splitlines(), start=1):
                 haystack = line if args.case_sensitive else line.casefold()
                 column = haystack.find(needle)
                 if column < 0:
                     continue
                 shown_line, line_truncated = _truncate_text(line, 500)
+                matches_in_file += 1
+                if matches_in_file > 5:
+                    truncated = True
+                    break
                 matches.append(
                     {
                         "path": relative.as_posix(),
@@ -278,6 +283,13 @@ class SearchCodeTool(_WorkspaceTool):
             },
             duration_ms=(time.monotonic() - started) * 1000,
         )
+
+
+def _search_path_priority(path: Path) -> tuple[int, str]:
+    """搜索时让源码先于测试、文档和示例，同时保持路径排序确定性。"""
+    low_priority = {"doc", "docs", "example", "examples", "test", "tests", "testing"}
+    is_low_priority = any(part.casefold() in low_priority for part in path.parts)
+    return (1 if is_low_priority else 0, path.as_posix())
 
 
 class _ReadFileArgs(BaseModel):

@@ -1,0 +1,66 @@
+{
+  "schema_version": 1,
+  "experiment": "v0.7.0-real-token-optimization-prescreen",
+  "date": "2026-09-13",
+  "purpose": "在固定真实任务上预筛选 Token 行动优化，不用于验证 32k 历史折叠",
+  "model": "deepseek/deepseek-v4-flash",
+  "source_tracefix_commit": "c4eecc0e06cf3956f1a98c14dd3750911a5d6ace",
+  "source_tracefix_worktree_dirty": true,
+  "tasks": [
+    "pylint-dev__pylint-8898",
+    "pytest-dev__pytest-8399",
+    "sphinx-doc__sphinx-9461"
+  ],
+  "arms": {
+    "control": "token_optimization_enabled=false",
+    "treatment": "token_optimization_enabled=true"
+  },
+  "aggregate": {
+    "control": {
+      "runs": 3,
+      "resolved": 0,
+      "input_tokens": 259692,
+      "output_tokens": 4155,
+      "steps": 32,
+      "search_calls": 29,
+      "file_read_calls": 21,
+      "agent_test_calls": 0,
+      "cost_usd": 0.01669891,
+      "cost_cny_estimate": 0.12023217,
+      "duration_seconds": 148.65
+    },
+    "treatment": {
+      "runs": 3,
+      "resolved": 1,
+      "input_tokens": 232634,
+      "output_tokens": 6389,
+      "steps": 32,
+      "search_calls": 18,
+      "file_read_calls": 16,
+      "agent_test_calls": 3,
+      "cost_usd": 0.01570348,
+      "cost_cny_estimate": 0.11306503,
+      "duration_seconds": 161.47
+    }
+  },
+  "conclusions": [
+    "输入 Token 下降 10.42%，但输出 Token 增加 53.77%，总耗时增加 8.62%。",
+    "只有 pytest-dev__pytest-8399 的优化组同时满足 Agent 正常结束、公开测试通过和独立验收通过。",
+    "六次运行的最大单次请求估算为 8245 至 14645 Token，历史折叠触发次数为 0。",
+    "每组仅运行一次，且 TraceFix 工作区 dirty；结果只能作为方向性预筛选。"
+  ],
+  "warnings": {
+    "type": "SyntaxWarning",
+    "cause": "Pylint 测试夹具故意包含非法转义，Python 3.12 的 Repository Indexer ast.parse 扫描时发出警告",
+    "impact": "不改变任务代码、Agent 结果或独立验收判定；后续可在索引器局部屏蔽该类警告"
+  },
+  "source_runs": [
+    "runs/real-prescreen-20260913T021208Z-cf0fa879/prescreen-summary.json",
+    "runs/real-prescreen-20260913T021403Z-50908d14/prescreen-summary.json",
+    "runs/real-prescreen-20260913T021703Z-090b8350/prescreen-summary.json",
+    "runs/real-prescreen-20260913T021829Z-4a43dcec/prescreen-summary.json",
+    "runs/real-prescreen-20260913T021938Z-2eff543c/prescreen-summary.json",
+    "runs/real-prescreen-20260913T022015Z-b4cc0415/prescreen-summary.json"
+  ],
+  "report": "docs/experiments/v0.7.0-real-token-optimization-prescreen.md"
+}

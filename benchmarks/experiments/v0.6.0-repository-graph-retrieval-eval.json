@@ -1,0 +1,35 @@
+{
+  "schema_version": 1,
+  "experiment": "V0.6.0 repository graph offline retrieval re-evaluation",
+  "executed_at": "2026-09-11T08:48:24Z",
+  "llm_calls": 0,
+  "api_cost_usd": 0.0,
+  "tasks": "3 pinned SWE-bench Verified tasks",
+  "comparison": "same task descriptions, base commits, gold-patch file labels, 12 candidate limit, and filename-keyword baseline as the previous V0.6.0 run",
+  "new_index_features": [
+    "module-to-file reverse index",
+    "relative import resolution",
+    "symbol-to-definition-file reverse index",
+    "one-hop bounded import/call graph expansion"
+  ],
+  "aggregate": {
+    "baseline": {
+      "hit_at_1": 0.3333333333333333,
+      "hit_at_3": 0.6666666666666666,
+      "hit_at_5": 0.6666666666666666,
+      "recall_at_5": 0.4444444444444444,
+      "mrr": 0.4444444444444444
+    },
+    "repository_graph_repo_map": {
+      "hit_at_1": 0.0,
+      "hit_at_3": 1.0,
+      "hit_at_5": 1.0,
+      "recall_at_5": 0.5555555555555555,
+      "mrr": 0.4444444444444444
+    },
+    "average_index_duration_ms": 1275.74,
+    "average_repo_map_estimated_tokens": 807.67,
+    "graph_expanded_files_per_task": 6
+  },
+  "interpretation": "Graph expansion improves top-5 coverage and recall on this three-task screen, but it does not improve top-1 ranking and only ties baseline MRR. This is evidence for further ranking work, not a claim of production-quality localization."
+}

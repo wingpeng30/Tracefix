@@ -14,7 +14,13 @@ from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, model_validator
 
-from tracefix.agent import AgentConfig, AgentState, AgentStatus, MinimalAgent
+from tracefix.agent import (
+    AgentConfig,
+    AgentState,
+    AgentStatus,
+    MinimalAgent,
+    ToolPresentationMetrics,
+)
 from tracefix.context import ContextMetrics
 from tracefix.exceptions import (
     RunConfigurationError,
@@ -30,6 +36,7 @@ from tracefix.provenance import (
     collect_run_provenance,
     inspect_test_environment,
 )
+from tracefix.repository import RepoMap, RepositoryIndexer
 from tracefix.tools import GetGitDiffTool, create_default_tool_registry
 from tracefix.tracing import JSONLTraceSink, TraceEvent, TraceEventType
 
@@ -110,6 +117,9 @@ class RunResult(BaseModel):
     input_tokens: int = Field(default=0, ge=0)
     output_tokens: int = Field(default=0, ge=0)
     test_runs: int = Field(default=0, ge=0)
+    search_calls: int = Field(default=0, ge=0)
+    file_read_calls: int = Field(default=0, ge=0)
+    cached_tool_calls: int = Field(default=0, ge=0)
     cost_usd: float = Field(default=0.0, ge=0)
     cost_complete: bool
     usd_cny_rate: float = Field(gt=0)
@@ -117,12 +127,19 @@ class RunResult(BaseModel):
     started_at: datetime
     finished_at: datetime
     duration_seconds: float = Field(ge=0)
+    model_request_seconds: float = Field(default=0.0, ge=0)
+    tool_execution_seconds: float = Field(default=0.0, ge=0)
+    context_preparation_seconds: float = Field(default=0.0, ge=0)
+    repository_index_seconds: float = Field(default=0.0, ge=0)
     changed_files: tuple[str, ...] = ()
     trace_path: str
     diff_path: str
     result_path: str
     agent_config: AgentConfig
     context_metrics: ContextMetrics = Field(default_factory=ContextMetrics)
+    presentation_metrics: ToolPresentationMetrics = Field(default_factory=ToolPresentationMetrics)
+    repo_map: RepoMap | None = None
+    repo_map_path: str | None = None
     provenance: RunProvenance
     error: dict[str, JsonValue] | None = None
 
@@ -156,6 +173,7 @@ class TraceFixRunner:
         diff_path = run_dir / "patch.diff"
         result_path = run_dir / "result.json"
         workspace_path = run_dir / "workspace"
+        repo_map_path = run_dir / "repo-map.json"
 
         source_repo = str(config.repo.expanduser().resolve())
         source_commit: str | None = None
@@ -172,6 +190,8 @@ class TraceFixRunner:
         patch = ""
         sink: JSONLTraceSink | None = None
         agent: MinimalAgent | None = None
+        repository_map: RepoMap | None = None
+        repository_index_seconds = 0.0
         llm_config = LLMConfig(
             model_name=config.model_name,
             temperature=0.0,
@@ -213,6 +233,31 @@ class TraceFixRunner:
             source_repo = str(source)
             workspace = self._clone_repository(source, workspace_path)
 
+            if config.agent_config.repo_map.enabled:
+                # 索引失败不应被静默吞掉：它会导致模型少看到本应稳定提供的定位信息。
+                # 但 AST 解析失败的单个文件由 RepositoryIndexer 自己作为 skipped 记录。
+                index_started = time.monotonic()
+                indexer = RepositoryIndexer(workspace, config.agent_config.repo_map)
+                index = indexer.build()
+                repository_map = indexer.make_repo_map(index, config.task)
+                repository_index_seconds = time.monotonic() - index_started
+                repo_map_path.write_text(repository_map.model_dump_json(indent=2), encoding="utf-8")
+                sink.write(
+                    TraceEvent(
+                        event_type=TraceEventType.REPOSITORY_INDEXED,
+                        task_id=run_id,
+                        step=0,
+                        payload={
+                            "indexed_file_count": repository_map.indexed_file_count,
+                            "symbol_count": repository_map.symbol_count,
+                            "skipped_file_count": repository_map.skipped_file_count,
+                            "candidate_files": list(repository_map.candidate_files),
+                            "related_tests": list(repository_map.related_tests),
+                            "duration_ms": round(repository_index_seconds * 1000, 3),
+                        },
+                    )
+                )
+
             llm = self._llm_factory(llm_config)
             tools = create_default_tool_registry(
                 workspace,
@@ -225,6 +270,8 @@ class TraceFixRunner:
                 tools,
                 config=config.agent_config.model_copy(deep=True),
                 trace_sink=sink,
+                repository_map=repository_map.text if repository_map else None,
+                repository_candidates=(repository_map.candidate_files if repository_map else ()),
             )
             state = agent.run(config.task)
         except KeyboardInterrupt:
@@ -263,9 +310,7 @@ class TraceFixRunner:
 
         finished_at = state.finished_at or datetime.now(UTC)
         state.finished_at = finished_at
-        cost_cny = (
-            round(state.cost_usd * config.usd_cny_rate, 8) if state.cost_complete else None
-        )
+        cost_cny = round(state.cost_usd * config.usd_cny_rate, 8) if state.cost_complete else None
         result = RunResult(
             run_id=run_id,
             source_repo=source_repo,
@@ -279,6 +324,9 @@ class TraceFixRunner:
             input_tokens=state.input_tokens,
             output_tokens=state.output_tokens,
             test_runs=state.test_runs,
+            search_calls=state.search_calls,
+            file_read_calls=state.file_read_calls,
+            cached_tool_calls=state.cached_tool_calls,
             cost_usd=state.cost_usd,
             cost_complete=state.cost_complete,
             usd_cny_rate=config.usd_cny_rate,
@@ -286,12 +334,19 @@ class TraceFixRunner:
             started_at=started_at,
             finished_at=finished_at,
             duration_seconds=max(0.0, time.monotonic() - started_monotonic),
+            model_request_seconds=state.model_request_seconds,
+            tool_execution_seconds=state.tool_execution_seconds,
+            context_preparation_seconds=state.context_preparation_seconds,
+            repository_index_seconds=repository_index_seconds,
             changed_files=changed_files,
             trace_path=str(trace_path),
             diff_path=str(diff_path),
             result_path=str(result_path),
             agent_config=config.agent_config.model_copy(deep=True),
             context_metrics=state.context_metrics.model_copy(deep=True),
+            presentation_metrics=state.presentation_metrics.model_copy(deep=True),
+            repo_map=repository_map,
+            repo_map_path=str(repo_map_path) if repository_map is not None else None,
             provenance=provenance,
             error=error,
         )
@@ -307,9 +362,7 @@ class TraceFixRunner:
     @staticmethod
     def _validate_credentials(model_name: str) -> None:
         """仅检查已明确支持的供应商密钥，不把密钥放入配置对象。"""
-        if model_name.casefold().startswith("deepseek/") and not os.getenv(
-            "DEEPSEEK_API_KEY"
-        ):
+        if model_name.casefold().startswith("deepseek/") and not os.getenv("DEEPSEEK_API_KEY"):
             raise RunConfigurationError(
                 "DEEPSEEK_API_KEY is required for DeepSeek models",
                 context={"model_name": model_name, "env_var": "DEEPSEEK_API_KEY"},
@@ -395,9 +448,7 @@ class TraceFixRunner:
                 shell=False,
             )
         except (OSError, subprocess.SubprocessError) as exc:
-            raise WorkspaceError(
-                f"cannot {purpose}: {exc}", context={"cwd": str(cwd)}
-            ) from exc
+            raise WorkspaceError(f"cannot {purpose}: {exc}", context={"cwd": str(cwd)}) from exc
         if result.returncode != 0:
             raise WorkspaceError(
                 f"cannot {purpose}",

@@ -1,0 +1,14 @@
+{
+  "experiment": "v0.7.1-pylint-token-optimization-smoke",
+  "date": "2026-09-13",
+  "purpose": "mechanism smoke test only; not a paired statistical comparison",
+  "task_id": "pylint-dev__pylint-8898",
+  "model_name": "deepseek/deepseek-v4-flash",
+  "budgets": {"max_input_tokens": 120000, "max_steps": 18, "max_test_runs": 5, "context_trigger_tokens": 32000},
+  "trials": [
+    {"arm": "control", "run_directory": "runs/real-prescreen-20260913T031806Z-8ee6ef59", "input_tokens": 131452, "output_tokens": 1607, "steps": 14, "search_calls": 15, "file_read_calls": 10, "agent_test_runs": 0, "history_compaction_count": 0, "status": "interrupted", "stop_reason": "token_budget_exceeded", "agent_completed": false, "public_tests_passed": null, "independent_tests_passed": false, "tests_modified": false, "resolved": false},
+    {"arm": "control", "run_directory": "runs/real-prescreen-20260913T032521Z-372a4eb9", "input_tokens": 122006, "output_tokens": 1311, "steps": 14, "search_calls": 20, "file_read_calls": 5, "agent_test_runs": 0, "history_compaction_count": 0, "status": "interrupted", "stop_reason": "token_budget_exceeded", "agent_completed": false, "public_tests_passed": null, "independent_tests_passed": false, "tests_modified": false, "resolved": false},
+    {"arm": "treatment", "run_directory": "runs/real-prescreen-20260913T032805Z-ea3c66b7", "input_tokens": 124747, "output_tokens": 2850, "steps": 14, "search_calls": 4, "file_read_calls": 5, "agent_test_runs": 1, "history_compaction_count": 0, "status": "interrupted", "stop_reason": "token_budget_exceeded", "agent_completed": false, "public_tests_passed": null, "independent_tests_passed": false, "tests_modified": false, "resolved": false}
+  ],
+  "conclusion": "Do not claim token savings or accuracy improvement: all trials exhausted the input budget and none passed hidden verification."
+}

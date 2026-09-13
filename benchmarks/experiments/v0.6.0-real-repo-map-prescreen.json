@@ -1,0 +1,48 @@
+{
+  "schema_version": 1,
+  "experiment": "real_repo_map_single_paired_prescreen",
+  "date": "2026-09-11",
+  "model": "deepseek/deepseek-v4-flash",
+  "task_count": 3,
+  "trials_per_group": 1,
+  "fixed_conditions": {
+    "context_compaction_enabled": true,
+    "context_trigger_tokens": 32000,
+    "max_input_tokens": 80000,
+    "task_commits_and_hashes": "recorded in local run provenance",
+    "hidden_verification": true
+  },
+  "control": {
+    "repo_map_enabled": false,
+    "agent_completed": 0,
+    "hidden_passed": 1,
+    "resolved": 0,
+    "input_tokens": 252744,
+    "output_tokens": 4353,
+    "cost_usd": 0.022565352,
+    "cost_cny_estimate": 0.16247053,
+    "target_read_count": 3,
+    "average_first_target_read_step": 2.0
+  },
+  "treatment": {
+    "repo_map_enabled": true,
+    "agent_completed": 0,
+    "hidden_passed": 0,
+    "resolved": 0,
+    "input_tokens": 258750,
+    "output_tokens": 3973,
+    "cost_usd": 0.0212166,
+    "cost_cny_estimate": 0.15275953,
+    "target_read_count": 3,
+    "average_first_target_read_step": 1.3333333333333333
+  },
+  "trial_summary": [
+    {"task": "pylint-dev__pylint-8898", "group": "control", "steps": 13, "input_tokens": 82809, "first_target_read_step": 2, "patch_calls": 0, "test_calls": 0, "stop_reason": "token_budget_exceeded"},
+    {"task": "pylint-dev__pylint-8898", "group": "repo_map", "steps": 11, "input_tokens": 88654, "first_target_read_step": 1, "patch_calls": 0, "test_calls": 0, "stop_reason": "token_budget_exceeded"},
+    {"task": "pytest-dev__pytest-8399", "group": "repo_map", "steps": 12, "input_tokens": 86634, "first_target_read_step": 1, "patch_calls": 0, "test_calls": 0, "stop_reason": "token_budget_exceeded"},
+    {"task": "pytest-dev__pytest-8399", "group": "control", "steps": 13, "input_tokens": 82870, "first_target_read_step": 2, "patch_calls": 2, "test_calls": 0, "hidden_passed": true, "stop_reason": "token_budget_exceeded"},
+    {"task": "sphinx-doc__sphinx-9461", "group": "control", "steps": 10, "input_tokens": 87065, "first_target_read_step": 2, "patch_calls": 0, "test_calls": 0, "stop_reason": "token_budget_exceeded"},
+    {"task": "sphinx-doc__sphinx-9461", "group": "repo_map", "steps": 10, "input_tokens": 83462, "first_target_read_step": 2, "patch_calls": 0, "test_calls": 2, "stop_reason": "token_budget_exceeded"}
+  ],
+  "interpretation": "All trials stopped at the input-token budget before a complete repair loop. The sample only suggests earlier initial target-file access for Repo Map; it is not a repair-rate comparison."
+}

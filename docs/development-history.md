@@ -3,6 +3,65 @@
 本文集中说明各阶段实际完成的代码、验证方式和版本位置。实验数字的详细解释见
 [`experiments/README.md`](experiments/README.md)。
 
+## V0.6.0（开发中）：确定性 Repository Indexer 与 Repo Map
+
+新增 Python AST 符号、导入和保守调用名称索引，并在每次隔离运行中生成 `repo-map.json`，将任务相关候选源码、符号行号和测试候选作为模型可见 system 上下文。轨迹新增索引/地图事件，CLI 支持 `--no-repo-map` 作为未来定位 A/B 对照。详见 [`tasks/v0.6.0-repository-index-and-repo-map.md`](tasks/v0.6.0-repository-index-and-repo-map.md)。
+
+本次不运行付费 API。离线检索评测显示：Repo Map 对 Pylint、pytest 有局部帮助，但三题总计
+Hit@5 与文件名关键词基线打平，Hit@1 和 MRR 更低；下一步是完善模块/相对导入/符号图，而非
+直接进行付费 LLM A/B。完整数据与解释见
+[`experiments/v0.6.0-repo-map-retrieval-eval.md`](experiments/v0.6.0-repo-map-retrieval-eval.md)。
+
+随后加入模块/符号反向索引、相对导入解析和一跳图扩展，在相同三题、零 LLM 成本复评上把
+Hit@5 由 66.67% 提升到 100%、Recall@5 由 44.44% 提升到 55.56%。Hit@1 仍为 0%，MRR 仅与
+基线打平，故下一步仍应先优化排序，不宣称 Agent 修复率提升。详见
+[`experiments/v0.6.0-repository-graph-retrieval-eval.md`](experiments/v0.6.0-repository-graph-retrieval-eval.md)。
+
+进一步加入源码目录先验、显式模块名精确加权和区分边权重的种子排序后，在同一离线样本中将
+Hit@1 提升至 66.67%，MRR 提升至 0.833，Hit@5 保持 100%。这支持进行小规模真实 Agent
+预筛选，但不构成修复成功率结论；详见
+[`experiments/v0.6.0-seed-ranking-retrieval-eval.md`](experiments/v0.6.0-seed-ranking-retrieval-eval.md)。
+
+随后完成真实 Issue 的 Repo Map 单次交替预筛选：每题关闭/开启各一次、两组均开启 32k 压缩并进行
+Agent 不可见的隐藏验收。Repo Map 将首次读取目标文件的平均步骤从 2.00 提前至 1.33，但 6 次运行都在
+80k 输入 Token 预算耗尽前中断，resolved 均为 0。因此没有进入每组 3 次的正式配对实验；下一步应先
+压缩无效搜索并加强“读取后补丁—测试”的行动引导。完整方法、结果和限制见
+[`tasks/v0.6.0-real-repo-map-prescreen.md`](tasks/v0.6.0-real-repo-map-prescreen.md)。
+
+## V0.6.1（开发中）：定位后的行动收敛
+
+针对真实预筛选中“已经读到目标文件，却持续搜索直到累计输入预算耗尽”的失败模式，新增
+`EXPLORE/PATCH/VERIFY/FINISH` 阶段、Repo Map Top-2 首轮行动提示、成功搜索/读取的紧凑缓存、
+探索软预算，以及累计输入 Token 50%/70%/85% 收敛提示。`search_code` 默认只返回 20 条且单文件
+最多 5 条，并补充首次补丁、首次测试、目标文件后搜索与阶段转换指标。本阶段没有付费复跑，详见
+[`tasks/v0.6.1-agent-action-efficiency.md`](tasks/v0.6.1-agent-action-efficiency.md)。
+
+## V0.7.1（开发中）：验收完整性与失败反馈
+
+将 `agent_selected_tests_passed`、Agent 可见的 `public_tests_passed`、隐藏
+`independent_tests_passed`、补丁可应用性和测试文件修改拆分记录。当前真实任务的公开测试字段
+明确为 `null`，不再把模型最后一次自选测试伪装为公开测试。另对无效补丁和截断搜索增加定向恢复
+提示，并抑制 Pylint 故意非法转义夹具在 Indexer 中产生的 `SyntaxWarning`。一次 Pylint 实运行
+验证了预算中断后仍可完整留档，但不是完整对照实验；详见
+[`tasks/v0.7.1-evaluation-integrity-and-feedback.md`](tasks/v0.7.1-evaluation-integrity-and-feedback.md)。
+随后完成同题 Token 行动优化冒烟运行：处理组显著减少搜索并运行了一次测试，但累计 Token 没有
+下降、两组隐藏验收均失败。因此只作为机制观察，而不作为效果结论；详见
+[`experiments/v0.7.1-pylint-token-optimization-smoke.md`](experiments/v0.7.1-pylint-token-optimization-smoke.md)。
+
+## V0.7.2（开发中）：真实任务预算与重新预筛选
+
+将真实任务命令的默认累计输入预算从通用的 80k 提高至 350k，普通 `run` / `eval` 默认值不变。
+三个真实任务重新预筛选中，pytest 成功通过隐藏验收，Pylint 仍超预算、Sphinx 隐藏验收失败；三题都
+没有触发 32k 历史折叠，故不进入正式压缩 C/T 配对实验。完整方法、运行命令、成本和决策见
+[`tasks/v0.7.2-real-budget-and-prescreen.md`](tasks/v0.7.2-real-budget-and-prescreen.md)。
+
+## V0.7.3（开发中）：非重复多文件长轨迹筛选
+
+用四道规则分散、带隐藏验收的多文件合成任务筛选 32k 历史折叠候选。四题均被解决并通过隐藏
+验收，却只形成约 4–6k 的单次请求、没有发生折叠。这证明“多文件”本身不足以构成压缩实验；
+它们保留为准确率基准、拒绝进入压缩 A/B。完整数据与纳入标准见
+[`experiments/v0.7.3-natural-multifile-screen.md`](experiments/v0.7.3-natural-multifile-screen.md)。
+
 ## 版本总览
 
 | 阶段 | Git 位置 | 核心成果 |
@@ -198,3 +257,9 @@ Agent 工作区创建、补丁应用到最终 Diff 收集都使用同一跨平�
 本地完整验收为 `168 passed`、总覆盖率 `90.74%`，Ruff、compileall 与 diff 检查通过。
 GitHub Actions Run #7 也在 Windows Python 3.11/3.12 两个作业成功通过；详细说明见
 [`tasks/v0.5.2-runner-longpaths.md`](tasks/v0.5.2-runner-longpaths.md)。
+## V0.7.0（开发中）：Token 效率策略可控化
+
+新增模型可见工具结果投影、缓存可见性校验、测试后缓存失效和分段耗时统计。策略可用 `--no-token-optimization` 关闭，支持在固定任务、模型和预算下比较准确率、供应商 Token、费用与时延；完整实现说明及尚未运行付费实验的边界见 [`tasks/v0.7.0-token-efficient-agent.md`](tasks/v0.7.0-token-efficient-agent.md)。
+
+三个真实任务的单次 C/T 预筛选中，开启组累计输入 Token 降低 10.42%，并将
+`pytest-dev__pytest-8399` 从未解决变为解决；另外两题仍因累计 Token 超限中断，六次运行均未触发 32k 历史折叠。由于每组仅一次且工作区为 dirty，本结果只作为方向性证据，详见 [`experiments/v0.7.0-real-token-optimization-prescreen.md`](experiments/v0.7.0-real-token-optimization-prescreen.md)。

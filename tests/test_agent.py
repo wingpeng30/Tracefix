@@ -3,7 +3,15 @@ from datetime import datetime
 import pytest
 from pydantic import ValidationError
 
-from tracefix import AgentConfig, AgentState, AgentStatus, BaseAgent, BaseLLM, LLMConfig
+from tracefix import (
+    AgentConfig,
+    AgentPhase,
+    AgentState,
+    AgentStatus,
+    BaseAgent,
+    BaseLLM,
+    LLMConfig,
+)
 
 
 class StubLLM(BaseLLM):
@@ -28,6 +36,8 @@ def test_agent_config_defaults() -> None:
     assert config.max_output_tokens == 20_000
     assert config.wall_time_seconds == 1_200
     assert config.max_test_runs == 8
+    assert config.max_exploration_steps == 4
+    assert config.max_search_calls == 4
 
 
 def test_base_agent_is_abstract() -> None:
@@ -50,6 +60,7 @@ def test_subclass_receives_dependencies_and_resets_state() -> None:
 
     assert agent.llm is llm
     assert agent.state.status is AgentStatus.CREATED
+    assert agent.state.phase is AgentPhase.EXPLORE
     assert agent.state.task is None
     assert agent.state.cost_usd == 0
     assert agent.state.final_output is None

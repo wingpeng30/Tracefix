@@ -1,0 +1,40 @@
+{
+  "schema_version": 1,
+  "experiment": "V0.6.0 source-prior and seed-ranking offline retrieval evaluation",
+  "executed_at": "2026-09-11T08:52:59Z",
+  "llm_calls": 0,
+  "api_cost_usd": 0.0,
+  "tasks": "3 pinned SWE-bench Verified tasks",
+  "controlled_conditions": "same task descriptions, base commits, gold-patch file labels, candidate limit, repository graph edges and filename-keyword baseline as the prior graph evaluation",
+  "new_ranking_features": [
+    "lower prior for doc, examples, benchmarks and test directories",
+    "higher score for explicit task module names",
+    "separate import, call and test edge weights"
+  ],
+  "aggregate": {
+    "filename_keyword_baseline": {
+      "hit_at_1": 0.3333333333333333,
+      "hit_at_3": 0.6666666666666666,
+      "hit_at_5": 0.6666666666666666,
+      "recall_at_5": 0.4444444444444444,
+      "mrr": 0.4444444444444444
+    },
+    "previous_repository_graph_repo_map": {
+      "hit_at_1": 0.0,
+      "hit_at_3": 1.0,
+      "hit_at_5": 1.0,
+      "recall_at_5": 0.5555555555555555,
+      "mrr": 0.4444444444444444
+    },
+    "seed_ranked_repository_graph_repo_map": {
+      "hit_at_1": 0.6666666666666666,
+      "hit_at_3": 1.0,
+      "hit_at_5": 1.0,
+      "recall_at_5": 0.5555555555555555,
+      "mrr": 0.8333333333333334
+    },
+    "average_index_duration_ms": 1778.12,
+    "average_repo_map_estimated_tokens": 780.67
+  },
+  "interpretation": "On this three-task offline screen, source-prior and explicit-module seed ranking improve Hit@1 and MRR while retaining graph-based Hit@5. The sample is too small to claim generalization or Agent repair-rate improvement."
+}

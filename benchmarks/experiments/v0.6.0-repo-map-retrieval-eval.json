@@ -1,0 +1,61 @@
+{
+  "schema_version": 1,
+  "experiment": "v0.6.0 offline Repo Map retrieval evaluation",
+  "executed_at": "2026-09-11T04:46:09Z",
+  "tracefix_revision": "V0.6.0 working tree before release",
+  "llm_calls": 0,
+  "api_cost_usd": 0.0,
+  "tasks": "benchmarks/real_tasks (3 pinned SWE-bench Verified tasks)",
+  "source_root": "runs/real-task-validation (local, not committed)",
+  "label_boundary": "gold.patch diff headers provide target file labels only; patch content is never passed to either ranking strategy",
+  "repo_map_config": {
+    "max_candidate_files": 12,
+    "max_symbols_per_file": 8,
+    "max_chars": 12000
+  },
+  "aggregate": {
+    "baseline": {
+      "hit_at_1": 0.3333333333333333,
+      "hit_at_3": 0.6666666666666666,
+      "hit_at_5": 0.6666666666666666,
+      "recall_at_5": 0.4444444444444444,
+      "mrr": 0.4444444444444444
+    },
+    "repo_map": {
+      "hit_at_1": 0.0,
+      "hit_at_3": 0.6666666666666666,
+      "hit_at_5": 0.6666666666666666,
+      "recall_at_5": 0.4444444444444444,
+      "mrr": 0.3703703703703704
+    },
+    "average_index_duration_ms": 1205.99,
+    "average_repo_map_estimated_tokens": 843.67
+  },
+  "per_task": [
+    {
+      "task_id": "pylint-dev__pylint-8898",
+      "gold_target_count": 3,
+      "baseline_hit_at_5": 0.0,
+      "repo_map_hit_at_5": 1.0,
+      "baseline_mrr": 0.0,
+      "repo_map_mrr": 0.5
+    },
+    {
+      "task_id": "pytest-dev__pytest-8399",
+      "gold_target_count": 2,
+      "baseline_hit_at_5": 1.0,
+      "repo_map_hit_at_5": 1.0,
+      "baseline_mrr": 0.3333333333333333,
+      "repo_map_mrr": 0.5
+    },
+    {
+      "task_id": "sphinx-doc__sphinx-9461",
+      "gold_target_count": 3,
+      "baseline_hit_at_5": 1.0,
+      "repo_map_hit_at_5": 0.0,
+      "baseline_mrr": 1.0,
+      "repo_map_mrr": 0.1111111111111111
+    }
+  ],
+  "interpretation": "This three-task screen is not evidence of an improvement. Repo Map helps Pylint and pytest but misses Sphinx; aggregate Hit@5 ties the filename-keyword baseline while Hit@1 and MRR are lower."
+}

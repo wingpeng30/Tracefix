@@ -7,6 +7,7 @@ import pytest
 from tracefix import (
     AgentConfig,
     AgentError,
+    AgentPhase,
     AgentStatus,
     BaseLLM,
     BaseTool,
@@ -117,6 +118,9 @@ def test_agent_runs_tool_loop_and_accumulates_usage() -> None:
     assert state.input_tokens == 30
     assert state.output_tokens == 6
     assert state.cost_usd == pytest.approx(0.03)
+    assert state.model_request_seconds >= 0
+    assert state.context_preparation_seconds >= 0
+    assert state.presentation_metrics.result_count == 1
     assert len(tool.calls) == 1
     assert len(llm.requests[1][0]) == 4
 
@@ -127,8 +131,165 @@ def test_agent_runs_tool_loop_and_accumulates_usage() -> None:
     assert payload["success"] is True
     assert agent.history.pending_tool_call_ids == frozenset()
     assert TraceEventType.TOOL_CALLED in [event.event_type for event in sink.events]
+    assert TraceEventType.TOOL_RESULT_PRESENTED in [event.event_type for event in sink.events]
     assert sink.events[-1].event_type is TraceEventType.TASK_FINISHED
     assert len({event.task_id for event in sink.events}) == 1
+
+
+def test_duplicate_successful_read_uses_compact_cache_and_prompts_patch() -> None:
+    """重复只读调用不应再次执行工具，读取候选后应从探索转入修改。"""
+    tool = RecordingTool(name="read_file")
+    arguments = {"path": "src/parser.py", "start_line": 1, "end_line": 80}
+    llm = ScriptedLLM(
+        [
+            response(calls=(ToolCall(id="read-1", name="read_file", arguments=arguments),)),
+            response(calls=(ToolCall(id="read-2", name="read_file", arguments=arguments),)),
+            response(content="完成"),
+        ]
+    )
+    sink = MemorySink()
+    agent = MinimalAgent(
+        llm,
+        ToolRegistry([tool]),
+        AgentConfig(repo_map_reads_before_patch=1),
+        trace_sink=sink,
+        repository_map="map",
+        repository_candidates=("src/parser.py",),
+    )
+
+    state = agent.run("修复 parser")
+
+    assert len(tool.calls) == 1
+    assert state.cached_tool_calls == 1
+    assert state.repo_map_candidate_reads == 1
+    assert state.phase is AgentPhase.FINISH
+    cached_messages = [
+        json.loads(message.content or "{}")
+        for message in agent.history.snapshot()
+        if message.role is MessageRole.TOOL
+    ]
+    assert cached_messages[-1]["metadata"]["cached"] is True
+    assert any(message.metadata.get("kind") == "patch_action" for message in llm.requests[1][0])
+    assert TraceEventType.AGENT_PHASE_CHANGED in [event.event_type for event in sink.events]
+
+
+def test_exploration_soft_limit_adds_action_guidance() -> None:
+    """达到搜索软上限只推动收敛，不破坏消息配对或强行终止任务。"""
+    tool = RecordingTool()
+    llm = ScriptedLLM(
+        [
+            response(
+                calls=(
+                    ToolCall(id="search-1", name="search_code", arguments={"query": "a"}),
+                    ToolCall(id="search-2", name="search_code", arguments={"query": "b"}),
+                )
+            ),
+            response(content="根据证据完成"),
+        ]
+    )
+    agent = MinimalAgent(
+        llm,
+        ToolRegistry([tool]),
+        AgentConfig(max_search_calls=2),
+    )
+
+    state = agent.run("减少搜索")
+
+    assert state.status is AgentStatus.COMPLETED
+    assert state.search_calls == 2
+    assert any(
+        message.metadata.get("kind") == "exploration_budget"
+        for message in llm.requests[1][0]
+    )
+
+
+def test_cumulative_input_budget_adds_one_time_convergence_guidance() -> None:
+    """累计输入达到 50% 后，下一次请求应明确提示开始收敛。"""
+    tool = RecordingTool()
+    llm = ScriptedLLM(
+        [
+            response(
+                calls=(ToolCall(id="search", name="search_code", arguments={"query": "x"}),),
+                input_tokens=50,
+            ),
+            response(content="完成", input_tokens=10),
+        ]
+    )
+    agent = MinimalAgent(
+        llm,
+        ToolRegistry([tool]),
+        AgentConfig(max_input_tokens=100),
+    )
+
+    agent.run("预算提示")
+
+    reminders = [
+        message
+        for message in llm.requests[1][0]
+        if message.metadata.get("kind") == "token_budget_guidance"
+    ]
+    assert len(reminders) == 1
+    assert reminders[0].metadata["threshold_percent"] == 50
+
+
+def test_eighty_five_percent_policy_allows_one_targeted_read() -> None:
+    """预算最后 15% 仍保留一次具体文件读取，避免遗漏修复所需证据。"""
+    search = RecordingTool(name="search_code")
+    read = RecordingTool(name="read_file")
+    llm = ScriptedLLM(
+        [
+            response(
+                calls=(ToolCall(id="search", name="search_code", arguments={"query": "x"}),),
+                input_tokens=84,
+            ),
+            response(
+                calls=(ToolCall(id="read", name="read_file", arguments={"path": "a.py"}),),
+                input_tokens=1,
+            ),
+            response(content="停止探索", input_tokens=1),
+        ]
+    )
+    agent = MinimalAgent(
+        llm,
+        ToolRegistry([search, read]),
+        AgentConfig(max_input_tokens=100),
+    )
+
+    state = agent.run("保护预算")
+
+    assert state.status is AgentStatus.COMPLETED
+    assert len(search.calls) == 1
+    assert len(read.calls) == 1
+    tool_result = next(
+        json.loads(message.content or "{}")
+        for message in agent.history.snapshot()
+        if message.role is MessageRole.TOOL and message.tool_call_id == "read"
+    )
+    assert tool_result["success"] is True
+
+
+def test_token_optimization_can_be_disabled_for_fair_control() -> None:
+    """对照组应重复执行读取，且工具消息保持完整原始 ToolResult JSON。"""
+    tool = RecordingTool(name="read_file")
+    arguments = {"path": "src/parser.py"}
+    llm = ScriptedLLM(
+        [
+            response(calls=(ToolCall(id="read-1", name="read_file", arguments=arguments),)),
+            response(calls=(ToolCall(id="read-2", name="read_file", arguments=arguments),)),
+            response(content="完成"),
+        ]
+    )
+    agent = MinimalAgent(
+        llm,
+        ToolRegistry([tool]),
+        AgentConfig(token_optimization_enabled=False),
+    )
+
+    state = agent.run("对照运行")
+
+    assert len(tool.calls) == 2
+    assert state.cached_tool_calls == 0
+    assert state.presentation_metrics.compacted_result_count == 0
 
 
 def test_unknown_tool_becomes_feedback_and_agent_can_recover() -> None:
@@ -406,6 +567,7 @@ def test_passing_tests_and_nonempty_diff_prompt_agent_to_finish() -> None:
 
     assert state.status is AgentStatus.COMPLETED
     assert state.test_runs == 1
+    assert state.phase is AgentPhase.FINISH
     reminder = agent.history.snapshot()[-2]
     assert reminder.role is MessageRole.USER
     assert reminder.metadata["kind"] == "ready_to_finish"

@@ -1,0 +1,16 @@
+{
+  "experiment": "v0.7.3-natural-multifile-screen",
+  "date": "2026-09-13",
+  "task_kind": "synthetic_multifile_non_repetitive",
+  "purpose": "screen candidates for natural 32k historical compaction; not an A/B comparison",
+  "model_name": "deepseek/deepseek-v4-flash",
+  "budgets": {"max_input_tokens": 350000, "max_steps": 24, "max_test_runs": 6, "compaction_trigger_tokens": 32000},
+  "summary_path": "runs/eval-20260913T034635Z-59e06c1a/summary.json",
+  "trials": [
+    {"task_id": "config_precedence", "resolved": true, "input_tokens": 17396, "steps": 5, "file_read_calls": 7, "max_estimated_request_tokens": 4464, "history_compaction_count": 0, "eligible_for_context_ab": false},
+    {"task_id": "event_merge", "resolved": true, "input_tokens": 27985, "steps": 7, "file_read_calls": 6, "max_estimated_request_tokens": 5506, "history_compaction_count": 0, "eligible_for_context_ab": false},
+    {"task_id": "retry_pipeline", "resolved": true, "input_tokens": 17918, "steps": 5, "file_read_calls": 6, "max_estimated_request_tokens": 4489, "history_compaction_count": 0, "eligible_for_context_ab": false},
+    {"task_id": "shipping_route", "resolved": true, "input_tokens": 16570, "steps": 5, "file_read_calls": 6, "max_estimated_request_tokens": 4183, "history_compaction_count": 0, "eligible_for_context_ab": false}
+  ],
+  "conclusion": "All candidates are retained for accuracy and hidden-verification benchmarks but rejected for 32k compaction A/B because no historical compaction occurred."
+}

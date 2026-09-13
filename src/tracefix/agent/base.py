@@ -8,9 +8,11 @@ from enum import StrEnum
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from tracefix.agent.presentation import ToolPresentationConfig, ToolPresentationMetrics
 from tracefix.context import ContextConfig, ContextManager, ContextMetrics
 from tracefix.messages import MessageHistory
 from tracefix.models.base import BaseLLM
+from tracefix.repository import RepoMapConfig
 from tracefix.tools.base import ToolRegistry
 from tracefix.tracing.base import TraceSink
 
@@ -34,6 +36,15 @@ class AgentStatus(StrEnum):
     INTERRUPTED = "interrupted"
 
 
+class AgentPhase(StrEnum):
+    """Coding Agent 当前所处的工作阶段，用于约束探索并推动验证闭环。"""
+
+    EXPLORE = "explore"
+    PATCH = "patch"
+    VERIFY = "verify"
+    FINISH = "finish"
+
+
 class AgentConfig(BaseModel):
     """单次 Agent 运行使用的提示词和资源预算。"""
 
@@ -45,8 +56,15 @@ class AgentConfig(BaseModel):
     max_output_tokens: int = Field(default=20_000, ge=1)
     wall_time_seconds: int = Field(default=1_200, ge=1)
     max_test_runs: int = Field(default=8, ge=1)
+    max_exploration_steps: int = Field(default=4, ge=1)
+    max_search_calls: int = Field(default=4, ge=1)
+    max_file_reads_before_patch: int = Field(default=8, ge=1)
+    repo_map_reads_before_patch: int = Field(default=2, ge=1)
+    token_optimization_enabled: bool = True
+    presentation: ToolPresentationConfig = Field(default_factory=ToolPresentationConfig)
     record_request_views: bool = False
     context: ContextConfig = Field(default_factory=ContextConfig)
+    repo_map: RepoMapConfig = Field(default_factory=RepoMapConfig)
 
 
 class AgentState(BaseModel):
@@ -55,6 +73,7 @@ class AgentState(BaseModel):
     model_config = ConfigDict(extra="forbid", validate_assignment=True)
 
     status: AgentStatus = AgentStatus.CREATED
+    phase: AgentPhase = AgentPhase.EXPLORE
     task: str | None = None
     step_count: int = Field(default=0, ge=0)
     input_tokens: int = Field(default=0, ge=0)
@@ -62,11 +81,19 @@ class AgentState(BaseModel):
     cost_usd: float = Field(default=0.0, ge=0)
     cost_complete: bool = True
     test_runs: int = Field(default=0, ge=0)
+    search_calls: int = Field(default=0, ge=0)
+    file_read_calls: int = Field(default=0, ge=0)
+    cached_tool_calls: int = Field(default=0, ge=0)
+    repo_map_candidate_reads: int = Field(default=0, ge=0)
     started_at: datetime | None = None
     finished_at: datetime | None = None
     stop_reason: str | None = None
     final_output: str | None = None
     context_metrics: ContextMetrics = Field(default_factory=ContextMetrics)
+    presentation_metrics: ToolPresentationMetrics = Field(default_factory=ToolPresentationMetrics)
+    model_request_seconds: float = Field(default=0.0, ge=0)
+    tool_execution_seconds: float = Field(default=0.0, ge=0)
+    context_preparation_seconds: float = Field(default=0.0, ge=0)
 
     @model_validator(mode="after")
     def validate_timestamps(self) -> AgentState:
@@ -88,11 +115,17 @@ class BaseAgent(ABC):
         tools: ToolRegistry | None = None,
         config: AgentConfig | None = None,
         trace_sink: TraceSink | None = None,
+        repository_map: str | None = None,
+        repository_candidates: tuple[str, ...] = (),
     ) -> None:
         self.llm = llm
         self.tools = tools or ToolRegistry()
         self.config = config or AgentConfig()
         self.trace_sink = trace_sink
+        # Repo Map 是运行时针对隔离工作区生成的只读提示，不写回 AgentConfig，
+        # 避免配置文件携带某次仓库的局部绝对路径或代码内容。
+        self.repository_map = repository_map
+        self.repository_candidates = tuple(repository_candidates)
         self.history = MessageHistory()
         self.state = AgentState()
         self.context_manager = ContextManager(self.config.context.model_copy(deep=True))

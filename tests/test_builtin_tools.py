@@ -137,6 +137,21 @@ def test_search_code_marks_result_limit_truncation(git_workspace: Path) -> None:
     assert result.output["truncated"] is True
 
 
+def test_search_code_caps_repetitive_matches_per_file(git_workspace: Path) -> None:
+    """单文件相似命中最多返回五条，为其他文件保留上下文空间。"""
+    (git_workspace / "many.py").write_text("\n".join(["# NEEDLE"] * 8), encoding="utf-8")
+    (git_workspace / "other.py").write_text("# NEEDLE\n", encoding="utf-8")
+
+    result = SearchCodeTool(git_workspace).execute(
+        ToolCall(id="search-cap", name="search_code", arguments={"query": "NEEDLE"})
+    )
+
+    paths = [match["path"] for match in result.output["matches"]]
+    assert paths.count("many.py") == 5
+    assert "other.py" in paths
+    assert result.output["truncated"] is True
+
+
 def test_tool_argument_validation_and_name_mismatch(git_workspace: Path) -> None:
     tool = SearchCodeTool(git_workspace)
     with pytest.raises(ToolValidationError):

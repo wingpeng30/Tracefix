@@ -22,8 +22,11 @@ from tracefix.real_experiment import (
     RealPairedExperimentRunner,
     RealPrescreenRunner,
     RealPrescreenSummary,
+    RealRepoMapPrescreenRunner,
     validate_real_task_behavior,
 )
+from tracefix.repository import RepoMapConfig
+from tracefix.retrieval_eval import RetrievalEvaluationConfig, RetrievalEvaluator
 from tracefix.runtime import (
     DEFAULT_MODEL_NAME,
     DEFAULT_USD_CNY_RATE,
@@ -89,6 +92,12 @@ def _add_shared_options(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--max-output-tokens", type=int, help="累计输出 Token 上限")
     parser.add_argument("--wall-time-seconds", type=int, help="任务最长运行秒数")
     parser.add_argument("--max-test-runs", type=int, help="Agent 内测试调用上限")
+    parser.add_argument("--max-exploration-steps", type=int, help="探索阶段模型步骤软上限")
+    parser.add_argument("--max-search-calls", type=int, help="进入补丁前搜索调用软上限")
+    parser.add_argument("--max-file-reads-before-patch", type=int, help="进入补丁前文件读取软上限")
+    parser.add_argument(
+        "--repo-map-reads-before-patch", type=int, help="触发补丁行动提示的候选文件读取数"
+    )
     parser.add_argument("--llm-timeout-seconds", type=float, help="单次模型请求超时")
     parser.add_argument("--llm-max-retries", type=int, help="LiteLLM 自动重试次数")
     parser.add_argument(
@@ -116,15 +125,27 @@ def _add_shared_options(parser: argparse.ArgumentParser) -> None:
     )
     parser.add_argument("--context-window-tokens", type=int, help="模型单次请求硬窗口")
     parser.add_argument("--context-trigger-tokens", type=int, help="历史折叠软阈值")
-    parser.add_argument(
-        "--context-retain-ratio", type=float, help="折叠后保留近期轮次的比例"
-    )
+    parser.add_argument("--context-retain-ratio", type=float, help="折叠后保留近期轮次的比例")
     parser.add_argument(
         "--record-request-views",
         action="store_true",
         default=None,
         help="在轨迹中保存脱敏后的实际模型请求视图（默认关闭）",
     )
+    parser.add_argument(
+        "--no-token-optimization",
+        action="store_true",
+        default=None,
+        help="关闭工具结果精简、缓存与行动引导，用作同预算对照组",
+    )
+    repo_map_group = parser.add_mutually_exclusive_group()
+    repo_map_group.add_argument(
+        "--repo-map", action="store_true", default=None, help="显式启用确定性 Python Repo Map"
+    )
+    repo_map_group.add_argument(
+        "--no-repo-map", action="store_true", default=None, help="关闭 Repo Map，用于定位对照组"
+    )
+    parser.add_argument("--repo-map-max-chars", type=int, help="Repo Map 字符上限")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -205,6 +226,13 @@ def build_parser() -> argparse.ArgumentParser:
     _add_real_task_locations(prescreen_parser)
     _add_shared_options(prescreen_parser)
 
+    repo_map_prescreen_parser = subparsers.add_parser(
+        "real-repo-map-prescreen",
+        help="真实 Issue 上仅切换 Repo Map 的单次交替预筛选（会调用 LLM）",
+    )
+    _add_real_task_locations(repo_map_prescreen_parser)
+    _add_shared_options(repo_map_prescreen_parser)
+
     real_paired_parser = subparsers.add_parser(
         "real-paired-eval", help="只对至少三道已入选真实任务执行正式配对实验"
     )
@@ -214,6 +242,26 @@ def build_parser() -> argparse.ArgumentParser:
     )
     real_paired_parser.add_argument("--repetitions", type=int, default=3)
     _add_shared_options(real_paired_parser)
+
+    retrieval_parser = subparsers.add_parser(
+        "retrieval-eval", help="离线比较文件名关键词基线与 Repo Map 的文件定位能力"
+    )
+    retrieval_parser.add_argument(
+        "--tasks", type=Path, default=Path("benchmarks/real_tasks"), help="真实任务目录"
+    )
+    retrieval_parser.add_argument(
+        "--source-root",
+        type=Path,
+        default=Path("runs/real-task-validation"),
+        help="按任务 ID 保存的固定源码检出目录",
+    )
+    retrieval_parser.add_argument(
+        "--output-dir", type=Path, default=Path("runs"), help="评测产物根目录"
+    )
+    retrieval_parser.add_argument(
+        "--task-id", action="append", default=[], help="只评测指定任务，可重复传入"
+    )
+    retrieval_parser.add_argument("--repo-map-max-chars", type=int, default=12_000)
     return parser
 
 
@@ -239,8 +287,15 @@ def _add_real_task_locations(parser: argparse.ArgumentParser) -> None:
     )
 
 
-def _resolve_shared(args: argparse.Namespace) -> dict[str, Any]:
-    """加载 .env 后合并 CLI、环境变量和默认值。"""
+def _resolve_shared(
+    args: argparse.Namespace, *, real_issue_budget: bool = False
+) -> dict[str, Any]:
+    """加载 .env 后合并 CLI、环境变量和默认值。
+
+    真实 Issue 的一次定位、补丁和独立验收通常比合成任务长得多，因此仅真实任务
+    命令使用 350k 的累计输入默认值；普通 ``run``/``eval`` 仍保留 80k，避免无意间
+    扩大日常调试成本。CLI 参数和环境变量始终优先于这里的默认值。
+    """
     load_environment_file(args.env_file)
     return {
         "model_name": _first(args.model, "TRACEFIX_MODEL", DEFAULT_MODEL_NAME),
@@ -272,11 +327,7 @@ def _resolve_shared(args: argparse.Namespace) -> dict[str, Any]:
         ),
         "test_python_executable": (
             Path(value)
-            if (
-                value := _first(
-                    args.test_python, "TRACEFIX_TEST_PYTHON", None
-                )
-            )
+            if (value := _first(args.test_python, "TRACEFIX_TEST_PYTHON", None))
             else None
         ),
         "test_pythonpath_entries": tuple(
@@ -289,11 +340,12 @@ def _resolve_shared(args: argparse.Namespace) -> dict[str, Any]:
             )
         ),
         "agent_config": AgentConfig(
-            max_steps=_number_or_default(
-                args.max_steps, "TRACEFIX_MAX_STEPS", int, 30
-            ),
+            max_steps=_number_or_default(args.max_steps, "TRACEFIX_MAX_STEPS", int, 30),
             max_input_tokens=_number_or_default(
-                args.max_input_tokens, "TRACEFIX_MAX_INPUT_TOKENS", int, 80_000
+                args.max_input_tokens,
+                "TRACEFIX_MAX_INPUT_TOKENS",
+                int,
+                350_000 if real_issue_budget else 80_000,
             ),
             max_output_tokens=_number_or_default(
                 args.max_output_tokens, "TRACEFIX_MAX_OUTPUT_TOKENS", int, 20_000
@@ -301,8 +353,32 @@ def _resolve_shared(args: argparse.Namespace) -> dict[str, Any]:
             wall_time_seconds=_number_or_default(
                 args.wall_time_seconds, "TRACEFIX_WALL_TIME_SECONDS", int, 1_200
             ),
-            max_test_runs=_number_or_default(
-                args.max_test_runs, "TRACEFIX_MAX_TEST_RUNS", int, 8
+            max_test_runs=_number_or_default(args.max_test_runs, "TRACEFIX_MAX_TEST_RUNS", int, 8),
+            max_exploration_steps=_number_or_default(
+                args.max_exploration_steps,
+                "TRACEFIX_MAX_EXPLORATION_STEPS",
+                int,
+                4,
+            ),
+            max_search_calls=_number_or_default(
+                args.max_search_calls, "TRACEFIX_MAX_SEARCH_CALLS", int, 4
+            ),
+            max_file_reads_before_patch=_number_or_default(
+                args.max_file_reads_before_patch,
+                "TRACEFIX_MAX_FILE_READS_BEFORE_PATCH",
+                int,
+                8,
+            ),
+            repo_map_reads_before_patch=_number_or_default(
+                args.repo_map_reads_before_patch,
+                "TRACEFIX_REPO_MAP_READS_BEFORE_PATCH",
+                int,
+                2,
+            ),
+            token_optimization_enabled=(
+                not args.no_token_optimization
+                if args.no_token_optimization is not None
+                else _env_bool("TRACEFIX_TOKEN_OPTIMIZATION_ENABLED", True)
             ),
             record_request_views=(
                 args.record_request_views
@@ -334,6 +410,16 @@ def _resolve_shared(args: argparse.Namespace) -> dict[str, Any]:
                     0.375,
                 ),
             ),
+            repo_map=RepoMapConfig(
+                enabled=(
+                    False
+                    if args.no_repo_map
+                    else (True if args.repo_map else _env_bool("TRACEFIX_REPO_MAP_ENABLED", True))
+                ),
+                max_chars=_number_or_default(
+                    args.repo_map_max_chars, "TRACEFIX_REPO_MAP_MAX_CHARS", int, 12_000
+                ),
+            ),
         ),
     }
 
@@ -360,6 +446,20 @@ def _print_run_result(result: Any) -> None:
         f"裁剪工具结果 {context_metrics.tool_results_pruned} 次 / "
         f"估算节省 {context_metrics.estimated_tokens_saved} Token"
     )
+    presentation = getattr(result, "presentation_metrics", None)
+    if presentation is not None:
+        print(
+            "工具结果视图: "
+            f"精简 {presentation.compacted_result_count}/{presentation.result_count} 条 / "
+            f"估算节省 {presentation.estimated_tokens_saved} Token"
+        )
+    if hasattr(result, "model_request_seconds"):
+        print(
+            "耗时: "
+            f"模型 {result.model_request_seconds:.2f}s / "
+            f"工具 {result.tool_execution_seconds:.2f}s / "
+            f"索引 {result.repository_index_seconds:.2f}s"
+        )
     if result.cost_complete:
         print(
             f"费用: ${result.cost_usd:.8f} / 约 ¥{result.cost_cny_estimate:.8f} "
@@ -415,7 +515,30 @@ def main(argv: list[str] | None = None) -> int:
             print(f"验收记录: {result_path}", file=sys.stderr)
             return 0
 
-        shared = _resolve_shared(args)
+        if args.command == "retrieval-eval":
+            summary = RetrievalEvaluator().run(
+                RetrievalEvaluationConfig(
+                    tasks_dir=args.tasks,
+                    source_root=args.source_root,
+                    output_dir=args.output_dir,
+                    task_ids=tuple(args.task_id),
+                    repo_map=RepoMapConfig(max_chars=args.repo_map_max_chars),
+                )
+            )
+            print(f"离线检索评测完成: {summary.task_count} 题，不调用 LLM")
+            print(
+                "Hit@5: "
+                f"baseline {summary.baseline_metrics.hit_at_5:.1%}；"
+                f"repo_map {summary.repo_map_metrics.hit_at_5:.1%}"
+            )
+            print(f"汇总文件: {summary.summary_path}")
+            return 0
+
+        shared = _resolve_shared(
+            args,
+            real_issue_budget=args.command
+            in {"real-prescreen", "real-repo-map-prescreen", "real-paired-eval"},
+        )
         if args.command == "run":
             result = TraceFixRunner().run(
                 RunConfig(repo=args.repo, task=_read_task(args), **shared)
@@ -425,7 +548,11 @@ def main(argv: list[str] | None = None) -> int:
                 return 0
             return 2 if result.status is AgentStatus.INTERRUPTED else 1
 
-        if args.command in {"real-prescreen", "real-paired-eval"}:
+        if args.command in {
+            "real-prescreen",
+            "real-repo-map-prescreen",
+            "real-paired-eval",
+        }:
             # 真实任务按题选择独立解释器和 bootstrap，因此不采用 shared 中的
             # 单一 test-python 参数；其余模型与预算字段保持完全一致。
             shared.pop("test_python_executable", None)
@@ -442,6 +569,20 @@ def main(argv: list[str] | None = None) -> int:
                 print(
                     f"真实任务预筛选完成: {len(summary.eligible_task_ids)}/"
                     f"{len(summary.results)} 达到正式实验门槛"
+                )
+                print(f"汇总文件: {summary.summary_path}")
+                return 0
+            if args.command == "real-repo-map-prescreen":
+                if args.repo_map or args.no_repo_map:
+                    raise ValueError(
+                        "real-repo-map-prescreen 会自动运行关闭和开启 Repo Map 两组，"
+                        "不能额外传 --repo-map 或 --no-repo-map"
+                    )
+                summary = RealRepoMapPrescreenRunner().run(real_config)
+                print(
+                    "Repo Map 预筛选完成: "
+                    f"关闭 {summary.control.resolved_count}/{summary.control.trial_count}；"
+                    f"开启 {summary.treatment.resolved_count}/{summary.treatment.trial_count}"
                 )
                 print(f"汇总文件: {summary.summary_path}")
                 return 0
@@ -481,12 +622,9 @@ def main(argv: list[str] | None = None) -> int:
             print(f"汇总文件: {summary.summary_path}")
             return 0
 
-        summary = BenchmarkRunner().run(
-            benchmark_config
-        )
+        summary = BenchmarkRunner().run(benchmark_config)
         print(
-            f"评测完成: {summary.resolved_count}/{summary.task_count} "
-            f"({summary.resolved_rate:.1%})"
+            f"评测完成: {summary.resolved_count}/{summary.task_count} ({summary.resolved_rate:.1%})"
         )
         print(f"汇总文件: {summary.summary_path}")
         return 0 if summary.resolved_count == summary.task_count else 1

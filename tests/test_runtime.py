@@ -138,6 +138,9 @@ def test_runner_clones_runs_agent_writes_artifacts_and_converts_cost(tmp_path, m
     assert result.cost_cny_estimate == pytest.approx(0.216)
     assert result.cost_complete
     assert result.context_metrics.preparation_count == 2
+    assert result.repo_map is not None
+    assert result.repo_map_path is not None
+    assert Path(result.repo_map_path).is_file()
     assert seen_config[0].extra_kwargs == {
         "api_base": "https://api.deepseek.com",
         "extra_body": {"thinking": {"type": "disabled"}},
@@ -155,7 +158,8 @@ def test_runner_clones_runs_agent_writes_artifacts_and_converts_cost(tmp_path, m
     assert "pydantic" in stored["provenance"]["dependency_versions"]
     event_types = [json.loads(line)["event_type"] for line in trace_text.splitlines()]
     assert event_types[0] == "run_provenance"
-    assert event_types[1] == "task_started"
+    assert event_types[1] == "repository_indexed"
+    assert "repo_map_added" in event_types
     assert event_types[-1] == "task_finished"
 
 

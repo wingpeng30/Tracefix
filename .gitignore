@@ -4,6 +4,9 @@ __pycache__/
 .coverage
 .pytest_cache/
 .pytest-tmp*/
+.test-tmp*/
+test-artifacts-*/
+pytest-*/
 .ruff_cache/
 .venv/
 build/

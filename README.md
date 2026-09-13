@@ -6,7 +6,7 @@ Token 预算下，通过仓库结构检索、动态上下文和测试驱动的�
 
 完整的版本代码说明与实验索引见 [`docs/README.md`](docs/README.md)。
 
-最新稳定版本为 **v0.5.2**。它已经具备一条可真实运行的最小闭环，并新增确定性上下文管理：
+最新开发版本为 **v0.7.3**（最新稳定标签以 GitHub Releases 为准）。它已经具备一条可真实运行的最小闭环，并新增确定性上下文管理：
 完整轨迹始终保留，模型请求视图会按压力裁剪超长工具输出并折叠较早轮次。
 
 ## 当前能力
@@ -26,6 +26,7 @@ Token 预算下，通过仓库结构检索、动态上下文和测试驱动的�
 - 独立记录 Agent 完成、公开测试、隐藏验收和测试文件篡改四类信号。
 - 支持关闭压缩与 32k 压缩的交替、至少三次重复配对实验。
 - 3 道来自 SWE-bench Verified、gold 实际修改多个源码文件的真实 Issue 任务。
+- 确定性 Python AST Repository Indexer 与任务相关 Repo Map，先给出候选文件和符号行号。
 
 ## 架构
 
@@ -34,6 +35,7 @@ tracefix CLI
     │
     ├── TraceFixRunner ── 干净源仓库 → 独立 Git 克隆
     │       ├── LiteLLMAdapter → DeepSeek API
+    │       ├── RepositoryIndexer → Repo Map（候选文件/符号）
     │       ├── MinimalAgent → MessageHistory（完整历史）
     │       │                    └── ContextManager（模型请求视图）
     │       ├── ToolRegistry → 五个基础工具
@@ -129,6 +131,24 @@ tracefix paired-eval `
 Agent 是否正常结束、公开测试、独立隐藏测试、测试文件修改、Token、费用、文件重读、重复调用、
 工具失败、工具结果裁剪和真正的历史轮次折叠。没有触发折叠的任务会单独列出。
 
+不调用模型地评估 Repo Map 文件定位能力：
+
+```powershell
+.\.venv\Scripts\python.exe -W ignore::SyntaxWarning -m tracefix.cli retrieval-eval `
+  --tasks benchmarks/real_tasks `
+  --source-root runs/real-task-validation
+```
+
+该命令只把 `gold.patch` 的 diff 文件路径作为评测标签，绝不把补丁内容传给索引器。它会对比
+文件名关键词基线与 Repo Map 的 Hit@K、Recall@K、MRR、索引耗时和地图估算 Token；首轮三题
+结果未显示总体提升。随后增加模块/符号反向索引、相对导入和一跳图扩展，在相同样本上将 Hit@5
+提升至 100%，但首位定位仍未改善；详见
+[`docs/experiments/v0.6.0-repository-graph-retrieval-eval.md`](docs/experiments/v0.6.0-repository-graph-retrieval-eval.md)。
+
+之后的源码先验与种子排序在相同三题上将 Repo Map 的 Hit@1 提升至 66.67%、MRR 提升至
+0.833，同时保持 Hit@5 为 100%；该结果仅是离线定位证据，详见
+[`docs/experiments/v0.6.0-seed-ranking-retrieval-eval.md`](docs/experiments/v0.6.0-seed-ranking-retrieval-eval.md)。
+
 常用预算参数：
 
 ```text
@@ -156,6 +176,7 @@ Token 时折叠较早的完整工具轮次，并保留约 37.5% 的近期上下�
 
 ```text
 --no-context-compaction       关闭裁剪和折叠，用于未压缩对照组
+--no-token-optimization       关闭工具结果精简、缓存和行动引导，用于 Token 效率对照组
 --context-window-tokens       模型单次请求硬窗口，默认 1000000
 --context-trigger-tokens      历史折叠软阈值，默认 32000
 --context-retain-ratio        折叠后近期历史保留比例，默认 0.375
@@ -223,6 +244,12 @@ tracefix eval `
   --tasks benchmarks/real_tasks `
   --source-root runs/real-task-validation `
   --test-env-root runs/real-task-envs-v2
+
+# Repo Map 真实预筛选：每题关闭/开启各一次，顺序交替；两组均保持 32k 压缩
+.\.venv\Scripts\python.exe -m tracefix.cli real-repo-map-prescreen `
+  --tasks benchmarks/real_tasks `
+  --source-root runs/real-task-validation `
+  --test-env-root runs/real-task-envs-v2
 ```
 
 三个任务已在独立 Python 3.9 环境中验证：清单里的隐藏用例均在 base 上失败、gold 后通过。
@@ -233,6 +260,11 @@ tracefix eval `
 0/3 触发历史折叠，所以没有继续花费 18 次正式配对实验。Pylint/Sphinx 主要卡在文件定位，
 pytest 虽形成补丁闭环却修改测试且未过隐藏验收；下一主功能据此选择 AST Repo Map。完整数据
 与解释见 [`docs/experiments/v0.5.0-real-issue-32k-prescreen.md`](docs/experiments/v0.5.0-real-issue-32k-prescreen.md)。
+
+V0.6.1 针对 Repo Map 已定位但 Agent 不收敛的问题，加入四阶段行动状态、只读工具缓存、探索软预算
+和累计 Token 分级提示。搜索默认结果降至 20 条、每个文件最多 5 条；真实评测新增首次补丁、首次
+测试和目标文件后搜索次数。实现与未付费复跑边界见
+[`docs/tasks/v0.6.1-agent-action-efficiency.md`](docs/tasks/v0.6.1-agent-action-efficiency.md)。
 
 ## v0.2.0 Baseline
 

@@ -16,6 +16,7 @@ from tracefix.real_experiment import (
     RealExperimentConfig,
     RealPairedExperimentRunner,
     RealPrescreenRunner,
+    RealRepoMapPrescreenRunner,
     RealTrajectoryMetrics,
     RealTrialResult,
     _eligibility_failures,
@@ -50,6 +51,11 @@ new file mode 100644
 +def test_fixed():
 +    assert VALUE == 1 and ENABLED
 """
+
+
+def test_real_experiment_default_input_budget_is_350k() -> None:
+    """程序化真实实验与 CLI 的 350k 默认值必须一致。"""
+    assert RealExperimentConfig().agent_config.max_input_tokens == 350_000
 
 
 def _run_git(repo: Path, *arguments: str) -> str:
@@ -253,8 +259,10 @@ def test_prescreen_runs_hidden_verification_and_applies_entry_gate(
 
     trial = summary.results[0]
     assert trial.agent_completed is True
-    assert trial.public_tests_passed is True
+    assert trial.agent_selected_tests_passed is True
+    assert trial.public_tests_passed is None
     assert trial.independent_tests_passed is True
+    assert trial.source_patch_applied is True
     assert trial.tests_modified is False
     assert trial.resolved is True
     assert trial.eligible_for_paired is True
@@ -274,6 +282,23 @@ def test_trajectory_reports_missing_gate_reasons(tmp_path) -> None:
     assert "no_history_compaction" in failures
     assert "request_never_reached_trigger" in failures
     assert metrics.request_views_recorded == 1
+
+
+def test_trajectory_records_first_read_of_evaluator_only_target_file(tmp_path) -> None:
+    path = tmp_path / "trace.jsonl"
+    _trace(path)
+
+    metrics = analyze_real_trajectory(
+        path,
+        related_files=("pkg/a.py", "pkg/b.py"),
+        target_files=("pkg/b.py",),
+    )
+
+    assert metrics.first_target_read_path == "pkg/b.py"
+    assert metrics.first_target_read_step == 1
+    assert metrics.first_target_read_tool_call == 2
+    assert metrics.first_patch_step == 2
+    assert metrics.first_test_step == 3
 
 
 def test_gate_requires_files_loop_and_request_view() -> None:
@@ -349,6 +374,67 @@ def test_paired_runner_uses_ct_tc_ct_order_and_persists_summary(
         ExperimentArm.TREATMENT,
         ExperimentArm.CONTROL,
     ]
+    assert Path(summary.summary_path).is_file()
+
+
+def test_repo_map_prescreen_alternates_arms_and_keeps_context_policy(tmp_path, monkeypatch) -> None:
+    """该预筛选的唯一变量是 Repo Map，不能意外关闭 32k 压缩。"""
+    task, source = _fixture(tmp_path)
+    config = RealExperimentConfig(output_dir=tmp_path / "runs")
+    fake_run = _FakeRunner().run(
+        type(
+            "Config",
+            (),
+            {
+                "output_dir": tmp_path / "fake",
+                "repo": source,
+                "model_name": config.model_name,
+                "task": task.problem_statement,
+                "usd_cny_rate": config.usd_cny_rate,
+                "agent_config": AgentConfig(),
+            },
+        )()
+    )
+    tasks = tuple(task.model_copy(update={"id": f"task-{index}"}) for index in range(3))
+    monkeypatch.setattr(
+        "tracefix.real_experiment.load_real_issue_tasks", lambda *args, **kwargs: tasks
+    )
+    runner = RealRepoMapPrescreenRunner()
+    seen = []
+
+    def fake_trial(config, task, arm, sequence, repetition, *paths, **kwargs):
+        seen.append((task.id, arm, kwargs["context_enabled"], kwargs["repo_map_enabled"]))
+        return RealTrialResult(
+            sequence=sequence,
+            task_id=task.id,
+            arm=arm,
+            repo_map_enabled=kwargs["repo_map_enabled"],
+            repetition=repetition,
+            run=fake_run,
+            agent_completed=True,
+            public_tests_passed=True,
+            independent_tests_passed=True,
+            tests_modified=False,
+            resolved=True,
+            trajectory=RealTrajectoryMetrics(first_target_read_step=2),
+            eligible_for_paired=True,
+        )
+
+    monkeypatch.setattr(runner, "_run_trial", fake_trial)
+    summary = runner.run(config)
+
+    assert [entry[1] for entry in seen] == [
+        ExperimentArm.CONTROL,
+        ExperimentArm.TREATMENT,
+        ExperimentArm.TREATMENT,
+        ExperimentArm.CONTROL,
+        ExperimentArm.CONTROL,
+        ExperimentArm.TREATMENT,
+    ]
+    assert all(entry[2] is config.agent_config.context.enabled for entry in seen)
+    assert [entry[3] for entry in seen] == [False, True, True, False, False, True]
+    assert summary.control.resolved_count == 3
+    assert summary.treatment.average_first_target_read_step == 2
     assert Path(summary.summary_path).is_file()
 
 

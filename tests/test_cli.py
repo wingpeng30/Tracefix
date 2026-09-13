@@ -99,6 +99,33 @@ def test_cli_eval_uses_environment_defaults_and_returns_nonzero_for_unresolved(
     assert "0/1" in capsys.readouterr().out
 
 
+def test_real_prescreen_uses_larger_default_input_budget(tmp_path, monkeypatch, capsys) -> None:
+    """真实 Issue 默认 350k，普通 eval 的 80k 默认值不能被意外改变。"""
+    captured = []
+
+    class FakePrescreenRunner:
+        def run(self, config):
+            captured.append(config)
+            return SimpleNamespace(
+                eligible_task_ids=(), results=(), summary_path="real-summary.json"
+            )
+
+    monkeypatch.setattr("tracefix.cli.RealPrescreenRunner", FakePrescreenRunner)
+    code = main(
+        [
+            "real-prescreen",
+            "--tasks",
+            str(tmp_path),
+            "--env-file",
+            str(tmp_path / "missing.env"),
+        ]
+    )
+
+    assert code == 0
+    assert captured[0].agent_config.max_input_tokens == 350_000
+    assert "真实任务预筛选完成" in capsys.readouterr().out
+
+
 def test_cli_paired_eval_builds_three_repeat_experiment(tmp_path, monkeypatch, capsys) -> None:
     captured = []
 
@@ -195,6 +222,14 @@ def test_cli_context_options_override_environment(tmp_path, monkeypatch) -> None
             "--context-retain-ratio",
             "0.4",
             "--record-request-views",
+            "--max-exploration-steps",
+            "3",
+            "--max-search-calls",
+            "2",
+            "--max-file-reads-before-patch",
+            "6",
+            "--repo-map-reads-before-patch",
+            "1",
             "--env-file",
             str(tmp_path / "missing.env"),
         ]
@@ -206,21 +241,122 @@ def test_cli_context_options_override_environment(tmp_path, monkeypatch) -> None
     assert context.compaction_trigger_tokens == 3_000
     assert context.retain_ratio == 0.4
     assert captured[0].agent_config.record_request_views is True
+    assert captured[0].agent_config.max_exploration_steps == 3
+    assert captured[0].agent_config.max_search_calls == 2
+    assert captured[0].agent_config.max_file_reads_before_patch == 6
+    assert captured[0].agent_config.repo_map_reads_before_patch == 1
+
+
+def test_cli_token_optimization_switch_overrides_environment(tmp_path, monkeypatch) -> None:
+    """CLI 显式关闭应优先于环境变量，便于构造公平的 Token 对照组。"""
+    captured = []
+
+    class FakeRunner:
+        def run(self, config):
+            captured.append(config)
+            return _run_result()
+
+    monkeypatch.setattr("tracefix.cli.TraceFixRunner", FakeRunner)
+    monkeypatch.setenv("TRACEFIX_TOKEN_OPTIMIZATION_ENABLED", "true")
+    assert (
+        main(
+            [
+                "run",
+                "--repo",
+                str(tmp_path),
+                "--task",
+                "fix",
+                "--no-token-optimization",
+                "--env-file",
+                str(tmp_path / "missing.env"),
+            ]
+        )
+        == 0
+    )
+    assert captured[0].agent_config.token_optimization_enabled is False
+
+
+def test_cli_repo_map_options_override_environment(tmp_path, monkeypatch) -> None:
+    captured = []
+
+    class FakeRunner:
+        def run(self, config):
+            captured.append(config)
+            return _run_result()
+
+    monkeypatch.setattr("tracefix.cli.TraceFixRunner", FakeRunner)
+    monkeypatch.setenv("TRACEFIX_REPO_MAP_ENABLED", "false")
+    assert (
+        main(
+            [
+                "run",
+                "--repo",
+                str(tmp_path),
+                "--task",
+                "fix",
+                "--repo-map",
+                "--repo-map-max-chars",
+                "2048",
+                "--env-file",
+                str(tmp_path / "none"),
+            ]
+        )
+        == 0
+    )
+    assert captured[0].agent_config.repo_map.enabled is True
+    assert captured[0].agent_config.repo_map.max_chars == 2048
 
 
 def test_cli_rejects_invalid_context_boolean_environment(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("TRACEFIX_CONTEXT_ENABLED", "sometimes")
-    assert main(
+    assert (
+        main(
+            [
+                "run",
+                "--repo",
+                str(tmp_path),
+                "--task",
+                "fix",
+                "--env-file",
+                str(tmp_path / "missing.env"),
+            ]
+        )
+        == 2
+    )
+
+
+def test_cli_runs_offline_retrieval_evaluation(tmp_path, monkeypatch, capsys) -> None:
+    """该命令不解析共享 LLM 配置，也不应要求任何 API Key。"""
+    captured = []
+
+    class FakeEvaluator:
+        def run(self, config):
+            captured.append(config)
+            return SimpleNamespace(
+                task_count=2,
+                baseline_metrics=SimpleNamespace(hit_at_5=0.5),
+                repo_map_metrics=SimpleNamespace(hit_at_5=1.0),
+                summary_path="retrieval-summary.json",
+            )
+
+    monkeypatch.setattr("tracefix.cli.RetrievalEvaluator", FakeEvaluator)
+    code = main(
         [
-            "run",
-            "--repo",
-            str(tmp_path),
-            "--task",
-            "fix",
-            "--env-file",
-            str(tmp_path / "missing.env"),
+            "retrieval-eval",
+            "--tasks",
+            str(tmp_path / "tasks"),
+            "--source-root",
+            str(tmp_path / "sources"),
+            "--output-dir",
+            str(tmp_path / "outputs"),
+            "--repo-map-max-chars",
+            "2048",
         ]
-    ) == 2
+    )
+
+    assert code == 0
+    assert captured[0].repo_map.max_chars == 2048
+    assert "不调用 LLM" in capsys.readouterr().out
 
 
 def test_cli_direct_task_reports_interruption_and_incomplete_cost(
