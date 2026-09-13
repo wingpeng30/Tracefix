@@ -1,0 +1,45 @@
+{
+  "id": "psf__requests-1724",
+  "title": "Unicode method names cause UnicodeDecodeError for some requests in Python 2.7.2",
+  "source_dataset": "SWE-bench/SWE-bench_Verified",
+  "dataset_split": "test",
+  "repo": "psf/requests",
+  "repo_url": "https://github.com/psf/requests.git",
+  "issue_url": "https://github.com/psf/requests/issues/1724",
+  "base_commit": "1ba83c47ce7b177efe90d5f51f7760680f72eda0",
+  "environment_setup_commit": "4bceb312f1b99d36a25f2985b5606e98b6f0d8cd",
+  "upstream_version": "2.0",
+  "issue_created_at": "2013-11-04T09:37:00Z",
+  "evaluation_backend": "swebench_docker",
+  "problem_statement_kind": "verbatim",
+  "problem_statement_file": "problem.md",
+  "gold_patch_file": "gold.patch",
+  "test_patch_file": "test.patch",
+  "fail_to_pass": [
+    "test_requests.py::RequestsTestCase::test_DIGEST_AUTH_RETURNS_COOKIE",
+    "test_requests.py::RequestsTestCase::test_DIGEST_HTTP_200_OK_GET",
+    "test_requests.py::RequestsTestCase::test_different_encodings_dont_break_post",
+    "test_requests.py::RequestsTestCase::test_generic_cookiejar_works",
+    "test_requests.py::RequestsTestCase::test_uppercase_scheme_redirect",
+    "test_requests.py::RequestsTestCase::test_user_agent_transfers"
+  ],
+  "test_command": "pytest -q",
+  "pass_to_pass_count": 79,
+  "expected_source_files": [
+    "requests/sessions.py"
+  ],
+  "expected_test_files": [
+    "test_requests.py"
+  ],
+  "related_context_files": [
+    "requests/sessions.py",
+    "test_requests.py",
+    "requests/__init__.py",
+    "requests/__init__.pyi"
+  ],
+  "hashes": {
+    "problem_statement": "eacde5d201658474274cce4558b5d2b8ae74d9fcc2ad6ddc76aaf003b2160b8a",
+    "gold_patch": "f02e7cb27f931afc59887bcd31705b7d8ad9a226b187b398262f202f605365df",
+    "test_patch": "7b7377da0dd8c776fad717d6a658fa385c24df80f54ee9e463ae59ae9a2c306b"
+  }
+}

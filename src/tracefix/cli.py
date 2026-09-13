@@ -276,6 +276,12 @@ def build_parser() -> argparse.ArgumentParser:
         "--output-dir", type=Path, default=Path("benchmarks/real_candidates")
     )
     collect_parser.add_argument("--per-repository", type=int, default=3)
+    collect_parser.add_argument(
+        "--min-source-files",
+        type=int,
+        default=1,
+        help="gold patch 至少修改的非测试 Python 文件数，默认 1",
+    )
     collect_parser.add_argument("--repository", action="append", dest="repositories")
 
     screen_parser = subparsers.add_parser(
@@ -568,6 +574,7 @@ def main(argv: list[str] | None = None) -> int:
                 source=args.source,
                 output_dir=args.output_dir,
                 per_repository=args.per_repository,
+                min_source_files=args.min_source_files,
                 repositories=tuple(args.repositories)
                 if args.repositories
                 else CandidateCollectionConfig().repositories,

@@ -1,0 +1,25 @@
+{
+  "instance_id": "sphinx-doc__sphinx-10435",
+  "repo": "sphinx-doc/sphinx",
+  "base_commit": "f1061c012e214f16fd8790dec3c283d787e3daa8",
+  "version": "5.0",
+  "problem_statement_sha256": "0570ee51a381375e1d7cf73809446a73e0ce26f01742a06da36d0d46500b77f1",
+  "patch_sha256": "2584394a681f5a2f8dfd5312eabceb9bea865580a85cbcd7d0975da42c39f0e5",
+  "test_patch_sha256": "31b719cc3d54f539d1e5e3632599048a8d7e13878091477c75157942f429ab44",
+  "source_files": [
+    "sphinx/writers/latex.py"
+  ],
+  "test_files": [
+    "tests/test_build_latex.py"
+  ],
+  "related_files": [
+    "sphinx/writers/latex.py",
+    "tests/test_build_latex.py",
+    "sphinx/writers/__init__.py",
+    "sphinx/writers/__init__.pyi"
+  ],
+  "source_file_count": 1,
+  "test_file_count": 1,
+  "eligible": true,
+  "exclusion_reasons": []
+}

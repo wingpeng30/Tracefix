@@ -1,0 +1,25 @@
+{
+  "instance_id": "psf__requests-1142",
+  "repo": "psf/requests",
+  "base_commit": "22623bd8c265b78b161542663ee980738441c307",
+  "version": "1.1",
+  "problem_statement_sha256": "0192533ff2ef0c53a600b3ef02cb9dc20bf0998d56eeaee80ca1a76c46758eec",
+  "patch_sha256": "c25c1f930edaf8514d3a5f2bc5631a8e8080ecb2511c789ec171f37d14e627a6",
+  "test_patch_sha256": "6671e023a6f6ed84969327ccee025cb8ab81e79c9477a7d635640c0b03836769",
+  "source_files": [
+    "requests/models.py"
+  ],
+  "test_files": [
+    "test_requests.py"
+  ],
+  "related_files": [
+    "requests/models.py",
+    "test_requests.py",
+    "requests/__init__.py",
+    "requests/__init__.pyi"
+  ],
+  "source_file_count": 1,
+  "test_file_count": 1,
+  "eligible": true,
+  "exclusion_reasons": []
+}

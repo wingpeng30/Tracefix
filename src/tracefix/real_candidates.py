@@ -33,6 +33,7 @@ class CandidateCollectionConfig(BaseModel):
     source: Path | None = None
     output_dir: Path = Path("benchmarks/real_candidates")
     per_repository: int = Field(default=3, ge=1)
+    min_source_files: int = Field(default=1, ge=1)
     repositories: tuple[str, ...] = _REPOSITORIES
 
 
@@ -72,9 +73,15 @@ class CandidateCollectionResult(BaseModel):
     output_path: str
 
 
+def _normalized_text(text: str) -> str:
+    """统一工件换行符，避免 Windows 文本写入将混合换行符变形。"""
+    return text.replace("\r\n", "\n").replace("\r", "\n")
+
+
 def _sha(text: str) -> str:
     """对任务文本或补丁计算稳定 SHA-256。"""
-    return hashlib.sha256(text.replace("\r\n", "\n").encode("utf-8")).hexdigest()
+    normalized = _normalized_text(text)
+    return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
 
 
 def patch_paths(patch: str) -> tuple[str, ...]:
@@ -119,7 +126,7 @@ def _load_rows(config: CandidateCollectionConfig) -> tuple[dict[str, Any], ...]:
         ) from exc
 
 
-def _record(row: dict[str, Any], repositories: set[str]) -> CandidateRecord:
+def _record(row: dict[str, Any], repositories: set[str], min_source_files: int) -> CandidateRecord:
     """把官方实例转换为脱敏结构记录，不保存模型响应。"""
     repo = str(row.get("repo", ""))
     instance = str(row.get("instance_id", ""))
@@ -159,8 +166,8 @@ def _record(row: dict[str, Any], repositories: set[str]) -> CandidateRecord:
         reasons.append("empty_problem_statement")
     if not patch.strip() or not test_patch.strip():
         reasons.append("missing_patch_or_test_patch")
-    if len(source) < 2:
-        reasons.append("fewer_than_two_python_source_files")
+    if len(source) < min_source_files:
+        reasons.append(f"fewer_than_{min_source_files}_python_source_files")
     if not tests:
         reasons.append("no_test_patch_files")
     return CandidateRecord(
@@ -185,6 +192,15 @@ def _write_task_manifest(task_dir: Path, row: dict[str, Any], record: CandidateR
     """把候选结构记录转换为 RealIssueTask 可加载的最小清单。"""
     issue_number = record.instance_id.rsplit("-", 1)[-1]
     problem = str(row.get("problem_statement", ""))
+    # RealIssueTask 会逐一校验 gold patch 的全部路径；这里不能只保留 Python
+    # 文件，否则同时修改 setup.cfg 等配置的真实任务无法通过工件验收。
+    gold_files = patch_paths(str(row.get("patch", "")))
+    related_files = tuple(dict.fromkeys((*gold_files, *record.related_files)))[:10]
+    pass_to_pass = row.get("PASS_TO_PASS", row.get("pass_to_pass_count", 0))
+    # SWE-bench 官方字段是测试选择器列表；TraceFix 清单只需要其数量。
+    pass_to_pass_count = (
+        len(pass_to_pass) if isinstance(pass_to_pass, list) else int(pass_to_pass or 0)
+    )
     payload = {
         "id": record.instance_id,
         "title": problem.splitlines()[0][:200] or record.instance_id,
@@ -205,10 +221,10 @@ def _write_task_manifest(task_dir: Path, row: dict[str, Any], record: CandidateR
         "fail_to_pass": list(row.get("FAIL_TO_PASS", row.get("fail_to_pass", ["tests"])))
         or ["tests"],
         "test_command": str(row.get("test_command", "pytest -q")),
-        "pass_to_pass_count": int(row.get("PASS_TO_PASS", row.get("pass_to_pass_count", 0)) or 0),
-        "expected_source_files": list(record.source_files),
+        "pass_to_pass_count": pass_to_pass_count,
+        "expected_source_files": list(gold_files),
         "expected_test_files": list(record.test_files),
-        "related_context_files": list(record.related_files),
+        "related_context_files": list(related_files),
         "hashes": {
             "problem_statement": record.problem_statement_sha256,
             "gold_patch": record.patch_sha256,
@@ -223,7 +239,7 @@ def _write_task_manifest(task_dir: Path, row: dict[str, Any], record: CandidateR
 def collect_candidates(config: CandidateCollectionConfig) -> CandidateCollectionResult:
     """按仓库配额稳定选择候选，并写出不含补丁正文的清单。"""
     rows = tuple(sorted(_load_rows(config), key=lambda row: str(row.get("instance_id", ""))))
-    records = tuple(_record(row, set(config.repositories)) for row in rows)
+    records = tuple(_record(row, set(config.repositories), config.min_source_files) for row in rows)
     selected: list[CandidateRecord] = []
     counts = {repo: 0 for repo in config.repositories}
     for record in records:
@@ -234,12 +250,6 @@ def collect_candidates(config: CandidateCollectionConfig) -> CandidateCollection
         ):
             selected.append(record)
             counts[record.repo] += 1
-    missing = [repo for repo, count in counts.items() if count < config.per_repository]
-    if missing:
-        raise BenchmarkError(
-            "candidate quota is not satisfied",
-            context={"missing_repositories": missing, "counts": counts},
-        )
     output = config.output_dir.expanduser().resolve()
     output.mkdir(parents=True, exist_ok=True)
     # 保存问题和补丁原文供第二阶段准备源码使用；模型轨迹和 API 响应不会进入候选目录。
@@ -249,10 +259,14 @@ def collect_candidates(config: CandidateCollectionConfig) -> CandidateCollection
         task_dir = output / record.instance_id
         task_dir.mkdir(parents=True, exist_ok=True)
         (task_dir / "problem.md").write_text(
-            str(row.get("problem_statement", "")), encoding="utf-8"
+            _normalized_text(str(row.get("problem_statement", ""))), encoding="utf-8"
         )
-        (task_dir / "gold.patch").write_text(str(row.get("patch", "")), encoding="utf-8")
-        (task_dir / "test.patch").write_text(str(row.get("test_patch", "")), encoding="utf-8")
+        (task_dir / "gold.patch").write_text(
+            _normalized_text(str(row.get("patch", ""))), encoding="utf-8"
+        )
+        (task_dir / "test.patch").write_text(
+            _normalized_text(str(row.get("test_patch", ""))), encoding="utf-8"
+        )
         (task_dir / "candidate.json").write_text(record.model_dump_json(indent=2), encoding="utf-8")
         _write_task_manifest(task_dir, row, record)
     path = output / "candidate-pool.json"
@@ -267,4 +281,15 @@ def collect_candidates(config: CandidateCollectionConfig) -> CandidateCollection
         output_path=str(path),
     )
     path.write_text(result.model_dump_json(indent=2), encoding="utf-8")
+    missing = [repo for repo, count in counts.items() if count < config.per_repository]
+    if missing:
+        # 即使配额失败也持久化报告，避免用户只能得到一条无法诊断的错误消息。
+        raise BenchmarkError(
+            "candidate quota is not satisfied",
+            context={
+                "missing_repositories": missing,
+                "counts": counts,
+                "report_path": str(path),
+            },
+        )
     return result

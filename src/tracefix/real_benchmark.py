@@ -97,9 +97,11 @@ class RealIssueTask(BaseModel):
     fail_to_pass: tuple[str, ...] = Field(min_length=1)
     test_command: str = Field(min_length=1)
     pass_to_pass_count: int = Field(ge=0)
-    expected_source_files: tuple[str, ...] = Field(min_length=2)
+    # 真实 Issue 可能只需修改一个实现文件；多文件复杂度由离线结构筛选衡量，
+    # 不能在任务清单入口把这些有效样本直接排除。
+    expected_source_files: tuple[str, ...] = Field(min_length=1)
     expected_test_files: tuple[str, ...] = Field(min_length=1)
-    related_context_files: tuple[str, ...] = Field(min_length=5, max_length=10)
+    related_context_files: tuple[str, ...] = Field(min_length=1, max_length=10)
     hashes: RealTaskArtifactHashes
     task_dir: Path
 
@@ -325,9 +327,7 @@ class RealIssueTask(BaseModel):
         """在 Agent 结束后应用隐藏测试补丁；不执行测试或应用 gold patch。"""
         root = Path(workspace).expanduser().resolve()
         # 先预检再写入，失败时保持工作区不变。
-        self._run_git(
-            ["apply", "--check", str(self.test_patch_path)], cwd=root, timeout=120
-        )
+        self._run_git(["apply", "--check", str(self.test_patch_path)], cwd=root, timeout=120)
         self._run_git(["apply", str(self.test_patch_path)], cwd=root, timeout=120)
 
     @staticmethod
@@ -348,9 +348,7 @@ class RealIssueTask(BaseModel):
                 shell=False,
             )
         except (OSError, subprocess.SubprocessError) as exc:
-            raise BenchmarkError(
-                f"real task git command failed to start: {exc}"
-            ) from exc
+            raise BenchmarkError(f"real task git command failed to start: {exc}") from exc
         if result.returncode != 0:
             raise BenchmarkError(
                 "real task git command failed",
@@ -371,9 +369,7 @@ def load_real_issue_tasks(
     """按 ID 稳定加载真实 Issue 任务，并拒绝未知筛选值。"""
     root = Path(tasks_dir).expanduser().resolve()
     if not root.is_dir():
-        raise BenchmarkError(
-            "real tasks directory does not exist", context={"path": str(root)}
-        )
+        raise BenchmarkError("real tasks directory does not exist", context={"path": str(root)})
     selected = set(task_ids)
     tasks = tuple(
         RealIssueTask.load(path)
@@ -384,9 +380,7 @@ def load_real_issue_tasks(
     )
     missing = selected.difference(task.id for task in tasks)
     if missing:
-        raise BenchmarkError(
-            "unknown real task IDs", context={"missing_task_ids": sorted(missing)}
-        )
+        raise BenchmarkError("unknown real task IDs", context={"missing_task_ids": sorted(missing)})
     if not tasks:
         raise BenchmarkError("no real issue tasks were selected", context={"path": str(root)})
     return tasks

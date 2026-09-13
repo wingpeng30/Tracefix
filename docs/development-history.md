@@ -273,3 +273,20 @@ GitHub Actions Run #7 也在 Windows Python 3.11/3.12 两个作业成功通过�
 
 三个真实任务的单次 C/T 预筛选中，开启组累计输入 Token 降低 10.42%，并将
 `pytest-dev__pytest-8399` 从未解决变为解决；另外两题仍因累计 Token 超限中断，六次运行均未触发 32k 历史折叠。由于每组仅一次且工作区为 dirty，本结果只作为方向性证据，详见 [`experiments/v0.7.0-real-token-optimization-prescreen.md`](experiments/v0.7.0-real-token-optimization-prescreen.md)。
+
+## V0.8.0：候选规则可行性修正与首批 12 题工件
+
+首次从本机缓存的 SWE-bench Verified 固定 revision 读取 500 条实例时，原始“每题至少修改
+两个非测试 Python 文件”的规则导致 pytest 只有 2 题、Requests 为 0 题，无法满足四仓库各
+3 题的预注册配额。这是数据分布与硬筛选条件不兼容，不是下载、磁盘或 API 故障。
+
+因此候选入口改为默认“至少一个非测试 Python 文件 + 非空 test patch”；多文件复杂度交给
+后续源码检出后的图结构筛选，而不在收集阶段淘汰有效真实 Issue。此次生成并提交 12 道
+候选工件：pytest、Pylint、Sphinx、Requests 各 3 题。每题均含原始问题、gold/test patch、
+规范化 SHA-256 和可加载的 `task.json`。为兼容官方混合 CRLF/LF 文本，收集器在写入前统一
+换行符；并将 gold patch 中的配置文件一并登记，避免工件校验遗漏 `setup.cfg` 等真实修改。
+
+验证结果：12/12 `RealIssueTask` 清单加载及工件哈希校验通过；候选池、真实任务清单和 CLI
+回归测试 `39 passed`，Ruff 与 compileall 通过。未调用 LLM、未产生 API 费用。候选尚未代表
+可运行的 Agent 基准；下一阶段仍需固定 commit 检出、创建兼容 pytest 环境，并验证 base 失败
+与 gold patch 通过。

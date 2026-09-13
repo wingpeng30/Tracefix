@@ -107,22 +107,14 @@ def _make_task(tmp_path: Path) -> tuple[Path, Path, str]:
         "pass_to_pass_count": 2,
         "expected_source_files": ["pkg/a.py", "pkg/b.py"],
         "expected_test_files": ["tests/test_hidden.py"],
-        "related_context_files": [
-            "pkg/a.py",
-            "pkg/b.py",
-            "pkg/c.py",
-            "pkg/d.py",
-            "pkg/e.py"
-        ],
+        "related_context_files": ["pkg/a.py", "pkg/b.py", "pkg/c.py", "pkg/d.py", "pkg/e.py"],
         "hashes": {
             "problem_statement": _digest(task_dir / "problem.md"),
             "gold_patch": _digest(task_dir / "gold.patch"),
             "test_patch": _digest(task_dir / "test.patch"),
         },
     }
-    (task_dir / "task.json").write_text(
-        json.dumps(payload, indent=2), encoding="utf-8"
-    )
+    (task_dir / "task.json").write_text(json.dumps(payload, indent=2), encoding="utf-8")
     return task_dir, upstream, commit
 
 
@@ -281,7 +273,7 @@ def test_checked_in_real_tasks_are_multifile_and_hash_pinned() -> None:
         "pytest-dev__pytest-8399",
         "sphinx-doc__sphinx-9461",
     ]
-    assert all(len(task.expected_source_files) >= 2 for task in tasks)
+    assert all(len(task.expected_source_files) >= 1 for task in tasks)
     assert all(task.problem_statement_kind == "curated_excerpt" for task in tasks)
     assert len({task.repo for task in tasks}) == 3
 

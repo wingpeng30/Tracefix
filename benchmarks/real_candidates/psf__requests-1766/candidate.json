@@ -1,0 +1,25 @@
+{
+  "instance_id": "psf__requests-1766",
+  "repo": "psf/requests",
+  "base_commit": "847735553aeda6e6633f2b32e14ba14ba86887a4",
+  "version": "2.0",
+  "problem_statement_sha256": "90d541e87a05a5135b7ee242c82702e5cad1e2cae9e5571fcbc032d7d6d80682",
+  "patch_sha256": "fdf4dc67f564bc801f1fe74b1e6000a3186f19acec083f7585caef1b58671b12",
+  "test_patch_sha256": "8104cc2c46abb076affea41d2f19d40a908fbc696aee3115dfffc5b0354662b4",
+  "source_files": [
+    "requests/auth.py"
+  ],
+  "test_files": [
+    "test_requests.py"
+  ],
+  "related_files": [
+    "requests/auth.py",
+    "test_requests.py",
+    "requests/__init__.py",
+    "requests/__init__.pyi"
+  ],
+  "source_file_count": 1,
+  "test_file_count": 1,
+  "eligible": true,
+  "exclusion_reasons": []
+}

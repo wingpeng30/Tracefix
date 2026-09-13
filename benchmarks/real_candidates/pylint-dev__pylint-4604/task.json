@@ -1,0 +1,62 @@
+{
+  "id": "pylint-dev__pylint-4604",
+  "title": "unused-import false positive for a module used in a type comment",
+  "source_dataset": "SWE-bench/SWE-bench_Verified",
+  "dataset_split": "test",
+  "repo": "pylint-dev/pylint",
+  "repo_url": "https://github.com/pylint-dev/pylint.git",
+  "issue_url": "https://github.com/pylint-dev/pylint/issues/4604",
+  "base_commit": "1e55ae64624d28c5fe8b63ad7979880ee2e6ef3f",
+  "environment_setup_commit": "c04f92ef68e5ea779a60bfddb91dc677c5470fd0",
+  "upstream_version": "2.9",
+  "issue_created_at": "2021-06-22T10:44:14Z",
+  "evaluation_backend": "swebench_docker",
+  "problem_statement_kind": "verbatim",
+  "problem_statement_file": "problem.md",
+  "gold_patch_file": "gold.patch",
+  "test_patch_file": "test.patch",
+  "fail_to_pass": [
+    "tests/checkers/unittest_variables.py::TestVariablesChecker::test_bitbucket_issue_78",
+    "tests/checkers/unittest_variables.py::TestVariablesChecker::test_no_name_in_module_skipped",
+    "tests/checkers/unittest_variables.py::TestVariablesChecker::test_all_elements_without_parent",
+    "tests/checkers/unittest_variables.py::TestVariablesChecker::test_redefined_builtin_ignored",
+    "tests/checkers/unittest_variables.py::TestVariablesChecker::test_redefined_builtin_custom_modules",
+    "tests/checkers/unittest_variables.py::TestVariablesChecker::test_redefined_builtin_modname_not_ignored",
+    "tests/checkers/unittest_variables.py::TestVariablesChecker::test_redefined_builtin_in_function",
+    "tests/checkers/unittest_variables.py::TestVariablesChecker::test_unassigned_global",
+    "tests/checkers/unittest_variables.py::TestVariablesChecker::test_listcomp_in_decorator",
+    "tests/checkers/unittest_variables.py::TestVariablesChecker::test_listcomp_in_ancestors",
+    "tests/checkers/unittest_variables.py::TestVariablesChecker::test_return_type_annotation",
+    "tests/checkers/unittest_variables.py::TestVariablesChecker::test_attribute_in_type_comment",
+    "tests/checkers/unittest_variables.py::TestVariablesCheckerWithTearDown::test_custom_callback_string",
+    "tests/checkers/unittest_variables.py::TestVariablesCheckerWithTearDown::test_redefined_builtin_modname_not_ignored",
+    "tests/checkers/unittest_variables.py::TestVariablesCheckerWithTearDown::test_redefined_builtin_in_function",
+    "tests/checkers/unittest_variables.py::TestVariablesCheckerWithTearDown::test_import_as_underscore",
+    "tests/checkers/unittest_variables.py::TestVariablesCheckerWithTearDown::test_lambda_in_classdef",
+    "tests/checkers/unittest_variables.py::TestVariablesCheckerWithTearDown::test_nested_lambda",
+    "tests/checkers/unittest_variables.py::TestVariablesCheckerWithTearDown::test_ignored_argument_names_no_message",
+    "tests/checkers/unittest_variables.py::TestVariablesCheckerWithTearDown::test_ignored_argument_names_starred_args",
+    "tests/checkers/unittest_variables.py::TestMissingSubmodule::test_package_all"
+  ],
+  "test_command": "pytest -q",
+  "pass_to_pass_count": 0,
+  "expected_source_files": [
+    "pylint/checkers/variables.py",
+    "pylint/constants.py"
+  ],
+  "expected_test_files": [
+    "tests/checkers/unittest_variables.py"
+  ],
+  "related_context_files": [
+    "pylint/checkers/variables.py",
+    "pylint/constants.py",
+    "tests/checkers/unittest_variables.py",
+    "pylint/checkers/__init__.py",
+    "pylint/checkers/__init__.pyi"
+  ],
+  "hashes": {
+    "problem_statement": "3a15517e96657a1f4c7e3f2c42f6646f8ea333d67cd36bc8cb351682ab8bba80",
+    "gold_patch": "b50bd937b95d0b58008208d4e7cd122bb869602d0c84319bbae3ebf0f024887c",
+    "test_patch": "1d84ca139e0defdacbc56094a916a83dff514c77fbc446a0d015dbd260c264bb"
+  }
+}

@@ -1,0 +1,27 @@
+{
+  "instance_id": "pylint-dev__pylint-4604",
+  "repo": "pylint-dev/pylint",
+  "base_commit": "1e55ae64624d28c5fe8b63ad7979880ee2e6ef3f",
+  "version": "2.9",
+  "problem_statement_sha256": "3a15517e96657a1f4c7e3f2c42f6646f8ea333d67cd36bc8cb351682ab8bba80",
+  "patch_sha256": "b50bd937b95d0b58008208d4e7cd122bb869602d0c84319bbae3ebf0f024887c",
+  "test_patch_sha256": "1d84ca139e0defdacbc56094a916a83dff514c77fbc446a0d015dbd260c264bb",
+  "source_files": [
+    "pylint/checkers/variables.py",
+    "pylint/constants.py"
+  ],
+  "test_files": [
+    "tests/checkers/unittest_variables.py"
+  ],
+  "related_files": [
+    "pylint/checkers/variables.py",
+    "pylint/constants.py",
+    "tests/checkers/unittest_variables.py",
+    "pylint/checkers/__init__.py",
+    "pylint/checkers/__init__.pyi"
+  ],
+  "source_file_count": 2,
+  "test_file_count": 1,
+  "eligible": true,
+  "exclusion_reasons": []
+}

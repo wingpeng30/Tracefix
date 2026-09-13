@@ -1,0 +1,30 @@
+{
+  "instance_id": "pylint-dev__pylint-4551",
+  "repo": "pylint-dev/pylint",
+  "base_commit": "99589b08de8c5a2c6cc61e13a37420a868c80599",
+  "version": "2.9",
+  "problem_statement_sha256": "1063099828aeeacebfc53c30685b582300effb7b59574cd5f94bf3cefa00ace1",
+  "patch_sha256": "06a5ae87f8794dff30b6733c4427cf46fed7ae67c545449b3168977be5cf215c",
+  "test_patch_sha256": "ccdbb6351dd77464ac7429d8a43de3fc42088c03aed9618e5ba77bc8178fec87",
+  "source_files": [
+    "pylint/pyreverse/diagrams.py",
+    "pylint/pyreverse/inspector.py",
+    "pylint/pyreverse/utils.py",
+    "pylint/pyreverse/writer.py"
+  ],
+  "test_files": [
+    "tests/unittest_pyreverse_writer.py"
+  ],
+  "related_files": [
+    "pylint/pyreverse/diagrams.py",
+    "pylint/pyreverse/inspector.py",
+    "pylint/pyreverse/utils.py",
+    "pylint/pyreverse/writer.py",
+    "tests/unittest_pyreverse_writer.py",
+    "pylint/pyreverse/__init__.py"
+  ],
+  "source_file_count": 4,
+  "test_file_count": 1,
+  "eligible": true,
+  "exclusion_reasons": []
+}

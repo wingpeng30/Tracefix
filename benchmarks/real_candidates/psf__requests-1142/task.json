@@ -1,0 +1,40 @@
+{
+  "id": "psf__requests-1142",
+  "title": "requests.get is ALWAYS sending content length",
+  "source_dataset": "SWE-bench/SWE-bench_Verified",
+  "dataset_split": "test",
+  "repo": "psf/requests",
+  "repo_url": "https://github.com/psf/requests.git",
+  "issue_url": "https://github.com/psf/requests/issues/1142",
+  "base_commit": "22623bd8c265b78b161542663ee980738441c307",
+  "environment_setup_commit": "ba25184ed5f0bf9b876dea3cf4312fa35b539a7c",
+  "upstream_version": "1.1",
+  "issue_created_at": "2013-01-25T05:19:16Z",
+  "evaluation_backend": "swebench_docker",
+  "problem_statement_kind": "verbatim",
+  "problem_statement_file": "problem.md",
+  "gold_patch_file": "gold.patch",
+  "test_patch_file": "test.patch",
+  "fail_to_pass": [
+    "test_requests.py::RequestsTestCase::test_no_content_length"
+  ],
+  "test_command": "pytest -q",
+  "pass_to_pass_count": 5,
+  "expected_source_files": [
+    "requests/models.py"
+  ],
+  "expected_test_files": [
+    "test_requests.py"
+  ],
+  "related_context_files": [
+    "requests/models.py",
+    "test_requests.py",
+    "requests/__init__.py",
+    "requests/__init__.pyi"
+  ],
+  "hashes": {
+    "problem_statement": "0192533ff2ef0c53a600b3ef02cb9dc20bf0998d56eeaee80ca1a76c46758eec",
+    "gold_patch": "c25c1f930edaf8514d3a5f2bc5631a8e8080ecb2511c789ec171f37d14e627a6",
+    "test_patch": "6671e023a6f6ed84969327ccee025cb8ab81e79c9477a7d635640c0b03836769"
+  }
+}

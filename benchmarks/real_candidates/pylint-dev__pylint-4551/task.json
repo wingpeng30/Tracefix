@@ -1,0 +1,54 @@
+{
+  "id": "pylint-dev__pylint-4551",
+  "title": "Use Python type hints for UML generation",
+  "source_dataset": "SWE-bench/SWE-bench_Verified",
+  "dataset_split": "test",
+  "repo": "pylint-dev/pylint",
+  "repo_url": "https://github.com/pylint-dev/pylint.git",
+  "issue_url": "https://github.com/pylint-dev/pylint/issues/4551",
+  "base_commit": "99589b08de8c5a2c6cc61e13a37420a868c80599",
+  "environment_setup_commit": "c04f92ef68e5ea779a60bfddb91dc677c5470fd0",
+  "upstream_version": "2.9",
+  "issue_created_at": "2021-06-07T15:14:31Z",
+  "evaluation_backend": "swebench_docker",
+  "problem_statement_kind": "verbatim",
+  "problem_statement_file": "problem.md",
+  "gold_patch_file": "gold.patch",
+  "test_patch_file": "test.patch",
+  "fail_to_pass": [
+    "tests/unittest_pyreverse_writer.py::test_dot_files[packages_No_Name.dot]",
+    "tests/unittest_pyreverse_writer.py::test_dot_files[classes_No_Name.dot]",
+    "tests/unittest_pyreverse_writer.py::test_get_visibility[names0-special]",
+    "tests/unittest_pyreverse_writer.py::test_get_visibility[names1-private]",
+    "tests/unittest_pyreverse_writer.py::test_get_visibility[names2-public]",
+    "tests/unittest_pyreverse_writer.py::test_get_visibility[names3-protected]",
+    "tests/unittest_pyreverse_writer.py::test_get_annotation_annassign[a:",
+    "tests/unittest_pyreverse_writer.py::test_get_annotation_assignattr[def",
+    "tests/unittest_pyreverse_writer.py::test_infer_node_1",
+    "tests/unittest_pyreverse_writer.py::test_infer_node_2"
+  ],
+  "test_command": "pytest -q",
+  "pass_to_pass_count": 0,
+  "expected_source_files": [
+    "pylint/pyreverse/diagrams.py",
+    "pylint/pyreverse/inspector.py",
+    "pylint/pyreverse/utils.py",
+    "pylint/pyreverse/writer.py"
+  ],
+  "expected_test_files": [
+    "tests/unittest_pyreverse_writer.py"
+  ],
+  "related_context_files": [
+    "pylint/pyreverse/diagrams.py",
+    "pylint/pyreverse/inspector.py",
+    "pylint/pyreverse/utils.py",
+    "pylint/pyreverse/writer.py",
+    "tests/unittest_pyreverse_writer.py",
+    "pylint/pyreverse/__init__.py"
+  ],
+  "hashes": {
+    "problem_statement": "1063099828aeeacebfc53c30685b582300effb7b59574cd5f94bf3cefa00ace1",
+    "gold_patch": "06a5ae87f8794dff30b6733c4427cf46fed7ae67c545449b3168977be5cf215c",
+    "test_patch": "ccdbb6351dd77464ac7429d8a43de3fc42088c03aed9618e5ba77bc8178fec87"
+  }
+}

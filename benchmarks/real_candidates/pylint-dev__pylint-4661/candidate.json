@@ -1,0 +1,24 @@
+{
+  "instance_id": "pylint-dev__pylint-4661",
+  "repo": "pylint-dev/pylint",
+  "base_commit": "1d1619ef913b99b06647d2030bddff4800abdf63",
+  "version": "2.10",
+  "problem_statement_sha256": "395bcc4416ce0df3efc8563bf0f1b7db0df75e92ee6ff1dd354146bcb9d82403",
+  "patch_sha256": "43b3e2e849942d287987af5f42b532695dac6e68625778d6d29981cb0dcb3b59",
+  "test_patch_sha256": "ee7c4ca17fff72e7af07a9876cf1aa07552ae49099831b42f5d429c3132dcaaf",
+  "source_files": [
+    "pylint/config/__init__.py"
+  ],
+  "test_files": [
+    "tests/lint/unittest_lint.py"
+  ],
+  "related_files": [
+    "pylint/config/__init__.py",
+    "tests/lint/unittest_lint.py",
+    "pylint/config/__init__.pyi"
+  ],
+  "source_file_count": 1,
+  "test_file_count": 1,
+  "eligible": true,
+  "exclusion_reasons": []
+}

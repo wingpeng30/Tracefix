@@ -1,0 +1,25 @@
+{
+  "instance_id": "sphinx-doc__sphinx-10449",
+  "repo": "sphinx-doc/sphinx",
+  "base_commit": "36367765fe780f962bba861bf368a765380bbc68",
+  "version": "5.1",
+  "problem_statement_sha256": "ec42a659cf88e4be0bcb0b2ef418a57804e28a8ef4ef32659fe92abfc95f665b",
+  "patch_sha256": "686d63a8c9b8ee171de780e334fa9ec3a84bbf0d88deb0fa5533cd816282da74",
+  "test_patch_sha256": "d91618e097a8fc4fbe5563a018167bb677636de2b3d2d1a5e73912ab06ec68db",
+  "source_files": [
+    "sphinx/ext/autodoc/typehints.py"
+  ],
+  "test_files": [
+    "tests/test_ext_autodoc_configs.py"
+  ],
+  "related_files": [
+    "sphinx/ext/autodoc/typehints.py",
+    "tests/test_ext_autodoc_configs.py",
+    "sphinx/ext/autodoc/__init__.py",
+    "sphinx/ext/autodoc/__init__.pyi"
+  ],
+  "source_file_count": 1,
+  "test_file_count": 1,
+  "eligible": true,
+  "exclusion_reasons": []
+}
