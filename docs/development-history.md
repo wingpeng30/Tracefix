@@ -65,6 +65,13 @@ Agent 不可见的隐藏验收。Repo Map 将首次读取目标文件的平均�
 66.7% 提升至 100%，MRR 从 0.444 提升至 0.833；这是定位指标，不是 Agent 修复率结论。详见
 [`experiments/v0.7.3-real-offline-retrieval.md`](experiments/v0.7.3-real-offline-retrieval.md)。
 
+## V0.8.0：真实候选池与离线结构筛选
+
+新增固定 revision 的 SWE-bench Verified 候选收集器，按四个 Python 仓库各 3 题生成脱敏结构清单、
+问题/补丁工件和排除原因；新增 `collect-real-candidates` 与 `screen-real-candidates` CLI。结构筛选
+复用 Repo Map 离线指标，不调用 LLM，并明确将任务获取、源码行为验证和后续付费预筛选分为独立阶段。
+实现与验证记录见 [`tasks/v0.8.0-real-candidate-pool.md`](tasks/v0.8.0-real-candidate-pool.md)。
+
 ## 版本总览
 
 | 阶段 | Git 位置 | 核心成果 |

@@ -78,6 +78,12 @@ from tracefix.real_benchmark import (
     RealTaskValidation,
     load_real_issue_tasks,
 )
+from tracefix.real_candidates import (
+    CandidateCollectionConfig,
+    CandidateCollectionResult,
+    CandidateRecord,
+    collect_candidates,
+)
 from tracefix.real_experiment import (
     RealExperimentConfig,
     RealPairedExperimentRunner,
@@ -203,6 +209,10 @@ __all__ = [
     "RetrievalTaskResult",
     "TestEnvironmentProvenance",
     "RealIssueTask",
+    "CandidateCollectionConfig",
+    "CandidateCollectionResult",
+    "CandidateRecord",
+    "collect_candidates",
     "RealTaskArtifactHashes",
     "RealTaskValidation",
     "RealExperimentConfig",

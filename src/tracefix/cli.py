@@ -17,6 +17,7 @@ from tracefix.context import ContextConfig
 from tracefix.exceptions import TraceFixError
 from tracefix.paired import PairedExperimentConfig, PairedExperimentRunner
 from tracefix.real_benchmark import load_real_issue_tasks
+from tracefix.real_candidates import CandidateCollectionConfig, collect_candidates
 from tracefix.real_experiment import (
     RealExperimentConfig,
     RealPairedExperimentRunner,
@@ -262,6 +263,34 @@ def build_parser() -> argparse.ArgumentParser:
         "--task-id", action="append", default=[], help="只评测指定任务，可重复传入"
     )
     retrieval_parser.add_argument("--repo-map-max-chars", type=int, default=12_000)
+
+    collect_parser = subparsers.add_parser(
+        "collect-real-candidates", help="下载并按仓库配额生成 SWE-bench Verified 候选清单"
+    )
+    collect_parser.add_argument("--dataset", default="SWE-bench/SWE-bench_Verified")
+    collect_parser.add_argument("--revision", default="main")
+    collect_parser.add_argument(
+        "--source", type=Path, help="本地 JSON/JSONL fixture；省略则使用 datasets"
+    )
+    collect_parser.add_argument(
+        "--output-dir", type=Path, default=Path("benchmarks/real_candidates")
+    )
+    collect_parser.add_argument("--per-repository", type=int, default=3)
+    collect_parser.add_argument("--repository", action="append", dest="repositories")
+
+    screen_parser = subparsers.add_parser(
+        "screen-real-candidates", help="对固定源码候选执行离线 Repo Map 结构筛选"
+    )
+    screen_parser.add_argument("--tasks", type=Path, default=Path("benchmarks/real_tasks"))
+    screen_parser.add_argument(
+        "--source-root", type=Path, default=Path("runs/real-task-validation")
+    )
+    screen_parser.add_argument("--output-dir", type=Path, default=Path("runs"))
+    screen_parser.add_argument(
+        "--candidate-pool", type=Path, help="collect-real-candidates 生成的清单"
+    )
+    screen_parser.add_argument("--task-id", action="append", default=[])
+    screen_parser.add_argument("--repo-map-max-chars", type=int, default=12_000)
     return parser
 
 
@@ -287,9 +316,7 @@ def _add_real_task_locations(parser: argparse.ArgumentParser) -> None:
     )
 
 
-def _resolve_shared(
-    args: argparse.Namespace, *, real_issue_budget: bool = False
-) -> dict[str, Any]:
+def _resolve_shared(args: argparse.Namespace, *, real_issue_budget: bool = False) -> dict[str, Any]:
     """加载 .env 后合并 CLI、环境变量和默认值。
 
     真实 Issue 的一次定位、补丁和独立验收通常比合成任务长得多，因此仅真实任务
@@ -531,6 +558,46 @@ def main(argv: list[str] | None = None) -> int:
                 f"baseline {summary.baseline_metrics.hit_at_5:.1%}；"
                 f"repo_map {summary.repo_map_metrics.hit_at_5:.1%}"
             )
+            print(f"汇总文件: {summary.summary_path}")
+            return 0
+
+        if args.command == "collect-real-candidates":
+            config = CandidateCollectionConfig(
+                dataset=args.dataset,
+                revision=args.revision,
+                source=args.source,
+                output_dir=args.output_dir,
+                per_repository=args.per_repository,
+                repositories=tuple(args.repositories)
+                if args.repositories
+                else CandidateCollectionConfig().repositories,
+            )
+            result = collect_candidates(config)
+            print(f"候选池生成完成: {len(result.selected)} 题")
+            print(f"清单文件: {result.output_path}")
+            return 0
+
+        if args.command == "screen-real-candidates":
+            task_ids = list(args.task_id)
+            if args.candidate_pool:
+                try:
+                    pool = json.loads(args.candidate_pool.read_text(encoding="utf-8"))
+                    task_ids.extend(item["instance_id"] for item in pool.get("selected", ()))
+                except (OSError, json.JSONDecodeError, KeyError, TypeError) as exc:
+                    raise ValueError(
+                        "候选池清单必须是 collect-real-candidates 生成的 JSON"
+                    ) from exc
+            summary = RetrievalEvaluator().run(
+                RetrievalEvaluationConfig(
+                    tasks_dir=args.tasks,
+                    source_root=args.source_root,
+                    output_dir=args.output_dir,
+                    task_ids=tuple(dict.fromkeys(task_ids)),
+                    repo_map=RepoMapConfig(max_chars=args.repo_map_max_chars),
+                )
+            )
+            print(f"候选结构筛选完成: {summary.task_count} 题，不调用 LLM")
+            print(f"Repo Map Hit@5: {summary.repo_map_metrics.hit_at_5:.1%}")
             print(f"汇总文件: {summary.summary_path}")
             return 0
 
