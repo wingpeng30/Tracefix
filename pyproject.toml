@@ -20,6 +20,10 @@ llm = [
     "litellm==1.75.5.post2",
     "python-dotenv>=1.0,<2",
 ]
+benchmark = [
+    # 仅候选获取阶段需要；安装时可指定清华镜像源。
+    "datasets>=2.19,<4",
+]
 dev = [
     "pytest>=8.0",
     "pytest-cov>=5.0",

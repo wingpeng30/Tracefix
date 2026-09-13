@@ -136,9 +136,22 @@ def _record(row: dict[str, Any], repositories: set[str]) -> CandidateRecord:
         for path in patch_paths(test_patch)
         if path.startswith(("test", "tests/")) or "/test" in path
     )
-    related = tuple(
+    related_values = list(
         dict.fromkeys((*source, *tests, *(str(x) for x in row.get("related_files", ()))))
     )
+    # 官方数据通常不提供完整关联文件列表；先加入源码包入口，第二阶段检出固定
+    # commit 后再由 Repo Map 验证这些路径是否真实存在。
+    for path in source:
+        parent = Path(path).parent
+        for neighbor in (parent / "__init__.py", parent / "__init__.pyi"):
+            value = neighbor.as_posix()
+            if value not in related_values:
+                related_values.append(value)
+            if len(related_values) >= 5:
+                break
+        if len(related_values) >= 5:
+            break
+    related = tuple(related_values[:10])
     reasons: list[str] = []
     if repo not in repositories:
         reasons.append("repository_not_requested")
@@ -165,6 +178,45 @@ def _record(row: dict[str, Any], repositories: set[str]) -> CandidateRecord:
         test_file_count=len(tests),
         eligible=not reasons,
         exclusion_reasons=tuple(reasons),
+    )
+
+
+def _write_task_manifest(task_dir: Path, row: dict[str, Any], record: CandidateRecord) -> None:
+    """把候选结构记录转换为 RealIssueTask 可加载的最小清单。"""
+    issue_number = record.instance_id.rsplit("-", 1)[-1]
+    problem = str(row.get("problem_statement", ""))
+    payload = {
+        "id": record.instance_id,
+        "title": problem.splitlines()[0][:200] or record.instance_id,
+        "source_dataset": "SWE-bench/SWE-bench_Verified",
+        "dataset_split": "test",
+        "repo": record.repo,
+        "repo_url": f"https://github.com/{record.repo}.git",
+        "issue_url": f"https://github.com/{record.repo}/issues/{issue_number}",
+        "base_commit": record.base_commit,
+        "environment_setup_commit": str(row.get("environment_setup_commit", record.base_commit)),
+        "upstream_version": record.version,
+        "issue_created_at": str(row.get("created_at", "1970-01-01T00:00:00Z")),
+        "evaluation_backend": "swebench_docker",
+        "problem_statement_kind": "verbatim",
+        "problem_statement_file": "problem.md",
+        "gold_patch_file": "gold.patch",
+        "test_patch_file": "test.patch",
+        "fail_to_pass": list(row.get("FAIL_TO_PASS", row.get("fail_to_pass", ["tests"])))
+        or ["tests"],
+        "test_command": str(row.get("test_command", "pytest -q")),
+        "pass_to_pass_count": int(row.get("PASS_TO_PASS", row.get("pass_to_pass_count", 0)) or 0),
+        "expected_source_files": list(record.source_files),
+        "expected_test_files": list(record.test_files),
+        "related_context_files": list(record.related_files),
+        "hashes": {
+            "problem_statement": record.problem_statement_sha256,
+            "gold_patch": record.patch_sha256,
+            "test_patch": record.test_patch_sha256,
+        },
+    }
+    (task_dir / "task.json").write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
     )
 
 
@@ -202,6 +254,7 @@ def collect_candidates(config: CandidateCollectionConfig) -> CandidateCollection
         (task_dir / "gold.patch").write_text(str(row.get("patch", "")), encoding="utf-8")
         (task_dir / "test.patch").write_text(str(row.get("test_patch", "")), encoding="utf-8")
         (task_dir / "candidate.json").write_text(record.model_dump_json(indent=2), encoding="utf-8")
+        _write_task_manifest(task_dir, row, record)
     path = output / "candidate-pool.json"
     result = CandidateCollectionResult(
         dataset=config.dataset,
