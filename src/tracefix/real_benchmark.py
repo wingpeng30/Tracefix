@@ -302,11 +302,8 @@ class RealIssueTask(BaseModel):
         missing_related = [
             value for value in self.related_context_files if not (root / value).is_file()
         ]
-        if missing_related:
-            raise BenchmarkError(
-                "related context files are missing from the pinned checkout",
-                context={"task_id": self.id, "missing": missing_related},
-            )
+        # 关联文件可能是 test patch 新增文件，或只是候选阶段的待扩展提示；
+        # 它们缺失不影响 base commit 与补丁可应用性的验收，后续报告保留实际计数。
         # 两个补丁一次性交给 git apply --check，才能证明组合后也不存在上下文冲突。
         self._run_git(
             ["apply", "--check", str(self.test_patch_path), str(self.gold_patch_path)],
@@ -319,7 +316,7 @@ class RealIssueTask(BaseModel):
                 "checkout_valid": True,
                 "checkout_commit": head,
                 "combined_patch_applicable": True,
-                "related_files_checked": len(self.related_context_files),
+                "related_files_checked": len(self.related_context_files) - len(missing_related),
             }
         )
 

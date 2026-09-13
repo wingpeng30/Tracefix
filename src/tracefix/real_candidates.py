@@ -146,18 +146,7 @@ def _record(row: dict[str, Any], repositories: set[str], min_source_files: int) 
     related_values = list(
         dict.fromkeys((*source, *tests, *(str(x) for x in row.get("related_files", ()))))
     )
-    # 官方数据通常不提供完整关联文件列表；先加入源码包入口，第二阶段检出固定
-    # commit 后再由 Repo Map 验证这些路径是否真实存在。
-    for path in source:
-        parent = Path(path).parent
-        for neighbor in (parent / "__init__.py", parent / "__init__.pyi"):
-            value = neighbor.as_posix()
-            if value not in related_values:
-                related_values.append(value)
-            if len(related_values) >= 5:
-                break
-        if len(related_values) >= 5:
-            break
+    # 不凭空加入 __init__.py 等推测路径；第二阶段检出后再由 Repo Map 扩展真实邻居。
     related = tuple(related_values[:10])
     reasons: list[str] = []
     if repo not in repositories:
