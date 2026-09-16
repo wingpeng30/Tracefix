@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+import xml.etree.ElementTree as element_tree
 from datetime import UTC, datetime
 from pathlib import Path
 from uuid import uuid4
@@ -40,6 +41,25 @@ class RealTaskBehaviorValidation(BaseModel):
     gold_returncode: int | None
     test_command: str
     test_environment: TestEnvironmentProvenance
+    initial_evidence: PytestExecutionEvidence
+    gold_evidence: PytestExecutionEvidence
+    eligible_for_llm_prescreen: bool
+    eligibility_reason: str | None = None
+
+
+class PytestExecutionEvidence(BaseModel):
+    """一次 pytest 执行的 JUnit 与进程级证据。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    status: str
+    returncode: int | None
+    timed_out: bool
+    junit_available: bool
+    test_count: int = Field(ge=0)
+    failure_count: int = Field(ge=0)
+    error_count: int = Field(ge=0)
+    output_tail: str = ""
 
 
 class RealTrajectoryMetrics(BaseModel):
@@ -184,7 +204,7 @@ def validate_real_task_behavior(
     test_python: Path,
     output_dir: Path,
 ) -> RealTaskBehaviorValidation:
-    """在两个独立副本中证明隐藏用例先失败、应用 gold 后通过。"""
+    """在独立副本中用 JUnit 证明目标测试先失败、gold 后通过。"""
     output_dir.mkdir(parents=True, exist_ok=True)
     task.validate_checkout(source)
     results: dict[str, ToolResult] = {}
@@ -195,34 +215,129 @@ def validate_real_task_behavior(
                 "behavior validation destination already exists",
                 context={"task_id": task.id, "variant": variant},
             )
-        _git(["clone", "--quiet", "--no-hardlinks", str(source), str(checkout)], source.parent)
+        _create_behavior_checkout(source, checkout)
         _git(["apply", str(task.test_patch_path)], checkout)
         if variant == "gold":
             _git(["apply", str(task.gold_patch_path)], checkout)
-        tool = RunTestsTool(
-            checkout,
-            python_executable=test_python,
-            pythonpath_entries=task.test_pythonpath_paths,
-            default_timeout_seconds=300,
+        results[variant] = _run_qualified_pytest(
+            task, checkout, test_python, f"behavior-{task.id}-{variant}"
         )
-        results[variant] = tool.execute(
-            ToolCall(
-                id=f"behavior-{task.id}-{variant}",
-                name=tool.spec.name,
-                arguments={"command": task.test_command, "timeout_seconds": 300},
-            )
-        )
+    initial_evidence = _pytest_evidence(results["initial"], output_dir / f"{task.id}-initial")
+    gold_evidence = _pytest_evidence(results["gold"], output_dir / f"{task.id}-gold")
+    initial_failed = initial_evidence.status == "assertion_failed"
+    gold_passed = gold_evidence.status == "passed"
+    eligible = initial_failed and gold_passed
+    reason = (
+        None if eligible else (f"initial={initial_evidence.status}; gold={gold_evidence.status}")
+    )
     return RealTaskBehaviorValidation(
         task_id=task.id,
         base_commit=task.base_commit,
-        initial_hidden_failed=not results["initial"].success,
-        gold_hidden_passed=results["gold"].success,
+        initial_hidden_failed=initial_failed,
+        gold_hidden_passed=gold_passed,
         initial_returncode=_returncode(results["initial"]),
         gold_returncode=_returncode(results["gold"]),
         test_command=task.test_command,
         test_environment=inspect_test_environment(
             test_python, pythonpath_entries=task.test_pythonpath_paths
         ),
+        initial_evidence=initial_evidence,
+        gold_evidence=gold_evidence,
+        eligible_for_llm_prescreen=eligible,
+        eligibility_reason=reason,
+    )
+
+
+def _create_behavior_checkout(source: Path, checkout: Path) -> None:
+    """创建独立工作副本；本地 clone 受限时回退到 Git worktree。
+
+    某些 Windows Git 安装在 file-transport clone 时会调用 MSYS shell，受策略限制可能
+    无法建立信号管道。worktree 仍会生成独立工作目录，补丁只修改该目录，且不会让
+    base/gold 导入同一源码副本，因此满足行为验收的源码隔离要求。
+    """
+    try:
+        _git(["clone", "--quiet", "--no-hardlinks", str(source), str(checkout)], source.parent)
+    except BenchmarkError:
+        _git(["worktree", "add", "--detach", str(checkout), "HEAD"], source)
+
+
+def _run_qualified_pytest(
+    task: RealIssueTask, checkout: Path, test_python: Path, call_id: str
+) -> ToolResult:
+    """运行相同 pytest 入口并请求 JUnit，以区分业务失败和环境故障。"""
+    junit = checkout / ".tracefix-junit.xml"
+    command = f"{task.test_command} --junitxml {junit.name}"
+    tool = RunTestsTool(
+        checkout,
+        python_executable=test_python,
+        pythonpath_entries=task.test_pythonpath_paths,
+        default_timeout_seconds=300,
+    )
+    return tool.execute(
+        ToolCall(
+            id=call_id,
+            name=tool.spec.name,
+            arguments={"command": command, "timeout_seconds": 300},
+        )
+    )
+
+
+def _pytest_evidence(result: ToolResult, checkout: Path) -> PytestExecutionEvidence:
+    """将 JUnit 和进程输出归类，避免把安装或收集失败当作有效复现。"""
+    output = result.output if isinstance(result.output, dict) else {}
+    stdout = str(output.get("stdout", ""))
+    stderr = str(output.get("stderr", ""))
+    combined = f"{stdout}\n{stderr}"
+    timed_out = bool(output.get("timed_out", False))
+    junit = checkout / ".tracefix-junit.xml"
+    tests = failures = errors = 0
+    available = junit.is_file()
+    if available:
+        try:
+            root = element_tree.parse(junit).getroot()
+            for suite in root.iter("testsuite"):
+                tests += int(suite.attrib.get("tests", "0"))
+                failures += int(suite.attrib.get("failures", "0"))
+                errors += int(suite.attrib.get("errors", "0"))
+        except (OSError, ValueError, element_tree.ParseError):
+            available = False
+    lowered = combined.casefold()
+    if timed_out:
+        status = "timeout"
+    elif (
+        "modulenotfounderror" in lowered
+        or "no module named" in lowered
+        or "importerror" in lowered
+    ):
+        status = "dependency_error"
+    elif "error collecting" in lowered or "conftest" in lowered or "collected 0 items" in lowered:
+        status = "collection_error"
+    elif tests == 0:
+        status = "no_tests"
+    elif failures > 0 and errors == 0:
+        status = "assertion_failed"
+    elif errors > 0:
+        status = "execution_error"
+    elif result.success:
+        # xfail 的零退出码不能冒充 base 已复现；xpass 也单独保留，以便审查
+        # 测试标记是否掩盖了真正的 base/gold 行为差异。
+        if "xfailed" in lowered:
+            status = "passed_xfail"
+        elif "xpassed" in lowered:
+            status = "passed_xpass"
+        else:
+            status = "passed"
+    else:
+        status = "execution_error"
+    return PytestExecutionEvidence(
+        status=status,
+        returncode=_returncode(result),
+        timed_out=timed_out,
+        junit_available=available,
+        test_count=tests,
+        failure_count=failures,
+        error_count=errors,
+        output_tail=combined[-2000:],
     )
 
 
@@ -236,8 +351,7 @@ class RealPrescreenRunner:
         """运行预筛选；每题后覆盖写 summary，意外中断也能保留已完成结果。"""
         tasks = load_real_issue_tasks(config.tasks_dir, task_ids=config.task_ids)
         experiment_id = (
-            f"real-prescreen-{datetime.now(UTC).strftime('%Y%m%dT%H%M%SZ')}-"
-            f"{uuid4().hex[:8]}"
+            f"real-prescreen-{datetime.now(UTC).strftime('%Y%m%dT%H%M%SZ')}-{uuid4().hex[:8]}"
         )
         root = config.output_dir.expanduser().resolve() / experiment_id
         artifacts = root / "artifacts"
@@ -258,9 +372,7 @@ class RealPrescreenRunner:
                     verification,
                 )
             )
-            summary = self._summary(
-                experiment_id, started_at, config, results, summary_path
-            )
+            summary = self._summary(experiment_id, started_at, config, results, summary_path)
             summary_path.write_text(summary.model_dump_json(indent=2), encoding="utf-8")
         return summary
 
@@ -285,9 +397,7 @@ class RealPrescreenRunner:
             {
                 **config.agent_config.context.model_dump(mode="python"),
                 "enabled": (
-                    arm is ExperimentArm.TREATMENT
-                    if context_enabled is None
-                    else context_enabled
+                    arm is ExperimentArm.TREATMENT if context_enabled is None else context_enabled
                 ),
                 "compaction_trigger_tokens": config.trigger_tokens,
             }
@@ -343,10 +453,7 @@ class RealPrescreenRunner:
         )
         failures = _eligibility_failures(trajectory, config.trigger_tokens)
         resolved = (
-            agent_completed
-            and source_patch_applied
-            and independent_passed
-            and not changed_tests
+            agent_completed and source_patch_applied and independent_passed and not changed_tests
         )
         return RealTrialResult(
             sequence=sequence,
@@ -484,8 +591,7 @@ class RealPairedExperimentRunner(RealPrescreenRunner):
             raise BenchmarkError("formal real paired experiment requires at least 3 repetitions")
         tasks = load_real_issue_tasks(config.tasks_dir, task_ids=eligible_task_ids)
         experiment_id = (
-            f"real-paired-{datetime.now(UTC).strftime('%Y%m%dT%H%M%SZ')}-"
-            f"{uuid4().hex[:8]}"
+            f"real-paired-{datetime.now(UTC).strftime('%Y%m%dT%H%M%SZ')}-{uuid4().hex[:8]}"
         )
         root = config.output_dir.expanduser().resolve() / experiment_id
         artifacts = root / "artifacts"
@@ -674,9 +780,7 @@ def analyze_real_trajectory(
     )
 
 
-def _repo_map_aggregate(
-    trials: list[RealTrialResult], arm: ExperimentArm
-) -> RepoMapArmAggregate:
+def _repo_map_aggregate(trials: list[RealTrialResult], arm: ExperimentArm) -> RepoMapArmAggregate:
     """在不丢失费用完整性语义的前提下聚合单次 Repo Map 预筛选。"""
     selected = [trial for trial in trials if trial.arm is arm]
     first_steps = [
@@ -696,9 +800,7 @@ def _repo_map_aggregate(
         output_tokens=sum(trial.run.output_tokens for trial in selected),
         cost_usd=sum(trial.run.cost_usd for trial in selected),
         cost_cny_estimate=(
-            sum(trial.run.cost_cny_estimate or 0 for trial in selected)
-            if cost_complete
-            else None
+            sum(trial.run.cost_cny_estimate or 0 for trial in selected) if cost_complete else None
         ),
         target_read_count=len(first_steps),
         average_first_target_read_step=(
@@ -707,9 +809,7 @@ def _repo_map_aggregate(
     )
 
 
-def _eligibility_failures(
-    metrics: RealTrajectoryMetrics, trigger_tokens: int
-) -> tuple[str, ...]:
+def _eligibility_failures(metrics: RealTrajectoryMetrics, trigger_tokens: int) -> tuple[str, ...]:
     """按实验计划的四项门槛返回明确的未入选原因。"""
     failures: list[str] = []
     if metrics.behavior.compaction_count < 1:

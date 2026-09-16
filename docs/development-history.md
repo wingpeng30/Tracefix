@@ -290,3 +290,19 @@ GitHub Actions Run #7 也在 Windows Python 3.11/3.12 两个作业成功通过�
 回归测试 `39 passed`，Ruff 与 compileall 通过。未调用 LLM、未产生 API 费用。候选尚未代表
 可运行的 Agent 基准；下一阶段仍需固定 commit 检出、创建兼容 pytest 环境，并验证 base 失败
 与 gold patch 通过。
+
+## V0.8.1：真实任务环境与可信行为验收
+
+新增逐任务虚拟环境准备器 `prepare-real-environments`：环境使用显式解释器和清华 PyPI 镜像，
+非 editable 安装固定源码依赖，并以任务 ID、固定 commit、镜像和依赖指纹建立健康复用标记。
+环境、安装命令及有限日志全部进入忽略目录 `runs/`，而脱敏汇总进入版本库。
+
+真实行为验收改为在 base/gold 两个独立 clone 中运行同一官方 pytest 选择器并写 JUnit。只有
+base 出现实际断言失败、gold 在同一入口通过，才可进入后续 LLM 预筛选；依赖错误、收集错误、
+零测试、超时和执行异常均单独记录，不能被误算为 Bug 复现。
+
+首批五题在现有 Python 3.12.5 下均有明确的不合格证据（0/5）：历史 Pylint 依赖与 Python
+3.12 不兼容，pytest 缺少构建期版本文件，Sphinx 的官方用例 base 为 xfail 而非失败。未调用
+LLM、未产生 API 费用，也没有开始 Token 对照实验。详见
+[`tasks/v0.8.1-real-environments-and-behavior.md`](tasks/v0.8.1-real-environments-and-behavior.md)
+与 [`experiments/v0.8.1-real-environment-behavior.md`](experiments/v0.8.1-real-environment-behavior.md)。

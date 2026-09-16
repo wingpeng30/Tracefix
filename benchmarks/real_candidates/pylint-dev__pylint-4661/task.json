@@ -18,7 +18,7 @@
   "fail_to_pass": [
     "tests/lint/unittest_lint.py::test_pylint_home"
   ],
-  "test_command": "pytest -q",
+  "test_command": "pytest -q tests/lint/unittest_lint.py::test_pylint_home",
   "pass_to_pass_count": 0,
   "expected_source_files": [
     "pylint/config/__init__.py",

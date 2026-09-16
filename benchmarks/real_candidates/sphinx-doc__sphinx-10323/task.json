@@ -18,7 +18,7 @@
   "fail_to_pass": [
     "tests/test_directive_code.py::test_LiteralIncludeReader_dedent_and_append_and_prepend"
   ],
-  "test_command": "pytest -q",
+  "test_command": "pytest -q tests/test_directive_code.py::test_LiteralIncludeReader_dedent_and_append_and_prepend",
   "pass_to_pass_count": 40,
   "expected_source_files": [
     "sphinx/directives/code.py"

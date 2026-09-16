@@ -84,7 +84,14 @@ from tracefix.real_candidates import (
     CandidateRecord,
     collect_candidates,
 )
+from tracefix.real_environment import (
+    EnvironmentPreparationConfig,
+    EnvironmentPreparationResult,
+    EnvironmentPreparationSummary,
+    RealEnvironmentPreparer,
+)
 from tracefix.real_experiment import (
+    PytestExecutionEvidence,
     RealExperimentConfig,
     RealPairedExperimentRunner,
     RealPairedExperimentSummary,
@@ -209,6 +216,10 @@ __all__ = [
     "RetrievalTaskResult",
     "TestEnvironmentProvenance",
     "RealIssueTask",
+    "EnvironmentPreparationConfig",
+    "EnvironmentPreparationResult",
+    "EnvironmentPreparationSummary",
+    "RealEnvironmentPreparer",
     "CandidateCollectionConfig",
     "CandidateCollectionResult",
     "CandidateRecord",
@@ -224,6 +235,7 @@ __all__ = [
     "RealRepoMapPrescreenSummary",
     "RepoMapArmAggregate",
     "RealTaskBehaviorValidation",
+    "PytestExecutionEvidence",
     "RealTrajectoryMetrics",
     "RealTrialResult",
     "ReadFileTool",

@@ -21,10 +21,12 @@ from tracefix.real_experiment import (
     RealTrialResult,
     _eligibility_failures,
     _git,
+    _pytest_evidence,
     _task_python,
     analyze_real_trajectory,
     validate_real_task_behavior,
 )
+from tracefix.tools import ToolResult
 
 GOLD = """diff --git a/pkg/a.py b/pkg/a.py
 --- a/pkg/a.py
@@ -56,6 +58,21 @@ new file mode 100644
 def test_real_experiment_default_input_budget_is_350k() -> None:
     """程序化真实实验与 CLI 的 350k 默认值必须一致。"""
     assert RealExperimentConfig().agent_config.max_input_tokens == 350_000
+
+
+def test_pytest_evidence_marks_xfail_as_non_qualifying_pass(tmp_path: Path) -> None:
+    """xfail 的零退出码必须与普通通过区分，避免误判为 base 复现。"""
+    (tmp_path / ".tracefix-junit.xml").write_text(
+        '<testsuite tests="1" failures="0" errors="0" />', encoding="utf-8"
+    )
+    result = ToolResult(
+        call_id="test-xfail",
+        tool_name="run_tests",
+        success=True,
+        output={"returncode": 0, "stdout": "1 xfailed", "stderr": "", "timed_out": False},
+    )
+
+    assert _pytest_evidence(result, tmp_path).status == "passed_xfail"
 
 
 def _run_git(repo: Path, *arguments: str) -> str:
@@ -152,9 +169,7 @@ def _trace(path: Path, *, eligible: bool = True) -> None:
             {
                 "event_type": "tool_called",
                 "step": 1,
-                "payload": {
-                    "call": {"name": "read_file", "arguments": {"path": f"pkg/{name}"}}
-                },
+                "payload": {"call": {"name": "read_file", "arguments": {"path": f"pkg/{name}"}}},
             }
         )
     events.extend(
@@ -214,9 +229,7 @@ class _FakeRunner:
             diff_path=str(diff),
             result_path=str(result_path),
             agent_config=config.agent_config,
-            provenance=collect_run_provenance(
-                config.task, LLMConfig(model_name=config.model_name)
-            ),
+            provenance=collect_run_provenance(config.task, LLMConfig(model_name=config.model_name)),
         )
 
 
@@ -231,21 +244,20 @@ def test_behavior_validation_proves_initial_fail_and_gold_pass(tmp_path) -> None
 
     assert result.initial_hidden_failed is True
     assert result.gold_hidden_passed is True
+    assert result.initial_evidence.status == "assertion_failed"
+    assert result.gold_evidence.status == "passed"
+    assert result.eligible_for_llm_prescreen is True
     assert result.initial_returncode != 0
     assert result.gold_returncode == 0
     assert result.test_environment.python_version
 
 
-def test_prescreen_runs_hidden_verification_and_applies_entry_gate(
-    tmp_path, monkeypatch
-) -> None:
+def test_prescreen_runs_hidden_verification_and_applies_entry_gate(tmp_path, monkeypatch) -> None:
     task, source = _fixture(tmp_path)
     source_root = tmp_path / "sources"
     source_root.mkdir()
     source.rename(source_root / task.id)
-    monkeypatch.setattr(
-        "tracefix.real_experiment._task_python", lambda *_: Path(sys.executable)
-    )
+    monkeypatch.setattr("tracefix.real_experiment._task_python", lambda *_: Path(sys.executable))
 
     summary = RealPrescreenRunner(_FakeRunner()).run(
         RealExperimentConfig(
@@ -318,9 +330,7 @@ def test_paired_runner_rejects_fewer_than_three_eligible_tasks(tmp_path) -> None
         )
 
 
-def test_paired_runner_uses_ct_tc_ct_order_and_persists_summary(
-    tmp_path, monkeypatch
-) -> None:
+def test_paired_runner_uses_ct_tc_ct_order_and_persists_summary(tmp_path, monkeypatch) -> None:
     task, source = _fixture(tmp_path)
     config = RealExperimentConfig(output_dir=tmp_path / "runs")
     fake_run = _FakeRunner().run(

@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "kind": "real_task_environment_and_behavior_validation",
+  "code_version": "0.8.1",
+  "python_version": "3.12.5",
+  "package_index": "https://pypi.tuna.tsinghua.edu.cn/simple",
+  "llm_called": false,
+  "task_count": 5,
+  "eligible_for_llm_prescreen_count": 0,
+  "results": [
+    {"task_id": "pylint-dev__pylint-4551", "environment_ready": true, "base_status": "dependency_error", "gold_status": "dependency_error", "eligible": false},
+    {"task_id": "pylint-dev__pylint-4604", "environment_ready": true, "base_status": "dependency_error", "gold_status": "dependency_error", "eligible": false},
+    {"task_id": "pylint-dev__pylint-4661", "environment_ready": true, "base_status": "dependency_error", "gold_status": "dependency_error", "eligible": false},
+    {"task_id": "pytest-dev__pytest-10051", "environment_ready": true, "base_status": "dependency_error", "gold_status": "dependency_error", "eligible": false},
+    {"task_id": "sphinx-doc__sphinx-10323", "environment_ready": true, "base_status": "passed_xfail", "gold_status": "passed_xpass", "eligible": false}
+  ],
+  "conclusion": "No task may enter paid LLM prescreen until task-level interpreter, dependency, build, and test-entry recipes are fixed."
+}

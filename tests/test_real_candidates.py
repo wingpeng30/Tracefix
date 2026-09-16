@@ -82,3 +82,4 @@ def test_collect_candidates_accepts_single_source_file_and_writes_loadable_manif
     task = RealIssueTask.load(tmp_path / "out" / "psf__requests-1")
     assert result.selected[0].source_file_count == 1
     assert task.expected_source_files == ("requests/models.py", "setup.cfg")
+    assert task.test_command == "pytest -q"

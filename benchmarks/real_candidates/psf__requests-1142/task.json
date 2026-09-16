@@ -18,7 +18,7 @@
   "fail_to_pass": [
     "test_requests.py::RequestsTestCase::test_no_content_length"
   ],
-  "test_command": "pytest -q",
+  "test_command": "pytest -q test_requests.py::RequestsTestCase::test_no_content_length",
   "pass_to_pass_count": 5,
   "expected_source_files": [
     "requests/models.py"

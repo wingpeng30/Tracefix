@@ -23,7 +23,7 @@
     "test_requests.py::RequestsTestCase::test_params_are_merged_case_sensitive",
     "test_requests.py::RequestsTestCase::test_user_agent_transfers"
   ],
-  "test_command": "pytest -q",
+  "test_command": "pytest -q test_requests.py::RequestsTestCase::test_DIGESTAUTH_QUOTES_QOP_VALUE test_requests.py::RequestsTestCase::test_HTTP_200_OK_GET_ALTERNATIVE test_requests.py::RequestsTestCase::test_cookie_sent_on_redirect test_requests.py::RequestsTestCase::test_custom_content_type test_requests.py::RequestsTestCase::test_params_are_merged_case_sensitive test_requests.py::RequestsTestCase::test_user_agent_transfers",
   "pass_to_pass_count": 79,
   "expected_source_files": [
     "requests/auth.py"

@@ -190,6 +190,11 @@ def _write_task_manifest(task_dir: Path, row: dict[str, Any], record: CandidateR
     pass_to_pass_count = (
         len(pass_to_pass) if isinstance(pass_to_pass, list) else int(pass_to_pass or 0)
     )
+    fail_to_pass = tuple(
+        str(item) for item in row.get("FAIL_TO_PASS", row.get("fail_to_pass", ()))
+    )
+    # 资格验收优先运行数据集明确声明的目标用例；缺少选择器的 fixture 才回退。
+    test_command = "pytest -q" if not fail_to_pass else "pytest -q " + " ".join(fail_to_pass)
     payload = {
         "id": record.instance_id,
         "title": problem.splitlines()[0][:200] or record.instance_id,
@@ -207,9 +212,8 @@ def _write_task_manifest(task_dir: Path, row: dict[str, Any], record: CandidateR
         "problem_statement_file": "problem.md",
         "gold_patch_file": "gold.patch",
         "test_patch_file": "test.patch",
-        "fail_to_pass": list(row.get("FAIL_TO_PASS", row.get("fail_to_pass", ["tests"])))
-        or ["tests"],
-        "test_command": str(row.get("test_command", "pytest -q")),
+        "fail_to_pass": list(fail_to_pass) or ["tests"],
+        "test_command": test_command,
         "pass_to_pass_count": pass_to_pass_count,
         "expected_source_files": list(gold_files),
         "expected_test_files": list(record.test_files),

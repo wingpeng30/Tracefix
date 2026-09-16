@@ -18,7 +18,7 @@
   "fail_to_pass": [
     "tests/test_build_latex.py::test_latex_code_role"
   ],
-  "test_command": "pytest -q",
+  "test_command": "pytest -q tests/test_build_latex.py::test_latex_code_role",
   "pass_to_pass_count": 74,
   "expected_source_files": [
     "sphinx/writers/latex.py"

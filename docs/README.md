@@ -5,6 +5,7 @@
 
 ## 项目历程
 
+- [`roadmap.md`](roadmap.md)：项目目标、当前阶段、验收门槛与下一步行动。
 - [`development-history.md`](development-history.md)：从 V0 接口骨架到 V0.3.2 实验可追溯性
   A/B 的代码说明、设计取舍、验证结果和 Git 版本。
 
@@ -34,6 +35,8 @@
   24 次交替配对实验、未触发 32k 的否定性结论与下一功能决策。
 - [`experiments/v0.5.0-real-issue-32k-prescreen.md`](experiments/v0.5.0-real-issue-32k-prescreen.md)：
   三道真实 Issue 的 32k 单次预筛选、0/3 入选结论和 Repo Map 功能决策。
+- [`experiments/v0.8.1-real-environment-behavior.md`](experiments/v0.8.1-real-environment-behavior.md)：
+  五道新候选的环境、base/gold 验收与 0/5 资格结论。
 - [`../benchmarks/experiments/v0.5.0-real-task-fixture-validation.json`](../benchmarks/experiments/v0.5.0-real-task-fixture-validation.json)：
   三个真实任务固定提交、补丁可应用性、base 失败/gold 通过和测试环境指纹的机器可读记录。
 - [`../benchmarks/experiments/v0.5.0-real-issue-32k-prescreen.json`](../benchmarks/experiments/v0.5.0-real-issue-32k-prescreen.json)：

@@ -14,10 +14,11 @@ from pydantic import ValidationError
 from tracefix.agent import AgentConfig, AgentStatus
 from tracefix.benchmark import BenchmarkConfig, BenchmarkRunner
 from tracefix.context import ContextConfig
-from tracefix.exceptions import TraceFixError
+from tracefix.exceptions import BenchmarkError, TraceFixError
 from tracefix.paired import PairedExperimentConfig, PairedExperimentRunner
 from tracefix.real_benchmark import load_real_issue_tasks
 from tracefix.real_candidates import CandidateCollectionConfig, collect_candidates
+from tracefix.real_environment import EnvironmentPreparationConfig, RealEnvironmentPreparer
 from tracefix.real_experiment import (
     RealExperimentConfig,
     RealPairedExperimentRunner,
@@ -219,6 +220,20 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
         default=Path("runs/real-task-behavior-validation"),
         help="一次性验收副本目录",
+    )
+
+    environment_parser = subparsers.add_parser(
+        "prepare-real-environments", help="为真实任务创建或复用独立 Python 测试环境"
+    )
+    _add_real_task_locations(environment_parser)
+    environment_parser.add_argument(
+        "--output-dir", type=Path, default=Path("runs/real-task-environment-preparation")
+    )
+    environment_parser.add_argument(
+        "--python", type=Path, default=Path(sys.executable), help="创建 venv 的兼容 Python 解释器"
+    )
+    environment_parser.add_argument(
+        "--index-url", default="https://pypi.tuna.tsinghua.edu.cn/simple"
     )
 
     prescreen_parser = subparsers.add_parser(
@@ -467,6 +482,11 @@ def _read_task(args: argparse.Namespace) -> str:
         raise ValueError(f"无法读取任务文件：{exc}") from exc
 
 
+def _print_json(value: Any) -> None:
+    """以 ASCII 安全 JSON 输出，避免 Windows 非 UTF-8 控制台因测试日志而中断。"""
+    print(json.dumps(value, ensure_ascii=True, indent=2))
+
+
 def _print_run_result(result: Any) -> None:
     """输出适合人阅读、且不包含供应商原始响应的运行摘要。"""
     print(f"状态: {result.status.value}")
@@ -530,26 +550,53 @@ def main(argv: list[str] | None = None) -> int:
                     validation = task.validate_checkout(checkout)
                 validations.append(validation.model_dump(mode="json"))
             # 输出结构化 JSON，便于把一次联网校验的结果直接归档。
-            print(json.dumps(validations, ensure_ascii=False, indent=2))
+            _print_json(validations)
             return 0
 
         if args.command == "validate-real-behavior":
             tasks = load_real_issue_tasks(args.tasks, task_ids=tuple(args.task_id))
             validations = []
             for task in tasks:
-                validation = validate_real_task_behavior(
-                    task,
-                    source=(args.source_root / task.id).resolve(),
-                    test_python=_real_task_python(args.test_env_root, task.id),
-                    output_dir=args.output_dir.resolve(),
-                )
-                validations.append(validation.model_dump(mode="json"))
+                try:
+                    validation = validate_real_task_behavior(
+                        task,
+                        source=(args.source_root / task.id).resolve(),
+                        test_python=_real_task_python(args.test_env_root, task.id),
+                        output_dir=args.output_dir.resolve(),
+                    )
+                    validations.append(validation.model_dump(mode="json"))
+                except (BenchmarkError, ValueError) as exc:
+                    # 一个历史仓库的依赖问题不能阻断其他候选的资格判断。
+                    validations.append(
+                        {
+                            "task_id": task.id,
+                            "eligible_for_llm_prescreen": False,
+                            "environment_or_execution_error": str(exc),
+                        }
+                    )
             result_path = args.output_dir.resolve() / "behavior-validation.json"
             result_path.write_text(
                 json.dumps(validations, ensure_ascii=False, indent=2), encoding="utf-8"
             )
-            print(json.dumps(validations, ensure_ascii=False, indent=2))
+            _print_json(validations)
             print(f"验收记录: {result_path}", file=sys.stderr)
+            return 0
+
+        if args.command == "prepare-real-environments":
+            summary = RealEnvironmentPreparer().prepare(
+                EnvironmentPreparationConfig(
+                    tasks_dir=args.tasks,
+                    source_root=args.source_root,
+                    environment_root=args.test_env_root,
+                    output_dir=args.output_dir,
+                    task_ids=tuple(args.task_id),
+                    python_executable=args.python,
+                    index_url=args.index_url,
+                )
+            )
+            ready = sum(item.status in {"ready", "reused"} for item in summary.results)
+            print(f"真实任务环境准备完成: {ready}/{len(summary.results)} 可用")
+            print(f"汇总文件: {summary.summary_path}")
             return 0
 
         if args.command == "retrieval-eval":
