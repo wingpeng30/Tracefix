@@ -76,6 +76,27 @@ def test_pytest_evidence_marks_xfail_as_non_qualifying_pass(tmp_path: Path) -> N
     assert _pytest_evidence(result, tmp_path).status == "passed_xfail"
 
 
+def test_pytest_evidence_classifies_network_and_permission_failures(tmp_path: Path) -> None:
+    """外部代理与 pip 权限错误不能误写成待修复的业务断言失败。"""
+    network = ToolResult(
+        call_id="network",
+        tool_name="run_tests",
+        success=False,
+        error="pytest execution failed",
+        output={"stdout": "requests.exceptions.ProxyError: Cannot connect to proxy", "stderr": ""},
+    )
+    permission = ToolResult(
+        call_id="permission",
+        tool_name="run_tests",
+        success=False,
+        error="recipe build command failed",
+        output={"stdout": "", "stderr": "Permission denied: pip-build-tracker"},
+    )
+
+    assert _pytest_evidence(network, tmp_path).status == "network_error"
+    assert _pytest_evidence(permission, tmp_path).status == "permission_error"
+
+
 def _run_git(repo: Path, *arguments: str) -> str:
     result = subprocess.run(
         ["git", *arguments], cwd=repo, capture_output=True, text=True, check=True

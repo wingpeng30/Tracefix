@@ -98,6 +98,7 @@ from tracefix.real_environment import (
     preview_cleanup,
 )
 from tracefix.real_experiment import (
+    ProcessEvidence,
     PytestExecutionEvidence,
     RealExperimentConfig,
     RealPairedExperimentRunner,
@@ -253,6 +254,7 @@ __all__ = [
     "RepoMapArmAggregate",
     "RealTaskBehaviorValidation",
     "PytestExecutionEvidence",
+    "ProcessEvidence",
     "RealTrajectoryMetrics",
     "RealTrialResult",
     "ReadFileTool",

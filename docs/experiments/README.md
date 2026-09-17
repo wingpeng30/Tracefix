@@ -16,6 +16,7 @@
 | V0.4.0 配对对照组 | 4 题 × 3 次 | 12/12 | 254,975 | 68 | ¥0.37364763 | 关闭压缩 |
 | V0.4.0 配对 32k 组 | 相同 4 题 × 3 次 | 12/12 | 265,145 | 70 | ¥0.38225877 | 0 次折叠，不构成压缩证据 |
 | V0.8.2 环境资格验收 | 12 个真实候选 | 2/12 合格 | 0 | 0 | ¥0 | 仅环境/base-gold 资格，不是 Agent 实验 |
+| V0.8.3 环境资格重验 | 12 个真实候选 | 7/12 合格 | 0 | 0 | ¥0 | 审计 node ID 与环境版本后得到的任务资格 |
 
 ## V0.2.0 Baseline
 
@@ -65,6 +66,10 @@ V0.8.2 的真实候选环境与行为资格审查见
 [`v0.8.2-real-environment-validation.md`](v0.8.2-real-environment-validation.md)。其中 2/12
 表示“base 断言失败且 gold 同入口通过”的离线任务资格数；它不等于模型 resolved rate，也没有
 调用 LLM。
+
+V0.8.3 的重验结果见
+[`v0.8.3-real-environment-validation.md`](v0.8.3-real-environment-validation.md)。7/12 表示可进入
+未来付费实验的任务数，不表示 Agent 已解决 7 道真实 Issue。
 
 V0.4.0 的 24 次交替配对实验见
 [`v0.4.0-paired-context-32k.md`](v0.4.0-paired-context-32k.md)。两组均 12/12，但所有任务

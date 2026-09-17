@@ -319,3 +319,14 @@ Conda 与已登记解释器，优先复用兼容 Python；环境身份纳入固�
 三题的门槛，故未调用 LLM、未产生费用。完整实现和实验边界见
 [`tasks/v0.8.2-space-aware-environments.md`](tasks/v0.8.2-space-aware-environments.md) 与
 [`experiments/v0.8.2-real-environment-validation.md`](experiments/v0.8.2-real-environment-validation.md)。
+
+## V0.8.3：可审计验收与 Python 版本修正
+
+V0.8.3 为真实任务的构建、pytest 收集与执行分别保存 argv、工作目录、退出码、时长和完整日志。
+轻量 pytest 审计插件记录 node ID 与阶段结果；JUnit、源码导入探针和实际执行集合共同用于资格判断。
+失败被区分为权限、网络、依赖、收集、报告、skip/xfail 与业务断言，避免把环境噪声宣传为修复能力。
+
+重验发现旧 pytest 候选在 Python 3.12 上的 `ast.Str` 弃用异常属于版本兼容问题，改用本机 Python
+3.11 后三题都通过 base/gold 闭环；Sphinx 10449 也经逐题审查后在 Windows 合格。最终 12 题中
+7 题合格，达到下一阶段预注册 C/T 实验的最低任务数。未调用 LLM，详细结果见
+[`experiments/v0.8.3-real-environment-validation.md`](experiments/v0.8.3-real-environment-validation.md)。

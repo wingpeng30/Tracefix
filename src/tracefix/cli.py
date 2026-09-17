@@ -583,6 +583,15 @@ def main(argv: list[str] | None = None) -> int:
             tasks = load_real_issue_tasks(args.tasks, task_ids=tuple(args.task_id))
             recipes = load_environment_recipes(args.recipes)
             validations = []
+            result_path = args.output_dir.resolve() / "behavior-validation.json"
+            result_path.parent.mkdir(parents=True, exist_ok=True)
+
+            def persist_partial_results() -> None:
+                """每题完成即写入汇总，意外中断时仍保留已获得的验收证据。"""
+                result_path.write_text(
+                    json.dumps(validations, ensure_ascii=False, indent=2), encoding="utf-8"
+                )
+
             for task in tasks:
                 recipe = recipes.get(task.id)
                 if recipe is not None and not recipe.supports_current_platform():
@@ -595,6 +604,7 @@ def main(argv: list[str] | None = None) -> int:
                             ),
                         }
                     )
+                    persist_partial_results()
                     continue
                 try:
                     validation = validate_real_task_behavior(
@@ -614,10 +624,8 @@ def main(argv: list[str] | None = None) -> int:
                             "environment_or_execution_error": str(exc),
                         }
                     )
-            result_path = args.output_dir.resolve() / "behavior-validation.json"
-            result_path.write_text(
-                json.dumps(validations, ensure_ascii=False, indent=2), encoding="utf-8"
-            )
+                persist_partial_results()
+            persist_partial_results()
             _print_json(validations)
             print(f"验收记录: {result_path}", file=sys.stderr)
             return 0

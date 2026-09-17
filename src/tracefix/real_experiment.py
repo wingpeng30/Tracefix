@@ -5,8 +5,8 @@ from __future__ import annotations
 
 import json
 import os
-import shlex
 import subprocess
+import time
 import xml.etree.ElementTree as element_tree
 from datetime import UTC, datetime
 from pathlib import Path
@@ -51,8 +51,23 @@ class RealTaskBehaviorValidation(BaseModel):
     eligibility_reason: str | None = None
 
 
+class ProcessEvidence(BaseModel):
+    """一次构建、收集或测试子进程的完整可追溯证据。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    stage: str
+    command: tuple[str, ...]
+    working_directory: str
+    returncode: int | None
+    timed_out: bool
+    duration_ms: float = Field(ge=0)
+    stdout_path: str
+    stderr_path: str
+
+
 class PytestExecutionEvidence(BaseModel):
-    """一次 pytest 执行的 JUnit 与进程级证据。"""
+    """一次 pytest 验收的收集、执行、JUnit 与插件结构化证据。"""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -63,11 +78,19 @@ class PytestExecutionEvidence(BaseModel):
     test_count: int = Field(ge=0)
     failure_count: int = Field(ge=0)
     error_count: int = Field(ge=0)
+    skipped_count: int = Field(ge=0)
+    xfailed_count: int = Field(ge=0)
+    xpassed_count: int = Field(ge=0)
     collected_node_ids: tuple[str, ...] = ()
+    executed_node_ids: tuple[str, ...] = ()
     expected_node_ids: tuple[str, ...] = ()
     import_probe_path: str | None = None
     diagnostic: str | None = None
     output_tail: str = ""
+    build_steps: tuple[ProcessEvidence, ...] = ()
+    collection: ProcessEvidence | None = None
+    execution: ProcessEvidence | None = None
+    audit_path: str | None = None
 
 
 class RealTrajectoryMetrics(BaseModel):
@@ -233,12 +256,45 @@ def validate_real_task_behavior(
         )
     initial_evidence = _pytest_evidence(results["initial"], output_dir / f"{task.id}-initial")
     gold_evidence = _pytest_evidence(results["gold"], output_dir / f"{task.id}-gold")
-    initial_failed = initial_evidence.status == "assertion_failed"
-    gold_passed = gold_evidence.status == "passed"
-    eligible = initial_failed and gold_passed
-    reason = (
-        None if eligible else (f"initial={initial_evidence.status}; gold={gold_evidence.status}")
+    # 审计插件正常情况下给出 call 阶段 node ID。某些受限 Windows 临时目录会拒绝
+    # 插件写文件，此时仅当收集集合相同、JUnit 完整且两个阶段均有实际测试时，才以
+    # 已收集的精确目标集合交叉核对；仍保留 audit 缺失证据供后续审查。
+    initial_nodes = _canonical_node_ids(
+        initial_evidence.executed_node_ids or initial_evidence.collected_node_ids
     )
+    gold_nodes = _canonical_node_ids(
+        gold_evidence.executed_node_ids or gold_evidence.collected_node_ids
+    )
+    if initial_nodes or gold_nodes:
+        same_execution_set = initial_nodes == gold_nodes and bool(initial_nodes)
+    else:
+        # 极少数受限目录会同时阻断插件文件和 collect-only 输出文件。此时必须仍有
+        # JUnit 记录的实际测试数，且两个阶段使用同一不可变 expected 选择器，才允许
+        # 继续判定；CLI 结果会把 audit 缺失保留为可审查证据。
+        same_execution_set = (
+            initial_evidence.test_count > 0
+            and gold_evidence.test_count > 0
+            and initial_evidence.expected_node_ids == gold_evidence.expected_node_ids
+        )
+    no_nonbusiness_outcomes = all(
+        item.skipped_count == 0 and item.xfailed_count == 0 and item.xpassed_count == 0
+        for item in (initial_evidence, gold_evidence)
+    )
+    initial_failed = initial_evidence.status == "assertion_failed" and same_execution_set
+    gold_passed = (
+        gold_evidence.status == "passed" and same_execution_set and no_nonbusiness_outcomes
+    )
+    eligible = initial_failed and gold_passed
+    reasons = []
+    if not initial_failed:
+        reasons.append(f"initial={initial_evidence.status}")
+    if not gold_passed:
+        reasons.append(f"gold={gold_evidence.status}")
+    if not same_execution_set:
+        reasons.append("base/gold executed node IDs differ or are missing")
+    if not no_nonbusiness_outcomes:
+        reasons.append("skip/xfail/xpass was observed")
+    reason = "; ".join(reasons) or None
     return RealTaskBehaviorValidation(
         task_id=task.id,
         base_commit=task.base_commit,
@@ -255,6 +311,20 @@ def validate_real_task_behavior(
         eligible_for_llm_prescreen=eligible,
         eligibility_reason=reason,
     )
+
+
+def _canonical_node_ids(node_ids: tuple[str, ...]) -> tuple[str, ...]:
+    """移除 base/gold checkout 前缀，比较同一 pytest node ID 的稳定部分。"""
+    normalized: list[str] = []
+    for node_id in node_ids:
+        value = node_id.replace("\\", "/")
+        marker = value.find("tests/")
+        if marker >= 0:
+            normalized.append(value[marker:])
+            continue
+        python_marker = value.find(".py::")
+        normalized.append(value[value.rfind("/", 0, python_marker) + 1 :] if python_marker >= 0 else value)
+    return tuple(normalized)
 
 
 def _create_behavior_checkout(source: Path, checkout: Path) -> None:
@@ -277,95 +347,190 @@ def _run_qualified_pytest(
     call_id: str,
     recipe: EnvironmentRecipe | None = None,
 ) -> ToolResult:
-    """运行相同 pytest 入口并请求 JUnit，以区分业务失败和环境故障。"""
-    build_error = _run_recipe_build(recipe, checkout, test_python)
-    if build_error:
-        return ToolResult(call_id=call_id, tool_name="run_tests", success=False, error=build_error)
-    junit = checkout / ".tracefix-junit.xml"
-    command = _effective_test_command(task, recipe)
-    collected = _collect_node_ids(
-        command,
-        checkout,
-        test_python,
-        pythonpath_entries=task.test_pythonpath_paths,
-    )
+    """用参数列表执行严格 pytest 验收，并完整保留每个阶段的日志。"""
+    evidence_root = checkout / ".tracefix-validation"
+    evidence_root.mkdir(parents=True, exist_ok=True)
+    build_steps = _run_recipe_build(recipe, checkout, test_python, evidence_root)
+    failed_build = next((step for step in build_steps if step.returncode != 0 or step.timed_out), None)
+    if failed_build:
+        return _failed_validation_result(
+            call_id,
+            "recipe build command failed",
+            build_steps=build_steps,
+            execution=None,
+            collection=None,
+        )
     expected = (
         tuple(recipe.selector_overrides)
         if recipe and recipe.selector_overrides
         else task.fail_to_pass
     )
+    command = _pytest_command(test_python, expected)
+    environment = _validation_environment(checkout, task.test_pythonpath_paths)
+    _write_audit_plugin(checkout)
+    collection = _run_validation_process(
+        (*command, "--collect-only", "-p", "tracefix_pytest_audit"),
+        checkout,
+        environment | {"TRACEFIX_AUDIT_PATH": str(evidence_root / "collection.audit.json")},
+        evidence_root,
+        "collection",
+    )
+    collected, collection_audit = _read_audit(evidence_root / "collection.audit.json")
+    if not collected:
+        # 插件审计文件不可写时，pytest collect-only 的标准 node ID 仍是可靠后备证据。
+        collected = _node_ids_from_collect_output(_read_text(Path(collection.stdout_path)))
+    if collection.returncode != 0:
+        return _failed_validation_result(
+            call_id,
+            "pytest collection failed",
+            build_steps=build_steps,
+            collection=collection,
+            execution=None,
+            collected=collected,
+            expected=expected,
+            audit_path=collection_audit,
+        )
     if not expected or not _selectors_collected(expected, collected):
-        return ToolResult(
-            call_id=call_id,
-            tool_name="run_tests",
-            success=False,
-            error="official test selectors were not fully collected",
-            output={"collected_node_ids": list(collected), "expected_node_ids": list(expected)},
+        return _failed_validation_result(
+            call_id,
+            "official test selectors were not fully collected",
+            build_steps=build_steps,
+            collection=collection,
+            execution=None,
+            collected=collected,
+            expected=expected,
+            audit_path=collection_audit,
         )
     probe_error, probe_path = _probe_source_import(recipe, checkout, test_python)
     if probe_error:
-        return ToolResult(
-            call_id=call_id,
-            tool_name="run_tests",
-            success=False,
-            error=probe_error,
-            output={"import_probe_path": probe_path},
+        return _failed_validation_result(
+            call_id,
+            probe_error,
+            build_steps=build_steps,
+            collection=collection,
+            execution=None,
+            collected=collected,
+            expected=expected,
+            audit_path=collection_audit,
+            import_probe_path=probe_path,
         )
-    command = f"{command} --junitxml {junit.name}"
-    tool = RunTestsTool(
+    junit = evidence_root / "junit.xml"
+    execution = _run_validation_process(
+        (*command, f"--junitxml={junit}", "-p", "tracefix_pytest_audit"),
         checkout,
-        python_executable=test_python,
-        pythonpath_entries=task.test_pythonpath_paths,
-        default_timeout_seconds=300,
+        environment | {"TRACEFIX_AUDIT_PATH": str(evidence_root / "execution.audit.json")},
+        evidence_root,
+        "execution",
     )
-    result = tool.execute(
-        ToolCall(
-            id=call_id,
-            name=tool.spec.name,
-            arguments={"command": command, "timeout_seconds": 300},
-        )
+    output = {
+        "returncode": execution.returncode,
+        "timed_out": execution.timed_out,
+        "stdout": _read_text(Path(execution.stdout_path)),
+        "stderr": _read_text(Path(execution.stderr_path)),
+        "collected_node_ids": list(collected),
+        "expected_node_ids": list(expected),
+        "import_probe_path": probe_path,
+        "build_steps": [step.model_dump(mode="json") for step in build_steps],
+        "collection": collection.model_dump(mode="json"),
+        "execution": execution.model_dump(mode="json"),
+        "audit_path": str(evidence_root / "execution.audit.json"),
+        "junit_path": str(junit),
+    }
+    return ToolResult(
+        call_id=call_id,
+        tool_name="run_tests",
+        success=execution.returncode == 0 and not execution.timed_out,
+        output=output,
+        error=None
+        if execution.returncode == 0 and not execution.timed_out
+        else "pytest execution failed",
+        duration_ms=execution.duration_ms,
     )
-    # 导入探针属于验收证据而非 pytest 原始输出；附加在结构化结果中供后续归类写入。
-    if isinstance(result.output, dict):
-        result.output["import_probe_path"] = probe_path
-    return result
 
 
-def _effective_test_command(task: RealIssueTask, recipe: EnvironmentRecipe | None) -> str:
-    """将配方内经审计的选择器显式替代损坏的官方记录。"""
-    selectors = (
-        recipe.selector_overrides if recipe and recipe.selector_overrides else task.fail_to_pass
-    )
-    return "pytest -q " + " ".join(shlex.quote(selector) for selector in selectors)
+def _pytest_command(test_python: Path, selectors: tuple[str, ...]) -> tuple[str, ...]:
+    """构造不可被 Shell 重解释的 pytest 参数列表。"""
+    return (str(test_python), "-m", "pytest", "-q", *selectors)
 
 
-def _collect_node_ids(
-    command: str,
+def _validation_environment(checkout: Path, pythonpath_entries: tuple[Path, ...]) -> dict[str, str]:
+    """隔离父项目插件和临时目录，同时让当前副本源码优先被导入。"""
+    environment = _isolated_build_environment(checkout)
+    roots = [str(path) for path in pythonpath_entries]
+    if (checkout / "src").is_dir():
+        roots.append(str(checkout / "src"))
+    roots.append(str(checkout))
+    environment["PYTHONPATH"] = os.pathsep.join(roots)
+    environment["PYTEST_DISABLE_PLUGIN_AUTOLOAD"] = "1"
+    return environment
+
+
+def _run_validation_process(
+    command: tuple[str, ...],
     checkout: Path,
-    test_python: Path,
-    *,
-    pythonpath_entries: tuple[Path, ...] = (),
-) -> tuple[str, ...]:
-    """先 collect-only，再核对每个目标 node ID 确实被 pytest 识别。"""
-    command = f"{command} --collect-only"
-    tool = RunTestsTool(
-        checkout,
-        python_executable=test_python,
-        pythonpath_entries=pythonpath_entries,
-        default_timeout_seconds=300,
-    )
-    result = tool.execute(
-        ToolCall(
-            id="collect",
-            name=tool.spec.name,
-            arguments={"command": command, "timeout_seconds": 300},
+    environment: dict[str, str],
+    evidence_root: Path,
+    stage: str,
+) -> ProcessEvidence:
+    """执行一个验证阶段并将完整输出落入当前任务的忽略目录。"""
+    started = time.monotonic()
+    stdout_path = evidence_root / f"{stage}.stdout.txt"
+    stderr_path = evidence_root / f"{stage}.stderr.txt"
+    try:
+        completed = subprocess.run(
+            command, cwd=checkout, env=environment, capture_output=True, text=True,
+            encoding="utf-8", errors="replace", timeout=300, check=False, shell=False,
         )
+        returncode, timed_out, stdout, stderr = completed.returncode, False, completed.stdout, completed.stderr
+    except subprocess.TimeoutExpired as exc:
+        returncode, timed_out = None, True
+        stdout = _decode_process_output(exc.stdout)
+        stderr = _decode_process_output(exc.stderr)
+    except OSError as exc:
+        returncode, timed_out, stdout, stderr = None, False, "", str(exc)
+    stdout_path.write_text(stdout, encoding="utf-8")
+    stderr_path.write_text(stderr, encoding="utf-8")
+    return ProcessEvidence(
+        stage=stage, command=command, working_directory=str(checkout), returncode=returncode,
+        timed_out=timed_out, duration_ms=(time.monotonic() - started) * 1000,
+        stdout_path=str(stdout_path), stderr_path=str(stderr_path),
     )
-    output = result.output if isinstance(result.output, dict) else {}
-    lines = str(output.get("stdout", "")).splitlines()
-    return tuple(
-        line.strip() for line in lines if "::" in line and not line.lstrip().startswith("<")
-    )
+
+
+def _failed_validation_result(
+    call_id: str, error: str, *, build_steps: tuple[ProcessEvidence, ...],
+    collection: ProcessEvidence | None, execution: ProcessEvidence | None,
+    collected: tuple[str, ...] = (), expected: tuple[str, ...] = (),
+    audit_path: str | None = None, import_probe_path: str | None = None,
+) -> ToolResult:
+    """把尚未执行 pytest 的验证失败也包装成完整结构化结果。"""
+    build_stdout = "\n".join(_read_text(Path(step.stdout_path)) for step in build_steps)
+    build_stderr = "\n".join(_read_text(Path(step.stderr_path)) for step in build_steps)
+    output = {
+        "returncode": execution.returncode if execution else None,
+        "timed_out": execution.timed_out if execution else False,
+        "stdout": _read_text(Path(execution.stdout_path)) if execution else build_stdout,
+        "stderr": _read_text(Path(execution.stderr_path)) if execution else build_stderr,
+        "collected_node_ids": list(collected), "expected_node_ids": list(expected),
+        "build_steps": [step.model_dump(mode="json") for step in build_steps],
+        "collection": collection.model_dump(mode="json") if collection else None,
+        "execution": execution.model_dump(mode="json") if execution else None,
+        "audit_path": audit_path, "import_probe_path": import_probe_path,
+    }
+    return ToolResult(call_id=call_id, tool_name="run_tests", success=False, output=output, error=error)
+
+
+def _decode_process_output(value: bytes | str | None) -> str:
+    """统一超时异常中 bytes 与文本输出的编码。"""
+    return value.decode("utf-8", errors="replace") if isinstance(value, bytes) else value or ""
+
+
+def _read_text(path: Path) -> str:
+    """读取已保存的诊断文件；读取失败时返回空文本而不掩盖原始错误。"""
+    try:
+        return path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return ""
 
 
 def _probe_source_import(
@@ -415,32 +580,71 @@ def _probe_source_import(
 
 
 def _run_recipe_build(
-    recipe: EnvironmentRecipe | None, checkout: Path, test_python: Path
-) -> str | None:
-    """执行配方声明的无 Shell 构建步骤，如 setuptools-scm 版本文件生成。"""
+    recipe: EnvironmentRecipe | None, checkout: Path, test_python: Path, evidence_root: Path
+) -> tuple[ProcessEvidence, ...]:
+    """执行配方构建步骤，并为每一步保存命令和完整输出。"""
     if recipe is None:
-        return None
+        return ()
     environment = _isolated_build_environment(checkout)
+    steps: list[ProcessEvidence] = []
     for template in recipe.build_commands:
-        command = [str(test_python) if item == "{python}" else item for item in template]
-        try:
-            completed = subprocess.run(
-                command,
-                cwd=checkout,
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                timeout=300,
-                check=False,
-                shell=False,
-                env=environment,
-            )
-        except (OSError, subprocess.SubprocessError) as exc:
-            return f"recipe build command failed: {exc}"
-        if completed.returncode != 0:
-            return f"recipe build command failed: {(completed.stderr or completed.stdout)[-1000:]}"
-    return None
+        command = tuple(str(test_python) if item == "{python}" else item for item in template)
+        step = _run_validation_process(command, checkout, environment, evidence_root, f"build-{len(steps)}")
+        steps.append(step)
+        if step.returncode != 0 or step.timed_out:
+            break
+    return tuple(steps)
+
+
+_AUDIT_PLUGIN = '''
+import json
+import os
+
+_records = {"collected_node_ids": [], "reports": []}
+
+def pytest_collection_modifyitems(session, config, items):
+    _records["collected_node_ids"] = [item.nodeid for item in items]
+
+def pytest_runtest_logreport(report):
+    _records["reports"].append({
+        "nodeid": report.nodeid,
+        "when": report.when,
+        "outcome": report.outcome,
+        "wasxfail": bool(getattr(report, "wasxfail", False)),
+        "longrepr": str(report.longrepr)[:2000] if report.failed else "",
+    })
+
+def pytest_sessionfinish(session, exitstatus):
+    _records["exitstatus"] = exitstatus
+    path = os.environ.get("TRACEFIX_AUDIT_PATH")
+    if path:
+        with open(path, "w", encoding="utf-8") as handle:
+            json.dump(_records, handle, ensure_ascii=False)
+'''
+
+
+def _write_audit_plugin(checkout: Path) -> None:
+    """在临时 checkout 写入 pytest 插件；它不进入待测仓库的提交内容。"""
+    (checkout / "tracefix_pytest_audit.py").write_text(_AUDIT_PLUGIN, encoding="utf-8")
+
+
+def _read_audit(path: Path) -> tuple[tuple[str, ...], str | None]:
+    """读取收集阶段插件记录的 node ID；缺失报告由后续分类负责标记。"""
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return (), None
+    values = payload.get("collected_node_ids", [])
+    return tuple(item for item in values if isinstance(item, str)), str(path)
+
+
+def _node_ids_from_collect_output(output: str) -> tuple[str, ...]:
+    """从 pytest collect-only 标准输出提取 node ID，作为插件文件缺失的后备。"""
+    return tuple(
+        line.strip()
+        for line in output.splitlines()
+        if "::" in line and not line.lstrip().startswith("<")
+    )
 
 
 def _isolated_build_environment(checkout: Path) -> dict[str, str]:
@@ -489,7 +693,21 @@ def _pytest_evidence(result: ToolResult, checkout: Path) -> PytestExecutionEvide
         str(item) for item in output.get("expected_node_ids", []) if isinstance(item, str)
     )
     probe_path = output.get("import_probe_path")
-    junit = checkout / ".tracefix-junit.xml"
+    audit_path = output.get("audit_path")
+    execution_data = output.get("execution")
+    collection_data = output.get("collection")
+    build_data = output.get("build_steps", [])
+    audit = _load_audit(Path(audit_path)) if isinstance(audit_path, str) else {}
+    reports = audit.get("reports", []) if isinstance(audit, dict) else []
+    executed = tuple(
+        report["nodeid"] for report in reports
+        if isinstance(report, dict) and report.get("when") == "call" and isinstance(report.get("nodeid"), str)
+    )
+    skipped = sum(1 for report in reports if isinstance(report, dict) and report.get("outcome") == "skipped")
+    xfailed = sum(1 for report in reports if isinstance(report, dict) and report.get("wasxfail") and report.get("outcome") == "skipped")
+    xpassed = sum(1 for report in reports if isinstance(report, dict) and report.get("wasxfail") and report.get("outcome") == "passed")
+    junit_raw = output.get("junit_path")
+    junit = Path(junit_raw) if isinstance(junit_raw, str) else checkout / ".tracefix-junit.xml"
     tests = failures = errors = 0
     available = junit.is_file()
     if available:
@@ -502,7 +720,11 @@ def _pytest_evidence(result: ToolResult, checkout: Path) -> PytestExecutionEvide
         except (OSError, ValueError, element_tree.ParseError):
             available = False
     lowered = combined.casefold()
-    if timed_out:
+    if _has_permission_error(combined) or _has_permission_error(result.error or ""):
+        status = "permission_error"
+    elif _has_network_error(combined):
+        status = "network_error"
+    elif timed_out:
         status = "timeout"
     elif (
         "modulenotfounderror" in lowered or "no module named" in lowered or "importerror" in lowered
@@ -510,12 +732,18 @@ def _pytest_evidence(result: ToolResult, checkout: Path) -> PytestExecutionEvide
         status = "dependency_error"
     elif "error collecting" in lowered or "conftest" in lowered or "collected 0 items" in lowered:
         status = "collection_error"
+    elif result.error == "pytest collection failed":
+        status = "collection_error"
     elif result.error == "official test selectors were not fully collected":
         status = "selector_mismatch"
     elif result.error and result.error.startswith("recipe build command failed"):
         status = "build_error"
     elif result.error and result.error.startswith("source import probe"):
         status = "source_import_error"
+    elif not available and result.success:
+        status = "report_missing"
+    elif skipped or xfailed or xpassed:
+        status = "skipped_or_xfailed"
     elif tests == 0:
         status = "no_tests"
     elif failures > 0 and errors == 0:
@@ -541,12 +769,45 @@ def _pytest_evidence(result: ToolResult, checkout: Path) -> PytestExecutionEvide
         test_count=tests,
         failure_count=failures,
         error_count=errors,
+        skipped_count=skipped,
+        xfailed_count=xfailed,
+        xpassed_count=xpassed,
         collected_node_ids=collected,
+        executed_node_ids=executed,
         expected_node_ids=expected,
         import_probe_path=str(probe_path) if probe_path else None,
         diagnostic=result.error,
         output_tail=combined[-2000:],
+        build_steps=tuple(ProcessEvidence.model_validate(item) for item in build_data if isinstance(item, dict)),
+        collection=ProcessEvidence.model_validate(collection_data) if isinstance(collection_data, dict) else None,
+        execution=ProcessEvidence.model_validate(execution_data) if isinstance(execution_data, dict) else None,
+        audit_path=audit_path if isinstance(audit_path, str) else None,
     )
+
+
+def _load_audit(path: Path) -> dict[str, object]:
+    """读取 pytest 插件的结构化记录；缺失文件会被报告缺失逻辑识别。"""
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return value if isinstance(value, dict) else {}
+
+
+def _has_permission_error(message: str) -> bool:
+    """识别 Windows 与 pip 的权限拒绝文本。"""
+    lowered = message.casefold()
+    # pytest 无法写缓存时会给出 PytestCacheWarning，但测试本身仍可能完整执行；
+    # 只有非缓存警告的访问拒绝才视为环境权限故障。
+    if "pytestcachewarning" in lowered:
+        return "permission denied" in lowered and "cache path" not in lowered
+    return "permission denied" in lowered or "winerror 5" in lowered or "拒绝访问" in message
+
+
+def _has_network_error(message: str) -> bool:
+    """识别代理、连接和 DNS 导致的非业务测试失败。"""
+    lowered = message.casefold()
+    return any(token in lowered for token in ("proxyerror", "cannot connect to proxy", "connection refused", "name or service not known"))
 
 
 class RealPrescreenRunner:

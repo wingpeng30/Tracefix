@@ -37,6 +37,10 @@
   三道真实 Issue 的 32k 单次预筛选、0/3 入选结论和 Repo Map 功能决策。
 - [`experiments/v0.8.1-real-environment-behavior.md`](experiments/v0.8.1-real-environment-behavior.md)：
   五道新候选的环境、base/gold 验收与 0/5 资格结论。
+- [`tasks/v0.8.3-auditable-real-validation.md`](tasks/v0.8.3-auditable-real-validation.md)：
+  构建、收集、pytest 执行证据和失败分类改进。
+- [`experiments/v0.8.3-real-environment-validation.md`](experiments/v0.8.3-real-environment-validation.md)：
+  12 道真实候选的 7/12 合格重验结果。
 - [`tasks/v0.8.2-space-aware-environments.md`](tasks/v0.8.2-space-aware-environments.md)：
   解释器发现、任务级环境配方、空间门槛与安全清理实现。
 - [`experiments/v0.8.2-real-environment-validation.md`](experiments/v0.8.2-real-environment-validation.md)：
