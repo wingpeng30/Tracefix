@@ -2,7 +2,7 @@
   "schema_version": 1,
   "task_id": "pytest-dev__pytest-10081",
   "python_versions": ["3.11"],
-  "extra_dependencies": ["setuptools-scm", "pytest==7.1.2"],
+  "extra_dependencies": ["setuptools-scm==6.4.2", "pytest==7.1.2"],
   "build_commands": [["{python}", "setup.py", "--version"]],
   "selector_overrides": [],
   "supported_platforms": ["windows"],

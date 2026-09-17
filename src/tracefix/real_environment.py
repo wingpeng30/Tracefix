@@ -278,12 +278,29 @@ class RealEnvironmentPreparer:
             if installed_extras.returncode != 0:
                 return _failed(task, "install_failed", commands, logs, recipe)
         build_source = environment / ".tracefix-build-source"
+        # setuptools-scm 需要固定提交的 Git 元数据生成版本。构建副本以 gitdir
+        # 文件只读引用固定源码的元数据，避免复制并回收 Windows pack 文件时占用失败。
         shutil.copytree(source, build_source, ignore=shutil.ignore_patterns(".git", ".tracefix*"))
+        _link_build_copy_git_metadata(source, build_source)
+        # 版本文件等构建副作用只能发生在本次环境的副本中，绝不改动固定源码。
+        # 这一步位于 pip 安装之前，使 setuptools-scm 等历史项目能从隔离副本生成元数据。
+        for index, template in enumerate(recipe.build_commands if recipe else ()):
+            build = tuple(str(python) if item == "{python}" else item for item in template)
+            commands.append(build)
+            built = _run(build, build_source, config.timeout_seconds, process_environment)
+            logs.append(_log(f"recipe_build_{index}", built))
+            if built.returncode != 0:
+                _remove_managed_child(environment, build_source)
+                return _failed(task, "install_failed", commands, logs, recipe)
         install = (str(python), "-m", "pip", "install", "-i", config.index_url, ".")
         commands.append(install)
         installed = _run(install, build_source, config.timeout_seconds, process_environment)
         logs.append(_log("project_install", installed))
-        _remove_managed_child(environment, build_source)
+        try:
+            _remove_managed_child(environment, build_source)
+        except BenchmarkError as exc:
+            # 现场保留比在权限竞争中中断完成的环境更安全；所有权标记会使它仍受管理。
+            logs.append(f"build_copy_cleanup_deferred: {exc}")
         if installed.returncode != 0:
             status = (
                 "incompatible"
@@ -479,7 +496,21 @@ def _remove_managed_child(environment: Path, child: Path) -> None:
         return
     if child.parent != environment or child.is_symlink():
         raise BenchmarkError("refusing to remove an unmanaged build path", context={"path": str(child)})
-    shutil.rmtree(child)
+    try:
+        shutil.rmtree(child)
+    except OSError as exc:
+        raise BenchmarkError("unable to remove managed build path", context={"path": str(child)}) from exc
+
+
+def _link_build_copy_git_metadata(source: Path, build_source: Path) -> None:
+    """让隔离构建副本只读引用固定源码的 Git 元数据。"""
+    metadata = source / ".git"
+    if metadata.is_dir():
+        (build_source / ".git").write_text(
+            f"gitdir: {metadata.resolve()}\n", encoding="utf-8"
+        )
+    elif metadata.is_file():
+        (build_source / ".git").write_text(metadata.read_text(encoding="utf-8"), encoding="utf-8")
 
 
 def _marker_matches(

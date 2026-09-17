@@ -151,6 +151,64 @@ def test_recipe_hash_invalidates_reuse_and_storage_ignores_unmanaged_paths(
     assert preparer.prepare(config).results[0].status == "ready"
 
 
+def test_preparer_runs_recipe_build_in_isolated_copy(tmp_path, monkeypatch) -> None:
+    """历史版本文件生成只能在环境构建副本中执行，并记录到安装命令。"""
+    task, source = _task(tmp_path)
+    recipes = tmp_path / "recipes"
+    recipes.mkdir()
+    recipe = EnvironmentRecipe(
+        task_id=task.id, build_commands=(("{python}", "setup.py", "--version"),)
+    )
+    (recipes / "fixture.json").write_text(recipe.model_dump_json(), encoding="utf-8")
+    config = EnvironmentPreparationConfig(
+        tasks_dir=task.task_dir.parent,
+        source_root=source.parent,
+        environment_root=tmp_path / "envs",
+        output_dir=tmp_path / "results",
+        python_executable=Path(sys.executable),
+        recipes_dir=recipes,
+    )
+    commands: list[tuple[str, ...]] = []
+
+    def fake_run(command, cwd, timeout, environment=None):
+        commands.append(command)
+        if command[2:3] == ("venv",):
+            return subprocess.run(command, cwd=cwd, capture_output=True, text=True, check=False)
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr("tracefix.real_environment._run", fake_run)
+    result = RealEnvironmentPreparer().prepare(config).results[0]
+    assert result.status == "ready"
+    assert any(command[-2:] == ("setup.py", "--version") for command in commands)
+
+
+def test_preparer_keeps_git_metadata_only_in_build_copy(tmp_path, monkeypatch) -> None:
+    """需要 setuptools-scm 的构建副本保留 Git 元数据，固定源码仍不被写入。"""
+    task, source = _task(tmp_path)
+    (source / ".git").mkdir()
+    (source / ".git" / "HEAD").write_text("ref: refs/heads/main\n", encoding="utf-8")
+    config = EnvironmentPreparationConfig(
+        tasks_dir=task.task_dir.parent,
+        source_root=source.parent,
+        environment_root=tmp_path / "envs",
+        output_dir=tmp_path / "results",
+        python_executable=Path(sys.executable),
+    )
+    copied_git_metadata: list[str] = []
+
+    def fake_run(command, cwd, timeout, environment=None):
+        if command[2:3] == ("venv",):
+            return subprocess.run(command, cwd=cwd, capture_output=True, text=True, check=False)
+        if command[-1:] == (".",):
+            copied_git_metadata.append((cwd / ".git").read_text(encoding="utf-8"))
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr("tracefix.real_environment._run", fake_run)
+    assert RealEnvironmentPreparer().prepare(config).results[0].status == "ready"
+    assert copied_git_metadata == [f"gitdir: {(source / '.git').resolve()}\n"]
+    assert (source / ".git" / "HEAD").read_text(encoding="utf-8") == "ref: refs/heads/main\n"
+
+
 def test_recipe_loader_rejects_undocumented_selector_override(tmp_path) -> None:
     """测试入口替代必须写清缘由，避免悄悄缩小官方验收范围。"""
     (tmp_path / "bad.json").write_text(
