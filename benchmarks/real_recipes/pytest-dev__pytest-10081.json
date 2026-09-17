@@ -1,0 +1,10 @@
+{
+  "schema_version": 1,
+  "task_id": "pytest-dev__pytest-10081",
+  "python_versions": ["3.12"],
+  "extra_dependencies": ["setuptools-scm"],
+  "build_commands": [["{python}", "-m", "pip", "install", "-i", "https://pypi.tuna.tsinghua.edu.cn/simple", "--no-deps", "."]],
+  "selector_overrides": [],
+  "supported_platforms": ["windows"],
+  "source_import_probe": "_pytest._version"
+}

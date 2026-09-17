@@ -18,7 +18,14 @@ from tracefix.exceptions import BenchmarkError, TraceFixError
 from tracefix.paired import PairedExperimentConfig, PairedExperimentRunner
 from tracefix.real_benchmark import load_real_issue_tasks
 from tracefix.real_candidates import CandidateCollectionConfig, collect_candidates
-from tracefix.real_environment import EnvironmentPreparationConfig, RealEnvironmentPreparer
+from tracefix.real_environment import (
+    EnvironmentPreparationConfig,
+    RealEnvironmentPreparer,
+    apply_cleanup,
+    discover_interpreters,
+    inspect_storage,
+    preview_cleanup,
+)
 from tracefix.real_experiment import (
     RealExperimentConfig,
     RealPairedExperimentRunner,
@@ -27,6 +34,7 @@ from tracefix.real_experiment import (
     RealRepoMapPrescreenRunner,
     validate_real_task_behavior,
 )
+from tracefix.real_recipes import load_environment_recipes
 from tracefix.repository import RepoMapConfig
 from tracefix.retrieval_eval import RetrievalEvaluationConfig, RetrievalEvaluator
 from tracefix.runtime import (
@@ -221,6 +229,7 @@ def build_parser() -> argparse.ArgumentParser:
         default=Path("runs/real-task-behavior-validation"),
         help="一次性验收副本目录",
     )
+    behavior_parser.add_argument("--recipes", type=Path, default=Path("benchmarks/real_recipes"))
 
     environment_parser = subparsers.add_parser(
         "prepare-real-environments", help="为真实任务创建或复用独立 Python 测试环境"
@@ -230,11 +239,28 @@ def build_parser() -> argparse.ArgumentParser:
         "--output-dir", type=Path, default=Path("runs/real-task-environment-preparation")
     )
     environment_parser.add_argument(
-        "--python", type=Path, default=Path(sys.executable), help="创建 venv 的兼容 Python 解释器"
+        "--python", type=Path, help="显式指定兼容 Python；省略时自动发现"
     )
     environment_parser.add_argument(
         "--index-url", default="https://pypi.tuna.tsinghua.edu.cn/simple"
     )
+    environment_parser.add_argument("--recipes", type=Path, default=Path("benchmarks/real_recipes"))
+    environment_parser.add_argument("--min-free-gib", type=int, default=10)
+    environment_parser.add_argument("--no-create-interpreter", action="store_true")
+
+    inventory_parser = subparsers.add_parser(
+        "inspect-real-environments", help="盘点 TraceFix 解释器与空间"
+    )
+    inventory_parser.add_argument(
+        "--environment-root", type=Path, default=Path("runs/real-task-envs-v2")
+    )
+    cleanup_parser = subparsers.add_parser(
+        "clean-real-artifacts", help="预览或清理 TraceFix 登记的环境"
+    )
+    cleanup_parser.add_argument(
+        "--environment-root", type=Path, default=Path("runs/real-task-envs-v2")
+    )
+    cleanup_parser.add_argument("--apply", action="store_true", help="实际删除预览中的已登记目录")
 
     prescreen_parser = subparsers.add_parser(
         "real-prescreen", help="真实 Issue 的单次 32k 压缩触发预筛选"
@@ -555,14 +581,28 @@ def main(argv: list[str] | None = None) -> int:
 
         if args.command == "validate-real-behavior":
             tasks = load_real_issue_tasks(args.tasks, task_ids=tuple(args.task_id))
+            recipes = load_environment_recipes(args.recipes)
             validations = []
             for task in tasks:
+                recipe = recipes.get(task.id)
+                if recipe is not None and not recipe.supports_current_platform():
+                    validations.append(
+                        {
+                            "task_id": task.id,
+                            "eligible_for_llm_prescreen": False,
+                            "environment_or_execution_error": (
+                                "platform is unsupported by task recipe"
+                            ),
+                        }
+                    )
+                    continue
                 try:
                     validation = validate_real_task_behavior(
                         task,
                         source=(args.source_root / task.id).resolve(),
                         test_python=_real_task_python(args.test_env_root, task.id),
                         output_dir=args.output_dir.resolve(),
+                        recipe=recipe,
                     )
                     validations.append(validation.model_dump(mode="json"))
                 except (BenchmarkError, ValueError) as exc:
@@ -592,11 +632,34 @@ def main(argv: list[str] | None = None) -> int:
                     task_ids=tuple(args.task_id),
                     python_executable=args.python,
                     index_url=args.index_url,
+                    recipes_dir=args.recipes,
+                    min_free_gib=args.min_free_gib,
+                    allow_create_interpreter=not args.no_create_interpreter,
                 )
             )
             ready = sum(item.status in {"ready", "reused"} for item in summary.results)
             print(f"真实任务环境准备完成: {ready}/{len(summary.results)} 可用")
             print(f"汇总文件: {summary.summary_path}")
+            return 0
+
+        if args.command == "inspect-real-environments":
+            report = inspect_storage(args.environment_root)
+            interpreters = discover_interpreters(args.environment_root)
+            _print_json(
+                {
+                    "storage": report.model_dump(mode="json"),
+                    "interpreters": [item.model_dump() for item in interpreters],
+                }
+            )
+            return 0
+
+        if args.command == "clean-real-artifacts":
+            preview = (
+                apply_cleanup(args.environment_root)
+                if args.apply
+                else preview_cleanup(args.environment_root)
+            )
+            _print_json({"applied": args.apply, **preview.model_dump(mode="json")})
             return 0
 
         if args.command == "retrieval-eval":

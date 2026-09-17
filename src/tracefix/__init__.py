@@ -85,10 +85,17 @@ from tracefix.real_candidates import (
     collect_candidates,
 )
 from tracefix.real_environment import (
+    CleanupPreview,
     EnvironmentPreparationConfig,
     EnvironmentPreparationResult,
     EnvironmentPreparationSummary,
+    InterpreterInfo,
     RealEnvironmentPreparer,
+    StorageReport,
+    apply_cleanup,
+    discover_interpreters,
+    inspect_storage,
+    preview_cleanup,
 )
 from tracefix.real_experiment import (
     PytestExecutionEvidence,
@@ -106,6 +113,7 @@ from tracefix.real_experiment import (
     analyze_real_trajectory,
     validate_real_task_behavior,
 )
+from tracefix.real_recipes import EnvironmentRecipe, load_environment_recipes
 from tracefix.repository import (
     RepoMap,
     RepoMapConfig,
@@ -219,7 +227,16 @@ __all__ = [
     "EnvironmentPreparationConfig",
     "EnvironmentPreparationResult",
     "EnvironmentPreparationSummary",
+    "InterpreterInfo",
+    "StorageReport",
+    "CleanupPreview",
     "RealEnvironmentPreparer",
+    "discover_interpreters",
+    "inspect_storage",
+    "preview_cleanup",
+    "apply_cleanup",
+    "EnvironmentRecipe",
+    "load_environment_recipes",
     "CandidateCollectionConfig",
     "CandidateCollectionResult",
     "CandidateRecord",

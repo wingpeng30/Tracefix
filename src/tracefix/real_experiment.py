@@ -1,8 +1,11 @@
 """真实 GitHub Issue 的行为校验、32k 预筛选与条件配对实验。"""
+# ruff: noqa: E501
 
 from __future__ import annotations
 
 import json
+import os
+import shlex
 import subprocess
 import xml.etree.ElementTree as element_tree
 from datetime import UTC, datetime
@@ -18,6 +21,7 @@ from tracefix.messages import ToolCall
 from tracefix.paired import ExperimentArm, TrajectoryMetrics, analyze_trajectory
 from tracefix.provenance import TestEnvironmentProvenance, inspect_test_environment
 from tracefix.real_benchmark import RealIssueTask, load_real_issue_tasks
+from tracefix.real_recipes import EnvironmentRecipe
 from tracefix.runtime import (
     DEFAULT_MODEL_NAME,
     DEFAULT_USD_CNY_RATE,
@@ -59,6 +63,10 @@ class PytestExecutionEvidence(BaseModel):
     test_count: int = Field(ge=0)
     failure_count: int = Field(ge=0)
     error_count: int = Field(ge=0)
+    collected_node_ids: tuple[str, ...] = ()
+    expected_node_ids: tuple[str, ...] = ()
+    import_probe_path: str | None = None
+    diagnostic: str | None = None
     output_tail: str = ""
 
 
@@ -203,6 +211,7 @@ def validate_real_task_behavior(
     source: Path,
     test_python: Path,
     output_dir: Path,
+    recipe: EnvironmentRecipe | None = None,
 ) -> RealTaskBehaviorValidation:
     """在独立副本中用 JUnit 证明目标测试先失败、gold 后通过。"""
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -220,7 +229,7 @@ def validate_real_task_behavior(
         if variant == "gold":
             _git(["apply", str(task.gold_patch_path)], checkout)
         results[variant] = _run_qualified_pytest(
-            task, checkout, test_python, f"behavior-{task.id}-{variant}"
+            task, checkout, test_python, f"behavior-{task.id}-{variant}", recipe
         )
     initial_evidence = _pytest_evidence(results["initial"], output_dir / f"{task.id}-initial")
     gold_evidence = _pytest_evidence(results["gold"], output_dir / f"{task.id}-gold")
@@ -262,24 +271,208 @@ def _create_behavior_checkout(source: Path, checkout: Path) -> None:
 
 
 def _run_qualified_pytest(
-    task: RealIssueTask, checkout: Path, test_python: Path, call_id: str
+    task: RealIssueTask,
+    checkout: Path,
+    test_python: Path,
+    call_id: str,
+    recipe: EnvironmentRecipe | None = None,
 ) -> ToolResult:
     """运行相同 pytest 入口并请求 JUnit，以区分业务失败和环境故障。"""
+    build_error = _run_recipe_build(recipe, checkout, test_python)
+    if build_error:
+        return ToolResult(call_id=call_id, tool_name="run_tests", success=False, error=build_error)
     junit = checkout / ".tracefix-junit.xml"
-    command = f"{task.test_command} --junitxml {junit.name}"
+    command = _effective_test_command(task, recipe)
+    collected = _collect_node_ids(
+        command,
+        checkout,
+        test_python,
+        pythonpath_entries=task.test_pythonpath_paths,
+    )
+    expected = (
+        tuple(recipe.selector_overrides)
+        if recipe and recipe.selector_overrides
+        else task.fail_to_pass
+    )
+    if not expected or not _selectors_collected(expected, collected):
+        return ToolResult(
+            call_id=call_id,
+            tool_name="run_tests",
+            success=False,
+            error="official test selectors were not fully collected",
+            output={"collected_node_ids": list(collected), "expected_node_ids": list(expected)},
+        )
+    probe_error, probe_path = _probe_source_import(recipe, checkout, test_python)
+    if probe_error:
+        return ToolResult(
+            call_id=call_id,
+            tool_name="run_tests",
+            success=False,
+            error=probe_error,
+            output={"import_probe_path": probe_path},
+        )
+    command = f"{command} --junitxml {junit.name}"
     tool = RunTestsTool(
         checkout,
         python_executable=test_python,
         pythonpath_entries=task.test_pythonpath_paths,
         default_timeout_seconds=300,
     )
-    return tool.execute(
+    result = tool.execute(
         ToolCall(
             id=call_id,
             name=tool.spec.name,
             arguments={"command": command, "timeout_seconds": 300},
         )
     )
+    # 导入探针属于验收证据而非 pytest 原始输出；附加在结构化结果中供后续归类写入。
+    if isinstance(result.output, dict):
+        result.output["import_probe_path"] = probe_path
+    return result
+
+
+def _effective_test_command(task: RealIssueTask, recipe: EnvironmentRecipe | None) -> str:
+    """将配方内经审计的选择器显式替代损坏的官方记录。"""
+    selectors = (
+        recipe.selector_overrides if recipe and recipe.selector_overrides else task.fail_to_pass
+    )
+    return "pytest -q " + " ".join(shlex.quote(selector) for selector in selectors)
+
+
+def _collect_node_ids(
+    command: str,
+    checkout: Path,
+    test_python: Path,
+    *,
+    pythonpath_entries: tuple[Path, ...] = (),
+) -> tuple[str, ...]:
+    """先 collect-only，再核对每个目标 node ID 确实被 pytest 识别。"""
+    command = f"{command} --collect-only"
+    tool = RunTestsTool(
+        checkout,
+        python_executable=test_python,
+        pythonpath_entries=pythonpath_entries,
+        default_timeout_seconds=300,
+    )
+    result = tool.execute(
+        ToolCall(
+            id="collect",
+            name=tool.spec.name,
+            arguments={"command": command, "timeout_seconds": 300},
+        )
+    )
+    output = result.output if isinstance(result.output, dict) else {}
+    lines = str(output.get("stdout", "")).splitlines()
+    return tuple(
+        line.strip() for line in lines if "::" in line and not line.lstrip().startswith("<")
+    )
+
+
+def _probe_source_import(
+    recipe: EnvironmentRecipe | None, checkout: Path, test_python: Path
+) -> tuple[str | None, str | None]:
+    """确认配方指定模块从当前 base/gold 副本导入，而不是环境里的固定源码。
+
+    非 editable 安装仍可能让 Python 优先从 site-packages 导入。这里把工作目录及其
+    ``src`` 目录显式置于 ``PYTHONPATH`` 首位，并要求模块的 ``__file__`` 位于本次
+    独立 checkout 下；探针失败时不把 pytest 结果当作可信验收证据。
+    """
+    if recipe is None or not recipe.source_import_probe:
+        return None, None
+    environment = dict(os.environ)
+    entries = [str(checkout), str(checkout / "src")]
+    previous = environment.get("PYTHONPATH")
+    environment["PYTHONPATH"] = os.pathsep.join([*entries, *([previous] if previous else [])])
+    code = (
+        "import importlib; module = importlib.import_module(" + repr(recipe.source_import_probe)
+        + "); print(getattr(module, '__file__', ''))"
+    )
+    try:
+        completed = subprocess.run(
+            [str(test_python), "-c", code],
+            cwd=checkout,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=60,
+            check=False,
+            shell=False,
+            env=environment,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        return f"source import probe failed: {exc}", None
+    path_text = completed.stdout.strip().splitlines()[-1] if completed.stdout.strip() else None
+    if completed.returncode != 0 or path_text is None:
+        tail = (completed.stderr or completed.stdout)[-500:]
+        return f"source import probe failed: {tail}", path_text
+    try:
+        imported = Path(path_text).resolve()
+        imported.relative_to(checkout.resolve())
+    except (OSError, ValueError):
+        return "source import probe resolved outside the isolated checkout", path_text
+    return None, str(imported)
+
+
+def _run_recipe_build(
+    recipe: EnvironmentRecipe | None, checkout: Path, test_python: Path
+) -> str | None:
+    """执行配方声明的无 Shell 构建步骤，如 setuptools-scm 版本文件生成。"""
+    if recipe is None:
+        return None
+    environment = _isolated_build_environment(checkout)
+    for template in recipe.build_commands:
+        command = [str(test_python) if item == "{python}" else item for item in template]
+        try:
+            completed = subprocess.run(
+                command,
+                cwd=checkout,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=300,
+                check=False,
+                shell=False,
+                env=environment,
+            )
+        except (OSError, subprocess.SubprocessError) as exc:
+            return f"recipe build command failed: {exc}"
+        if completed.returncode != 0:
+            return f"recipe build command failed: {(completed.stderr or completed.stdout)[-1000:]}"
+    return None
+
+
+def _isolated_build_environment(checkout: Path) -> dict[str, str]:
+    """将构建临时文件限制在副本内，避免系统 Temp 的权限与空间干扰。"""
+    temporary = checkout / ".tracefix-build-tmp"
+    temporary.mkdir(parents=True, exist_ok=True)
+    environment = dict(os.environ)
+    environment.update(
+        {
+            "TEMP": str(temporary),
+            "TMP": str(temporary),
+            "PIP_CACHE_DIR": str(temporary / "pip-cache"),
+            "PIP_NO_CACHE_DIR": "1",
+        }
+    )
+    # 构建步骤不需要模型密钥，避免上游构建脚本或子进程读取运行凭证。
+    environment.pop("DEEPSEEK_API_KEY", None)
+    return environment
+
+
+def _selectors_collected(expected: tuple[str, ...], collected: tuple[str, ...]) -> bool:
+    """允许文件级选择器匹配其收集到的具体测试，但不允许无关替代。"""
+    def matches(selector: str, node: str) -> bool:
+        normalized = node.replace("\\", "/")
+        return (
+            normalized == selector
+            or normalized.startswith(f"{selector}::")
+            or normalized.endswith(f"/{selector}")
+            or f"/{selector}::" in normalized
+        )
+
+    return all(any(matches(selector, node) for node in collected) for selector in expected)
 
 
 def _pytest_evidence(result: ToolResult, checkout: Path) -> PytestExecutionEvidence:
@@ -289,6 +482,13 @@ def _pytest_evidence(result: ToolResult, checkout: Path) -> PytestExecutionEvide
     stderr = str(output.get("stderr", ""))
     combined = f"{stdout}\n{stderr}"
     timed_out = bool(output.get("timed_out", False))
+    collected = tuple(
+        str(item) for item in output.get("collected_node_ids", []) if isinstance(item, str)
+    )
+    expected = tuple(
+        str(item) for item in output.get("expected_node_ids", []) if isinstance(item, str)
+    )
+    probe_path = output.get("import_probe_path")
     junit = checkout / ".tracefix-junit.xml"
     tests = failures = errors = 0
     available = junit.is_file()
@@ -305,13 +505,17 @@ def _pytest_evidence(result: ToolResult, checkout: Path) -> PytestExecutionEvide
     if timed_out:
         status = "timeout"
     elif (
-        "modulenotfounderror" in lowered
-        or "no module named" in lowered
-        or "importerror" in lowered
+        "modulenotfounderror" in lowered or "no module named" in lowered or "importerror" in lowered
     ):
         status = "dependency_error"
     elif "error collecting" in lowered or "conftest" in lowered or "collected 0 items" in lowered:
         status = "collection_error"
+    elif result.error == "official test selectors were not fully collected":
+        status = "selector_mismatch"
+    elif result.error and result.error.startswith("recipe build command failed"):
+        status = "build_error"
+    elif result.error and result.error.startswith("source import probe"):
+        status = "source_import_error"
     elif tests == 0:
         status = "no_tests"
     elif failures > 0 and errors == 0:
@@ -337,6 +541,10 @@ def _pytest_evidence(result: ToolResult, checkout: Path) -> PytestExecutionEvide
         test_count=tests,
         failure_count=failures,
         error_count=errors,
+        collected_node_ids=collected,
+        expected_node_ids=expected,
+        import_probe_path=str(probe_path) if probe_path else None,
+        diagnostic=result.error,
         output_tail=combined[-2000:],
     )
 

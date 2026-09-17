@@ -6,7 +6,7 @@ Token 预算下，通过仓库结构检索、动态上下文和测试驱动的�
 
 完整的版本代码说明与实验索引见 [`docs/README.md`](docs/README.md)。
 
-最新开发版本为 **v0.8.1**（最新稳定标签以 GitHub Releases 为准）。它已经具备一条可真实运行的最小闭环，并新增确定性上下文管理：
+最新开发版本为 **v0.8.2**（最新稳定标签以 GitHub Releases 为准）。它已经具备一条可真实运行的最小闭环，并新增确定性上下文管理：
 完整轨迹始终保留，模型请求视图会按压力裁剪超长工具输出并折叠较早轮次。
 
 ## 当前能力
@@ -234,6 +234,14 @@ tracefix eval `
   --checkout-dir runs/real-task-validation-new
 
 # 不调用模型：验证 base 的隐藏用例失败、gold 后通过
+.\.venv\Scripts\python.exe -m tracefix.cli prepare-real-environments `
+  --tasks benchmarks/real_tasks `
+  --source-root runs/real-task-validation `
+  --test-env-root runs/real-task-envs-v2
+
+.\.venv\Scripts\python.exe -m tracefix.cli inspect-real-environments `
+  --environment-root runs/real-task-envs-v2
+
 .\.venv\Scripts\python.exe -m tracefix.cli validate-real-behavior `
   --tasks benchmarks/real_tasks `
   --source-root runs/real-task-validation `
@@ -251,6 +259,11 @@ tracefix eval `
   --source-root runs/real-task-validation `
   --test-env-root runs/real-task-envs-v2
 ```
+
+环境准备会优先发现并复用本机已有的兼容解释器（包括 Python Launcher、Conda 和 TraceFix
+登记的解释器），并按任务配方选择版本；默认要求磁盘至少剩余 10 GiB。只有未找到兼容版本时，
+才会尝试创建一个 TraceFix 专用 Conda 环境。可用 `clean-real-artifacts` 先预览可回收的、带
+TraceFix 标记的环境；只有加 `--apply` 才会删除，绝不扫描或删除其他 Conda 环境和原始仓库。
 
 三个任务已在独立 Python 3.9 环境中验证：清单里的隐藏用例均在 base 上失败、gold 后通过。
 当前机器没有 Docker，因此尚未执行官方完整 `PASS_TO_PASS`；这仍不是 Agent 解决率。详细边界和验证证据见

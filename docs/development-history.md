@@ -306,3 +306,16 @@ base 出现实际断言失败、gold 在同一入口通过，才可进入后续 
 LLM、未产生 API 费用，也没有开始 Token 对照实验。详见
 [`tasks/v0.8.1-real-environments-and-behavior.md`](tasks/v0.8.1-real-environments-and-behavior.md)
 与 [`experiments/v0.8.1-real-environment-behavior.md`](experiments/v0.8.1-real-environment-behavior.md)。
+
+## V0.8.2：节省空间的配方环境与严格资格审查
+
+V0.8.2 将真实任务环境从“每题显式解释器”升级为任务级配方：TraceFix 自动盘点本机 Launcher、
+Conda 与已登记解释器，优先复用兼容 Python；环境身份纳入固定 commit、配方哈希、解释器版本和
+依赖指纹。新增空间盘点、10 GiB 创建门槛及带标记目录的预览式安全清理，避免无限下载 Python
+或误删用户 Conda 环境。所有 Python 包仍经清华 PyPI 镜像安装。
+
+验收器加入 collect-only 选择器核验、构建诊断、JUnit/退出码交叉证据和源码导入探针；base/gold
+必须从各自独立副本加载实现。离线审查 12 道候选后仅 2/12 合格，未达到真实付费 C/T 实验至少
+三题的门槛，故未调用 LLM、未产生费用。完整实现和实验边界见
+[`tasks/v0.8.2-space-aware-environments.md`](tasks/v0.8.2-space-aware-environments.md) 与
+[`experiments/v0.8.2-real-environment-validation.md`](experiments/v0.8.2-real-environment-validation.md)。

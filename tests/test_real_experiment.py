@@ -26,6 +26,7 @@ from tracefix.real_experiment import (
     analyze_real_trajectory,
     validate_real_task_behavior,
 )
+from tracefix.real_recipes import EnvironmentRecipe
 from tracefix.tools import ToolResult
 
 GOLD = """diff --git a/pkg/a.py b/pkg/a.py
@@ -250,6 +251,23 @@ def test_behavior_validation_proves_initial_fail_and_gold_pass(tmp_path) -> None
     assert result.initial_returncode != 0
     assert result.gold_returncode == 0
     assert result.test_environment.python_version
+
+
+def test_behavior_validation_records_isolated_source_import_probe(tmp_path: Path) -> None:
+    """base/gold 的模块导入路径必须指向各自工作副本，而不是 site-packages。"""
+    task, source = _fixture(tmp_path)
+    result = validate_real_task_behavior(
+        task,
+        source=source,
+        test_python=Path(sys.executable),
+        output_dir=tmp_path / "behavior-probe",
+        recipe=EnvironmentRecipe(task_id=task.id, source_import_probe="pkg.a"),
+    )
+
+    assert result.initial_evidence.import_probe_path is not None
+    assert result.gold_evidence.import_probe_path is not None
+    assert "owner__repo-1-initial" in result.initial_evidence.import_probe_path
+    assert "owner__repo-1-gold" in result.gold_evidence.import_probe_path
 
 
 def test_prescreen_runs_hidden_verification_and_applies_entry_gate(tmp_path, monkeypatch) -> None:

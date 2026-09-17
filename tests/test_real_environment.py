@@ -9,7 +9,13 @@ import sys
 from pathlib import Path
 
 from tracefix.real_benchmark import RealIssueTask
-from tracefix.real_environment import EnvironmentPreparationConfig, RealEnvironmentPreparer
+from tracefix.real_environment import (
+    EnvironmentPreparationConfig,
+    RealEnvironmentPreparer,
+    inspect_storage,
+    preview_cleanup,
+)
+from tracefix.real_recipes import EnvironmentRecipe, load_environment_recipes
 
 
 def _digest(path: Path) -> str:
@@ -93,3 +99,54 @@ def test_preparer_creates_and_reuses_isolated_environment(tmp_path, monkeypatch)
     assert first.environment is not None
     assert second.status == "reused"
     assert Path(first.python_executable or "").is_file()
+
+
+def test_recipe_hash_invalidates_reuse_and_storage_ignores_unmanaged_paths(
+    tmp_path, monkeypatch
+) -> None:
+    """配方变化必须使旧环境失效，空间统计不能把普通目录视作可清理目标。"""
+    task, source = _task(tmp_path)
+    recipes = tmp_path / "recipes"
+    recipes.mkdir()
+    recipe = EnvironmentRecipe(task_id=task.id, python_versions=("3.12",))
+    (recipes / "fixture.json").write_text(recipe.model_dump_json(), encoding="utf-8")
+    config = EnvironmentPreparationConfig(
+        tasks_dir=task.task_dir.parent,
+        source_root=source.parent,
+        environment_root=tmp_path / "envs",
+        output_dir=tmp_path / "results",
+        python_executable=Path(sys.executable),
+        recipes_dir=recipes,
+    )
+    preparer = RealEnvironmentPreparer()
+
+    def fake_run(command, cwd, timeout):
+        if command[2:4] == ("venv", str(tmp_path / "envs" / task.id)):
+            return subprocess.run(command, cwd=cwd, capture_output=True, text=True, check=False)
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr("tracefix.real_environment._run", fake_run)
+    assert preparer.prepare(config).results[0].status == "ready"
+    (tmp_path / "envs" / "ordinary").mkdir()
+    report = inspect_storage(tmp_path / "envs")
+    preview = preview_cleanup(tmp_path / "envs")
+    assert report.managed_environment_bytes > 0
+    assert len(preview.paths) == 1
+
+    changed = recipe.model_copy(update={"extra_dependencies": ("demo==1",)})
+    (recipes / "fixture.json").write_text(changed.model_dump_json(), encoding="utf-8")
+    assert preparer.prepare(config).results[0].status == "ready"
+
+
+def test_recipe_loader_rejects_undocumented_selector_override(tmp_path) -> None:
+    """测试入口替代必须写清缘由，避免悄悄缩小官方验收范围。"""
+    (tmp_path / "bad.json").write_text(
+        json.dumps({"task_id": "owner__repo-1", "selector_overrides": ["tests/test_x.py"]}),
+        encoding="utf-8",
+    )
+    try:
+        load_environment_recipes(tmp_path)
+    except Exception as exc:
+        assert "invalid environment recipe" in str(exc)
+    else:
+        raise AssertionError("invalid recipe should be rejected")

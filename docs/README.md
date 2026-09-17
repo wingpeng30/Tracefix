@@ -37,6 +37,10 @@
   三道真实 Issue 的 32k 单次预筛选、0/3 入选结论和 Repo Map 功能决策。
 - [`experiments/v0.8.1-real-environment-behavior.md`](experiments/v0.8.1-real-environment-behavior.md)：
   五道新候选的环境、base/gold 验收与 0/5 资格结论。
+- [`tasks/v0.8.2-space-aware-environments.md`](tasks/v0.8.2-space-aware-environments.md)：
+  解释器发现、任务级环境配方、空间门槛与安全清理实现。
+- [`experiments/v0.8.2-real-environment-validation.md`](experiments/v0.8.2-real-environment-validation.md)：
+  本轮离线环境与 base/gold 验收的逐题结论和证据边界。
 - [`../benchmarks/experiments/v0.5.0-real-task-fixture-validation.json`](../benchmarks/experiments/v0.5.0-real-task-fixture-validation.json)：
   三个真实任务固定提交、补丁可应用性、base 失败/gold 通过和测试环境指纹的机器可读记录。
 - [`../benchmarks/experiments/v0.5.0-real-issue-32k-prescreen.json`](../benchmarks/experiments/v0.5.0-real-issue-32k-prescreen.json)：
