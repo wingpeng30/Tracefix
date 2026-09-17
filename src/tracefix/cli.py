@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import subprocess
 import sys
 from pathlib import Path
 from typing import Any
@@ -230,6 +231,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="一次性验收副本目录",
     )
     behavior_parser.add_argument("--recipes", type=Path, default=Path("benchmarks/real_recipes"))
+    behavior_parser.add_argument(
+        "--test-python",
+        type=Path,
+        help="显式复用已准备的兼容测试解释器；仍由配方校验版本，仅适合单题诊断",
+    )
 
     environment_parser = subparsers.add_parser(
         "prepare-real-environments", help="为真实任务创建或复用独立 Python 测试环境"
@@ -607,10 +613,40 @@ def main(argv: list[str] | None = None) -> int:
                     persist_partial_results()
                     continue
                 try:
+                    test_python = (
+                        args.test_python.expanduser().resolve()
+                        if args.test_python is not None
+                        else _real_task_python(args.test_env_root, task.id)
+                    )
+                    if not test_python.is_file():
+                        raise BenchmarkError(
+                            "explicit test Python executable does not exist",
+                            context={"path": str(test_python)},
+                        )
+                    if recipe is not None:
+                        version_command = (
+                            "import sys; "
+                            "print(f'{sys.version_info.major}.{sys.version_info.minor}')"
+                        )
+                        version_result = subprocess.run(
+                            [str(test_python), "-c", version_command],
+                            capture_output=True,
+                            text=True,
+                            encoding="utf-8",
+                            errors="replace",
+                            timeout=20,
+                            check=False,
+                            shell=False,
+                        )
+                        compatible = recipe.supports_python(version_result.stdout.strip())
+                        if version_result.returncode != 0 or not compatible:
+                            raise BenchmarkError(
+                                "explicit test Python is incompatible with task recipe"
+                            )
                     validation = validate_real_task_behavior(
                         task,
                         source=(args.source_root / task.id).resolve(),
-                        test_python=_real_task_python(args.test_env_root, task.id),
+                        test_python=test_python,
                         output_dir=args.output_dir.resolve(),
                         recipe=recipe,
                     )

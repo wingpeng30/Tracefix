@@ -41,6 +41,12 @@
   构建、收集、pytest 执行证据和失败分类改进。
 - [`experiments/v0.8.3-real-environment-validation.md`](experiments/v0.8.3-real-environment-validation.md)：
   12 道真实候选的 7/12 合格重验结果。
+- [`tasks/v0.8.4-strict-real-validation.md`](tasks/v0.8.4-strict-real-validation.md)：
+  严格 node ID、受审查收集失败、解释器复用与环境指纹修复。
+- [`experiments/v0.8.4-real-environment-validation.md`](experiments/v0.8.4-real-environment-validation.md)：
+  12 道真实候选严格重验的 10/12 行为资格结果与边界。
+- [`../benchmarks/experiments/v0.8.4-real-environment-validation.json`](../benchmarks/experiments/v0.8.4-real-environment-validation.json)：
+  V0.8.4 的脱敏机器可读资格汇总，不含模型输出或本机绝对路径。
 - [`tasks/v0.8.2-space-aware-environments.md`](tasks/v0.8.2-space-aware-environments.md)：
   解释器发现、任务级环境配方、空间门槛与安全清理实现。
 - [`experiments/v0.8.2-real-environment-validation.md`](experiments/v0.8.2-real-environment-validation.md)：

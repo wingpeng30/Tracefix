@@ -86,7 +86,7 @@ def test_preparer_creates_and_reuses_isolated_environment(tmp_path, monkeypatch)
     )
     preparer = RealEnvironmentPreparer()
 
-    def fake_run(command, cwd, timeout):
+    def fake_run(command, cwd, timeout, environment=None):
         if command[2:4] == ("venv", str(tmp_path / "envs" / task.id)):
             return subprocess.run(command, cwd=cwd, capture_output=True, text=True, check=False)
         return subprocess.CompletedProcess(command, 0, "", "")
@@ -120,7 +120,7 @@ def test_recipe_hash_invalidates_reuse_and_storage_ignores_unmanaged_paths(
     )
     preparer = RealEnvironmentPreparer()
 
-    def fake_run(command, cwd, timeout):
+    def fake_run(command, cwd, timeout, environment=None):
         if command[2:4] == ("venv", str(tmp_path / "envs" / task.id)):
             return subprocess.run(command, cwd=cwd, capture_output=True, text=True, check=False)
         return subprocess.CompletedProcess(command, 0, "", "")

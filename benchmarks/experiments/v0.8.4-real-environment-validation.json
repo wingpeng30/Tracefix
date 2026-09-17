@@ -1,0 +1,37 @@
+{
+  "kind": "offline_real_task_behavior_validation",
+  "tracefix_version": "0.8.4",
+  "code_base_commit": "4848a28d96481aeeb77f4b78517eb90e0957be47",
+  "code_worktree_dirty": true,
+  "llm_called": false,
+  "model_cost_usd": 0.0,
+  "candidate_count": 12,
+  "qualified_count": 10,
+  "qualification_counts": {
+    "assertion_failure": 8,
+    "expected_collection_failure": 2,
+    "business_not_reproduced": 1,
+    "platform_pending": 1
+  },
+  "qualified_task_ids": [
+    "pylint-dev__pylint-4551",
+    "pylint-dev__pylint-4604",
+    "pylint-dev__pylint-4661",
+    "pytest-dev__pytest-10051",
+    "pytest-dev__pytest-10081",
+    "pytest-dev__pytest-10356",
+    "sphinx-doc__sphinx-10435",
+    "sphinx-doc__sphinx-10449",
+    "psf__requests-1142",
+    "psf__requests-1766"
+  ],
+  "unqualified": {
+    "psf__requests-1724": "business_not_reproduced_on_python_3_9",
+    "sphinx-doc__sphinx-10323": "upstream_windows_xfail_pending_linux"
+  },
+  "evidence_root_patterns": [
+    "runs/real-candidate-behavior-validation-v084-*",
+    "runs/real-candidate-environment-preparation-v084*"
+  ],
+  "interpretation": "Behavior qualification is not an Agent repair success rate."
+}

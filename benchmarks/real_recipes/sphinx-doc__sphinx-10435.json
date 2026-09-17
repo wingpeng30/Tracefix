@@ -1,10 +1,10 @@
 {
   "schema_version": 1,
   "task_id": "sphinx-doc__sphinx-10435",
-  "python_versions": ["3.12"],
-  "extra_dependencies": [],
+  "python_versions": ["3.11"],
+  "extra_dependencies": ["html5lib==1.1", "Pygments==2.11.2"],
   "build_commands": [],
   "selector_overrides": [],
-  "supported_platforms": ["linux"],
+  "supported_platforms": ["windows"],
   "source_import_probe": "sphinx"
 }

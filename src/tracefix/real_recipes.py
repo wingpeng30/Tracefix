@@ -7,10 +7,23 @@ import hashlib
 import json
 import sys
 from pathlib import Path
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from tracefix.exceptions import BenchmarkError
+
+
+class ExpectedBaseFailure(BaseModel):
+    """经审查、只允许在 base 收集阶段出现的精确失败特征。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    stage: Literal["collection"]
+    exception_type: str = Field(min_length=1)
+    module: str = Field(min_length=1)
+    symbol: str = Field(min_length=1)
+    reason: str = Field(min_length=1)
 
 
 class EnvironmentRecipe(BaseModel):
@@ -27,6 +40,7 @@ class EnvironmentRecipe(BaseModel):
     # 当官方 FAIL_TO_PASS 记录损坏时，必须明确记录替代选择器及理由。
     selector_overrides: tuple[str, ...] = ()
     selector_reason: str | None = None
+    expected_base_failure: ExpectedBaseFailure | None = None
     supported_platforms: tuple[str, ...] = ()
     source_import_probe: str | None = None
 

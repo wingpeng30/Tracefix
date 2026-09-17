@@ -4,7 +4,26 @@
   "python_versions": ["3.10"],
   "extra_dependencies": ["appdirs==1.4.4"],
   "build_commands": [],
-  "selector_overrides": [],
+  "selector_overrides": [
+    "tests/unittest_pyreverse_writer.py::test_dot_files[packages_No_Name.dot]",
+    "tests/unittest_pyreverse_writer.py::test_dot_files[classes_No_Name.dot]",
+    "tests/unittest_pyreverse_writer.py::test_get_visibility[names0-special]",
+    "tests/unittest_pyreverse_writer.py::test_get_visibility[names1-private]",
+    "tests/unittest_pyreverse_writer.py::test_get_visibility[names2-public]",
+    "tests/unittest_pyreverse_writer.py::test_get_visibility[names3-protected]",
+    "tests/unittest_pyreverse_writer.py::test_get_annotation_annassign",
+    "tests/unittest_pyreverse_writer.py::test_get_annotation_assignattr",
+    "tests/unittest_pyreverse_writer.py::test_infer_node_1",
+    "tests/unittest_pyreverse_writer.py::test_infer_node_2"
+  ],
+  "selector_reason": "官方参数化 node ID 被截断；以新增测试函数为最小、唯一的完整选择器替代。",
+  "expected_base_failure": {
+    "stage": "collection",
+    "exception_type": "ImportError",
+    "module": "pylint.pyreverse.utils",
+    "symbol": "get_annotation",
+    "reason": "test.patch 在 base 不存在 get_annotation 时于模块导入阶段失败；gold 提供该符号后必须完整执行上述目标。"
+  },
   "supported_platforms": ["windows"],
   "source_import_probe": "pylint"
 }

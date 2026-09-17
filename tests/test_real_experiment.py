@@ -19,14 +19,17 @@ from tracefix.real_experiment import (
     RealRepoMapPrescreenRunner,
     RealTrajectoryMetrics,
     RealTrialResult,
+    _canonical_node_ids,
+    _collection_exception,
     _eligibility_failures,
     _git,
+    _matches_expected_collection_failure,
     _pytest_evidence,
     _task_python,
     analyze_real_trajectory,
     validate_real_task_behavior,
 )
-from tracefix.real_recipes import EnvironmentRecipe
+from tracefix.real_recipes import EnvironmentRecipe, ExpectedBaseFailure
 from tracefix.tools import ToolResult
 
 GOLD = """diff --git a/pkg/a.py b/pkg/a.py
@@ -95,6 +98,81 @@ def test_pytest_evidence_classifies_network_and_permission_failures(tmp_path: Pa
 
     assert _pytest_evidence(network, tmp_path).status == "network_error"
     assert _pytest_evidence(permission, tmp_path).status == "permission_error"
+
+
+def test_pytest_evidence_rejects_success_without_structured_audit(tmp_path: Path) -> None:
+    """JUnit 存在但缺少实际 node ID 审计时，不得把结果当作合格通过。"""
+    junit = tmp_path / "junit.xml"
+    junit.write_text('<testsuite tests="1" failures="0" errors="0" />', encoding="utf-8")
+    result = ToolResult(
+        call_id="missing-audit",
+        tool_name="run_tests",
+        success=True,
+        output={"returncode": 0, "junit_path": str(junit), "stdout": "1 passed"},
+    )
+
+    assert _pytest_evidence(result, tmp_path).status == "report_missing"
+
+
+def test_node_id_normalization_preserves_directory_and_parameter(tmp_path: Path) -> None:
+    """两个同名测试文件不能因旧的截断规则而被视为同一个测试。"""
+    root = tmp_path / "checkout"
+    root.mkdir()
+    ids = _canonical_node_ids(
+        (
+            str(root / "first" / "test_same.py") + "::test_value[param-a]",
+            str(root / "second" / "test_same.py") + "::test_value[param-a]",
+        ),
+        root,
+    )
+
+    assert ids == {
+        "first/test_same.py::test_value[param-a]",
+        "second/test_same.py::test_value[param-a]",
+    }
+
+
+def test_reviewed_collection_failure_must_match_every_declared_field(tmp_path: Path) -> None:
+    """配方不能把任意 ImportError 放进受审查的 base 失败类别。"""
+    evidence = _pytest_evidence(
+        ToolResult(
+            call_id="collection",
+            tool_name="run_tests",
+            success=False,
+            error="pytest collection failed",
+            output={
+                "stdout": "ImportError: cannot import name 'NEW_API' from 'pkg.module'",
+                "collection": {
+                    "stage": "collection",
+                    "command": ["pytest"],
+                    "working_directory": str(tmp_path),
+                    "returncode": 2,
+                    "timed_out": False,
+                    "duration_ms": 1,
+                    "stdout_path": str(tmp_path / "out"),
+                    "stderr_path": str(tmp_path / "err"),
+                },
+            },
+        ),
+        tmp_path,
+    )
+    rule = ExpectedBaseFailure(
+        stage="collection",
+        exception_type="ImportError",
+        module="pkg.module",
+        symbol="NEW_API",
+        reason="gold adds the API",
+    )
+
+    assert _matches_expected_collection_failure(evidence, rule)
+    assert not _matches_expected_collection_failure(
+        evidence, rule.model_copy(update={"symbol": "OTHER_API"})
+    )
+    assert _collection_exception("ImportError: cannot import name 'NEW_API' from 'pkg.module'") == (
+        "ImportError",
+        "pkg.module",
+        "NEW_API",
+    )
 
 
 def _run_git(repo: Path, *arguments: str) -> str:

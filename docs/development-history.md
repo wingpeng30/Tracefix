@@ -330,3 +330,20 @@ V0.8.3 为真实任务的构建、pytest 收集与执行分别保存 argv、工�
 3.11 后三题都通过 base/gold 闭环；Sphinx 10449 也经逐题审查后在 Windows 合格。最终 12 题中
 7 题合格，达到下一阶段预注册 C/T 实验的最低任务数。未调用 LLM，详细结果见
 [`experiments/v0.8.3-real-environment-validation.md`](experiments/v0.8.3-real-environment-validation.md)。
+
+## V0.8.4：严格 node ID 与历史环境配方
+
+V0.8.4 删除了“缺少执行 node ID 时按 JUnit 测试数量继续判断”的宽松回退；现在报告、审计或
+实际执行集合缺失都会 fail closed。验收器保留完整相对 node ID、参数化标识、导入路径与收集异常
+特征，并让 pytest 子进程隔离继承参数而保留被测仓库自己的插件配置。
+
+新增受审查 collection ImportError 配方类型，Pylint-4551/4604 因 test patch 导入 gold 新增 API
+而在 base 收集失败的情形被单独计数，绝不放行其他收集错误。环境创建、ensurepip 与 pip 改用
+TraceFix 管理的临时目录；健康 marker 验证实际依赖指纹。Sphinx-10435 经依赖审查改为 Windows
+可验证，pytest 三题固定兼容运行器和隔离版本文件生成。
+
+最新离线重验形成 10/12 可资格化任务：8 道正常断言失败/gold 通过，2 道受审查收集失败/gold
+通过；Requests-1724 在 Python 3.9 未复现原 Python 2.7 行为，Sphinx-10323 仍因上游 Windows
+xfail 待 Linux。未调用 LLM、未产生模型费用。详见
+[`tasks/v0.8.4-strict-real-validation.md`](tasks/v0.8.4-strict-real-validation.md) 与
+[`experiments/v0.8.4-real-environment-validation.md`](experiments/v0.8.4-real-environment-validation.md)。

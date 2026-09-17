@@ -114,7 +114,7 @@ from tracefix.real_experiment import (
     analyze_real_trajectory,
     validate_real_task_behavior,
 )
-from tracefix.real_recipes import EnvironmentRecipe, load_environment_recipes
+from tracefix.real_recipes import EnvironmentRecipe, ExpectedBaseFailure, load_environment_recipes
 from tracefix.repository import (
     RepoMap,
     RepoMapConfig,
@@ -237,6 +237,7 @@ __all__ = [
     "preview_cleanup",
     "apply_cleanup",
     "EnvironmentRecipe",
+    "ExpectedBaseFailure",
     "load_environment_recipes",
     "CandidateCollectionConfig",
     "CandidateCollectionResult",

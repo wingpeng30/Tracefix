@@ -203,7 +203,7 @@ class RealEnvironmentPreparer:
         python = _environment_python(environment)
         marker = _marker_path(environment)
         if python.is_file() and _marker_matches(
-            marker, task, config.index_url, recipe, interpreter_info
+            marker, task, config.index_url, recipe, interpreter_info, python
         ):
             try:
                 provenance = inspect_test_environment(python)
@@ -222,10 +222,15 @@ class RealEnvironmentPreparer:
                 )
         commands: list[tuple[str, ...]] = []
         logs: list[str] = []
+        process_environment = _managed_process_environment(environment)
+        # 失败的 venv 可能已有 python.exe 却没有健康 marker；不能在其上继续安装，
+        # 只回收 TraceFix 正在准备的精确任务目录，随后从头创建。
+        if environment.exists() and not marker.is_file():
+            shutil.rmtree(environment, ignore_errors=True)
         if not python.is_file():
             create = (str(interpreter), "-m", "venv", str(environment))
             commands.append(create)
-            created = _run(create, source.parent, config.timeout_seconds)
+            created = _run(create, source.parent, config.timeout_seconds, process_environment)
             logs.append(_log("create", created))
             if created.returncode != 0:
                 return _failed(task, "install_failed", commands, logs, recipe)
@@ -242,13 +247,12 @@ class RealEnvironmentPreparer:
             "pip",
         )
         commands.append(bootstrap)
-        boot = _run(bootstrap, source, config.timeout_seconds)
+        boot = _run(bootstrap, source, config.timeout_seconds, process_environment)
         logs.append(_log("pip_bootstrap", boot))
         if boot.returncode != 0:
             return _failed(task, "install_failed", commands, logs, recipe)
-        # 安装固定源码所声明的依赖和项目元数据，但不使用 editable 安装；
-        # RunTestsTool 会以工作区和 src/ 为优先导入路径，因此 base/gold 两个
-        # 副本均从各自 clone 加载实现，而不是从环境中的固定提交加载。
+        # 依赖元数据安装必须不写固定源码。先复制到环境自己的临时构建目录，完成后
+        # 回收副本；base/gold 测试依然通过 PYTHONPATH 从各自 checkout 导入代码。
         if recipe and recipe.extra_dependencies:
             extras = (
                 str(python),
@@ -260,14 +264,18 @@ class RealEnvironmentPreparer:
                 *recipe.extra_dependencies,
             )
             commands.append(extras)
-            installed_extras = _run(extras, source, config.timeout_seconds)
+            installed_extras = _run(extras, source, config.timeout_seconds, process_environment)
             logs.append(_log("recipe_dependencies", installed_extras))
             if installed_extras.returncode != 0:
                 return _failed(task, "install_failed", commands, logs, recipe)
+        build_source = environment / ".tracefix-build-source"
+        shutil.rmtree(build_source, ignore_errors=True)
+        shutil.copytree(source, build_source, ignore=shutil.ignore_patterns(".git", ".tracefix*"))
         install = (str(python), "-m", "pip", "install", "-i", config.index_url, ".")
         commands.append(install)
-        installed = _run(install, source, config.timeout_seconds)
+        installed = _run(install, build_source, config.timeout_seconds, process_environment)
         logs.append(_log("project_install", installed))
+        shutil.rmtree(build_source, ignore_errors=True)
         if installed.returncode != 0:
             status = (
                 "incompatible"
@@ -277,7 +285,7 @@ class RealEnvironmentPreparer:
             return _failed(task, status, commands, logs, recipe)
         pytest = (str(python), "-m", "pip", "install", "-i", config.index_url, "pytest")
         commands.append(pytest)
-        installed_pytest = _run(pytest, source, config.timeout_seconds)
+        installed_pytest = _run(pytest, source, config.timeout_seconds, process_environment)
         logs.append(_log("pytest_install", installed_pytest))
         if installed_pytest.returncode != 0:
             return _failed(task, "install_failed", commands, logs, recipe)
@@ -295,6 +303,7 @@ class RealEnvironmentPreparer:
                     "recipe_hash": recipe.fingerprint if recipe else None,
                     "interpreter_version": interpreter_info.version,
                     "environment_fingerprint": _fingerprint(task, provenance, recipe),
+                    "dependency_fingerprint": provenance.fingerprint_sha256,
                     "managed_kind": "environment",
                 },
                 sort_keys=True,
@@ -331,22 +340,45 @@ def _marker_matches(
     index_url: str,
     recipe: EnvironmentRecipe | None,
     interpreter: InterpreterInfo,
+    python: Path,
 ) -> bool:
     """仅复用同一提交、配方、解释器和镜像已完成的健康环境。"""
     try:
         payload = json.loads(marker.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return False
-    return (
+    identity_matches = (
         payload.get("task_id") == task.id
         and payload.get("base_commit") == task.base_commit
         and payload.get("index_url") == index_url
         and payload.get("recipe_hash") == (recipe.fingerprint if recipe else None)
         and payload.get("interpreter_version") == interpreter.version
     )
+    if not identity_matches:
+        return False
+    try:
+        current = inspect_test_environment(python)
+    except ValueError:
+        return False
+    # pip 或手工安装改变依赖后必须重新准备，不能继续把旧 marker 当作健康环境。
+    return payload.get("dependency_fingerprint") == current.fingerprint_sha256
 
 
-def _run(command: tuple[str, ...], cwd: Path, timeout: int) -> subprocess.CompletedProcess[str]:
+def _managed_process_environment(environment: Path) -> dict[str, str]:
+    """让 venv、ensurepip 与 pip 都使用可控的项目临时目录。"""
+    temporary = environment.parent / ".tracefix-environment-tmp"
+    temporary.mkdir(parents=True, exist_ok=True)
+    values = dict(os.environ)
+    values.update({"TEMP": str(temporary), "TMP": str(temporary), "PIP_NO_CACHE_DIR": "1"})
+    return values
+
+
+def _run(
+    command: tuple[str, ...],
+    cwd: Path,
+    timeout: int,
+    environment: dict[str, str] | None = None,
+) -> subprocess.CompletedProcess[str]:
     """执行没有 Shell 的依赖安装命令。"""
     try:
         return subprocess.run(
@@ -359,6 +391,7 @@ def _run(command: tuple[str, ...], cwd: Path, timeout: int) -> subprocess.Comple
             timeout=timeout,
             check=False,
             shell=False,
+            env=environment,
         )
     except (OSError, subprocess.SubprocessError) as exc:
         return subprocess.CompletedProcess(command, 1, "", str(exc))
