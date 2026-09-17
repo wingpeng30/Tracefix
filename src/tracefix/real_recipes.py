@@ -23,6 +23,7 @@ class ExpectedBaseFailure(BaseModel):
     exception_type: str = Field(min_length=1)
     module: str = Field(min_length=1)
     symbol: str = Field(min_length=1)
+    test_entry: str = Field(min_length=1)
     reason: str = Field(min_length=1)
 
 

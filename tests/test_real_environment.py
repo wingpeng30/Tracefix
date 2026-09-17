@@ -7,9 +7,11 @@ import json
 import subprocess
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
+from tracefix.exceptions import BenchmarkError
 from tracefix.real_benchmark import RealIssueTask
 from tracefix.real_environment import (
     EnvironmentPreparationConfig,
@@ -218,7 +220,7 @@ def test_managed_path_rejects_escape_and_link(tmp_path) -> None:
     assert not _is_safe_managed_path(root, link / "child")
 
 
-def test_environment_resolver_finds_only_registered_rebuild(tmp_path) -> None:
+def test_environment_resolver_finds_only_registered_rebuild(tmp_path, monkeypatch) -> None:
     """CLI 与实验器应找到重建环境，并忽略碰巧同名的未登记目录。"""
     root = tmp_path / "envs"
     root.mkdir()
@@ -238,7 +240,58 @@ def test_environment_resolver_finds_only_registered_rebuild(tmp_path) -> None:
         ),
         encoding="utf-8",
     )
+    (rebuilt / ".tracefix-environment.json").write_text(
+        json.dumps(
+            {
+                "task_id": "owner__repo-1",
+                "managed_kind": "environment",
+                "dependency_fingerprint": "healthy",
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        "tracefix.real_environment.inspect_test_environment",
+        lambda _python: SimpleNamespace(fingerprint_sha256="healthy"),
+    )
     assert resolve_managed_environment_python(root, "owner__repo-1") == python
+
+
+def test_environment_resolver_rejects_stale_registered_environment(tmp_path, monkeypatch) -> None:
+    """运行入口不可因只存在所有权标记就复用依赖已漂移的环境。"""
+    root = tmp_path / "envs"
+    root.mkdir()
+    environment = root / "owner__repo-1"
+    python = environment / ("Scripts/python.exe" if sys.platform == "win32" else "bin/python")
+    python.parent.mkdir(parents=True)
+    python.write_text("", encoding="utf-8")
+    (environment / ".tracefix-owner.json").write_text(
+        json.dumps(
+            {
+                "managed_kind": "environment",
+                "task_id": "owner__repo-1",
+                "environment_root": str(root.resolve()),
+                "environment_path": str(environment.resolve()),
+            }
+        ),
+        encoding="utf-8",
+    )
+    (environment / ".tracefix-environment.json").write_text(
+        json.dumps(
+            {
+                "task_id": "owner__repo-1",
+                "managed_kind": "environment",
+                "dependency_fingerprint": "old",
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        "tracefix.real_environment.inspect_test_environment",
+        lambda _python: SimpleNamespace(fingerprint_sha256="new"),
+    )
+    with pytest.raises(BenchmarkError, match="registered environment"):
+        resolve_managed_environment_python(root, "owner__repo-1")
 
 
 def test_environment_helpers_classify_process_and_interpreters(tmp_path, monkeypatch) -> None:

@@ -22,6 +22,7 @@
     "exception_type": "ImportError",
     "module": "pylint.pyreverse.utils",
     "symbol": "get_annotation",
+    "test_entry": "tests/unittest_pyreverse_writer.py",
     "reason": "test.patch 在 base 不存在 get_annotation 时于模块导入阶段失败；gold 提供该符号后必须完整执行上述目标。"
   },
   "supported_platforms": ["windows"],

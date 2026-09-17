@@ -10,6 +10,7 @@
     "exception_type": "ImportError",
     "module": "pylint.constants",
     "symbol": "IS_PYPY",
+    "test_entry": "tests/checkers/unittest_variables.py",
     "reason": "test.patch 在 base 不存在 IS_PYPY 时于模块导入阶段失败；gold 提供该常量后必须完整执行官方目标。"
   },
   "supported_platforms": ["windows"],

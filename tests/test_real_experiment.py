@@ -265,6 +265,24 @@ def test_pytest_evidence_rejects_source_loaded_outside_checkout(tmp_path: Path) 
             {"reports": [{"nodeid": "tests/test_x.py::test_x", "when": "call"}]},
             "missing setup",
         ),
+        (
+            {
+                "reports": [
+                    {"nodeid": "tests/test_x.py::test_x", "when": phase}
+                    for phase in ("setup", "call", "teardown", "call")
+                ]
+            },
+            "duplicate test phase",
+        ),
+        (
+            {
+                "reports": [
+                    {"nodeid": "tests/test_y.py::test_y", "when": phase}
+                    for phase in ("setup", "call", "teardown")
+                ]
+            },
+            "outside the collected set",
+        ),
     ],
 )
 def test_execution_audit_fails_closed_for_incomplete_evidence(update, message) -> None:
@@ -321,7 +339,12 @@ def test_reviewed_collection_failure_must_match_every_declared_field(tmp_path: P
                 "stage": "collection",
                 "collected_node_ids": [],
                 "reports": [],
-                "collection_errors": [{"nodeid": "tests/test_x.py", "longrepr": "ImportError"}],
+                "collection_errors": [
+                    {
+                        "nodeid": "tests/test_x.py",
+                        "longrepr": "ImportError: cannot import name 'NEW_API' from 'pkg.module'",
+                    }
+                ],
                 "completed": True,
                 "exitstatus": 2,
             }
@@ -357,12 +380,16 @@ def test_reviewed_collection_failure_must_match_every_declared_field(tmp_path: P
         exception_type="ImportError",
         module="pkg.module",
         symbol="NEW_API",
+        test_entry="tests/test_x.py",
         reason="gold adds the API",
     )
 
     assert _matches_expected_collection_failure(evidence, rule)
     assert not _matches_expected_collection_failure(
         evidence, rule.model_copy(update={"symbol": "OTHER_API"})
+    )
+    assert not _matches_expected_collection_failure(
+        evidence, rule.model_copy(update={"test_entry": "tests/other.py"})
     )
     assert _collection_exception("ImportError: cannot import name 'NEW_API' from 'pkg.module'") == (
         "ImportError",
@@ -568,6 +595,11 @@ def test_behavior_validation_proves_initial_fail_and_gold_pass(tmp_path) -> None
     assert result.initial_returncode != 0
     assert result.gold_returncode == 0
     assert result.test_environment.python_version
+    assert result.dependency_drift_detected is False
+    assert (
+        result.environment_before.fingerprint_sha256
+        == result.environment_after_gold.fingerprint_sha256
+    )
 
 
 def test_behavior_validation_records_isolated_source_import_probe(tmp_path: Path) -> None:

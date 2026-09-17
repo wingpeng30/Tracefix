@@ -161,7 +161,6 @@ class RealEnvironmentPreparer:
     ) -> EnvironmentPreparationResult:
         """创建单题环境，并只安装该固定源码声明的依赖。"""
         source = (config.source_root / task.id).expanduser().resolve()
-        environment = _select_managed_environment(root, task.id)
         if recipe is not None and not recipe.supports_current_platform():
             return EnvironmentPreparationResult(
                 task_id=task.id,
@@ -197,6 +196,9 @@ class RealEnvironmentPreparer:
                 logs=("no compatible local Python interpreter was found",),
             )
         interpreter = Path(interpreter_info.executable)
+        environment = _select_matching_managed_environment(
+            root, task, config.index_url, recipe, interpreter_info
+        )
         if not source.is_dir():
             return EnvironmentPreparationResult(
                 task_id=task.id,
@@ -391,8 +393,28 @@ def _select_managed_environment(root: Path, task_id: str) -> Path:
     return base if not base.exists() else _new_managed_environment(root, task_id, create=False)
 
 
+def _select_matching_managed_environment(
+    root: Path,
+    task: RealIssueTask,
+    index_url: str,
+    recipe: EnvironmentRecipe | None,
+    interpreter: InterpreterInfo,
+) -> Path:
+    """优先选取实际依赖仍匹配本任务配方的最新已登记环境。"""
+    candidates = (root / task.id, *sorted(root.glob(f"{task.id}--rebuild-*")))
+    for candidate in reversed(candidates):
+        python = _environment_python(candidate)
+        if (
+            _owner_matches(root, candidate, task.id)
+            and python.is_file()
+            and _marker_matches(_marker_path(candidate), task, index_url, recipe, interpreter, python)
+        ):
+            return candidate
+    return _select_managed_environment(root, task.id)
+
+
 def resolve_managed_environment_python(root: Path, task_id: str) -> Path:
-    """定位已登记任务环境的解释器，包括保留旧现场后创建的重建目录。"""
+    """定位已登记、依赖指纹仍健康的任务解释器。"""
     managed_root = root.expanduser().resolve()
     candidates = (managed_root / task_id, *sorted(managed_root.glob(f"{task_id}--rebuild-*")))
     for environment in reversed(candidates):
@@ -402,11 +424,25 @@ def resolve_managed_environment_python(root: Path, task_id: str) -> Path:
             environment / "Scripts" / "python.exe",
             environment / "bin" / "python",
         ):
-            if python.is_file():
+            if python.is_file() and _registered_environment_is_healthy(environment, task_id, python):
                 return python
     raise BenchmarkError(
         "real task test interpreter does not exist in a registered environment",
         context={"task_id": task_id, "environment_root": str(managed_root)},
+    )
+
+
+def _registered_environment_is_healthy(environment: Path, task_id: str, python: Path) -> bool:
+    """运行入口只复用具备完整健康标记且依赖未漂移的环境。"""
+    try:
+        payload = json.loads(_marker_path(environment).read_text(encoding="utf-8"))
+        current = inspect_test_environment(python)
+    except (OSError, ValueError, json.JSONDecodeError):
+        return False
+    return (
+        payload.get("task_id") == task_id
+        and payload.get("managed_kind") == "environment"
+        and payload.get("dependency_fingerprint") == current.fingerprint_sha256
     )
 
 

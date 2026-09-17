@@ -47,6 +47,10 @@ class RealTaskBehaviorValidation(BaseModel):
     gold_returncode: int | None
     test_command: str
     test_environment: TestEnvironmentProvenance
+    environment_before: TestEnvironmentProvenance
+    environment_after_initial: TestEnvironmentProvenance
+    environment_after_gold: TestEnvironmentProvenance
+    dependency_drift_detected: bool = False
     initial_evidence: PytestExecutionEvidence
     gold_evidence: PytestExecutionEvidence
     eligible_for_llm_prescreen: bool
@@ -69,6 +73,15 @@ class ProcessEvidence(BaseModel):
     stderr_path: str
 
 
+class CollectionErrorEvidence(BaseModel):
+    """收集阶段的结构化异常；入口与正文都参与受审查例外判断。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    nodeid: str
+    longrepr: str
+
+
 class PytestExecutionEvidence(BaseModel):
     """一次 pytest 验收的收集、执行、JUnit 与插件结构化证据。"""
 
@@ -85,6 +98,7 @@ class PytestExecutionEvidence(BaseModel):
     source_import_audit_valid: bool = False
     imported_source_paths: dict[str, str] = Field(default_factory=dict)
     collection_errors: tuple[str, ...] = ()
+    collection_error_records: tuple[CollectionErrorEvidence, ...] = ()
     test_count: int = Field(ge=0)
     failure_count: int = Field(ge=0)
     error_count: int = Field(ge=0)
@@ -252,6 +266,9 @@ def validate_real_task_behavior(
     """在独立副本中用 JUnit 证明目标测试先失败、gold 后通过。"""
     output_dir.mkdir(parents=True, exist_ok=True)
     task.validate_checkout(source)
+    environment_before = inspect_test_environment(
+        test_python, pythonpath_entries=task.test_pythonpath_paths
+    )
     results: dict[str, ToolResult] = {}
     for variant in ("initial", "gold"):
         checkout = output_dir / f"{task.id}-{variant}"
@@ -267,6 +284,20 @@ def validate_real_task_behavior(
         results[variant] = _run_qualified_pytest(
             task, checkout, test_python, f"behavior-{task.id}-{variant}", recipe
         )
+        if variant == "initial":
+            environment_after_initial = inspect_test_environment(
+                test_python, pythonpath_entries=task.test_pythonpath_paths
+            )
+    environment_after_gold = inspect_test_environment(
+        test_python, pythonpath_entries=task.test_pythonpath_paths
+    )
+    dependency_drift_detected = len(
+        {
+            environment_before.fingerprint_sha256,
+            environment_after_initial.fingerprint_sha256,
+            environment_after_gold.fingerprint_sha256,
+        }
+    ) != 1
     initial_evidence = _pytest_evidence(results["initial"], output_dir / f"{task.id}-initial")
     gold_evidence = _pytest_evidence(results["gold"], output_dir / f"{task.id}-gold")
     # 绝不以测试数量替代实际 node ID。参数化名称和目录都属于目标集合的一部分；
@@ -299,7 +330,7 @@ def validate_real_task_behavior(
         and bool(gold_nodes)
         and no_nonbusiness_outcomes
     )
-    eligible = (initial_failed or initial_collection_failed) and gold_passed
+    eligible = (initial_failed or initial_collection_failed) and gold_passed and not dependency_drift_detected
     reasons = []
     if not initial_failed and not initial_collection_failed:
         reasons.append(f"initial={initial_evidence.status}")
@@ -309,6 +340,8 @@ def validate_real_task_behavior(
         reasons.append("base/gold executed node IDs differ or are missing")
     if not no_nonbusiness_outcomes:
         reasons.append("skip/xfail/xpass was observed")
+    if dependency_drift_detected:
+        reasons.append("test environment dependency fingerprint drifted during validation")
     reason = "; ".join(reasons) or None
     if eligible and initial_collection_failed:
         qualification_type = "expected_collection_failure"
@@ -339,6 +372,10 @@ def validate_real_task_behavior(
         test_environment=inspect_test_environment(
             test_python, pythonpath_entries=task.test_pythonpath_paths
         ),
+        environment_before=environment_before,
+        environment_after_initial=environment_after_initial,
+        environment_after_gold=environment_after_gold,
+        dependency_drift_detected=dependency_drift_detected,
         initial_evidence=initial_evidence,
         gold_evidence=gold_evidence,
         eligible_for_llm_prescreen=eligible,
@@ -376,10 +413,10 @@ def _matches_expected_collection_failure(
         and evidence.collection is not None
         and evidence.collection.returncode not in (0, None)
         and evidence.collection_audit_available
-        and evidence.collection_exception_type == rule.exception_type
-        and evidence.collection_exception_module == rule.module
-        and evidence.collection_exception_symbol == rule.symbol
-        and len(evidence.collection_errors) == 1
+        and len(evidence.collection_error_records) == 1
+        and evidence.collection_error_records[0].nodeid.replace("\\", "/") == rule.test_entry
+        and _collection_exception(evidence.collection_error_records[0].longrepr)
+        == (rule.exception_type, rule.module, rule.symbol)
     )
 
 
@@ -780,10 +817,20 @@ def _audit_complete(audit: object, *, stage: str, run_id: str, returncode: int |
         return False, "audit lacks structured node IDs or reports"
     if not isinstance(audit.get("collection_errors"), list):
         return False, "audit lacks collection error records"
+    if not all(
+        isinstance(item, dict)
+        and isinstance(item.get("nodeid"), str)
+        and isinstance(item.get("longrepr"), str)
+        for item in audit["collection_errors"]
+    ):
+        return False, "audit collection error is malformed"
+    if len(set(collected)) != len(collected):
+        return False, "audit contains duplicate collected node IDs"
     if stage == "execution":
         if not collected or not reports:
             return False, "execution audit contains no collected nodes or reports"
         phases: dict[str, set[str]] = {}
+        report_keys: set[tuple[str, str]] = set()
         for report in reports:
             if not isinstance(report, dict):
                 return False, "audit report is malformed"
@@ -791,6 +838,11 @@ def _audit_complete(audit: object, *, stage: str, run_id: str, returncode: int |
             phase = report.get("when")
             if not isinstance(node, str) or phase not in {"setup", "call", "teardown"}:
                 return False, "audit report lacks a test node or phase"
+            if node not in collected:
+                return False, "audit report references a node outside the collected set"
+            if (node, phase) in report_keys:
+                return False, "audit contains a duplicate test phase report"
+            report_keys.add((node, phase))
             phases.setdefault(node, set()).add(phase)
         if any(phases.get(node) != {"setup", "call", "teardown"} for node in collected):
             return False, "audit is missing setup, call, or teardown evidence"
@@ -914,11 +966,14 @@ def _pytest_evidence(result: ToolResult, checkout: Path) -> PytestExecutionEvide
             )
         except OSError:
             source_import_audit_valid = False
-    collection_errors = tuple(
-        str(item.get("longrepr", ""))
+    collection_error_records = tuple(
+        CollectionErrorEvidence.model_validate(item)
         for item in collection_audit.get("collection_errors", [])
         if isinstance(item, dict)
+        and isinstance(item.get("nodeid"), str)
+        and isinstance(item.get("longrepr"), str)
     )
+    collection_errors = tuple(item.longrepr for item in collection_error_records)
     reports = audit.get("reports", []) if isinstance(audit, dict) else []
     executed = tuple(
         report["nodeid"] for report in reports
@@ -1000,6 +1055,7 @@ def _pytest_evidence(result: ToolResult, checkout: Path) -> PytestExecutionEvide
         source_import_audit_valid=source_import_audit_valid,
         imported_source_paths=imported_source_paths,
         collection_errors=collection_errors,
+        collection_error_records=collection_error_records,
         test_count=tests,
         failure_count=failures,
         error_count=errors,
@@ -1016,9 +1072,15 @@ def _pytest_evidence(result: ToolResult, checkout: Path) -> PytestExecutionEvide
         collection=ProcessEvidence.model_validate(collection_data) if isinstance(collection_data, dict) else None,
         execution=ProcessEvidence.model_validate(execution_data) if isinstance(execution_data, dict) else None,
         audit_path=audit_path if isinstance(audit_path, str) else None,
-        collection_exception_type=_collection_exception(combined)[0],
-        collection_exception_module=_collection_exception(combined)[1],
-        collection_exception_symbol=_collection_exception(combined)[2],
+        collection_exception_type=(
+            _collection_exception(collection_errors[0])[0] if len(collection_errors) == 1 else None
+        ),
+        collection_exception_module=(
+            _collection_exception(collection_errors[0])[1] if len(collection_errors) == 1 else None
+        ),
+        collection_exception_symbol=(
+            _collection_exception(collection_errors[0])[2] if len(collection_errors) == 1 else None
+        ),
     )
 
 
