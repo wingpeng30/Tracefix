@@ -17,6 +17,7 @@ from tracefix.real_environment import (
     EnvironmentPreparationConfig,
     RealEnvironmentPreparer,
     _is_safe_managed_path,
+    _link_build_copy_git_metadata,
     _log,
     _looks_incompatible,
     _owner_task_id,
@@ -207,6 +208,51 @@ def test_preparer_keeps_git_metadata_only_in_build_copy(tmp_path, monkeypatch) -
     assert RealEnvironmentPreparer().prepare(config).results[0].status == "ready"
     assert copied_git_metadata == [f"gitdir: {(source / '.git').resolve()}\n"]
     assert (source / ".git" / "HEAD").read_text(encoding="utf-8") == "ref: refs/heads/main\n"
+
+
+def test_preparer_records_failed_recipe_build_without_installing_project(
+    tmp_path, monkeypatch
+) -> None:
+    """构建步骤失败必须保留诊断并停止项目安装，不能产生健康环境标记。"""
+    task, source = _task(tmp_path)
+    recipes = tmp_path / "recipes"
+    recipes.mkdir()
+    recipe = EnvironmentRecipe(
+        task_id=task.id, build_commands=(("{python}", "setup.py", "--version"),)
+    )
+    (recipes / "fixture.json").write_text(recipe.model_dump_json(), encoding="utf-8")
+    config = EnvironmentPreparationConfig(
+        tasks_dir=task.task_dir.parent,
+        source_root=source.parent,
+        environment_root=tmp_path / "envs",
+        output_dir=tmp_path / "results",
+        python_executable=Path(sys.executable),
+        recipes_dir=recipes,
+    )
+
+    def fake_run(command, cwd, timeout, environment=None):
+        if command[2:3] == ("venv",):
+            return subprocess.run(command, cwd=cwd, capture_output=True, text=True, check=False)
+        if command[-2:] == ("setup.py", "--version"):
+            return subprocess.CompletedProcess(command, 1, "", "version failed")
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr("tracefix.real_environment._run", fake_run)
+    result = RealEnvironmentPreparer().prepare(config).results[0]
+    assert result.status == "install_failed"
+    assert any("recipe_build_0" in log for log in result.logs)
+    assert not (tmp_path / "envs" / task.id / ".tracefix-environment.json").exists()
+
+
+def test_build_copy_accepts_gitfile_metadata(tmp_path) -> None:
+    """worktree 形式的固定源码也能把 gitdir 文件原样带入构建副本。"""
+    source = tmp_path / "source"
+    build = tmp_path / "build"
+    source.mkdir()
+    build.mkdir()
+    (source / ".git").write_text("gitdir: D:/metadata\n", encoding="utf-8")
+    _link_build_copy_git_metadata(source, build)
+    assert (build / ".git").read_text(encoding="utf-8") == "gitdir: D:/metadata\n"
 
 
 def test_recipe_loader_rejects_undocumented_selector_override(tmp_path) -> None:

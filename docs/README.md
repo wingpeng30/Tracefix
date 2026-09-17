@@ -51,6 +51,8 @@
   严格 node ID、受审查收集失败、解释器复用与环境指纹修复。
 - [`tasks/v0.8.5-p0-trusted-validation.md`](tasks/v0.8.5-p0-trusted-validation.md)：
   环境所有权、双阶段审计、源码隔离及 P0 全量测试与覆盖率门槛。
+- [`experiments/v0.8.5-p1-real-environment-validation.md`](experiments/v0.8.5-p1-real-environment-validation.md)：
+  新环境、固定配方下 12 道真实任务的统一 base/gold 行为复核。
 - [`experiments/v0.8.4-real-environment-validation.md`](experiments/v0.8.4-real-environment-validation.md)：
   12 道真实候选严格重验的 10/12 行为资格结果与边界。
 - [`../benchmarks/experiments/v0.8.4-real-environment-validation.json`](../benchmarks/experiments/v0.8.4-real-environment-validation.json)：

@@ -388,3 +388,15 @@ compileall 和 diff 检查均通过。
 后完成验证；旧临时目录未清理。代码仍基于 `d491c91` 的未提交工作区，未推送、未调用模型，也
 未开始 12 题复核。实现、文件哈希、最终证据路径和限制见
 [`tasks/v0.8.5-p0-trusted-validation.md`](tasks/v0.8.5-p0-trusted-validation.md)。
+
+### V0.8.5 P1：新环境与 12 题统一复核
+
+在提交 `71da107` 的固定代码快照下，重新准备 11 个受管理任务环境：Requests 使用 Python 3.9.21，
+Pylint 使用 3.10.20，pytest 与 Sphinx 使用 3.11.16。pytest 历史源码依赖 setuptools-scm 版本文件，
+因此将配方固定为 `setuptools-scm==6.4.2`，并让环境构建副本通过只读 gitdir 引用固定源码 Git 元数据；
+失败副本和原始环境均保留。Sphinx-10323 依配方在 Windows 标为待平台验证。
+
+12 题的 base/gold 复核已结束：8 道常规断言失败资格、2 道受审查收集失败资格、Requests-1724
+在 Python 3.9.21 未复现、Sphinx-10323 待平台验证。每题保存收集与执行审计、JUnit、日志、实际导入
+路径和三次依赖指纹；未调用模型或产生费用。完整分类、配方边界与复现命令见
+[`experiments/v0.8.5-p1-real-environment-validation.md`](experiments/v0.8.5-p1-real-environment-validation.md)。
