@@ -8,12 +8,23 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 from tracefix.real_benchmark import RealIssueTask
 from tracefix.real_environment import (
     EnvironmentPreparationConfig,
     RealEnvironmentPreparer,
+    _is_safe_managed_path,
+    _log,
+    _looks_incompatible,
+    _owner_task_id,
+    _run,
+    _select_interpreter,
+    apply_cleanup,
+    discover_interpreters,
     inspect_storage,
     preview_cleanup,
+    resolve_managed_environment_python,
 )
 from tracefix.real_recipes import EnvironmentRecipe, load_environment_recipes
 
@@ -87,7 +98,7 @@ def test_preparer_creates_and_reuses_isolated_environment(tmp_path, monkeypatch)
     preparer = RealEnvironmentPreparer()
 
     def fake_run(command, cwd, timeout, environment=None):
-        if command[2:4] == ("venv", str(tmp_path / "envs" / task.id)):
+        if command[2:3] == ("venv",):
             return subprocess.run(command, cwd=cwd, capture_output=True, text=True, check=False)
         return subprocess.CompletedProcess(command, 0, "", "")
 
@@ -121,7 +132,7 @@ def test_recipe_hash_invalidates_reuse_and_storage_ignores_unmanaged_paths(
     preparer = RealEnvironmentPreparer()
 
     def fake_run(command, cwd, timeout, environment=None):
-        if command[2:4] == ("venv", str(tmp_path / "envs" / task.id)):
+        if command[2:3] == ("venv",):
             return subprocess.run(command, cwd=cwd, capture_output=True, text=True, check=False)
         return subprocess.CompletedProcess(command, 0, "", "")
 
@@ -150,3 +161,140 @@ def test_recipe_loader_rejects_undocumented_selector_override(tmp_path) -> None:
         assert "invalid environment recipe" in str(exc)
     else:
         raise AssertionError("invalid recipe should be rejected")
+
+
+@pytest.mark.parametrize("command", [(), ("python", "setup.py")])
+def test_recipe_rejects_unsafe_build_commands(command) -> None:
+    """构建步骤必须非空且只能通过已选择的解释器启动。"""
+    with pytest.raises(ValueError):
+        EnvironmentRecipe(task_id="owner__repo-1", build_commands=(command,))
+
+
+def test_recipe_loader_rejects_duplicate_task_ids(tmp_path) -> None:
+    recipe = EnvironmentRecipe(task_id="owner__repo-1")
+    (tmp_path / "a.json").write_text(recipe.model_dump_json(), encoding="utf-8")
+    (tmp_path / "b.json").write_text(recipe.model_dump_json(), encoding="utf-8")
+    with pytest.raises(Exception, match="duplicate environment recipe"):
+        load_environment_recipes(tmp_path)
+
+
+def test_preparer_preserves_unregistered_or_unhealthy_environment(tmp_path, monkeypatch) -> None:
+    """旧目录缺少 TraceFix 所有权或健康标记时必须保留，并改用新目录。"""
+    task, source = _task(tmp_path)
+    legacy = tmp_path / "envs" / task.id
+    legacy.mkdir(parents=True)
+    (legacy / "user-note.txt").write_text("keep", encoding="utf-8")
+    config = EnvironmentPreparationConfig(
+        tasks_dir=task.task_dir.parent,
+        source_root=source.parent,
+        environment_root=tmp_path / "envs",
+        output_dir=tmp_path / "results",
+        python_executable=Path(sys.executable),
+    )
+
+    def fake_run(command, cwd, timeout, environment=None):
+        if command[2:3] == ("venv",):
+            return subprocess.run(command, cwd=cwd, capture_output=True, text=True, check=False)
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr("tracefix.real_environment._run", fake_run)
+    result = RealEnvironmentPreparer().prepare(config).results[0]
+    assert result.status == "ready"
+    assert (legacy / "user-note.txt").read_text(encoding="utf-8") == "keep"
+    assert task.id + "--rebuild-" in str(result.python_executable)
+
+
+def test_managed_path_rejects_escape_and_link(tmp_path) -> None:
+    """路径必须同时通过原始路径、解析边界和链接检查。"""
+    root = tmp_path / "managed"
+    root.mkdir()
+    assert not _is_safe_managed_path(root, root / ".." / "outside")
+    assert not _is_safe_managed_path(root, root)
+    link = root / "junction"
+    try:
+        link.symlink_to(tmp_path, target_is_directory=True)
+    except OSError:
+        return
+    assert not _is_safe_managed_path(root, link / "child")
+
+
+def test_environment_resolver_finds_only_registered_rebuild(tmp_path) -> None:
+    """CLI 与实验器应找到重建环境，并忽略碰巧同名的未登记目录。"""
+    root = tmp_path / "envs"
+    root.mkdir()
+    (root / "owner__repo-1").mkdir()
+    rebuilt = root / "owner__repo-1--rebuild-0001"
+    python = rebuilt / ("Scripts/python.exe" if sys.platform == "win32" else "bin/python")
+    python.parent.mkdir(parents=True)
+    python.write_text("", encoding="utf-8")
+    (rebuilt / ".tracefix-owner.json").write_text(
+        json.dumps(
+            {
+                "managed_kind": "environment",
+                "task_id": "owner__repo-1",
+                "environment_root": str(root.resolve()),
+                "environment_path": str(rebuilt.resolve()),
+            }
+        ),
+        encoding="utf-8",
+    )
+    assert resolve_managed_environment_python(root, "owner__repo-1") == python
+
+
+def test_environment_helpers_classify_process_and_interpreters(tmp_path, monkeypatch) -> None:
+    """环境诊断应保留异常、版本选择和安装不兼容的可审计分类。"""
+    monkeypatch.setattr(
+        "tracefix.real_environment.subprocess.run",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("denied")),
+    )
+    failed = _run(("missing",), tmp_path, 30)
+    assert failed.returncode == 1
+    assert "denied" in _log("probe", failed)
+    assert _looks_incompatible("Package REQUIRES-PYTHON >= 4")
+    assert _looks_incompatible("requires a different python")
+    assert not _looks_incompatible("network unavailable")
+
+    monkeypatch.setattr(
+        "tracefix.real_environment._run",
+        lambda command, *_args: subprocess.CompletedProcess(
+            command, 0, "Python 3.10.9" if command[0] != "py" else "", ""
+        ),
+    )
+    explicit = tmp_path / "python.exe"
+    records = discover_interpreters(tmp_path, explicit=(explicit, None))
+    assert any(item.source == "explicit" and item.version == "3.10.9" for item in records)
+    recipe = EnvironmentRecipe(task_id="owner__repo-1", python_versions=("3.10",))
+    assert _select_interpreter(recipe, explicit, records).version == "3.10.9"
+    assert _select_interpreter(recipe, None, records).version == "3.10.9"
+    assert _select_interpreter(recipe, tmp_path / "other.exe", records) is None
+
+
+def test_cleanup_accepts_registered_environment_and_rejects_bad_owner(tmp_path) -> None:
+    """显式清理仅删除所有权完整的环境，伪标记不进入预览。"""
+    root = tmp_path / "envs"
+    root.mkdir()
+    managed = root / "owner__repo-1"
+    managed.mkdir()
+    (managed / ".tracefix-owner.json").write_text(
+        json.dumps(
+            {
+                "managed_kind": "environment",
+                "task_id": "owner__repo-1",
+                "environment_root": str(root.resolve()),
+                "environment_path": str(managed.resolve()),
+            }
+        ),
+        encoding="utf-8",
+    )
+    (managed / ".tracefix-environment.json").write_text("{}", encoding="utf-8")
+    bad = root / "bad"
+    bad.mkdir()
+    (bad / ".tracefix-owner.json").write_text("not-json", encoding="utf-8")
+    (bad / ".tracefix-environment.json").write_text("{}", encoding="utf-8")
+    assert _owner_task_id(bad) == ""
+    preview = preview_cleanup(root)
+    assert preview.paths == (str(managed.resolve()),)
+    applied = apply_cleanup(root)
+    assert applied.paths == preview.paths
+    assert not managed.exists()
+    assert bad.exists()

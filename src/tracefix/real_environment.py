@@ -14,6 +14,7 @@ from collections.abc import Iterable
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
+from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -23,6 +24,8 @@ from tracefix.real_benchmark import RealIssueTask, load_real_issue_tasks
 from tracefix.real_recipes import EnvironmentRecipe, load_environment_recipes
 
 TUNA_INDEX_URL = "https://pypi.tuna.tsinghua.edu.cn/simple"
+_OWNER_MARKER = ".tracefix-owner.json"
+_ENVIRONMENT_MARKER = ".tracefix-environment.json"
 
 
 class InterpreterInfo(BaseModel):
@@ -128,7 +131,7 @@ class RealEnvironmentPreparer:
         report = inspect_storage(root)
         results = tuple(
             self._prepare_one(
-                task, recipes.get(task.id), config, root / task.id, interpreters, report
+                task, recipes.get(task.id), config, root, interpreters, report
             )
             for task in tasks
         )
@@ -152,12 +155,13 @@ class RealEnvironmentPreparer:
         task: RealIssueTask,
         recipe: EnvironmentRecipe | None,
         config: EnvironmentPreparationConfig,
-        environment: Path,
+        root: Path,
         interpreters: tuple[InterpreterInfo, ...],
         storage: StorageReport,
     ) -> EnvironmentPreparationResult:
         """创建单题环境，并只安装该固定源码声明的依赖。"""
         source = (config.source_root / task.id).expanduser().resolve()
+        environment = _select_managed_environment(root, task.id)
         if recipe is not None and not recipe.supports_current_platform():
             return EnvironmentPreparationResult(
                 task_id=task.id,
@@ -182,7 +186,7 @@ class RealEnvironmentPreparer:
             and recipe.python_versions
         ):
             interpreter_info = _create_managed_interpreter(
-                root=environment.parent, version=recipe.python_versions[0]
+                root=root, version=recipe.python_versions[0]
             )
         if interpreter_info is None:
             return EnvironmentPreparationResult(
@@ -222,11 +226,14 @@ class RealEnvironmentPreparer:
                 )
         commands: list[tuple[str, ...]] = []
         logs: list[str] = []
+        # 健康标记缺失、损坏或依赖漂移时绝不删除旧现场。选择一个新的、已登记的
+        # 目录重建，供人工保留和检查旧安装日志。
+        if environment.exists():
+            environment = _new_managed_environment(root, task.id)
+            python = _environment_python(environment)
+            marker = _marker_path(environment)
+        _register_environment(root, environment, task.id)
         process_environment = _managed_process_environment(environment)
-        # 失败的 venv 可能已有 python.exe 却没有健康 marker；不能在其上继续安装，
-        # 只回收 TraceFix 正在准备的精确任务目录，随后从头创建。
-        if environment.exists() and not marker.is_file():
-            shutil.rmtree(environment, ignore_errors=True)
         if not python.is_file():
             create = (str(interpreter), "-m", "venv", str(environment))
             commands.append(create)
@@ -269,13 +276,12 @@ class RealEnvironmentPreparer:
             if installed_extras.returncode != 0:
                 return _failed(task, "install_failed", commands, logs, recipe)
         build_source = environment / ".tracefix-build-source"
-        shutil.rmtree(build_source, ignore_errors=True)
         shutil.copytree(source, build_source, ignore=shutil.ignore_patterns(".git", ".tracefix*"))
         install = (str(python), "-m", "pip", "install", "-i", config.index_url, ".")
         commands.append(install)
         installed = _run(install, build_source, config.timeout_seconds, process_environment)
         logs.append(_log("project_install", installed))
-        shutil.rmtree(build_source, ignore_errors=True)
+        _remove_managed_child(environment, build_source)
         if installed.returncode != 0:
             status = (
                 "incompatible"
@@ -331,7 +337,113 @@ def _environment_python(environment: Path) -> Path:
 
 def _marker_path(environment: Path) -> Path:
     """返回只在完整安装成功后写入的环境健康标记。"""
-    return environment / ".tracefix-environment.json"
+    return environment / _ENVIRONMENT_MARKER
+
+
+def _is_safe_managed_path(root: Path, path: Path) -> bool:
+    """仅接受管理根目录内、没有链接跳转的直接管理子目录。"""
+    # 在 resolve 前拒绝 ``..``，否则 ``root/../outside`` 会在语义上逃逸后又被
+    # Path.relative_to 的纯词法比较错误接受。
+    if ".." in path.parts or _is_link(path):
+        return False
+    try:
+        relative = path.absolute().relative_to(root.absolute())
+    except ValueError:
+        return False
+    if not relative.parts or path.absolute() == root.absolute():
+        return False
+    current = root
+    for part in relative.parts:
+        current = current / part
+        if current.exists() and _is_link(current):
+            return False
+    return True
+
+
+def _is_link(path: Path) -> bool:
+    """同时识别 POSIX 符号链接和 Windows junction。"""
+    return path.is_symlink() or bool(getattr(path, "is_junction", lambda: False)())
+
+
+def _owner_matches(root: Path, environment: Path, task_id: str) -> bool:
+    """确认目录是本根目录为该任务登记的环境，而不是碰巧同名的用户目录。"""
+    if not _is_safe_managed_path(root, environment):
+        return False
+    try:
+        payload = json.loads((environment / _OWNER_MARKER).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    return payload == {
+        "managed_kind": "environment",
+        "task_id": task_id,
+        "environment_root": str(root),
+        "environment_path": str(environment.resolve()),
+    }
+
+
+def _select_managed_environment(root: Path, task_id: str) -> Path:
+    """复用已登记环境；旧的未登记目录保持原状并绕开。"""
+    base = root / task_id
+    candidates = (base, *sorted(root.glob(f"{task_id}--rebuild-*")))
+    for candidate in candidates:
+        if _owner_matches(root, candidate, task_id):
+            return candidate
+    return base if not base.exists() else _new_managed_environment(root, task_id, create=False)
+
+
+def resolve_managed_environment_python(root: Path, task_id: str) -> Path:
+    """定位已登记任务环境的解释器，包括保留旧现场后创建的重建目录。"""
+    managed_root = root.expanduser().resolve()
+    candidates = (managed_root / task_id, *sorted(managed_root.glob(f"{task_id}--rebuild-*")))
+    for environment in reversed(candidates):
+        if not _owner_matches(managed_root, environment, task_id):
+            continue
+        for python in (
+            environment / "Scripts" / "python.exe",
+            environment / "bin" / "python",
+        ):
+            if python.is_file():
+                return python
+    raise BenchmarkError(
+        "real task test interpreter does not exist in a registered environment",
+        context={"task_id": task_id, "environment_root": str(managed_root)},
+    )
+
+
+def _new_managed_environment(root: Path, task_id: str, *, create: bool = True) -> Path:
+    """分配未使用的重建目录；从不覆盖或回收旧目录。"""
+    candidate = root / f"{task_id}--rebuild-{uuid4().hex[:12]}"
+    if not _is_safe_managed_path(root, candidate):
+        raise BenchmarkError("refusing unsafe managed environment path", context={"path": str(candidate)})
+    if create:
+        candidate.mkdir(parents=False, exist_ok=False)
+    return candidate
+
+
+def _register_environment(root: Path, environment: Path, task_id: str) -> None:
+    """在创建任何 venv 内容前写入任务所有权标记。"""
+    if not _is_safe_managed_path(root, environment):
+        raise BenchmarkError("refusing to register an unmanaged path", context={"path": str(environment)})
+    environment.mkdir(parents=False, exist_ok=True)
+    marker = environment / _OWNER_MARKER
+    payload = {
+        "managed_kind": "environment",
+        "task_id": task_id,
+        "environment_root": str(root),
+        "environment_path": str(environment.resolve()),
+    }
+    if marker.exists() and not _owner_matches(root, environment, task_id):
+        raise BenchmarkError("environment ownership does not match task", context={"path": str(environment)})
+    marker.write_text(json.dumps(payload, sort_keys=True), encoding="utf-8")
+
+
+def _remove_managed_child(environment: Path, child: Path) -> None:
+    """只回收本次环境中的构建副本，拒绝链接和边界外路径。"""
+    if not child.exists():
+        return
+    if child.parent != environment or child.is_symlink():
+        raise BenchmarkError("refusing to remove an unmanaged build path", context={"path": str(child)})
+    shutil.rmtree(child)
 
 
 def _marker_matches(
@@ -518,9 +630,11 @@ def inspect_storage(environment_root: Path) -> StorageReport:
     environments = workspaces = 0
     if root.is_dir():
         for marker in root.rglob(".tracefix-environment.json"):
-            environments += _directory_size(marker.parent)
+            if _owner_matches(root, marker.parent, _owner_task_id(marker.parent)):
+                environments += _directory_size(marker.parent)
         for marker in root.rglob(".tracefix-workspace.json"):
-            workspaces += _directory_size(marker.parent)
+            if _is_safe_managed_path(root, marker.parent) and not marker.parent.is_symlink():
+                workspaces += _directory_size(marker.parent)
     return StorageReport(
         root=str(root),
         free_bytes=usage.free,
@@ -536,7 +650,13 @@ def preview_cleanup(environment_root: Path) -> CleanupPreview:
     paths: list[Path] = []
     if root.is_dir():
         for name in (".tracefix-environment.json", ".tracefix-workspace.json"):
-            paths.extend(marker.parent for marker in root.rglob(name))
+            for marker in root.rglob(name):
+                path = marker.parent
+                if name == _ENVIRONMENT_MARKER:
+                    if _owner_matches(root, path, _owner_task_id(path)):
+                        paths.append(path)
+                elif _is_safe_managed_path(root, path) and not path.is_symlink():
+                    paths.append(path)
     unique = tuple(sorted({path.resolve() for path in paths}))
     return CleanupPreview(
         paths=tuple(str(path) for path in unique),
@@ -551,13 +671,24 @@ def apply_cleanup(environment_root: Path) -> CleanupPreview:
     for raw in preview.paths:
         path = Path(raw)
         if (
-            not path.is_relative_to(root)
+            not _is_safe_managed_path(root, path)
             or not (path / ".tracefix-environment.json").is_file()
             and not (path / ".tracefix-workspace.json").is_file()
+            or (path / ".tracefix-environment.json").is_file()
+            and not _owner_matches(root, path, _owner_task_id(path))
         ):
             raise BenchmarkError("refusing to clean an unmanaged path", context={"path": str(path)})
         shutil.rmtree(path)
     return preview
+
+
+def _owner_task_id(environment: Path) -> str:
+    """读取所有权中的任务 ID；无效值会使后续所有权检查失败。"""
+    try:
+        value = json.loads((environment / _OWNER_MARKER).read_text(encoding="utf-8")).get("task_id")
+    except (OSError, json.JSONDecodeError):
+        return ""
+    return value if isinstance(value, str) else ""
 
 
 def _select_interpreter(

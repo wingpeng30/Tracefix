@@ -19,6 +19,7 @@ from tracefix.real_experiment import (
     RealRepoMapPrescreenRunner,
     RealTrajectoryMetrics,
     RealTrialResult,
+    _audit_complete,
     _canonical_node_ids,
     _collection_exception,
     _eligibility_failures,
@@ -100,6 +101,78 @@ def test_pytest_evidence_classifies_network_and_permission_failures(tmp_path: Pa
     assert _pytest_evidence(permission, tmp_path).status == "permission_error"
 
 
+@pytest.mark.parametrize(
+    ("result", "expected"),
+    [
+        (
+            ToolResult(
+                call_id="timeout",
+                tool_name="run_tests",
+                success=False,
+                error="pytest execution timed out",
+                output={"timed_out": True, "stdout": "", "stderr": ""},
+            ),
+            "timeout",
+        ),
+        (
+            ToolResult(
+                call_id="collection",
+                tool_name="run_tests",
+                success=False,
+                error="pytest collection failed",
+                output={"stdout": "", "stderr": ""},
+            ),
+            "collection_error",
+        ),
+        (
+            ToolResult(
+                call_id="dependency",
+                tool_name="run_tests",
+                success=False,
+                error="pytest execution failed",
+                output={"stdout": "ModuleNotFoundError: No module named 'pluggy'", "stderr": ""},
+            ),
+            "dependency_error",
+        ),
+        (
+            ToolResult(
+                call_id="selector",
+                tool_name="run_tests",
+                success=False,
+                error="official test selectors were not fully collected",
+                output={"stdout": "", "stderr": ""},
+            ),
+            "selector_mismatch",
+        ),
+        (
+            ToolResult(
+                call_id="build",
+                tool_name="run_tests",
+                success=False,
+                error="recipe build command failed at step 2",
+                output={"stdout": "", "stderr": ""},
+            ),
+            "build_error",
+        ),
+        (
+            ToolResult(
+                call_id="source",
+                tool_name="run_tests",
+                success=False,
+                error="source import probe resolved outside checkout",
+                output={"stdout": "", "stderr": ""},
+            ),
+            "source_import_error",
+        ),
+    ],
+)
+def test_pytest_evidence_preserves_operational_failure_categories(
+    tmp_path: Path, result: ToolResult, expected: str
+) -> None:
+    """基础设施失败要保持独立分类，不能退化为报告缺失。"""
+    assert _pytest_evidence(result, tmp_path).status == expected
+
+
 def test_pytest_evidence_rejects_success_without_structured_audit(tmp_path: Path) -> None:
     """JUnit 存在但缺少实际 node ID 审计时，不得把结果当作合格通过。"""
     junit = tmp_path / "junit.xml"
@@ -112,6 +185,108 @@ def test_pytest_evidence_rejects_success_without_structured_audit(tmp_path: Path
     )
 
     assert _pytest_evidence(result, tmp_path).status == "report_missing"
+
+
+def test_pytest_evidence_rejects_source_loaded_outside_checkout(tmp_path: Path) -> None:
+    """单独导入探针通过也不能替代真实 pytest 进程中的源码身份。"""
+    junit = tmp_path / "junit.xml"
+    junit.write_text('<testsuite tests="1" failures="0" errors="0" />', encoding="utf-8")
+    collection = tmp_path / "collection.json"
+    execution = tmp_path / "execution.json"
+    common = {
+        "format_version": 2,
+        "collected_node_ids": ["tests/test_x.py::test_x"],
+        "collection_errors": [],
+        "completed": True,
+        "exitstatus": 0,
+    }
+    collection.write_text(
+        json.dumps(common | {"run_id": "run:collection", "stage": "collection", "reports": []}),
+        encoding="utf-8",
+    )
+    reports = [
+        {"nodeid": "tests/test_x.py::test_x", "when": phase, "outcome": "passed", "wasxfail": False}
+        for phase in ("setup", "call", "teardown")
+    ]
+    execution.write_text(
+        json.dumps(
+            common
+            | {
+                "run_id": "run:execution",
+                "stage": "execution",
+                "reports": reports,
+                "imported_source_paths": {"pkg": str(tmp_path.parent / "site-packages/pkg.py")},
+            }
+        ),
+        encoding="utf-8",
+    )
+    process = {
+        "stage": "execution",
+        "command": ["pytest"],
+        "working_directory": str(tmp_path),
+        "returncode": 0,
+        "timed_out": False,
+        "duration_ms": 1,
+        "stdout_path": str(tmp_path / "out"),
+        "stderr_path": str(tmp_path / "err"),
+    }
+    result = ToolResult(
+        call_id="source",
+        tool_name="run_tests",
+        success=True,
+        output={
+            "returncode": 0,
+            "junit_path": str(junit),
+            "audit_path": str(execution),
+            "collection_audit_path": str(collection),
+            "audit_run_id": "run",
+            "source_import_probe": "pkg",
+            "collection": process | {"stage": "collection"},
+            "execution": process,
+        },
+    )
+    evidence = _pytest_evidence(result, tmp_path)
+    assert evidence.status == "source_import_error"
+    assert evidence.source_import_audit_valid is False
+
+
+@pytest.mark.parametrize(
+    ("update", "message"),
+    [
+        ({"format_version": 1}, "format version"),
+        ({"run_id": "stale"}, "does not belong"),
+        ({"completed": False}, "completed"),
+        ({"exitstatus": 2}, "exit status"),
+        ({"reports": None}, "structured node IDs"),
+        ({"collection_errors": None}, "collection error"),
+        ({"collected_node_ids": []}, "no collected nodes"),
+        ({"reports": [{}]}, "lacks a test node"),
+        (
+            {"reports": [{"nodeid": "tests/test_x.py::test_x", "when": "call"}]},
+            "missing setup",
+        ),
+    ],
+)
+def test_execution_audit_fails_closed_for_incomplete_evidence(update, message) -> None:
+    """审计身份、结构或测试阶段不完整时必须给出明确拒绝原因。"""
+    audit = {
+        "format_version": 2,
+        "run_id": "run",
+        "stage": "execution",
+        "completed": True,
+        "exitstatus": 0,
+        "collected_node_ids": ["tests/test_x.py::test_x"],
+        "reports": [
+            {"nodeid": "tests/test_x.py::test_x", "when": phase}
+            for phase in ("setup", "call", "teardown")
+        ],
+        "collection_errors": [],
+    }
+    valid, diagnostic = _audit_complete(
+        audit | update, stage="execution", run_id="run", returncode=0
+    )
+    assert valid is False
+    assert message in str(diagnostic)
 
 
 def test_node_id_normalization_preserves_directory_and_parameter(tmp_path: Path) -> None:
@@ -130,10 +305,29 @@ def test_node_id_normalization_preserves_directory_and_parameter(tmp_path: Path)
         "first/test_same.py::test_value[param-a]",
         "second/test_same.py::test_value[param-a]",
     }
+    assert _canonical_node_ids(("tests/test_a.py::test_value[a\\b]",), root) == {
+        "tests/test_a.py::test_value[a\\b]"
+    }
 
 
 def test_reviewed_collection_failure_must_match_every_declared_field(tmp_path: Path) -> None:
     """配方不能把任意 ImportError 放进受审查的 base 失败类别。"""
+    audit = tmp_path / "collection.audit.json"
+    audit.write_text(
+        json.dumps(
+            {
+                "format_version": 2,
+                "run_id": "collection:collection",
+                "stage": "collection",
+                "collected_node_ids": [],
+                "reports": [],
+                "collection_errors": [{"nodeid": "tests/test_x.py", "longrepr": "ImportError"}],
+                "completed": True,
+                "exitstatus": 2,
+            }
+        ),
+        encoding="utf-8",
+    )
     evidence = _pytest_evidence(
         ToolResult(
             call_id="collection",
@@ -152,6 +346,8 @@ def test_reviewed_collection_failure_must_match_every_declared_field(tmp_path: P
                     "stdout_path": str(tmp_path / "out"),
                     "stderr_path": str(tmp_path / "err"),
                 },
+                "collection_audit_path": str(audit),
+                "audit_run_id": "collection",
             },
         ),
         tmp_path,
@@ -173,6 +369,28 @@ def test_reviewed_collection_failure_must_match_every_declared_field(tmp_path: P
         "pkg.module",
         "NEW_API",
     )
+
+    payload = json.loads(audit.read_text(encoding="utf-8"))
+    payload["collection_errors"].append(
+        {"nodeid": "tests/test_y.py", "longrepr": "RuntimeError: unrelated"}
+    )
+    audit.write_text(json.dumps(payload), encoding="utf-8")
+    mixed = _pytest_evidence(
+        ToolResult(
+            call_id="collection",
+            tool_name="run_tests",
+            success=False,
+            error="pytest collection failed",
+            output={
+                "stdout": "ImportError: cannot import name 'NEW_API' from 'pkg.module'",
+                "collection": evidence.collection.model_dump(mode="json"),
+                "collection_audit_path": str(audit),
+                "audit_run_id": "collection",
+            },
+        ),
+        tmp_path,
+    )
+    assert not _matches_expected_collection_failure(mixed, rule)
 
 
 def _run_git(repo: Path, *arguments: str) -> str:

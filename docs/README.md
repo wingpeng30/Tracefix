@@ -3,6 +3,12 @@
 本目录保存代码演进、实验解释和后续任务记录。README 首页只保留当前使用方法与主要结果，
 完整的历史和证据从这里进入。
 
+## 新任务交接入口
+
+- [`handoffs/2026-09-17-v084.md`](handoffs/2026-09-17-v084.md)：当前版本、优先级任务、
+  必读代码、原始证据位置和可复制启动提示。V0.8.4 的全量测试与严格资格证据仍需复核，
+  不应仅依据历史 10/12 汇总直接启动付费实验。
+
 ## 项目历程
 
 - [`roadmap.md`](roadmap.md)：项目目标、当前阶段、验收门槛与下一步行动。
@@ -43,6 +49,8 @@
   12 道真实候选的 7/12 合格重验结果。
 - [`tasks/v0.8.4-strict-real-validation.md`](tasks/v0.8.4-strict-real-validation.md)：
   严格 node ID、受审查收集失败、解释器复用与环境指纹修复。
+- [`tasks/v0.8.5-p0-trusted-validation.md`](tasks/v0.8.5-p0-trusted-validation.md)：
+  环境所有权、双阶段审计、源码隔离及 P0 全量测试与覆盖率门槛。
 - [`experiments/v0.8.4-real-environment-validation.md`](experiments/v0.8.4-real-environment-validation.md)：
   12 道真实候选严格重验的 10/12 行为资格结果与边界。
 - [`../benchmarks/experiments/v0.8.4-real-environment-validation.json`](../benchmarks/experiments/v0.8.4-real-environment-validation.json)：

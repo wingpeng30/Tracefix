@@ -22,6 +22,7 @@ from tracefix.messages import ToolCall
 from tracefix.paired import ExperimentArm, TrajectoryMetrics, analyze_trajectory
 from tracefix.provenance import TestEnvironmentProvenance, inspect_test_environment
 from tracefix.real_benchmark import RealIssueTask, load_real_issue_tasks
+from tracefix.real_environment import resolve_managed_environment_python
 from tracefix.real_recipes import EnvironmentRecipe, ExpectedBaseFailure
 from tracefix.runtime import (
     DEFAULT_MODEL_NAME,
@@ -78,6 +79,12 @@ class PytestExecutionEvidence(BaseModel):
     timed_out: bool
     junit_available: bool
     audit_available: bool = False
+    collection_audit_available: bool = False
+    execution_audit_available: bool = False
+    audit_diagnostic: str | None = None
+    source_import_audit_valid: bool = False
+    imported_source_paths: dict[str, str] = Field(default_factory=dict)
+    collection_errors: tuple[str, ...] = ()
     test_count: int = Field(ge=0)
     failure_count: int = Field(ge=0)
     error_count: int = Field(ge=0)
@@ -278,12 +285,17 @@ def validate_real_task_behavior(
     expected_collection = _matches_expected_collection_failure(
         initial_evidence, recipe.expected_base_failure if recipe else None
     )
-    initial_failed = initial_evidence.status == "assertion_failed" and same_execution_set
+    initial_failed = (
+        initial_evidence.status == "assertion_failed"
+        and initial_evidence.collection_audit_available
+        and same_execution_set
+    )
     initial_collection_failed = expected_collection and bool(gold_nodes) and gold_evidence.audit_available
     gold_passed = (
         gold_evidence.status == "passed"
         and gold_evidence.junit_available
         and gold_evidence.audit_available
+        and gold_evidence.collection_audit_available
         and bool(gold_nodes)
         and no_nonbusiness_outcomes
     )
@@ -338,18 +350,19 @@ def validate_real_task_behavior(
 def _canonical_node_ids(node_ids: tuple[str, ...], checkout: Path) -> frozenset[str]:
     """只移除当前 checkout 绝对前缀，完整保留目录与参数化标识。"""
     normalized: set[str] = set()
-    root = str(checkout.resolve()).replace("\\", "/").rstrip("/") + "/"
-    checkout_marker = checkout.name.replace("\\", "/") + "/"
+    roots = (
+        str(checkout.resolve()).rstrip("\\/") + "\\",
+        str(checkout.resolve()).replace("\\", "/").rstrip("/") + "/",
+    )
     for node_id in node_ids:
-        value = node_id.replace("\\", "/")
-        if value.startswith(root):
-            normalized.add(value[len(root) :])
-        elif checkout_marker in value:
-            # pytest 可能因仓库缺少自身配置而输出相对当前工作目录的路径；只删除
-            # 唯一 checkout 目录此前缀，不按 ``tests/`` 截断，避免同名文件冲突。
-            normalized.add(value.split(checkout_marker, 1)[1])
-        else:
-            normalized.add(value)
+        path_part, separator, remainder = node_id.partition("::")
+        value = path_part.replace("\\", "/") + (separator + remainder if separator else "")
+        for root in roots:
+            normalized_root = root.replace("\\", "/")
+            if value.startswith(normalized_root):
+                value = value[len(normalized_root) :]
+                break
+        normalized.add(value)
     return frozenset(normalized)
 
 
@@ -362,9 +375,11 @@ def _matches_expected_collection_failure(
         and evidence.status == "collection_error"
         and evidence.collection is not None
         and evidence.collection.returncode not in (0, None)
+        and evidence.collection_audit_available
         and evidence.collection_exception_type == rule.exception_type
         and evidence.collection_exception_module == rule.module
         and evidence.collection_exception_symbol == rule.symbol
+        and len(evidence.collection_errors) == 1
     )
 
 
@@ -391,12 +406,15 @@ def _run_qualified_pytest(
     """用参数列表执行严格 pytest 验收，并完整保留每个阶段的日志。"""
     evidence_root = checkout / ".tracefix-validation"
     evidence_root.mkdir(parents=True, exist_ok=True)
+    audit_run_id = f"{call_id}:{uuid4().hex}"
     build_steps = _run_recipe_build(recipe, checkout, test_python, evidence_root)
     failed_build = next((step for step in build_steps if step.returncode != 0 or step.timed_out), None)
     if failed_build:
         return _failed_validation_result(
             call_id,
             "recipe build command failed",
+            audit_run_id=audit_run_id,
+            source_import_probe=recipe.source_import_probe if recipe else None,
             build_steps=build_steps,
             execution=None,
             collection=None,
@@ -406,13 +424,19 @@ def _run_qualified_pytest(
         if recipe and recipe.selector_overrides
         else task.fail_to_pass
     )
-    command = _pytest_command(test_python, expected)
+    command = _pytest_command(test_python, checkout, expected, evidence_root)
     environment = _validation_environment(checkout, task.test_pythonpath_paths)
+    if recipe and recipe.source_import_probe:
+        environment["TRACEFIX_SOURCE_IMPORT_PROBE"] = recipe.source_import_probe
     _write_audit_plugin(checkout)
     collection = _run_validation_process(
         (*command, "--collect-only", "-p", "tracefix_pytest_audit"),
         checkout,
-        environment | {"TRACEFIX_AUDIT_PATH": str(evidence_root / "collection.audit.json")},
+        environment | {
+            "TRACEFIX_AUDIT_PATH": str(evidence_root / "collection.audit.json"),
+            "TRACEFIX_AUDIT_RUN_ID": f"{audit_run_id}:collection",
+            "TRACEFIX_AUDIT_STAGE": "collection",
+        },
         evidence_root,
         "collection",
     )
@@ -424,6 +448,8 @@ def _run_qualified_pytest(
         return _failed_validation_result(
             call_id,
             "pytest collection failed",
+            audit_run_id=audit_run_id,
+            source_import_probe=recipe.source_import_probe if recipe else None,
             build_steps=build_steps,
             collection=collection,
             execution=None,
@@ -435,6 +461,8 @@ def _run_qualified_pytest(
         return _failed_validation_result(
             call_id,
             "official test selectors were not fully collected",
+            audit_run_id=audit_run_id,
+            source_import_probe=recipe.source_import_probe if recipe else None,
             build_steps=build_steps,
             collection=collection,
             execution=None,
@@ -447,6 +475,8 @@ def _run_qualified_pytest(
         return _failed_validation_result(
             call_id,
             probe_error,
+            audit_run_id=audit_run_id,
+            source_import_probe=recipe.source_import_probe if recipe else None,
             build_steps=build_steps,
             collection=collection,
             execution=None,
@@ -459,7 +489,11 @@ def _run_qualified_pytest(
     execution = _run_validation_process(
         (*command, f"--junitxml={junit}", "-p", "tracefix_pytest_audit"),
         checkout,
-        environment | {"TRACEFIX_AUDIT_PATH": str(evidence_root / "execution.audit.json")},
+        environment | {
+            "TRACEFIX_AUDIT_PATH": str(evidence_root / "execution.audit.json"),
+            "TRACEFIX_AUDIT_RUN_ID": f"{audit_run_id}:execution",
+            "TRACEFIX_AUDIT_STAGE": "execution",
+        },
         evidence_root,
         "execution",
     )
@@ -475,6 +509,9 @@ def _run_qualified_pytest(
         "collection": collection.model_dump(mode="json"),
         "execution": execution.model_dump(mode="json"),
         "audit_path": str(evidence_root / "execution.audit.json"),
+        "collection_audit_path": str(evidence_root / "collection.audit.json"),
+        "audit_run_id": audit_run_id,
+        "source_import_probe": recipe.source_import_probe if recipe else None,
         "junit_path": str(junit),
     }
     return ToolResult(
@@ -489,11 +526,23 @@ def _run_qualified_pytest(
     )
 
 
-def _pytest_command(test_python: Path, selectors: tuple[str, ...]) -> tuple[str, ...]:
+def _pytest_command(
+    test_python: Path, checkout: Path, selectors: tuple[str, ...], evidence_root: Path
+) -> tuple[str, ...]:
     """构造不可被 Shell 重解释的 pytest 参数列表。"""
     # ``PYTEST_ADDOPTS`` 已在子进程环境中移除；不要用 ``-o addopts=`` 覆盖
     # 仓库自己的配置，因为历史 pytest 需要其中声明的 ``-p pytester`` 等插件。
-    return (str(test_python), "-m", "pytest", "-q", *selectors)
+    config = next(
+        (checkout / name for name in ("pytest.ini", "pyproject.toml", "tox.ini", "setup.cfg") if (checkout / name).is_file()),
+        None,
+    )
+    if config is None:
+        config = evidence_root / "empty-pytest.ini"
+        config.write_text("[pytest]\n", encoding="utf-8")
+    return (
+        str(test_python), "-m", "pytest", "-q", f"--rootdir={checkout}",
+        f"--confcutdir={checkout}", "-c", str(config), *selectors,
+    )
 
 
 def _validation_environment(checkout: Path, pythonpath_entries: tuple[Path, ...]) -> dict[str, str]:
@@ -546,6 +595,8 @@ def _failed_validation_result(
     collection: ProcessEvidence | None, execution: ProcessEvidence | None,
     collected: tuple[str, ...] = (), expected: tuple[str, ...] = (),
     audit_path: str | None = None, import_probe_path: str | None = None,
+    audit_run_id: str | None = None,
+    source_import_probe: str | None = None,
 ) -> ToolResult:
     """把尚未执行 pytest 的验证失败也包装成完整结构化结果。"""
     build_stdout = "\n".join(_read_text(Path(step.stdout_path)) for step in build_steps)
@@ -561,7 +612,9 @@ def _failed_validation_result(
         "build_steps": [step.model_dump(mode="json") for step in build_steps],
         "collection": collection.model_dump(mode="json") if collection else None,
         "execution": execution.model_dump(mode="json") if execution else None,
-        "audit_path": audit_path, "import_probe_path": import_probe_path,
+        "audit_path": audit_path, "collection_audit_path": audit_path,
+        "audit_run_id": audit_run_id or call_id, "import_probe_path": import_probe_path,
+        "source_import_probe": source_import_probe,
     }
     return ToolResult(call_id=call_id, tool_name="run_tests", success=False, output=output, error=error)
 
@@ -646,7 +699,16 @@ _AUDIT_PLUGIN = '''
 import json
 import os
 
-_records = {"collected_node_ids": [], "reports": [], "imported_source_paths": {}}
+_records = {
+    "format_version": 2,
+    "run_id": os.environ.get("TRACEFIX_AUDIT_RUN_ID"),
+    "stage": os.environ.get("TRACEFIX_AUDIT_STAGE"),
+    "collected_node_ids": [],
+    "reports": [],
+    "collection_errors": [],
+    "imported_source_paths": {},
+    "completed": False,
+}
 
 def pytest_collection_modifyitems(session, config, items):
     _records["collected_node_ids"] = [item.nodeid for item in items]
@@ -660,13 +722,23 @@ def pytest_runtest_logreport(report):
         "longrepr": str(report.longrepr)[:2000] if report.failed else "",
     })
 
+def pytest_collectreport(report):
+    if report.failed:
+        _records["collection_errors"].append({
+            "nodeid": report.nodeid,
+            "longrepr": str(report.longrepr)[:4000],
+        })
+
 def pytest_sessionfinish(session, exitstatus):
     import sys
     _records["exitstatus"] = exitstatus
+    _records["completed"] = True
     root = str(session.config.rootpath)
+    probe = os.environ.get("TRACEFIX_SOURCE_IMPORT_PROBE")
     for name, module in tuple(sys.modules.items()):
         path = getattr(module, "__file__", None)
-        if isinstance(path, str) and path.startswith(root):
+        is_probed = probe and (name == probe or name.startswith(probe + "."))
+        if isinstance(path, str) and (path.startswith(root) or is_probed):
             _records["imported_source_paths"][name] = path
     path = os.environ.get("TRACEFIX_AUDIT_PATH")
     if path:
@@ -688,6 +760,41 @@ def _read_audit(path: Path) -> tuple[tuple[str, ...], str | None]:
         return (), None
     values = payload.get("collected_node_ids", [])
     return tuple(item for item in values if isinstance(item, str)), str(path)
+
+
+def _audit_complete(audit: object, *, stage: str, run_id: str, returncode: int | None) -> tuple[bool, str | None]:
+    """只接受本次阶段完整落盘且退出状态一致的审计记录。"""
+    if not isinstance(audit, dict):
+        return False, "audit is missing or malformed"
+    if audit.get("format_version") != 2:
+        return False, "audit format version is unsupported"
+    if audit.get("run_id") != run_id or audit.get("stage") != stage:
+        return False, "audit does not belong to this validation stage"
+    if audit.get("completed") is not True:
+        return False, "audit did not record a completed pytest session"
+    if audit.get("exitstatus") != returncode:
+        return False, "audit exit status differs from pytest process"
+    collected = audit.get("collected_node_ids")
+    reports = audit.get("reports")
+    if not isinstance(collected, list) or not isinstance(reports, list):
+        return False, "audit lacks structured node IDs or reports"
+    if not isinstance(audit.get("collection_errors"), list):
+        return False, "audit lacks collection error records"
+    if stage == "execution":
+        if not collected or not reports:
+            return False, "execution audit contains no collected nodes or reports"
+        phases: dict[str, set[str]] = {}
+        for report in reports:
+            if not isinstance(report, dict):
+                return False, "audit report is malformed"
+            node = report.get("nodeid")
+            phase = report.get("when")
+            if not isinstance(node, str) or phase not in {"setup", "call", "teardown"}:
+                return False, "audit report lacks a test node or phase"
+            phases.setdefault(node, set()).add(phase)
+        if any(phases.get(node) != {"setup", "call", "teardown"} for node in collected):
+            return False, "audit is missing setup, call, or teardown evidence"
+    return True, None
 
 
 def _node_ids_from_collect_output(output: str) -> tuple[str, ...]:
@@ -738,9 +845,6 @@ def _selectors_collected(expected: tuple[str, ...], collected: tuple[str, ...]) 
             or normalized.startswith(f"{selector}::")
             # 函数级选择器可以合法展开为多个参数化 node ID。
             or normalized.startswith(f"{selector}[")
-            or normalized.endswith(f"/{selector}")
-            or f"/{selector}::" in normalized
-            or f"/{selector}[" in normalized
         )
 
     return all(any(matches(selector, node) for node in collected) for selector in expected)
@@ -761,11 +865,60 @@ def _pytest_evidence(result: ToolResult, checkout: Path) -> PytestExecutionEvide
     )
     probe_path = output.get("import_probe_path")
     audit_path = output.get("audit_path")
+    collection_audit_path = output.get("collection_audit_path")
+    audit_run_id = output.get("audit_run_id")
+    source_import_probe = output.get("source_import_probe")
     execution_data = output.get("execution")
     collection_data = output.get("collection")
     build_data = output.get("build_steps", [])
     audit = _load_audit(Path(audit_path)) if isinstance(audit_path, str) else {}
-    audit_available = bool(audit)
+    collection_audit = (
+        _load_audit(Path(collection_audit_path)) if isinstance(collection_audit_path, str) else {}
+    )
+    execution_available, execution_diagnostic = _audit_complete(
+        audit, stage="execution", run_id=f"{audit_run_id}:execution", returncode=_returncode(result)
+    )
+    collection_returncode = (
+        ProcessEvidence.model_validate(collection_data).returncode
+        if isinstance(collection_data, dict)
+        else None
+    )
+    collection_available, collection_diagnostic = _audit_complete(
+        collection_audit,
+        stage="collection",
+        run_id=f"{audit_run_id}:collection",
+        returncode=collection_returncode,
+    )
+    audit_available = execution_available
+    import_audit = audit if execution_available else collection_audit
+    imported_raw = import_audit.get("imported_source_paths", {})
+    imported_source_paths = {
+        str(name): str(path)
+        for name, path in (imported_raw.items() if isinstance(imported_raw, dict) else ())
+        if isinstance(name, str)
+        and isinstance(path, str)
+    }
+    probed_paths = (
+        tuple(
+            path for name, path in imported_source_paths.items()
+            if name == source_import_probe or name.startswith(f"{source_import_probe}.")
+        )
+        if isinstance(source_import_probe, str) and source_import_probe
+        else ()
+    )
+    source_import_audit_valid = not source_import_probe or bool(probed_paths)
+    if probed_paths:
+        try:
+            source_import_audit_valid = all(
+                Path(path).resolve().is_relative_to(checkout.resolve()) for path in probed_paths
+            )
+        except OSError:
+            source_import_audit_valid = False
+    collection_errors = tuple(
+        str(item.get("longrepr", ""))
+        for item in collection_audit.get("collection_errors", [])
+        if isinstance(item, dict)
+    )
     reports = audit.get("reports", []) if isinstance(audit, dict) else []
     executed = tuple(
         report["nodeid"] for report in reports
@@ -805,6 +958,8 @@ def _pytest_evidence(result: ToolResult, checkout: Path) -> PytestExecutionEvide
         status = "build_error"
     elif result.error and result.error.startswith("source import probe"):
         status = "source_import_error"
+    elif audit_available and not source_import_audit_valid:
+        status = "source_import_error"
     elif skipped or xfailed or xpassed or junit_skipped:
         status = "skipped_or_xfailed"
     elif not available or not audit_available:
@@ -839,6 +994,12 @@ def _pytest_evidence(result: ToolResult, checkout: Path) -> PytestExecutionEvide
         timed_out=timed_out,
         junit_available=available,
         audit_available=audit_available,
+        collection_audit_available=collection_available,
+        execution_audit_available=execution_available,
+        audit_diagnostic=execution_diagnostic or collection_diagnostic,
+        source_import_audit_valid=source_import_audit_valid,
+        imported_source_paths=imported_source_paths,
+        collection_errors=collection_errors,
         test_count=tests,
         failure_count=failures,
         error_count=errors,
@@ -1397,17 +1558,7 @@ def _changed_test_files(task: RealIssueTask, files: tuple[str, ...]) -> tuple[st
 
 def _task_python(root: Path, task_id: str) -> Path:
     """兼容 Windows 与 POSIX 虚拟环境布局，并拒绝静默回退。"""
-    environment = root.expanduser().resolve() / task_id
-    for candidate in (
-        environment / "Scripts" / "python.exe",
-        environment / "bin" / "python",
-    ):
-        if candidate.is_file():
-            return candidate
-    raise BenchmarkError(
-        "real task test interpreter does not exist",
-        context={"task_id": task_id, "environment_name": environment.name},
-    )
+    return resolve_managed_environment_python(root, task_id)
 
 
 def _returncode(result: ToolResult) -> int | None:

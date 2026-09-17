@@ -1,8 +1,11 @@
+import sys
+from pathlib import Path
 from types import SimpleNamespace
 
 from tracefix.agent import AgentStatus
 from tracefix.cli import main
 from tracefix.context import ContextMetrics
+from tracefix.exceptions import BenchmarkError
 
 
 def _run_result(status: AgentStatus = AgentStatus.COMPLETED):
@@ -427,3 +430,254 @@ def test_cli_reports_unreadable_task_file(tmp_path, capsys) -> None:
     )
     assert code == 2
     assert "无法读取任务文件" in capsys.readouterr().err
+
+
+def test_cli_real_environment_management_commands(tmp_path, monkeypatch, capsys) -> None:
+    """真实环境准备、盘点和预览清理应保留稳定的 CLI 数据流。"""
+    captured = []
+
+    class FakePreparer:
+        def prepare(self, config):
+            captured.append(config)
+            return SimpleNamespace(
+                results=(SimpleNamespace(status="ready"), SimpleNamespace(status="install_failed")),
+                summary_path="environment-preparation.json",
+            )
+
+    class Dumpable(SimpleNamespace):
+        def model_dump(self, **_kwargs):
+            return vars(self)
+
+    monkeypatch.setattr("tracefix.cli.RealEnvironmentPreparer", FakePreparer)
+    monkeypatch.setattr(
+        "tracefix.cli.inspect_storage",
+        lambda _root: Dumpable(root="envs", free_bytes=1),
+    )
+    monkeypatch.setattr(
+        "tracefix.cli.discover_interpreters",
+        lambda _root: (Dumpable(executable="python", version="3.11", source="fixture"),),
+    )
+    monkeypatch.setattr(
+        "tracefix.cli.preview_cleanup",
+        lambda _root: Dumpable(paths=("managed",), bytes_reclaimable=10),
+    )
+
+    assert main(["prepare-real-environments", "--tasks", str(tmp_path)]) == 0
+    assert captured[0].allow_create_interpreter is True
+    assert main(["inspect-real-environments", "--environment-root", str(tmp_path)]) == 0
+    assert main(["clean-real-artifacts", "--environment-root", str(tmp_path)]) == 0
+    output = capsys.readouterr().out
+    assert "1/2 可用" in output
+    assert '"applied": false' in output
+
+
+def test_cli_validate_real_behavior_persists_success_and_task_error(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    """逐题行为验收应在单题失败后继续，并持续写入部分结果。"""
+    tasks = (
+        SimpleNamespace(id="owner__repo-1"),
+        SimpleNamespace(id="owner__repo-2"),
+    )
+    monkeypatch.setattr("tracefix.cli.load_real_issue_tasks", lambda *_args, **_kwargs: tasks)
+    monkeypatch.setattr("tracefix.cli.load_environment_recipes", lambda _path: {})
+    monkeypatch.setattr("tracefix.cli._real_task_python", lambda *_args: Path(__file__))
+
+    class Validation:
+        def model_dump(self, **_kwargs):
+            return {"task_id": "owner__repo-1", "eligible_for_llm_prescreen": True}
+
+    calls = []
+
+    def validate(task, **_kwargs):
+        calls.append(task.id)
+        if task.id.endswith("2"):
+            raise BenchmarkError("fixture failure")
+        return Validation()
+
+    monkeypatch.setattr("tracefix.cli.validate_real_task_behavior", validate)
+    output = tmp_path / "behavior"
+    assert main(
+        [
+            "validate-real-behavior",
+            "--tasks",
+            str(tmp_path),
+            "--source-root",
+            str(tmp_path),
+            "--test-env-root",
+            str(tmp_path),
+            "--output-dir",
+            str(output),
+        ]
+    ) == 0
+    payload = (output / "behavior-validation.json").read_text(encoding="utf-8")
+    assert calls == ["owner__repo-1", "owner__repo-2"]
+    assert "fixture failure" in payload
+    assert "验收记录" in capsys.readouterr().err
+
+
+def test_cli_validate_real_tasks_and_candidate_commands(tmp_path, monkeypatch, capsys) -> None:
+    """真实任务清单校验、候选收集和结构筛选均应传递显式配置。"""
+    class Dumpable(SimpleNamespace):
+        def model_dump(self, **_kwargs):
+            return vars(self)
+
+    task = SimpleNamespace(
+        id="owner__repo-1",
+        validate_artifacts=lambda: Dumpable(task_id="owner__repo-1", valid=True),
+    )
+    monkeypatch.setattr("tracefix.cli.load_real_issue_tasks", lambda *_args, **_kwargs: (task,))
+    collected = []
+    monkeypatch.setattr(
+        "tracefix.cli.collect_candidates",
+        lambda config: collected.append(config)
+        or SimpleNamespace(selected=(1, 2), output_path="pool.json"),
+    )
+
+    class FakeEvaluator:
+        def run(self, config):
+            collected.append(config)
+            return SimpleNamespace(
+                task_count=1,
+                repo_map_metrics=SimpleNamespace(hit_at_5=1.0),
+                summary_path="screen.json",
+            )
+
+    monkeypatch.setattr("tracefix.cli.RetrievalEvaluator", FakeEvaluator)
+    assert main(["validate-real-tasks", "--tasks", str(tmp_path)]) == 0
+    assert main(
+        [
+            "collect-real-candidates",
+            "--source",
+            str(tmp_path / "source.json"),
+            "--output-dir",
+            str(tmp_path / "out"),
+            "--per-repository",
+            "1",
+        ]
+    ) == 0
+    assert main(
+        [
+            "screen-real-candidates",
+            "--tasks",
+            str(tmp_path),
+            "--source-root",
+            str(tmp_path),
+            "--output-dir",
+            str(tmp_path / "screen"),
+            "--task-id",
+            "owner__repo-1",
+        ]
+    ) == 0
+    assert len(collected) == 2
+    output = capsys.readouterr().out
+    assert "候选池生成完成: 2" in output
+    assert "候选结构筛选完成: 1" in output
+
+
+def test_cli_validate_real_tasks_prepares_missing_checkout(tmp_path, monkeypatch) -> None:
+    """显式 checkout 校验应创建缺失副本，并以检出结果进行验证。"""
+    calls = []
+
+    class Dumpable(SimpleNamespace):
+        def model_dump(self, **_kwargs):
+            return vars(self)
+
+    task = SimpleNamespace(id="owner__repo-1")
+    task.validate_artifacts = lambda: Dumpable(valid=True)
+    task.prepare_checkout = lambda path: calls.append(("prepare", path)) or path
+    task.validate_checkout = lambda path: calls.append(("validate", path)) or Dumpable(valid=True)
+    monkeypatch.setattr("tracefix.cli.load_real_issue_tasks", lambda *_args, **_kwargs: (task,))
+    checkout_root = tmp_path / "checkouts"
+    assert main(
+        [
+            "validate-real-tasks",
+            "--tasks",
+            str(tmp_path),
+            "--with-checkout",
+            "--checkout-dir",
+            str(checkout_root),
+        ]
+    ) == 0
+    expected = (checkout_root / task.id).resolve()
+    assert calls == [("prepare", expected), ("validate", expected)]
+
+
+def test_cli_behavior_rejects_unsupported_and_incompatible_recipe(
+    tmp_path, monkeypatch
+) -> None:
+    """平台与 Python 不兼容必须逐题落盘，不能开始行为验收。"""
+    tasks = (SimpleNamespace(id="unsupported"), SimpleNamespace(id="incompatible"))
+
+    class Recipe:
+        def __init__(self, supported):
+            self.supported = supported
+
+        def supports_current_platform(self):
+            return self.supported
+
+        def supports_python(self, _version):
+            return False
+
+    monkeypatch.setattr("tracefix.cli.load_real_issue_tasks", lambda *_args, **_kwargs: tasks)
+    monkeypatch.setattr(
+        "tracefix.cli.load_environment_recipes",
+        lambda _path: {"unsupported": Recipe(False), "incompatible": Recipe(True)},
+    )
+    output = tmp_path / "behavior-errors"
+    assert main(
+        [
+            "validate-real-behavior",
+            "--tasks",
+            str(tmp_path),
+            "--source-root",
+            str(tmp_path),
+            "--output-dir",
+            str(output),
+            "--test-python",
+            sys.executable,
+        ]
+    ) == 0
+    payload = (output / "behavior-validation.json").read_text(encoding="utf-8")
+    assert "platform is unsupported" in payload
+    assert "incompatible with task recipe" in payload
+
+
+def test_cli_real_repo_map_prescreen_runs_both_arms(tmp_path, monkeypatch, capsys) -> None:
+    """Repo Map 预筛选命令应构造真实实验配置并报告两组结果。"""
+    captured = []
+
+    class FakeRunner:
+        def run(self, config):
+            captured.append(config)
+            aggregate = SimpleNamespace(resolved_count=1, trial_count=2)
+            return SimpleNamespace(
+                control=aggregate,
+                treatment=aggregate,
+                summary_path="repo-map-summary.json",
+            )
+
+    monkeypatch.setattr("tracefix.cli.RealRepoMapPrescreenRunner", FakeRunner)
+    code = main(
+        [
+            "real-repo-map-prescreen",
+            "--tasks",
+            str(tmp_path),
+            "--env-file",
+            str(tmp_path / "missing.env"),
+        ]
+    )
+    assert code == 0
+    assert captured[0].agent_config.max_input_tokens == 350_000
+    assert "关闭 1/2；开启 1/2" in capsys.readouterr().out
+
+    assert main(
+        [
+            "real-repo-map-prescreen",
+            "--tasks",
+            str(tmp_path),
+            "--repo-map",
+            "--env-file",
+            str(tmp_path / "missing.env"),
+        ]
+    ) == 2

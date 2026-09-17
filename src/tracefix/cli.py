@@ -26,6 +26,7 @@ from tracefix.real_environment import (
     discover_interpreters,
     inspect_storage,
     preview_cleanup,
+    resolve_managed_environment_python,
 )
 from tracefix.real_experiment import (
     RealExperimentConfig,
@@ -867,15 +868,10 @@ def main(argv: list[str] | None = None) -> int:
 
 def _real_task_python(root: Path, task_id: str) -> Path:
     """按平台定位一个真实任务的独立虚拟环境解释器。"""
-    environment = root.expanduser().resolve() / task_id
-    candidates = (
-        environment / "Scripts" / "python.exe",
-        environment / "bin" / "python",
-    )
-    for candidate in candidates:
-        if candidate.is_file():
-            return candidate
-    raise ValueError(f"找不到任务 {task_id} 的测试解释器：{environment}")
+    try:
+        return resolve_managed_environment_python(root, task_id)
+    except BenchmarkError as exc:
+        raise ValueError(str(exc)) from exc
 
 
 if __name__ == "__main__":
