@@ -9,7 +9,7 @@ from collections.abc import Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field
 
 from tracefix.agent import AgentConfig
 from tracefix.context import ContextConfig
@@ -100,13 +100,6 @@ class P2ProtocolConfig(BaseModel):
     wall_time_seconds: int = Field(default=900, ge=1)
     per_request_output_tokens: int = Field(default=4_096, ge=1)
     formal: P2FormalRunRequirements | None = None
-
-    @model_validator(mode="after")
-    def validate_design(self) -> P2ProtocolConfig:
-        if self.repetitions != 3:
-            raise ValueError("P2 fixes exactly three repetitions per arm")
-        return self
-
 
 class P2TrialPlan(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -384,7 +377,10 @@ def build_p2_protocol(
     missing = (
         ()
         if config.formal
-        else ("model_name", "provider", "pricing_source", "total_cost_cap_usd")
+        else (
+            "model_name", "provider", "pricing_source", "total_cost_cap_usd",
+            "input_cost_per_million_usd", "output_cost_per_million_usd",
+        )
     )
     return P2ProtocolRecord(
         generated_at=datetime.now(UTC),

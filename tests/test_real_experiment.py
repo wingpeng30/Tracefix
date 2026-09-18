@@ -848,7 +848,8 @@ def test_p2_protocol_fixes_whole_system_60_trial_schedule_and_offline_gate(
     assert len(protocol.schedule) == 60
     assert protocol.formal_ready is False
     assert protocol.formal_missing == (
-        "model_name", "provider", "pricing_source", "total_cost_cap_usd"
+        "model_name", "provider", "pricing_source", "total_cost_cap_usd",
+        "input_cost_per_million_usd", "output_cost_per_million_usd",
     )
     assert [item.arm for item in protocol.schedule[:2]] == [
         ExperimentArm.CONTROL, ExperimentArm.TREATMENT
@@ -952,6 +953,25 @@ def test_p2_budgeted_llm_reserves_reconciles_and_freezes_uncertain_request(tmp_p
     with pytest.raises(BenchmarkError, match="uncertain"):
         llm.complete(())
 
+    too_small = requirements.model_copy(update={"total_cost_cap_usd": 0.0001})
+    limited = P2BudgetedLLM(
+        LLMConfig(model_name="provider/model", max_output_tokens=100, max_retries=0),
+        ledger_path=tmp_path / "limited.json", formal=too_small, input_upper_bound=1000,
+    )
+    with pytest.raises(BenchmarkError, match="cost cap"):
+        limited.complete(())
+
+    mismatched_path = tmp_path / "mismatched.json"
+    mismatched_path.write_text(
+        P2CostLedgerRecord(cap_usd=1).model_dump_json(), encoding="utf-8"
+    )
+    mismatch = P2BudgetedLLM(
+        LLMConfig(model_name="provider/model", max_output_tokens=100, max_retries=0),
+        ledger_path=mismatched_path, formal=requirements, input_upper_bound=1000,
+    )
+    with pytest.raises(BenchmarkError, match="does not match"):
+        mismatch.complete(())
+
 
 def test_p2_simulation_model_emits_supported_nonempty_git_patch() -> None:
     response = P2SimulationLLM(LLMConfig(model_name="simulation")).complete(())
@@ -965,6 +985,10 @@ def test_p2_formal_mode_rejects_missing_commercial_parameters(tmp_path) -> None:
     with pytest.raises(BenchmarkError, match="commercial parameters"):
         run_p2_experiment(
             P2ProtocolConfig(), experiment_dir=tmp_path / "formal", mode="formal"
+        )
+    with pytest.raises(BenchmarkError, match="unknown"):
+        run_p2_experiment(
+            P2ProtocolConfig(), experiment_dir=tmp_path / "unknown", mode="invalid"
         )
 
 
@@ -1009,6 +1033,12 @@ def test_p2_simulation_completes_and_resumes_all_trials(tmp_path, monkeypatch) -
     assert first.completed_count == 60 and first.resumed_count == 0
     assert resumed.completed_count == 60 and resumed.resumed_count == 60
     assert resumed.cost_usd == 0
+    protocol_path = root / "protocol.json"
+    payload = json.loads(protocol_path.read_text(encoding="utf-8"))
+    payload["code_commit"] = "changed"
+    protocol_path.write_text(json.dumps(payload), encoding="utf-8")
+    with pytest.raises(BenchmarkError, match="identity does not match"):
+        run_p2_simulation(config, experiment_dir=root)
 
 
 def test_p2_input_check_writes_snapshot_and_rejects_dirty_source(tmp_path, monkeypatch) -> None:
@@ -1032,6 +1062,14 @@ def test_p2_input_check_writes_snapshot_and_rejects_dirty_source(tmp_path, monke
     _run_git(tmp_path, "clone", "--quiet", str(source), str(sources / task.id))
     config = P2ProtocolConfig(source_root=sources, output_dir=tmp_path / "runs")
     assert write_p2_check(config).is_file()
+    formal = P2FormalRunRequirements(
+        model_name="provider/model", provider="provider", pricing_source="source",
+        total_cost_cap_usd=1, input_cost_per_million_usd=1,
+        output_cost_per_million_usd=1,
+    )
+    monkeypatch.setattr("tracefix.p2_protocol._tracked_diff", lambda *_: b"diff")
+    with pytest.raises(BenchmarkError, match="clean tracked worktree"):
+        check_p2_inputs(config.model_copy(update={"formal": formal}))
     (sources / task.id / "dirty.txt").write_text("x", encoding="utf-8")
     with pytest.raises(BenchmarkError, match="not clean"):
         check_p2_inputs(config)
@@ -1112,6 +1150,11 @@ def test_p2_protocol_rejects_changed_repetition_and_missing_recipe(tmp_path, mon
     with pytest.raises(ValueError, match="less than or equal"):
         P2ProtocolConfig(repetitions=4)
     with pytest.raises(BenchmarkError, match="missing environment recipes"):
+        build_p2_protocol(P2ProtocolConfig(), repository_root=source)
+    monkeypatch.setattr(
+        "tracefix.p2_protocol.P1_QUALIFIED_TASK_IDS", (*ids, "task-missing")
+    )
+    with pytest.raises(BenchmarkError, match="task set is incomplete"):
         build_p2_protocol(P2ProtocolConfig(), repository_root=source)
 
 

@@ -1,0 +1,49 @@
+{
+  "kind": "p2_final_engineering_summary",
+  "code_commit": "91f0e0b84d654c9298d116413810df4f6e3bb1f6",
+  "paid_experiment_started": false,
+  "simulation": {
+    "evidence_root": "runs/p2-agent-simulation-final3-20260918",
+    "trial_count": 60,
+    "verification_complete": 60,
+    "patch_applied": 60,
+    "assertion_failed": 48,
+    "collection_error": 12,
+    "source_identity_valid": 60,
+    "dependency_drift": 0,
+    "resumed_trials": 60,
+    "agent_runs_before_resume": 60,
+    "agent_runs_after_resume": 60,
+    "input_tokens": 120,
+    "output_tokens": 120,
+    "cost_usd": 0.0,
+    "interpretation": "engineering_only"
+  },
+  "verification": {
+    "evidence_root": "runs/p2-final-verification-20260918-v4",
+    "tests_passed": 260,
+    "duration_seconds": 176.89,
+    "statement_coverage_percent": 92.2625804010594,
+    "branch_coverage_percent": 81.41399416909621,
+    "combined_coverage_percent": 90.0270351456894,
+    "ruff_passed": true,
+    "compileall_passed": true
+  },
+  "formal_run": {
+    "entrypoint_ready": true,
+    "provider_retries": 0,
+    "persistent_cost_reservation": true,
+    "actual_token_reconciliation": true,
+    "uncertain_request_stops_experiment": true,
+    "missing_commercial_parameters_fail_before_client": true,
+    "started": false,
+    "blocking_inputs": [
+      "model_name",
+      "provider",
+      "pricing_source",
+      "input_cost_per_million_usd",
+      "output_cost_per_million_usd",
+      "total_cost_cap_usd"
+    ]
+  }
+}

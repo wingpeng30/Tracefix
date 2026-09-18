@@ -860,7 +860,7 @@ class GetGitDiffTool(_WorkspaceTool):
         untracked_files = sorted(path for path in untracked.stdout.split("\0") if path)
         patches = [tracked.stdout]
         for relative in untracked_files:
-            path = _resolve_path(self.workspace, relative, must_exist=True)
+            _resolve_path(self.workspace, relative, must_exist=True)
             generated = self._run_git(
                 [
                     "diff",
