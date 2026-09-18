@@ -17,7 +17,9 @@ from tracefix.benchmark import BenchmarkConfig, BenchmarkRunner
 from tracefix.context import ContextConfig
 from tracefix.exceptions import BenchmarkError, TraceFixError
 from tracefix.p2_protocol import (
+    P2FormalRunRequirements,
     P2ProtocolConfig,
+    run_p2_formal,
     run_p2_simulation,
     write_p2_check,
     write_p2_dry_run,
@@ -311,6 +313,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p2_parser.add_argument("--output-dir", type=Path, default=Path("runs"))
     p2_run = subparsers.add_parser("p2-run", help="执行或恢复 P2 零费用工程演练")
+    p2_run.add_argument("--mode", choices=("simulation", "formal"), default="simulation")
     p2_run.add_argument("--experiment-dir", type=Path, required=True)
     p2_run.add_argument("--tasks", type=Path, default=Path("benchmarks/real_candidates"))
     p2_run.add_argument("--recipes", type=Path, default=Path("benchmarks/real_recipes"))
@@ -319,6 +322,12 @@ def build_parser() -> argparse.ArgumentParser:
         "--test-env-root", type=Path,
         default=Path("runs/p1-revalidation-20260917/environments"),
     )
+    p2_run.add_argument("--model-name")
+    p2_run.add_argument("--provider")
+    p2_run.add_argument("--pricing-source")
+    p2_run.add_argument("--total-cost-cap-usd", type=float)
+    p2_run.add_argument("--input-cost-per-million-usd", type=float)
+    p2_run.add_argument("--output-cost-per-million-usd", type=float)
     p2_check = subparsers.add_parser("p2-check", help="检查并冻结 P2 的源码、配方和受管环境")
     p2_check.add_argument("--tasks", type=Path, default=Path("benchmarks/real_candidates"))
     p2_check.add_argument("--recipes", type=Path, default=Path("benchmarks/real_recipes"))
@@ -750,13 +759,22 @@ def main(argv: list[str] | None = None) -> int:
             return 0
 
         if args.command == "p2-run":
-            summary = run_p2_simulation(
-                P2ProtocolConfig(
-                    tasks_dir=args.tasks, recipes_dir=args.recipes,
-                    source_root=args.source_root, test_env_root=args.test_env_root,
-                ),
-                experiment_dir=args.experiment_dir,
+            formal = None
+            if args.mode == "formal":
+                formal = P2FormalRunRequirements(
+                    model_name=args.model_name, provider=args.provider,
+                    pricing_source=args.pricing_source,
+                    total_cost_cap_usd=args.total_cost_cap_usd,
+                    input_cost_per_million_usd=args.input_cost_per_million_usd,
+                    output_cost_per_million_usd=args.output_cost_per_million_usd,
+                )
+            config = P2ProtocolConfig(
+                tasks_dir=args.tasks, recipes_dir=args.recipes,
+                source_root=args.source_root, test_env_root=args.test_env_root,
+                formal=formal,
             )
+            run = run_p2_formal if args.mode == "formal" else run_p2_simulation
+            summary = run(config, experiment_dir=args.experiment_dir)
             print(f"P2 零费用工程演练: {summary.completed_count}/{summary.trial_count}")
             print(f"恢复复用: {summary.resumed_count}; 汇总: {summary.summary_path}")
             return 0

@@ -9,7 +9,11 @@ import pytest
 
 from tracefix import AgentConfig, AgentStatus, LLMConfig, RunResult
 from tracefix.exceptions import BenchmarkError
+from tracefix.messages import Message, MessageRole
+from tracefix.models import LLMResponse, TokenUsage
 from tracefix.p2_protocol import (
+    P2BudgetedLLM,
+    P2CostLedgerRecord,
     P2FormalRunRequirements,
     P2ProtocolConfig,
     P2TrialRecord,
@@ -17,6 +21,7 @@ from tracefix.p2_protocol import (
     check_p2_inputs,
     estimated_request_reservation,
     read_completed_trial,
+    run_p2_experiment,
     run_p2_simulation,
     write_p2_check,
     write_p2_dry_run,
@@ -909,6 +914,51 @@ def test_p2_trial_records_resume_only_completed_and_reserve_cost(tmp_path: Path)
         read_completed_trial(path)
 
 
+def test_p2_budgeted_llm_reserves_reconciles_and_freezes_uncertain_request(tmp_path) -> None:
+    requirements = P2FormalRunRequirements(
+        model_name="provider/model", provider="provider", pricing_source="source",
+        total_cost_cap_usd=10, input_cost_per_million_usd=2,
+        output_cost_per_million_usd=4,
+    )
+    ledger = tmp_path / "ledger.json"
+    llm = P2BudgetedLLM(
+        LLMConfig(model_name="provider/model", max_output_tokens=100, max_retries=0),
+        ledger_path=ledger, formal=requirements, input_upper_bound=1000,
+    )
+
+    class Delegate:
+        def complete(self, messages, tools=()):
+            return LLMResponse(
+                message=Message(role=MessageRole.ASSISTANT, content="done"),
+                usage=TokenUsage(input_tokens=100, output_tokens=20, total_tokens=120),
+                model_name="provider/model",
+            )
+
+    llm._delegate = Delegate()
+    response = llm.complete(())
+    saved = P2CostLedgerRecord.model_validate_json(ledger.read_text(encoding="utf-8"))
+    assert response.usage.cost_usd == pytest.approx(0.00028)
+    assert saved.spent_usd == pytest.approx(0.00028)
+    assert saved.reserved_usd == 0 and saved.uncertain_request is False
+
+    class Uncertain:
+        def complete(self, messages, tools=()):
+            raise RuntimeError("connection lost after send")
+
+    llm._delegate = Uncertain()
+    with pytest.raises(RuntimeError, match="connection lost"):
+        llm.complete(())
+    with pytest.raises(BenchmarkError, match="uncertain"):
+        llm.complete(())
+
+
+def test_p2_formal_mode_rejects_missing_commercial_parameters(tmp_path) -> None:
+    with pytest.raises(BenchmarkError, match="commercial parameters"):
+        run_p2_experiment(
+            P2ProtocolConfig(), experiment_dir=tmp_path / "formal", mode="formal"
+        )
+
+
 def test_p2_simulation_completes_and_resumes_all_trials(tmp_path, monkeypatch) -> None:
     task, source = _fixture(tmp_path)
     ids = tuple(f"task-{index}" for index in range(10))
@@ -953,12 +1003,17 @@ def test_p2_input_check_writes_snapshot_and_rejects_dirty_source(tmp_path, monke
     task, source = _fixture(tmp_path)
     monkeypatch.setattr("tracefix.p2_protocol.P1_QUALIFIED_TASK_IDS", (task.id,))
     monkeypatch.setattr("tracefix.p2_protocol.COLLECTION_FAILURE_TASK_IDS", ())
-    monkeypatch.setattr("tracefix.p2_protocol.load_real_issue_tasks", lambda *args, **kwargs: (task,))
+    monkeypatch.setattr(
+        "tracefix.p2_protocol.load_real_issue_tasks", lambda *args, **kwargs: (task,)
+    )
     monkeypatch.setattr(
         "tracefix.p2_protocol.load_environment_recipes",
         lambda *_: {task.id: EnvironmentRecipe(task_id=task.id)},
     )
-    monkeypatch.setattr("tracefix.p2_protocol.resolve_managed_environment_python", lambda *_: Path(sys.executable))
+    monkeypatch.setattr(
+        "tracefix.p2_protocol.resolve_managed_environment_python",
+        lambda *_: Path(sys.executable),
+    )
     monkeypatch.setattr("tracefix.p2_protocol._git_commit", lambda *_: "d" * 40)
     sources = tmp_path / "sources"
     sources.mkdir()
@@ -974,7 +1029,9 @@ def test_p2_simulation_rejects_existing_lock(tmp_path, monkeypatch) -> None:
     task, _ = _fixture(tmp_path)
     monkeypatch.setattr("tracefix.p2_protocol.P1_QUALIFIED_TASK_IDS", (task.id,))
     monkeypatch.setattr("tracefix.p2_protocol.COLLECTION_FAILURE_TASK_IDS", ())
-    monkeypatch.setattr("tracefix.p2_protocol.load_real_issue_tasks", lambda *args, **kwargs: (task,))
+    monkeypatch.setattr(
+        "tracefix.p2_protocol.load_real_issue_tasks", lambda *args, **kwargs: (task,)
+    )
     monkeypatch.setattr(
         "tracefix.p2_protocol.load_environment_recipes",
         lambda *_: {task.id: EnvironmentRecipe(task_id=task.id)},
@@ -990,24 +1047,33 @@ def test_p2_simulation_rejects_existing_lock(tmp_path, monkeypatch) -> None:
         run_p2_simulation(P2ProtocolConfig(), experiment_dir=root)
 
 
-def test_p2_simulation_records_missing_agent_patch_as_infrastructure_error(tmp_path, monkeypatch) -> None:
+def test_p2_simulation_records_missing_agent_patch_as_infrastructure_error(
+    tmp_path, monkeypatch
+) -> None:
     task, source = _fixture(tmp_path)
     monkeypatch.setattr("tracefix.p2_protocol.P1_QUALIFIED_TASK_IDS", (task.id,))
     monkeypatch.setattr("tracefix.p2_protocol.COLLECTION_FAILURE_TASK_IDS", ())
-    monkeypatch.setattr("tracefix.p2_protocol.load_real_issue_tasks", lambda *args, **kwargs: (task,))
+    monkeypatch.setattr(
+        "tracefix.p2_protocol.load_real_issue_tasks", lambda *args, **kwargs: (task,)
+    )
     monkeypatch.setattr(
         "tracefix.p2_protocol.load_environment_recipes",
         lambda *_: {task.id: EnvironmentRecipe(task_id=task.id)},
     )
     monkeypatch.setattr("tracefix.p2_protocol._git_commit", lambda *_: "f" * 40)
-    monkeypatch.setattr("tracefix.p2_protocol.resolve_managed_environment_python", lambda *_: Path(sys.executable))
+    monkeypatch.setattr(
+        "tracefix.p2_protocol.resolve_managed_environment_python",
+        lambda *_: Path(sys.executable),
+    )
     protocol = build_p2_protocol(P2ProtocolConfig())
     monkeypatch.setattr("tracefix.p2_protocol.check_p2_inputs", lambda *args, **kwargs: type(
         "Check", (), {"protocol": protocol}
     )())
     class NoPatchRunner:
         def run(self, run_config):
-            return _FakeRunner().run(run_config).model_copy(update={"diff_path": None, "cost_usd": 0})
+            return _FakeRunner().run(run_config).model_copy(
+                update={"diff_path": None, "cost_usd": 0}
+            )
 
     monkeypatch.setattr("tracefix.p2_protocol.TraceFixRunner", lambda *_: NoPatchRunner())
     sources = tmp_path / "sources"

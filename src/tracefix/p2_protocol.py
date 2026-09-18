@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import os
 import subprocess
+from collections.abc import Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -15,6 +16,7 @@ from tracefix.context import ContextConfig
 from tracefix.exceptions import BenchmarkError
 from tracefix.messages import Message, MessageRole, ToolCall
 from tracefix.models import BaseLLM, LLMConfig, LLMResponse, TokenUsage
+from tracefix.models.litellm_adapter import LiteLLMAdapter
 from tracefix.paired import ExperimentArm
 from tracefix.provenance import inspect_test_environment
 from tracefix.real_benchmark import RealIssueTask, load_real_issue_tasks
@@ -23,6 +25,7 @@ from tracefix.real_experiment import validate_agent_patch_strict
 from tracefix.real_recipes import load_environment_recipes
 from tracefix.repository import RepoMapConfig
 from tracefix.runtime import RunConfig, TraceFixRunner
+from tracefix.tools.base import ToolSpec
 
 P1_QUALIFIED_TASK_IDS = (
     "psf__requests-1142", "psf__requests-1766", "pylint-dev__pylint-4551",
@@ -44,6 +47,25 @@ def _git_commit(root: Path) -> str:
     if completed.returncode:
         raise BenchmarkError("cannot determine P2 code commit")
     return completed.stdout.strip()
+
+
+def _tracked_diff(root: Path) -> bytes:
+    completed = subprocess.run(
+        ["git", "diff", "--binary", "HEAD"], cwd=root, capture_output=True, check=False
+    )
+    if completed.returncode:
+        raise BenchmarkError("cannot inspect P2 tracked worktree")
+    return completed.stdout
+
+
+def _code_hashes(root: Path) -> dict[str, str]:
+    source = root.expanduser().resolve() / "src" / "tracefix"
+    if not source.is_dir():
+        return {}
+    return {
+        path.relative_to(root.resolve()).as_posix(): _sha256(path)
+        for path in sorted(source.rglob("*.py"))
+    }
 
 
 class P2FormalRunRequirements(BaseModel):
@@ -114,6 +136,7 @@ class P2ProtocolRecord(BaseModel):
     collection_failure_task_ids: tuple[str, ...]
     task_hashes: dict[str, dict[str, str]]
     recipe_hashes: dict[str, str]
+    code_hashes: dict[str, str] = Field(default_factory=dict)
     budgets: dict[str, int]
     arm_configurations: dict[str, dict[str, bool | int]]
     schedule: tuple[P2TrialPlan, ...]
@@ -161,6 +184,8 @@ class P2CheckRecord(BaseModel):
     kind: str = "p2_input_check"
     generated_at: datetime
     code_commit: str
+    tracked_worktree_dirty: bool
+    tracked_diff_sha256: str
     protocol: P2ProtocolRecord
     inputs: tuple[P2InputCheck, ...]
 
@@ -210,6 +235,59 @@ class P2RunSummary(BaseModel):
     summary_path: str
 
 
+class P2CostLedgerRecord(BaseModel):
+    """正式实验的持久化费用状态；不确定请求会冻结后续调用。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    cap_usd: float
+    spent_usd: float = 0
+    reserved_usd: float = 0
+    request_count: int = 0
+    uncertain_request: bool = False
+
+
+class P2BudgetedLLM(BaseLLM):
+    """在实际供应商调用边界进行费用预留和核算。"""
+
+    def __init__(self, config: LLMConfig, *, ledger_path: Path,
+                 formal: P2FormalRunRequirements, input_upper_bound: int) -> None:
+        super().__init__(config)
+        self._delegate = LiteLLMAdapter(config.model_copy(update={"max_retries": 0}))
+        self._ledger_path = ledger_path
+        self._formal = formal
+        self._input_upper_bound = input_upper_bound
+
+    def complete(self, messages: Sequence[Message], tools: Sequence[ToolSpec] = ()) -> LLMResponse:
+        ledger = _read_cost_ledger(self._ledger_path, self._formal.total_cost_cap_usd)
+        if ledger.uncertain_request:
+            raise BenchmarkError("P2 cost ledger contains an uncertain request")
+        reservation = estimated_request_reservation(
+            self._formal, input_tokens=self._input_upper_bound,
+            output_tokens=self.config.max_output_tokens or 0,
+        )
+        if ledger.spent_usd + ledger.reserved_usd + reservation > ledger.cap_usd:
+            raise BenchmarkError("P2 total cost cap would be exceeded")
+        ledger = ledger.model_copy(update={
+            "reserved_usd": ledger.reserved_usd + reservation,
+            "request_count": ledger.request_count + 1,
+            "uncertain_request": True,
+        })
+        _write_cost_ledger(self._ledger_path, ledger)
+        response = self._delegate.complete(messages, tools)
+        usage = response.usage
+        actual = estimated_request_reservation(
+            self._formal, input_tokens=usage.input_tokens, output_tokens=usage.output_tokens,
+        )
+        ledger = ledger.model_copy(update={
+            "spent_usd": ledger.spent_usd + actual,
+            "reserved_usd": max(0, ledger.reserved_usd - reservation),
+            "uncertain_request": False,
+        })
+        _write_cost_ledger(self._ledger_path, ledger)
+        return response.model_copy(update={"usage": usage.model_copy(update={"cost_usd": actual})})
+
+
 def estimated_request_reservation(formal: P2FormalRunRequirements, *, input_tokens: int,
                                   output_tokens: int) -> float:
     """在供应商调用前按每次上限保留费用，避免超过总帽。"""
@@ -217,6 +295,22 @@ def estimated_request_reservation(formal: P2FormalRunRequirements, *, input_toke
         input_tokens * formal.input_cost_per_million_usd
         + output_tokens * formal.output_cost_per_million_usd
     ) / 1_000_000
+
+
+def _write_cost_ledger(path: Path, ledger: P2CostLedgerRecord) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(".tmp")
+    temporary.write_text(ledger.model_dump_json(indent=2), encoding="utf-8")
+    os.replace(temporary, path)
+
+
+def _read_cost_ledger(path: Path, cap_usd: float) -> P2CostLedgerRecord:
+    if not path.is_file():
+        return P2CostLedgerRecord(cap_usd=cap_usd)
+    ledger = P2CostLedgerRecord.model_validate_json(path.read_text(encoding="utf-8"))
+    if ledger.cap_usd != cap_usd:
+        raise BenchmarkError("P2 cost cap does not match the persisted ledger")
+    return ledger
 
 
 def write_trial_record(path: Path, record: P2TrialRecord) -> None:
@@ -299,6 +393,7 @@ def build_p2_protocol(
         collection_failure_task_ids=COLLECTION_FAILURE_TASK_IDS,
         task_hashes=_task_hashes(tasks),
         recipe_hashes={key: recipes[key].fingerprint for key in ids},
+        code_hashes=_code_hashes(repository_root),
         budgets={
             "max_input_tokens": config.max_input_tokens,
             "max_output_tokens": config.max_output_tokens,
@@ -362,8 +457,13 @@ def check_p2_inputs(
             source_clean=True, recipe_fingerprint=recipes[task.id].fingerprint,
             test_python=str(python), dependency_fingerprint=provenance.fingerprint_sha256,
         ))
+    tracked_diff = _tracked_diff(repository_root)
+    if config.formal is not None and tracked_diff:
+        raise BenchmarkError("formal P2 run requires a clean tracked worktree")
     return P2CheckRecord(
         generated_at=datetime.now(UTC), code_commit=_git_commit(repository_root),
+        tracked_worktree_dirty=bool(tracked_diff),
+        tracked_diff_sha256=hashlib.sha256(tracked_diff).hexdigest(),
         protocol=protocol, inputs=tuple(inputs),
     )
 
@@ -378,15 +478,54 @@ def write_p2_check(config: P2ProtocolConfig, *, repository_root: Path = Path("."
     return path
 
 
-def run_p2_simulation(
-    config: P2ProtocolConfig, *, experiment_dir: Path, repository_root: Path = Path(".")
+def run_p2_experiment(
+    config: P2ProtocolConfig, *, experiment_dir: Path, mode: str,
+    repository_root: Path = Path(".")
 ) -> P2RunSummary:
-    """执行并可恢复 60 项零费用工程演练；绝不创建模型供应商客户端。"""
+    """执行并恢复统一 P2 流程；仅 formal 模式创建供应商客户端。"""
+    if mode not in {"simulation", "formal"}:
+        raise BenchmarkError("unknown P2 execution mode", context={"mode": mode})
+    if mode == "formal" and config.formal is None:
+        raise BenchmarkError("formal P2 run requires complete commercial parameters")
     check = check_p2_inputs(config, repository_root=repository_root)
     protocol = check.protocol
     root = experiment_dir.expanduser().resolve()
     trials_root = root / "trials"
     trials_root.mkdir(parents=True, exist_ok=True)
+    protocol_path = root / "protocol.json"
+    if protocol_path.exists():
+        persisted = P2ProtocolRecord.model_validate_json(
+            protocol_path.read_text(encoding="utf-8")
+        )
+        comparable = protocol.model_copy(update={"generated_at": persisted.generated_at})
+        if comparable != persisted:
+            raise BenchmarkError("P2 resume protocol identity does not match")
+    else:
+        protocol_path.write_text(protocol.model_dump_json(indent=2), encoding="utf-8")
+    results: list[P2TrialRecord] = []
+    tasks = {
+        item.id: item
+        for item in load_real_issue_tasks(
+            config.tasks_dir, task_ids=protocol.qualified_task_ids
+        )
+    }
+    recipes = load_environment_recipes(config.recipes_dir)
+    if mode == "simulation":
+        runner = TraceFixRunner(P2SimulationLLM)
+        model_name = "tracefix/p2-simulation"
+    else:
+        assert config.formal is not None
+        ledger_path = root / "cost-ledger.json"
+        formal = config.formal
+
+        def formal_factory(llm_config: LLMConfig) -> BaseLLM:
+            return P2BudgetedLLM(
+                llm_config, ledger_path=ledger_path, formal=formal,
+                input_upper_bound=config.max_input_tokens,
+            )
+
+        runner = TraceFixRunner(formal_factory)
+        model_name = formal.model_name
     lock_path = root / ".p2-run.lock"
     try:
         lock_handle = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
@@ -397,18 +536,6 @@ def run_p2_simulation(
         ) from exc
     os.write(lock_handle, str(os.getpid()).encode())
     os.close(lock_handle)
-    protocol_path = root / "protocol.json"
-    if not protocol_path.exists():
-        protocol_path.write_text(protocol.model_dump_json(indent=2), encoding="utf-8")
-    results: list[P2TrialRecord] = []
-    tasks = {
-        item.id: item
-        for item in load_real_issue_tasks(
-            config.tasks_dir, task_ids=protocol.qualified_task_ids
-        )
-    }
-    recipes = load_environment_recipes(config.recipes_dir)
-    runner = TraceFixRunner(P2SimulationLLM)
     try:
       for plan in protocol.schedule:
         path = trials_root / f"{plan.sequence:03d}.json"
@@ -429,7 +556,7 @@ def run_p2_simulation(
         )
         result = runner.run(RunConfig(
             repo=config.source_root / task.id, task=task.problem_statement,
-            model_name="tracefix/p2-simulation", output_dir=root / "agent-runs",
+            model_name=model_name, output_dir=root / "agent-runs",
             env_file=None, llm_max_retries=0,
             per_request_output_tokens=config.per_request_output_tokens,
             test_python_executable=resolve_managed_environment_python(
@@ -437,10 +564,22 @@ def run_p2_simulation(
             ),
             test_pythonpath_entries=task.test_pythonpath_paths, agent_config=agent_config,
         ))
+        if mode == "formal" and config.formal is not None:
+            ledger = _read_cost_ledger(root / "cost-ledger.json", config.formal.total_cost_cap_usd)
+            if ledger.uncertain_request:
+                record = P2TrialRecord(
+                    sequence=plan.sequence, task_id=plan.task_id, arm=plan.arm,
+                    repetition=plan.repetition, mode=mode, status="request_uncertain",
+                    input_tokens=result.input_tokens, output_tokens=result.output_tokens,
+                    cost_usd=result.cost_usd, stop_reason=result.stop_reason,
+                    run_result_path=result.result_path,
+                )
+                write_trial_record(path, record)
+                raise BenchmarkError("P2 provider request state is uncertain; formal run stopped")
         if not result.diff_path:
             record = P2TrialRecord(
                 sequence=plan.sequence, task_id=plan.task_id, arm=plan.arm,
-                repetition=plan.repetition, mode="simulation", status="infrastructure_error",
+                repetition=plan.repetition, mode=mode, status="infrastructure_error",
                 input_tokens=result.input_tokens, output_tokens=result.output_tokens,
                 cost_usd=result.cost_usd, stop_reason=result.stop_reason,
                 run_result_path=result.result_path,
@@ -456,7 +595,7 @@ def run_p2_simulation(
         )
         record = P2TrialRecord(
             sequence=plan.sequence, task_id=plan.task_id, arm=plan.arm,
-            repetition=plan.repetition, mode="simulation", status="verification_complete",
+            repetition=plan.repetition, mode=mode, status="verification_complete",
             input_tokens=result.input_tokens, output_tokens=result.output_tokens,
             cost_usd=result.cost_usd, stop_reason=result.stop_reason,
             independent_passed=verification.eligible,
@@ -470,15 +609,33 @@ def run_p2_simulation(
             lock_path.unlink()
     summary_path = root / "summary.json"
     summary = P2RunSummary(
-        mode="simulation", protocol_path=str(protocol_path), trial_count=len(results),
+        mode=mode, protocol_path=str(protocol_path), trial_count=len(results),
         completed_count=sum(item.status == "verification_complete" for item in results),
         resumed_count=sum(item.resumed for item in results),
         input_tokens=sum(item.input_tokens for item in results),
         output_tokens=sum(item.output_tokens for item in results),
         cost_usd=sum(item.cost_usd or 0 for item in results), results=tuple(results),
-        engineering_simulation_only=True, summary_path=str(summary_path),
+        engineering_simulation_only=mode == "simulation", summary_path=str(summary_path),
     )
     temporary = summary_path.with_suffix(".tmp")
     temporary.write_text(summary.model_dump_json(indent=2), encoding="utf-8")
     os.replace(temporary, summary_path)
     return summary
+
+
+def run_p2_simulation(
+    config: P2ProtocolConfig, *, experiment_dir: Path, repository_root: Path = Path(".")
+) -> P2RunSummary:
+    return run_p2_experiment(
+        config, experiment_dir=experiment_dir, mode="simulation",
+        repository_root=repository_root,
+    )
+
+
+def run_p2_formal(
+    config: P2ProtocolConfig, *, experiment_dir: Path, repository_root: Path = Path(".")
+) -> P2RunSummary:
+    return run_p2_experiment(
+        config, experiment_dir=experiment_dir, mode="formal",
+        repository_root=repository_root,
+    )
