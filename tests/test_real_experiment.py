@@ -9,6 +9,12 @@ import pytest
 
 from tracefix import AgentConfig, AgentStatus, LLMConfig, RunResult
 from tracefix.exceptions import BenchmarkError
+from tracefix.p2_protocol import (
+    P2FormalRunRequirements,
+    P2ProtocolConfig,
+    build_p2_protocol,
+    write_p2_dry_run,
+)
 from tracefix.paired import ExperimentArm
 from tracefix.provenance import collect_run_provenance
 from tracefix.real_benchmark import RealIssueTask
@@ -28,6 +34,7 @@ from tracefix.real_experiment import (
     _pytest_evidence,
     _task_python,
     analyze_real_trajectory,
+    validate_agent_patch_strict,
     validate_real_task_behavior,
 )
 from tracefix.real_recipes import EnvironmentRecipe, ExpectedBaseFailure
@@ -619,6 +626,38 @@ def test_behavior_validation_records_isolated_source_import_probe(tmp_path: Path
     assert "owner__repo-1-gold" in result.gold_evidence.import_probe_path
 
 
+def test_strict_agent_patch_validation_rejects_empty_patch(tmp_path: Path) -> None:
+    task, source = _fixture(tmp_path)
+    patch = tmp_path / "empty.diff"
+    patch.write_text("", encoding="utf-8")
+
+    result = validate_agent_patch_strict(
+        task, source=source, agent_patch=patch, test_python=Path(sys.executable),
+        output_dir=tmp_path / "agent-validation",
+    )
+
+    assert result.patch_applied is False
+    assert result.eligible is False
+    assert result.reason == "empty_agent_patch"
+
+
+def test_strict_agent_patch_validation_accepts_complete_hidden_evidence(tmp_path: Path) -> None:
+    task, source = _fixture(tmp_path)
+    patch = tmp_path / "gold.diff"
+    patch.write_text(GOLD, encoding="utf-8")
+
+    result = validate_agent_patch_strict(
+        task, source=source, agent_patch=patch, test_python=Path(sys.executable),
+        output_dir=tmp_path / "strict-agent-validation",
+        recipe=EnvironmentRecipe(task_id=task.id, source_import_probe="pkg.a"),
+    )
+
+    assert result.patch_applied is True
+    assert result.eligible is True
+    assert result.evidence is not None
+    assert result.evidence.source_import_audit_valid is True
+
+
 def test_prescreen_runs_hidden_verification_and_applies_entry_gate(tmp_path, monkeypatch) -> None:
     task, source = _fixture(tmp_path)
     source_root = tmp_path / "sources"
@@ -752,6 +791,87 @@ def test_paired_runner_uses_ct_tc_ct_order_and_persists_summary(tmp_path, monkey
         ExperimentArm.CONTROL,
     ]
     assert Path(summary.summary_path).is_file()
+
+
+def test_p2_protocol_fixes_whole_system_60_trial_schedule_and_offline_gate(
+    tmp_path, monkeypatch
+) -> None:
+    """P2 固定三轮 C/T、T/C、C/T；未填写商业参数只能做零费用演练。"""
+    task, _ = _fixture(tmp_path)
+    ids = tuple(f"task-{index}" for index in range(10))
+    tasks = tuple(task.model_copy(update={"id": task_id}) for task_id in ids)
+    recipes = {
+        task_id: EnvironmentRecipe(task_id=task_id)
+        for task_id in ids
+    }
+    monkeypatch.setattr("tracefix.p2_protocol.P1_QUALIFIED_TASK_IDS", ids)
+    monkeypatch.setattr("tracefix.p2_protocol.COLLECTION_FAILURE_TASK_IDS", ids[-2:])
+    monkeypatch.setattr("tracefix.p2_protocol.load_real_issue_tasks", lambda *args, **kwargs: tasks)
+    monkeypatch.setattr("tracefix.p2_protocol.load_environment_recipes", lambda *_: recipes)
+    monkeypatch.setattr("tracefix.p2_protocol._git_commit", lambda *_: "a" * 40)
+    config = P2ProtocolConfig(output_dir=tmp_path / "runs")
+
+    protocol = build_p2_protocol(config)
+
+    assert len(protocol.schedule) == 60
+    assert protocol.formal_ready is False
+    assert protocol.formal_missing == (
+        "model_name", "provider", "pricing_source", "total_cost_cap_usd"
+    )
+    assert [item.arm for item in protocol.schedule[:2]] == [
+        ExperimentArm.CONTROL, ExperimentArm.TREATMENT
+    ]
+    assert [item.arm for item in protocol.schedule[20:22]] == [
+        ExperimentArm.TREATMENT, ExperimentArm.CONTROL
+    ]
+    assert protocol.schedule[0].token_optimization_enabled is False
+    assert protocol.schedule[1].context_compaction_enabled is True
+    path = write_p2_dry_run(config)
+    assert path.is_file()
+    assert "p2_whole_system_ct_protocol" in path.read_text(encoding="utf-8")
+
+
+def test_p2_protocol_accepts_complete_commercial_requirements(tmp_path, monkeypatch) -> None:
+    task, source = _fixture(tmp_path)
+    ids = tuple(f"task-{index}" for index in range(10))
+    tasks = tuple(task.model_copy(update={"id": task_id}) for task_id in ids)
+    recipes = {task_id: EnvironmentRecipe(task_id=task_id) for task_id in ids}
+    monkeypatch.setattr("tracefix.p2_protocol.P1_QUALIFIED_TASK_IDS", ids)
+    monkeypatch.setattr("tracefix.p2_protocol.COLLECTION_FAILURE_TASK_IDS", ids[-2:])
+    monkeypatch.setattr("tracefix.p2_protocol.load_real_issue_tasks", lambda *args, **kwargs: tasks)
+    monkeypatch.setattr("tracefix.p2_protocol.load_environment_recipes", lambda *_: recipes)
+
+    protocol = build_p2_protocol(
+        P2ProtocolConfig(
+            formal=P2FormalRunRequirements(
+                model_name="provider/model", provider="provider",
+                pricing_source="https://example.invalid/pricing", total_cost_cap_usd=1.0,
+            )
+        ),
+        repository_root=source,
+    )
+
+    assert protocol.formal_ready is True
+    assert protocol.formal_missing == ()
+    assert protocol.offline_only is False
+    assert protocol.code_commit == _run_git(source, "rev-parse", "HEAD")
+
+
+def test_p2_protocol_rejects_changed_repetition_and_missing_recipe(tmp_path, monkeypatch) -> None:
+    task, source = _fixture(tmp_path)
+    ids = tuple(f"task-{index}" for index in range(10))
+    tasks = tuple(task.model_copy(update={"id": task_id}) for task_id in ids)
+    monkeypatch.setattr("tracefix.p2_protocol.P1_QUALIFIED_TASK_IDS", ids)
+    monkeypatch.setattr("tracefix.p2_protocol.load_real_issue_tasks", lambda *args, **kwargs: tasks)
+    monkeypatch.setattr(
+        "tracefix.p2_protocol.load_environment_recipes",
+        lambda *_: {task_id: EnvironmentRecipe(task_id=task_id) for task_id in ids[:-1]},
+    )
+
+    with pytest.raises(ValueError, match="less than or equal"):
+        P2ProtocolConfig(repetitions=4)
+    with pytest.raises(BenchmarkError, match="missing environment recipes"):
+        build_p2_protocol(P2ProtocolConfig(), repository_root=source)
 
 
 def test_repo_map_prescreen_alternates_arms_and_keeps_context_policy(tmp_path, monkeypatch) -> None:

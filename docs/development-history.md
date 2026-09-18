@@ -400,3 +400,11 @@ Pylint 使用 3.10.20，pytest 与 Sphinx 使用 3.11.16。pytest 历史源码�
 在 Python 3.9.21 未复现、Sphinx-10323 待平台验证。每题保存收集与执行审计、JUnit、日志、实际导入
 路径和三次依赖指纹；未调用模型或产生费用。完整分类、配方边界与复现命令见
 [`experiments/v0.8.5-p1-real-environment-validation.md`](experiments/v0.8.5-p1-real-environment-validation.md)。
+
+### V0.8.6 P2：整体优化对照协议
+
+P2 将 P1 的 10 道行为合格任务固定为 60 次 C/T 运行：三轮 C/T、T/C、C/T，C 同时关闭行动优化、Repo Map
+与上下文压缩，T 同时开启三者。新增协议与零费用 CLI 会锁定任务、补丁、配方和代码身份；正式调用缺少
+模型、供应商、价格来源或总费用上限时拒绝启动。独立验收增加 Agent 补丁专用的严格入口，复用 P1 的审计、
+JUnit、源码和依赖漂移规则。零费用演练未初始化供应商客户端。详见
+[`experiments/v0.8.6-p2-whole-system-protocol.md`](experiments/v0.8.6-p2-whole-system-protocol.md)。

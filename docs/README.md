@@ -53,6 +53,8 @@
   环境所有权、双阶段审计、源码隔离及 P0 全量测试与覆盖率门槛。
 - [`experiments/v0.8.5-p1-real-environment-validation.md`](experiments/v0.8.5-p1-real-environment-validation.md)：
   新环境、固定配方下 12 道真实任务的统一 base/gold 行为复核。
+- [`experiments/v0.8.6-p2-whole-system-protocol.md`](experiments/v0.8.6-p2-whole-system-protocol.md)：
+  10 道任务、60 次整体优化 C/T 的冻结协议与零费用演练。
 - [`experiments/v0.8.4-real-environment-validation.md`](experiments/v0.8.4-real-environment-validation.md)：
   12 道真实候选严格重验的 10/12 行为资格结果与边界。
 - [`../benchmarks/experiments/v0.8.4-real-environment-validation.json`](../benchmarks/experiments/v0.8.4-real-environment-validation.json)：

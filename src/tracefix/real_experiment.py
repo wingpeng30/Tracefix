@@ -58,6 +58,21 @@ class RealTaskBehaviorValidation(BaseModel):
     eligibility_reason: str | None = None
 
 
+class AgentPatchValidation(BaseModel):
+    """P2 对 Agent 补丁的单次严格独立验收结果。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    task_id: str
+    patch_applied: bool
+    eligible: bool
+    reason: str | None = None
+    evidence: PytestExecutionEvidence | None = None
+    environment_before: TestEnvironmentProvenance
+    environment_after: TestEnvironmentProvenance
+    dependency_drift_detected: bool = False
+
+
 class ProcessEvidence(BaseModel):
     """一次构建、收集或测试子进程的完整可追溯证据。"""
 
@@ -381,6 +396,49 @@ def validate_real_task_behavior(
         eligible_for_llm_prescreen=eligible,
         qualification_type=qualification_type,
         eligibility_reason=reason,
+    )
+
+
+def validate_agent_patch_strict(
+    task: RealIssueTask, *, source: Path, agent_patch: Path, test_python: Path,
+    output_dir: Path, recipe: EnvironmentRecipe | None = None,
+) -> AgentPatchValidation:
+    """在全新 checkout 中验收 Agent 补丁，拒绝不完整证据与环境漂移。"""
+    output_dir.mkdir(parents=True, exist_ok=True)
+    task.validate_checkout(source)
+    before = inspect_test_environment(test_python, pythonpath_entries=task.test_pythonpath_paths)
+    checkout = output_dir / f"{task.id}-agent"
+    _create_behavior_checkout(source, checkout)
+    if not agent_patch.is_file() or not agent_patch.stat().st_size:
+        return AgentPatchValidation(
+            task_id=task.id, patch_applied=False, eligible=False, reason="empty_agent_patch",
+            environment_before=before, environment_after=before,
+        )
+    try:
+        _git(["apply", str(agent_patch)], checkout)
+        _git(["apply", str(task.test_patch_path)], checkout)
+    except BenchmarkError as exc:
+        after = inspect_test_environment(test_python, pythonpath_entries=task.test_pythonpath_paths)
+        return AgentPatchValidation(
+            task_id=task.id, patch_applied=False, eligible=False, reason=str(exc),
+            environment_before=before, environment_after=after,
+            dependency_drift_detected=before.fingerprint_sha256 != after.fingerprint_sha256,
+        )
+    result = _run_qualified_pytest(task, checkout, test_python, f"p2-{task.id}-agent", recipe)
+    after = inspect_test_environment(test_python, pythonpath_entries=task.test_pythonpath_paths)
+    evidence = _pytest_evidence(result, checkout)
+    drift = before.fingerprint_sha256 != after.fingerprint_sha256
+    eligible = (
+        evidence.status == "passed" and evidence.junit_available and evidence.audit_available
+        and evidence.collection_audit_available and evidence.source_import_audit_valid
+        and bool(evidence.executed_node_ids) and evidence.skipped_count == 0
+        and evidence.xfailed_count == 0 and evidence.xpassed_count == 0 and not drift
+    )
+    return AgentPatchValidation(
+        task_id=task.id, patch_applied=True, eligible=eligible,
+        reason=None if eligible else evidence.audit_diagnostic or evidence.diagnostic or evidence.status,
+        evidence=evidence, environment_before=before, environment_after=after,
+        dependency_drift_detected=drift,
     )
 
 

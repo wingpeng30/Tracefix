@@ -16,6 +16,7 @@ from tracefix.agent import AgentConfig, AgentStatus
 from tracefix.benchmark import BenchmarkConfig, BenchmarkRunner
 from tracefix.context import ContextConfig
 from tracefix.exceptions import BenchmarkError, TraceFixError
+from tracefix.p2_protocol import P2ProtocolConfig, write_p2_dry_run
 from tracefix.paired import PairedExperimentConfig, PairedExperimentRunner
 from tracefix.real_benchmark import load_real_issue_tasks
 from tracefix.real_candidates import CandidateCollectionConfig, collect_candidates
@@ -291,6 +292,19 @@ def build_parser() -> argparse.ArgumentParser:
     )
     real_paired_parser.add_argument("--repetitions", type=int, default=3)
     _add_shared_options(real_paired_parser)
+
+    p2_parser = subparsers.add_parser(
+        "p2-dry-run", help="生成 P2 整体优化 C/T 协议与零费用演练记录，不调用 LLM"
+    )
+    p2_parser.add_argument("--tasks", type=Path, default=Path("benchmarks/real_candidates"))
+    p2_parser.add_argument("--recipes", type=Path, default=Path("benchmarks/real_recipes"))
+    p2_parser.add_argument(
+        "--source-root", type=Path, default=Path("runs/real-candidate-validation-v080b")
+    )
+    p2_parser.add_argument(
+        "--test-env-root", type=Path, default=Path("runs/p1-revalidation-20260917/environments")
+    )
+    p2_parser.add_argument("--output-dir", type=Path, default=Path("runs"))
 
     retrieval_parser = subparsers.add_parser(
         "retrieval-eval", help="离线比较文件名关键词基线与 Repo Map 的文件定位能力"
@@ -696,6 +710,20 @@ def main(argv: list[str] | None = None) -> int:
                     "interpreters": [item.model_dump() for item in interpreters],
                 }
             )
+            return 0
+
+        if args.command == "p2-dry-run":
+            path = write_p2_dry_run(
+                P2ProtocolConfig(
+                    tasks_dir=args.tasks,
+                    recipes_dir=args.recipes,
+                    source_root=args.source_root,
+                    test_env_root=args.test_env_root,
+                    output_dir=args.output_dir,
+                )
+            )
+            print("P2 零费用演练完成：未初始化供应商客户端，正式实验参数仍缺失。")
+            print(f"协议文件: {path}")
             return 0
 
         if args.command == "clean-real-artifacts":
