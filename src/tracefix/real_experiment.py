@@ -416,6 +416,22 @@ def validate_agent_patch_strict(
         )
     try:
         _git(["apply", str(agent_patch)], checkout)
+        changed = _git(["diff", "--name-only"], checkout).stdout.splitlines()
+        forbidden = _changed_test_files(task, tuple(changed))
+        forbidden += tuple(
+            path for path in changed
+            if Path(path).name in {"conftest.py", "pytest.ini", "tox.ini", "pyproject.toml"}
+        )
+        if forbidden:
+            after = inspect_test_environment(
+                test_python, pythonpath_entries=task.test_pythonpath_paths
+            )
+            return AgentPatchValidation(
+                task_id=task.id, patch_applied=True, eligible=False,
+                reason="agent_modified_test_or_pytest_configuration",
+                environment_before=before, environment_after=after,
+                dependency_drift_detected=before.fingerprint_sha256 != after.fingerprint_sha256,
+            )
         _git(["apply", str(task.test_patch_path)], checkout)
     except BenchmarkError as exc:
         after = inspect_test_environment(test_python, pythonpath_entries=task.test_pythonpath_paths)
@@ -1689,7 +1705,7 @@ def _returncode(result: ToolResult) -> int | None:
     return value if isinstance(value, int) else None
 
 
-def _git(arguments: list[str], cwd: Path) -> None:
+def _git(arguments: list[str], cwd: Path) -> subprocess.CompletedProcess[str]:
     """执行实验器内部的固定 Git 操作，并统一保留可诊断错误。"""
     try:
         result = subprocess.run(
@@ -1716,3 +1732,4 @@ def _git(arguments: list[str], cwd: Path) -> None:
                 "stderr": result.stderr.strip(),
             },
         )
+    return result

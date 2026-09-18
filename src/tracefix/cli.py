@@ -16,7 +16,7 @@ from tracefix.agent import AgentConfig, AgentStatus
 from tracefix.benchmark import BenchmarkConfig, BenchmarkRunner
 from tracefix.context import ContextConfig
 from tracefix.exceptions import BenchmarkError, TraceFixError
-from tracefix.p2_protocol import P2ProtocolConfig, write_p2_dry_run
+from tracefix.p2_protocol import P2ProtocolConfig, run_p2_simulation, write_p2_dry_run
 from tracefix.paired import PairedExperimentConfig, PairedExperimentRunner
 from tracefix.real_benchmark import load_real_issue_tasks
 from tracefix.real_candidates import CandidateCollectionConfig, collect_candidates
@@ -305,6 +305,10 @@ def build_parser() -> argparse.ArgumentParser:
         "--test-env-root", type=Path, default=Path("runs/p1-revalidation-20260917/environments")
     )
     p2_parser.add_argument("--output-dir", type=Path, default=Path("runs"))
+    p2_run = subparsers.add_parser("p2-run", help="执行或恢复 P2 零费用工程演练")
+    p2_run.add_argument("--experiment-dir", type=Path, required=True)
+    p2_run.add_argument("--tasks", type=Path, default=Path("benchmarks/real_candidates"))
+    p2_run.add_argument("--recipes", type=Path, default=Path("benchmarks/real_recipes"))
 
     retrieval_parser = subparsers.add_parser(
         "retrieval-eval", help="离线比较文件名关键词基线与 Repo Map 的文件定位能力"
@@ -724,6 +728,15 @@ def main(argv: list[str] | None = None) -> int:
             )
             print("P2 零费用演练完成：未初始化供应商客户端，正式实验参数仍缺失。")
             print(f"协议文件: {path}")
+            return 0
+
+        if args.command == "p2-run":
+            summary = run_p2_simulation(
+                P2ProtocolConfig(tasks_dir=args.tasks, recipes_dir=args.recipes),
+                experiment_dir=args.experiment_dir,
+            )
+            print(f"P2 零费用工程演练: {summary.completed_count}/{summary.trial_count}")
+            print(f"恢复复用: {summary.resumed_count}; 汇总: {summary.summary_path}")
             return 0
 
         if args.command == "clean-real-artifacts":

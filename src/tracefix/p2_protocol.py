@@ -3,16 +3,25 @@
 from __future__ import annotations
 
 import hashlib
+import os
 import subprocess
 from datetime import UTC, datetime
 from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from tracefix.agent import AgentConfig
+from tracefix.context import ContextConfig
 from tracefix.exceptions import BenchmarkError
+from tracefix.messages import Message, MessageRole, ToolCall
+from tracefix.models import BaseLLM, LLMConfig, LLMResponse, TokenUsage
 from tracefix.paired import ExperimentArm
 from tracefix.real_benchmark import RealIssueTask, load_real_issue_tasks
+from tracefix.real_environment import resolve_managed_environment_python
+from tracefix.real_experiment import validate_agent_patch_strict
 from tracefix.real_recipes import load_environment_recipes
+from tracefix.repository import RepoMapConfig
+from tracefix.runtime import RunConfig, TraceFixRunner
 
 P1_QUALIFIED_TASK_IDS = (
     "psf__requests-1142", "psf__requests-1766", "pylint-dev__pylint-4551",
@@ -45,6 +54,8 @@ class P2FormalRunRequirements(BaseModel):
     provider: str = Field(min_length=1)
     pricing_source: str = Field(min_length=1)
     total_cost_cap_usd: float = Field(gt=0)
+    input_cost_per_million_usd: float = Field(gt=0)
+    output_cost_per_million_usd: float = Field(gt=0)
 
 
 class P2ProtocolConfig(BaseModel):
@@ -106,6 +117,101 @@ class P2ProtocolRecord(BaseModel):
     arm_configurations: dict[str, dict[str, bool | int]]
     schedule: tuple[P2TrialPlan, ...]
     formal: P2FormalRunRequirements | None = None
+
+
+class P2TrialRecord(BaseModel):
+    """一项可恢复试次；模拟与正式模式写入同一结构。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    sequence: int
+    task_id: str
+    arm: ExperimentArm
+    repetition: int
+    mode: str
+    status: str
+    input_tokens: int = 0
+    output_tokens: int = 0
+    cost_usd: float | None = None
+    stop_reason: str | None = None
+    independent_passed: bool | None = None
+    resumed: bool = False
+    run_result_path: str | None = None
+    verification_eligible: bool | None = None
+
+
+class P2SimulationLLM(BaseLLM):
+    """只写无答案标记文件的确定性模型，用于验证真实 Agent 工具闭环。"""
+
+    def __init__(self, config: LLMConfig) -> None:
+        super().__init__(config)
+        self.calls = 0
+
+    def complete(self, messages, tools=()) -> LLMResponse:
+        self.calls += 1
+        if self.calls == 1:
+            message = Message(
+                role=MessageRole.ASSISTANT,
+                tool_calls=(ToolCall(
+                    id="simulation-marker", name="apply_patch",
+                    arguments={"patch": (
+                        "*** Begin Patch\n*** Add File: tracefix_simulation_note.txt\n"
+                        "+P2 engineering simulation; no task answer.\n*** End Patch"
+                    )},
+                ),),
+            )
+        else:
+            message = Message(role=MessageRole.ASSISTANT, content="simulation complete")
+        return LLMResponse(
+            message=message,
+            usage=TokenUsage(input_tokens=1, output_tokens=1, total_tokens=2, cost_usd=0),
+            model_name=self.config.model_name,
+        )
+
+
+class P2RunSummary(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    mode: str
+    protocol_path: str
+    trial_count: int
+    completed_count: int
+    resumed_count: int
+    input_tokens: int
+    output_tokens: int
+    cost_usd: float
+    results: tuple[P2TrialRecord, ...]
+    engineering_simulation_only: bool
+    summary_path: str
+
+
+def estimated_request_reservation(formal: P2FormalRunRequirements, *, input_tokens: int,
+                                  output_tokens: int) -> float:
+    """在供应商调用前按每次上限保留费用，避免超过总帽。"""
+    return (
+        input_tokens * formal.input_cost_per_million_usd
+        + output_tokens * formal.output_cost_per_million_usd
+    ) / 1_000_000
+
+
+def write_trial_record(path: Path, record: P2TrialRecord) -> None:
+    """原子更新单独试次记录，崩溃时保留上一份完整 JSON。"""
+    temporary = path.with_suffix(".tmp")
+    temporary.write_text(record.model_dump_json(indent=2), encoding="utf-8")
+    os.replace(temporary, path)
+
+
+def read_completed_trial(path: Path) -> P2TrialRecord | None:
+    """仅复用明确完成的试次；未知或部分状态必须停止人工处理。"""
+    if not path.is_file():
+        return None
+    record = P2TrialRecord.model_validate_json(path.read_text(encoding="utf-8"))
+    if record.status == "completed":
+        return record.model_copy(update={"resumed": True})
+    raise BenchmarkError(
+        "P2 trial has uncertain prior state; do not resend request",
+        context={"path": str(path)},
+    )
 
 
 def _task_hashes(tasks: tuple[RealIssueTask, ...]) -> dict[str, dict[str, str]]:
@@ -203,3 +309,83 @@ def write_p2_dry_run(config: P2ProtocolConfig, *, repository_root: Path = Path("
     path = root / "p2-protocol.json"
     path.write_text(protocol.model_dump_json(indent=2), encoding="utf-8")
     return path
+
+
+def run_p2_simulation(
+    config: P2ProtocolConfig, *, experiment_dir: Path, repository_root: Path = Path(".")
+) -> P2RunSummary:
+    """执行并可恢复 60 项零费用工程演练；绝不创建模型供应商客户端。"""
+    protocol = build_p2_protocol(config, repository_root=repository_root)
+    root = experiment_dir.expanduser().resolve()
+    trials_root = root / "trials"
+    trials_root.mkdir(parents=True, exist_ok=True)
+    protocol_path = root / "protocol.json"
+    if not protocol_path.exists():
+        protocol_path.write_text(protocol.model_dump_json(indent=2), encoding="utf-8")
+    results: list[P2TrialRecord] = []
+    tasks = {
+        item.id: item
+        for item in load_real_issue_tasks(
+            config.tasks_dir, task_ids=protocol.qualified_task_ids
+        )
+    }
+    recipes = load_environment_recipes(config.recipes_dir)
+    runner = TraceFixRunner(P2SimulationLLM)
+    for plan in protocol.schedule:
+        path = trials_root / f"{plan.sequence:03d}.json"
+        existing = read_completed_trial(path)
+        if existing:
+            results.append(existing)
+            continue
+        task = tasks[plan.task_id]
+        enabled = plan.arm is ExperimentArm.TREATMENT
+        agent_config = AgentConfig(
+            max_steps=config.max_steps, max_input_tokens=config.max_input_tokens,
+            max_output_tokens=config.max_output_tokens, wall_time_seconds=config.wall_time_seconds,
+            max_test_runs=config.max_test_runs, token_optimization_enabled=enabled,
+            context=ContextConfig(
+                enabled=enabled, compaction_trigger_tokens=config.context_trigger_tokens
+            ),
+            repo_map=RepoMapConfig(enabled=enabled), record_request_views=True,
+        )
+        result = runner.run(RunConfig(
+            repo=config.source_root / task.id, task=task.problem_statement,
+            model_name="tracefix/p2-simulation", output_dir=root / "agent-runs",
+            env_file=None, llm_max_retries=0,
+            per_request_output_tokens=config.per_request_output_tokens,
+            test_python_executable=resolve_managed_environment_python(
+                config.test_env_root, task.id
+            ),
+            test_pythonpath_entries=task.test_pythonpath_paths, agent_config=agent_config,
+        ))
+        verification = validate_agent_patch_strict(
+            task, source=config.source_root / task.id, agent_patch=Path(result.diff_path or ""),
+            test_python=resolve_managed_environment_python(config.test_env_root, task.id),
+            output_dir=root / "verification" / f"{plan.sequence:03d}",
+            recipe=recipes[task.id],
+        )
+        record = P2TrialRecord(
+            sequence=plan.sequence, task_id=plan.task_id, arm=plan.arm,
+            repetition=plan.repetition, mode="simulation", status="completed",
+            input_tokens=result.input_tokens, output_tokens=result.output_tokens,
+            cost_usd=result.cost_usd, stop_reason=result.stop_reason,
+            independent_passed=verification.eligible,
+            verification_eligible=verification.eligible,
+            run_result_path=result.result_path,
+        )
+        write_trial_record(path, record)
+        results.append(record)
+    summary_path = root / "summary.json"
+    summary = P2RunSummary(
+        mode="simulation", protocol_path=str(protocol_path), trial_count=len(results),
+        completed_count=sum(item.status == "completed" for item in results),
+        resumed_count=sum(item.resumed for item in results),
+        input_tokens=sum(item.input_tokens for item in results),
+        output_tokens=sum(item.output_tokens for item in results),
+        cost_usd=sum(item.cost_usd or 0 for item in results), results=tuple(results),
+        engineering_simulation_only=True, summary_path=str(summary_path),
+    )
+    temporary = summary_path.with_suffix(".tmp")
+    temporary.write_text(summary.model_dump_json(indent=2), encoding="utf-8")
+    os.replace(temporary, summary_path)
+    return summary

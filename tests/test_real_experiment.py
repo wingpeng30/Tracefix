@@ -12,8 +12,13 @@ from tracefix.exceptions import BenchmarkError
 from tracefix.p2_protocol import (
     P2FormalRunRequirements,
     P2ProtocolConfig,
+    P2TrialRecord,
     build_p2_protocol,
+    estimated_request_reservation,
+    read_completed_trial,
+    run_p2_simulation,
     write_p2_dry_run,
+    write_trial_record,
 )
 from tracefix.paired import ExperimentArm
 from tracefix.provenance import collect_run_provenance
@@ -846,6 +851,7 @@ def test_p2_protocol_accepts_complete_commercial_requirements(tmp_path, monkeypa
             formal=P2FormalRunRequirements(
                 model_name="provider/model", provider="provider",
                 pricing_source="https://example.invalid/pricing", total_cost_cap_usd=1.0,
+                input_cost_per_million_usd=1.0, output_cost_per_million_usd=2.0,
             )
         ),
         repository_root=source,
@@ -855,6 +861,63 @@ def test_p2_protocol_accepts_complete_commercial_requirements(tmp_path, monkeypa
     assert protocol.formal_missing == ()
     assert protocol.offline_only is False
     assert protocol.code_commit == _run_git(source, "rev-parse", "HEAD")
+
+
+def test_p2_trial_records_resume_only_completed_and_reserve_cost(tmp_path: Path) -> None:
+    record = P2TrialRecord(
+        sequence=1, task_id="task", arm=ExperimentArm.CONTROL, repetition=1,
+        mode="simulation", status="completed", input_tokens=10, output_tokens=5, cost_usd=0,
+    )
+    path = tmp_path / "trial.json"
+    write_trial_record(path, record)
+    resumed = read_completed_trial(path)
+    assert resumed is not None and resumed.resumed is True
+    requirements = P2FormalRunRequirements(
+        model_name="provider/model", provider="provider", pricing_source="source",
+        total_cost_cap_usd=1, input_cost_per_million_usd=2, output_cost_per_million_usd=4,
+    )
+    assert (
+        estimated_request_reservation(
+            requirements, input_tokens=1_000_000, output_tokens=500_000
+        )
+        == 4
+    )
+    write_trial_record(path, record.model_copy(update={"status": "request_uncertain"}))
+    with pytest.raises(BenchmarkError, match="uncertain"):
+        read_completed_trial(path)
+
+
+def test_p2_simulation_completes_and_resumes_all_trials(tmp_path, monkeypatch) -> None:
+    task, source = _fixture(tmp_path)
+    ids = tuple(f"task-{index}" for index in range(10))
+    tasks = tuple(task.model_copy(update={"id": task_id}) for task_id in ids)
+    recipes = {task_id: EnvironmentRecipe(task_id=task_id) for task_id in ids}
+    monkeypatch.setattr("tracefix.p2_protocol.P1_QUALIFIED_TASK_IDS", ids)
+    monkeypatch.setattr("tracefix.p2_protocol.COLLECTION_FAILURE_TASK_IDS", ids[-2:])
+    monkeypatch.setattr("tracefix.p2_protocol.load_real_issue_tasks", lambda *args, **kwargs: tasks)
+    monkeypatch.setattr("tracefix.p2_protocol.load_environment_recipes", lambda *_: recipes)
+    monkeypatch.setattr("tracefix.p2_protocol._git_commit", lambda *_: "c" * 40)
+    sources = tmp_path / "sources"
+    sources.mkdir()
+    for task_id in ids:
+        _run_git(tmp_path, "clone", "--quiet", str(source), str(sources / task_id))
+    monkeypatch.setattr(
+        "tracefix.p2_protocol.resolve_managed_environment_python",
+        lambda *_: Path(sys.executable),
+    )
+    class Verification:
+        eligible = False
+    monkeypatch.setattr(
+        "tracefix.p2_protocol.validate_agent_patch_strict",
+        lambda *args, **kwargs: Verification(),
+    )
+    root = tmp_path / "simulation"
+    config = P2ProtocolConfig(source_root=sources)
+    first = run_p2_simulation(config, experiment_dir=root)
+    resumed = run_p2_simulation(config, experiment_dir=root)
+    assert first.completed_count == 60 and first.resumed_count == 0
+    assert resumed.completed_count == 60 and resumed.resumed_count == 60
+    assert resumed.cost_usd == 0
 
 
 def test_p2_protocol_rejects_changed_repetition_and_missing_recipe(tmp_path, monkeypatch) -> None:
