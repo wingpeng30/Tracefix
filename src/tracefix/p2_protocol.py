@@ -162,6 +162,7 @@ class P2TrialRecord(BaseModel):
     resumed: bool = False
     run_result_path: str | None = None
     verification_eligible: bool | None = None
+    verification_path: str | None = None
 
 
 class P2InputCheck(BaseModel):
@@ -205,8 +206,11 @@ class P2SimulationLLM(BaseLLM):
                 tool_calls=(ToolCall(
                     id="simulation-marker", name="apply_patch",
                     arguments={"patch": (
-                        "*** Begin Patch\n*** Add File: tracefix_simulation_note.txt\n"
-                        "+P2 engineering simulation; no task answer.\n*** End Patch"
+                        "diff --git a/tracefix_simulation_note.txt "
+                        "b/tracefix_simulation_note.txt\n"
+                        "new file mode 100644\n--- /dev/null\n"
+                        "+++ b/tracefix_simulation_note.txt\n@@ -0,0 +1 @@\n"
+                        "+P2 engineering simulation; no task answer.\n"
                     )},
                 ),),
             )
@@ -593,6 +597,9 @@ def run_p2_experiment(
             output_dir=root / "verification" / f"{plan.sequence:03d}",
             recipe=recipes[task.id],
         )
+        verification_path = root / "verification" / f"{plan.sequence:03d}" / "result.json"
+        verification_path.parent.mkdir(parents=True, exist_ok=True)
+        verification_path.write_text(verification.model_dump_json(indent=2), encoding="utf-8")
         record = P2TrialRecord(
             sequence=plan.sequence, task_id=plan.task_id, arm=plan.arm,
             repetition=plan.repetition, mode=mode, status="verification_complete",
@@ -601,6 +608,7 @@ def run_p2_experiment(
             independent_passed=verification.eligible,
             verification_eligible=verification.eligible,
             run_result_path=result.result_path,
+            verification_path=str(verification_path),
         )
         write_trial_record(path, record)
         results.append(record)

@@ -16,6 +16,7 @@ from tracefix.p2_protocol import (
     P2CostLedgerRecord,
     P2FormalRunRequirements,
     P2ProtocolConfig,
+    P2SimulationLLM,
     P2TrialRecord,
     build_p2_protocol,
     check_p2_inputs,
@@ -952,6 +953,14 @@ def test_p2_budgeted_llm_reserves_reconciles_and_freezes_uncertain_request(tmp_p
         llm.complete(())
 
 
+def test_p2_simulation_model_emits_supported_nonempty_git_patch() -> None:
+    response = P2SimulationLLM(LLMConfig(model_name="simulation")).complete(())
+    patch = response.message.tool_calls[0].arguments["patch"]
+    assert isinstance(patch, str)
+    assert patch.startswith("diff --git ")
+    assert "--- /dev/null" in patch
+
+
 def test_p2_formal_mode_rejects_missing_commercial_parameters(tmp_path) -> None:
     with pytest.raises(BenchmarkError, match="commercial parameters"):
         run_p2_experiment(
@@ -979,6 +988,9 @@ def test_p2_simulation_completes_and_resumes_all_trials(tmp_path, monkeypatch) -
     )
     class Verification:
         eligible = False
+
+        def model_dump_json(self, **kwargs):
+            return '{"eligible": false}'
     monkeypatch.setattr(
         "tracefix.p2_protocol.validate_agent_patch_strict",
         lambda *args, **kwargs: Verification(),
