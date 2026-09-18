@@ -16,7 +16,12 @@ from tracefix.agent import AgentConfig, AgentStatus
 from tracefix.benchmark import BenchmarkConfig, BenchmarkRunner
 from tracefix.context import ContextConfig
 from tracefix.exceptions import BenchmarkError, TraceFixError
-from tracefix.p2_protocol import P2ProtocolConfig, run_p2_simulation, write_p2_dry_run
+from tracefix.p2_protocol import (
+    P2ProtocolConfig,
+    run_p2_simulation,
+    write_p2_check,
+    write_p2_dry_run,
+)
 from tracefix.paired import PairedExperimentConfig, PairedExperimentRunner
 from tracefix.real_benchmark import load_real_issue_tasks
 from tracefix.real_candidates import CandidateCollectionConfig, collect_candidates
@@ -309,6 +314,20 @@ def build_parser() -> argparse.ArgumentParser:
     p2_run.add_argument("--experiment-dir", type=Path, required=True)
     p2_run.add_argument("--tasks", type=Path, default=Path("benchmarks/real_candidates"))
     p2_run.add_argument("--recipes", type=Path, default=Path("benchmarks/real_recipes"))
+    p2_run.add_argument("--source-root", type=Path, required=True)
+    p2_run.add_argument(
+        "--test-env-root", type=Path,
+        default=Path("runs/p1-revalidation-20260917/environments"),
+    )
+    p2_check = subparsers.add_parser("p2-check", help="检查并冻结 P2 的源码、配方和受管环境")
+    p2_check.add_argument("--tasks", type=Path, default=Path("benchmarks/real_candidates"))
+    p2_check.add_argument("--recipes", type=Path, default=Path("benchmarks/real_recipes"))
+    p2_check.add_argument("--source-root", type=Path, required=True)
+    p2_check.add_argument(
+        "--test-env-root", type=Path,
+        default=Path("runs/p1-revalidation-20260917/environments"),
+    )
+    p2_check.add_argument("--output-dir", type=Path, default=Path("runs"))
 
     retrieval_parser = subparsers.add_parser(
         "retrieval-eval", help="离线比较文件名关键词基线与 Repo Map 的文件定位能力"
@@ -732,11 +751,25 @@ def main(argv: list[str] | None = None) -> int:
 
         if args.command == "p2-run":
             summary = run_p2_simulation(
-                P2ProtocolConfig(tasks_dir=args.tasks, recipes_dir=args.recipes),
+                P2ProtocolConfig(
+                    tasks_dir=args.tasks, recipes_dir=args.recipes,
+                    source_root=args.source_root, test_env_root=args.test_env_root,
+                ),
                 experiment_dir=args.experiment_dir,
             )
             print(f"P2 零费用工程演练: {summary.completed_count}/{summary.trial_count}")
             print(f"恢复复用: {summary.resumed_count}; 汇总: {summary.summary_path}")
+            return 0
+
+        if args.command == "p2-check":
+            path = write_p2_check(
+                P2ProtocolConfig(
+                    tasks_dir=args.tasks, recipes_dir=args.recipes,
+                    source_root=args.source_root, test_env_root=args.test_env_root,
+                    output_dir=args.output_dir,
+                )
+            )
+            print(f"P2 输入检查通过：{path}")
             return 0
 
         if args.command == "clean-real-artifacts":

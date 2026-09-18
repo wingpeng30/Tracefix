@@ -16,6 +16,7 @@ from tracefix.exceptions import BenchmarkError
 from tracefix.messages import Message, MessageRole, ToolCall
 from tracefix.models import BaseLLM, LLMConfig, LLMResponse, TokenUsage
 from tracefix.paired import ExperimentArm
+from tracefix.provenance import inspect_test_environment
 from tracefix.real_benchmark import RealIssueTask, load_real_issue_tasks
 from tracefix.real_environment import resolve_managed_environment_python
 from tracefix.real_experiment import validate_agent_patch_strict
@@ -140,6 +141,30 @@ class P2TrialRecord(BaseModel):
     verification_eligible: bool | None = None
 
 
+class P2InputCheck(BaseModel):
+    """冻结运行前对每题源码、配方和受管解释器的可审计检查。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    task_id: str
+    source: str
+    source_commit: str
+    source_clean: bool
+    recipe_fingerprint: str
+    test_python: str
+    dependency_fingerprint: str
+
+
+class P2CheckRecord(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    kind: str = "p2_input_check"
+    generated_at: datetime
+    code_commit: str
+    protocol: P2ProtocolRecord
+    inputs: tuple[P2InputCheck, ...]
+
+
 class P2SimulationLLM(BaseLLM):
     """只写无答案标记文件的确定性模型，用于验证真实 Agent 工具闭环。"""
 
@@ -206,7 +231,7 @@ def read_completed_trial(path: Path) -> P2TrialRecord | None:
     if not path.is_file():
         return None
     record = P2TrialRecord.model_validate_json(path.read_text(encoding="utf-8"))
-    if record.status == "completed":
+    if record.status == "verification_complete":
         return record.model_copy(update={"resumed": True})
     raise BenchmarkError(
         "P2 trial has uncertain prior state; do not resend request",
@@ -311,14 +336,67 @@ def write_p2_dry_run(config: P2ProtocolConfig, *, repository_root: Path = Path("
     return path
 
 
+def check_p2_inputs(
+    config: P2ProtocolConfig, *, repository_root: Path = Path(".")
+) -> P2CheckRecord:
+    """拒绝脏源码、错误提交、缺失配方或不健康的受管环境。"""
+    protocol = build_p2_protocol(config, repository_root=repository_root)
+    tasks = load_real_issue_tasks(config.tasks_dir, task_ids=protocol.qualified_task_ids)
+    recipes = load_environment_recipes(config.recipes_dir)
+    inputs: list[P2InputCheck] = []
+    for task in tasks:
+        source = (config.source_root / task.id).expanduser().resolve()
+        task.validate_checkout(source)
+        dirty = subprocess.run(
+            ["git", "status", "--porcelain"], cwd=source, capture_output=True,
+            text=True, check=False,
+        )
+        if dirty.returncode or dirty.stdout.strip():
+            raise BenchmarkError("P2 source checkout is not clean", context={"task_id": task.id})
+        python = resolve_managed_environment_python(config.test_env_root, task.id)
+        provenance = inspect_test_environment(
+            python, pythonpath_entries=task.test_pythonpath_paths
+        )
+        inputs.append(P2InputCheck(
+            task_id=task.id, source=str(source), source_commit=task.base_commit,
+            source_clean=True, recipe_fingerprint=recipes[task.id].fingerprint,
+            test_python=str(python), dependency_fingerprint=provenance.fingerprint_sha256,
+        ))
+    return P2CheckRecord(
+        generated_at=datetime.now(UTC), code_commit=_git_commit(repository_root),
+        protocol=protocol, inputs=tuple(inputs),
+    )
+
+
+def write_p2_check(config: P2ProtocolConfig, *, repository_root: Path = Path(".")) -> Path:
+    """保存 P2 输入冻结检查；任何不匹配都会在写入前中止。"""
+    record = check_p2_inputs(config, repository_root=repository_root)
+    root = config.output_dir.expanduser().resolve() / "p2-check"
+    root.mkdir(parents=True, exist_ok=False)
+    path = root / "p2-input-check.json"
+    path.write_text(record.model_dump_json(indent=2), encoding="utf-8")
+    return path
+
+
 def run_p2_simulation(
     config: P2ProtocolConfig, *, experiment_dir: Path, repository_root: Path = Path(".")
 ) -> P2RunSummary:
     """执行并可恢复 60 项零费用工程演练；绝不创建模型供应商客户端。"""
-    protocol = build_p2_protocol(config, repository_root=repository_root)
+    check = check_p2_inputs(config, repository_root=repository_root)
+    protocol = check.protocol
     root = experiment_dir.expanduser().resolve()
     trials_root = root / "trials"
     trials_root.mkdir(parents=True, exist_ok=True)
+    lock_path = root / ".p2-run.lock"
+    try:
+        lock_handle = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+    except FileExistsError as exc:
+        raise BenchmarkError(
+            "P2 experiment is already running or needs manual recovery",
+            context={"lock": str(lock_path)},
+        ) from exc
+    os.write(lock_handle, str(os.getpid()).encode())
+    os.close(lock_handle)
     protocol_path = root / "protocol.json"
     if not protocol_path.exists():
         protocol_path.write_text(protocol.model_dump_json(indent=2), encoding="utf-8")
@@ -331,7 +409,8 @@ def run_p2_simulation(
     }
     recipes = load_environment_recipes(config.recipes_dir)
     runner = TraceFixRunner(P2SimulationLLM)
-    for plan in protocol.schedule:
+    try:
+      for plan in protocol.schedule:
         path = trials_root / f"{plan.sequence:03d}.json"
         existing = read_completed_trial(path)
         if existing:
@@ -358,15 +437,26 @@ def run_p2_simulation(
             ),
             test_pythonpath_entries=task.test_pythonpath_paths, agent_config=agent_config,
         ))
+        if not result.diff_path:
+            record = P2TrialRecord(
+                sequence=plan.sequence, task_id=plan.task_id, arm=plan.arm,
+                repetition=plan.repetition, mode="simulation", status="infrastructure_error",
+                input_tokens=result.input_tokens, output_tokens=result.output_tokens,
+                cost_usd=result.cost_usd, stop_reason=result.stop_reason,
+                run_result_path=result.result_path,
+            )
+            write_trial_record(path, record)
+            results.append(record)
+            continue
         verification = validate_agent_patch_strict(
-            task, source=config.source_root / task.id, agent_patch=Path(result.diff_path or ""),
+            task, source=config.source_root / task.id, agent_patch=Path(result.diff_path),
             test_python=resolve_managed_environment_python(config.test_env_root, task.id),
             output_dir=root / "verification" / f"{plan.sequence:03d}",
             recipe=recipes[task.id],
         )
         record = P2TrialRecord(
             sequence=plan.sequence, task_id=plan.task_id, arm=plan.arm,
-            repetition=plan.repetition, mode="simulation", status="completed",
+            repetition=plan.repetition, mode="simulation", status="verification_complete",
             input_tokens=result.input_tokens, output_tokens=result.output_tokens,
             cost_usd=result.cost_usd, stop_reason=result.stop_reason,
             independent_passed=verification.eligible,
@@ -375,10 +465,13 @@ def run_p2_simulation(
         )
         write_trial_record(path, record)
         results.append(record)
+    finally:
+        if lock_path.exists():
+            lock_path.unlink()
     summary_path = root / "summary.json"
     summary = P2RunSummary(
         mode="simulation", protocol_path=str(protocol_path), trial_count=len(results),
-        completed_count=sum(item.status == "completed" for item in results),
+        completed_count=sum(item.status == "verification_complete" for item in results),
         resumed_count=sum(item.resumed for item in results),
         input_tokens=sum(item.input_tokens for item in results),
         output_tokens=sum(item.output_tokens for item in results),

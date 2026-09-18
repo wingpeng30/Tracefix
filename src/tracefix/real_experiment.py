@@ -416,7 +416,12 @@ def validate_agent_patch_strict(
         )
     try:
         _git(["apply", str(agent_patch)], checkout)
-        changed = _git(["diff", "--name-only"], checkout).stdout.splitlines()
+        # ``git diff`` 不会列出 Agent 新建但尚未追踪的文件；测试篡改也可能
+        # 恰好以这种形式出现。因此合并 HEAD 差异和未追踪文件清单。
+        changed = _git(["diff", "--name-only", "HEAD"], checkout).stdout.splitlines()
+        changed.extend(
+            _git(["ls-files", "--others", "--exclude-standard"], checkout).stdout.splitlines()
+        )
         forbidden = _changed_test_files(task, tuple(changed))
         forbidden += tuple(
             path for path in changed

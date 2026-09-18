@@ -14,9 +14,11 @@ from tracefix.p2_protocol import (
     P2ProtocolConfig,
     P2TrialRecord,
     build_p2_protocol,
+    check_p2_inputs,
     estimated_request_reservation,
     read_completed_trial,
     run_p2_simulation,
+    write_p2_check,
     write_p2_dry_run,
     write_trial_record,
 )
@@ -663,6 +665,25 @@ def test_strict_agent_patch_validation_accepts_complete_hidden_evidence(tmp_path
     assert result.evidence.source_import_audit_valid is True
 
 
+def test_strict_agent_patch_validation_rejects_untracked_test_file(tmp_path: Path) -> None:
+    """Agent 新建未跟踪测试也属于验收入口篡改，不能被 git diff 漏掉。"""
+    task, source = _fixture(tmp_path)
+    patch = tmp_path / "new-test.diff"
+    patch.write_text(
+        "diff --git a/tests/test_agent_bypass.py b/tests/test_agent_bypass.py\n"
+        "new file mode 100644\n--- /dev/null\n+++ b/tests/test_agent_bypass.py\n"
+        "@@ -0,0 +1,2 @@\n+def test_bypass():\n+    assert True\n",
+        encoding="utf-8",
+    )
+    result = validate_agent_patch_strict(
+        task, source=source, agent_patch=patch, test_python=Path(sys.executable),
+        output_dir=tmp_path / "strict-agent-untracked",
+    )
+    assert result.patch_applied is True
+    assert result.eligible is False
+    assert result.reason == "agent_modified_test_or_pytest_configuration"
+
+
 def test_prescreen_runs_hidden_verification_and_applies_entry_gate(tmp_path, monkeypatch) -> None:
     task, source = _fixture(tmp_path)
     source_root = tmp_path / "sources"
@@ -866,7 +887,8 @@ def test_p2_protocol_accepts_complete_commercial_requirements(tmp_path, monkeypa
 def test_p2_trial_records_resume_only_completed_and_reserve_cost(tmp_path: Path) -> None:
     record = P2TrialRecord(
         sequence=1, task_id="task", arm=ExperimentArm.CONTROL, repetition=1,
-        mode="simulation", status="completed", input_tokens=10, output_tokens=5, cost_usd=0,
+        mode="simulation", status="verification_complete", input_tokens=10,
+        output_tokens=5, cost_usd=0,
     )
     path = tmp_path / "trial.json"
     write_trial_record(path, record)
@@ -911,6 +933,13 @@ def test_p2_simulation_completes_and_resumes_all_trials(tmp_path, monkeypatch) -
         "tracefix.p2_protocol.validate_agent_patch_strict",
         lambda *args, **kwargs: Verification(),
     )
+    # 此单测验证 60 次状态机与恢复，不重复运行真实 Agent 子进程；真实闭环由
+    # P2 离线演练工件覆盖。
+    class SimulationRunner:
+        def run(self, run_config):
+            return _FakeRunner().run(run_config).model_copy(update={"cost_usd": 0})
+
+    monkeypatch.setattr("tracefix.p2_protocol.TraceFixRunner", lambda *_: SimulationRunner())
     root = tmp_path / "simulation"
     config = P2ProtocolConfig(source_root=sources)
     first = run_p2_simulation(config, experiment_dir=root)
@@ -918,6 +947,77 @@ def test_p2_simulation_completes_and_resumes_all_trials(tmp_path, monkeypatch) -
     assert first.completed_count == 60 and first.resumed_count == 0
     assert resumed.completed_count == 60 and resumed.resumed_count == 60
     assert resumed.cost_usd == 0
+
+
+def test_p2_input_check_writes_snapshot_and_rejects_dirty_source(tmp_path, monkeypatch) -> None:
+    task, source = _fixture(tmp_path)
+    monkeypatch.setattr("tracefix.p2_protocol.P1_QUALIFIED_TASK_IDS", (task.id,))
+    monkeypatch.setattr("tracefix.p2_protocol.COLLECTION_FAILURE_TASK_IDS", ())
+    monkeypatch.setattr("tracefix.p2_protocol.load_real_issue_tasks", lambda *args, **kwargs: (task,))
+    monkeypatch.setattr(
+        "tracefix.p2_protocol.load_environment_recipes",
+        lambda *_: {task.id: EnvironmentRecipe(task_id=task.id)},
+    )
+    monkeypatch.setattr("tracefix.p2_protocol.resolve_managed_environment_python", lambda *_: Path(sys.executable))
+    monkeypatch.setattr("tracefix.p2_protocol._git_commit", lambda *_: "d" * 40)
+    sources = tmp_path / "sources"
+    sources.mkdir()
+    _run_git(tmp_path, "clone", "--quiet", str(source), str(sources / task.id))
+    config = P2ProtocolConfig(source_root=sources, output_dir=tmp_path / "runs")
+    assert write_p2_check(config).is_file()
+    (sources / task.id / "dirty.txt").write_text("x", encoding="utf-8")
+    with pytest.raises(BenchmarkError, match="not clean"):
+        check_p2_inputs(config)
+
+
+def test_p2_simulation_rejects_existing_lock(tmp_path, monkeypatch) -> None:
+    task, _ = _fixture(tmp_path)
+    monkeypatch.setattr("tracefix.p2_protocol.P1_QUALIFIED_TASK_IDS", (task.id,))
+    monkeypatch.setattr("tracefix.p2_protocol.COLLECTION_FAILURE_TASK_IDS", ())
+    monkeypatch.setattr("tracefix.p2_protocol.load_real_issue_tasks", lambda *args, **kwargs: (task,))
+    monkeypatch.setattr(
+        "tracefix.p2_protocol.load_environment_recipes",
+        lambda *_: {task.id: EnvironmentRecipe(task_id=task.id)},
+    )
+    monkeypatch.setattr("tracefix.p2_protocol._git_commit", lambda *_: "e" * 40)
+    monkeypatch.setattr("tracefix.p2_protocol.check_p2_inputs", lambda *args, **kwargs: type(
+        "Check", (), {"protocol": build_p2_protocol(P2ProtocolConfig())}
+    )())
+    root = tmp_path / "simulation"
+    root.mkdir()
+    (root / ".p2-run.lock").write_text("other", encoding="utf-8")
+    with pytest.raises(BenchmarkError, match="already running"):
+        run_p2_simulation(P2ProtocolConfig(), experiment_dir=root)
+
+
+def test_p2_simulation_records_missing_agent_patch_as_infrastructure_error(tmp_path, monkeypatch) -> None:
+    task, source = _fixture(tmp_path)
+    monkeypatch.setattr("tracefix.p2_protocol.P1_QUALIFIED_TASK_IDS", (task.id,))
+    monkeypatch.setattr("tracefix.p2_protocol.COLLECTION_FAILURE_TASK_IDS", ())
+    monkeypatch.setattr("tracefix.p2_protocol.load_real_issue_tasks", lambda *args, **kwargs: (task,))
+    monkeypatch.setattr(
+        "tracefix.p2_protocol.load_environment_recipes",
+        lambda *_: {task.id: EnvironmentRecipe(task_id=task.id)},
+    )
+    monkeypatch.setattr("tracefix.p2_protocol._git_commit", lambda *_: "f" * 40)
+    monkeypatch.setattr("tracefix.p2_protocol.resolve_managed_environment_python", lambda *_: Path(sys.executable))
+    protocol = build_p2_protocol(P2ProtocolConfig())
+    monkeypatch.setattr("tracefix.p2_protocol.check_p2_inputs", lambda *args, **kwargs: type(
+        "Check", (), {"protocol": protocol}
+    )())
+    class NoPatchRunner:
+        def run(self, run_config):
+            return _FakeRunner().run(run_config).model_copy(update={"diff_path": None, "cost_usd": 0})
+
+    monkeypatch.setattr("tracefix.p2_protocol.TraceFixRunner", lambda *_: NoPatchRunner())
+    sources = tmp_path / "sources"
+    sources.mkdir()
+    _run_git(tmp_path, "clone", "--quiet", str(source), str(sources / task.id))
+    summary = run_p2_simulation(
+        P2ProtocolConfig(source_root=sources), experiment_dir=tmp_path / "simulation"
+    )
+    assert summary.completed_count == 0
+    assert {item.status for item in summary.results} == {"infrastructure_error"}
 
 
 def test_p2_protocol_rejects_changed_repetition_and_missing_recipe(tmp_path, monkeypatch) -> None:
