@@ -447,6 +447,7 @@ def test_get_git_diff_includes_tracked_and_untracked_files(git_workspace: Path) 
     assert result.output["changed_files"] == ["new_module.py", "sample.py"]
     assert "return a + b" in result.output["diff"]
     assert "new_module.py" in result.output["diff"]
+    assert str(git_workspace) not in result.output["diff"]
     assert json.dumps(result.model_dump(mode="json"))
 
 

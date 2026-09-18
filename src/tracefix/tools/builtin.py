@@ -869,7 +869,7 @@ class GetGitDiffTool(_WorkspaceTool):
                     f"--unified={args.context_lines}",
                     "--",
                     os.devnull,
-                    str(path),
+                    relative,
                 ]
             )
             # git diff --no-index 用退出码 1 表示“确实存在差异”。
