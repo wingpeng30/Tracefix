@@ -412,6 +412,8 @@ class P2BudgetedLLM(BaseLLM):
         ledger_path: Path,
         formal: P2FormalRunRequirements,
         input_upper_bound: int,
+        trial_input_budget: int = 350_000,
+        trial_output_budget: int = 20_000,
         request_id_prefix: str = "p2",
     ) -> None:
         super().__init__(config)
@@ -428,6 +430,10 @@ class P2BudgetedLLM(BaseLLM):
         self._ledger_path = ledger_path
         self._formal = formal
         self._input_upper_bound = input_upper_bound
+        self._trial_input_budget = trial_input_budget
+        self._trial_output_budget = trial_output_budget
+        self._trial_input_used = 0
+        self._trial_output_used = 0
         self._request_id_prefix = request_id_prefix
         self._request_number = 0
 
@@ -442,10 +448,21 @@ class P2BudgetedLLM(BaseLLM):
             raise BenchmarkError("P2 cost ledger contains an uncertain request")
         self._request_number += 1
         request_id = f"{self._request_id_prefix}:{self._request_number}"
+        input_upper_bound = min(
+            self._input_upper_bound, self._trial_input_budget - self._trial_input_used
+        )
+        output_upper_bound = min(
+            self.config.max_output_tokens or 0,
+            self._trial_output_budget - self._trial_output_used,
+        )
+        if input_upper_bound <= 0 or output_upper_bound <= 0:
+            raise BenchmarkError(
+                "P2 trial token budget is exhausted before another provider request"
+            )
         reservation = estimated_request_reservation(
             self._formal,
-            input_tokens=self._input_upper_bound,
-            output_tokens=self.config.max_output_tokens or 0,
+            input_tokens=input_upper_bound,
+            output_tokens=output_upper_bound,
         )
         if ledger.spent_usd + ledger.reserved_usd + reservation > ledger.cap_usd:
             _write_cost_ledger(
@@ -457,8 +474,8 @@ class P2BudgetedLLM(BaseLLM):
             request_id=request_id,
             status="reserved",
             reserved_usd=reservation,
-            input_token_upper_bound=self._input_upper_bound,
-            output_token_upper_bound=self.config.max_output_tokens or 0,
+            input_token_upper_bound=input_upper_bound,
+            output_token_upper_bound=output_upper_bound,
         )
         ledger = ledger.model_copy(
             update={
@@ -475,8 +492,8 @@ class P2BudgetedLLM(BaseLLM):
             usage.input_tokens <= 0
             or usage.output_tokens < 0
             or usage.total_tokens != usage.input_tokens + usage.output_tokens
-            or usage.input_tokens > self._input_upper_bound
-            or usage.output_tokens > (self.config.max_output_tokens or 0)
+            or usage.input_tokens > input_upper_bound
+            or usage.output_tokens > output_upper_bound
         ):
             raise BenchmarkError("P2 provider usage is missing, inconsistent, or exceeds its bound")
         actual = estimated_request_reservation(
@@ -504,6 +521,8 @@ class P2BudgetedLLM(BaseLLM):
             }
         )
         _write_cost_ledger(self._ledger_path, ledger)
+        self._trial_input_used += usage.input_tokens
+        self._trial_output_used += usage.output_tokens
         return response.model_copy(update={"usage": usage.model_copy(update={"cost_usd": actual})})
 
 
@@ -1069,6 +1088,8 @@ def run_p2_experiment(
                 ledger_path=ledger_path,
                 formal=formal,
                 input_upper_bound=config.per_request_input_tokens,
+                trial_input_budget=config.max_input_tokens,
+                trial_output_budget=config.max_output_tokens,
                 request_id_prefix=request_prefix[0],
             )
 
