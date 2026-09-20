@@ -7,6 +7,7 @@ import json
 import math
 import os
 import subprocess
+import time
 from collections.abc import Sequence
 from datetime import UTC, datetime
 from pathlib import Path
@@ -41,6 +42,22 @@ COLLECTION_FAILURE_TASK_IDS = ("pylint-dev__pylint-4551", "pylint-dev__pylint-46
 
 def _sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _artifact_sha256(path: str | None) -> str | None:
+    candidate = Path(path) if path else None
+    return _sha256(candidate) if candidate and candidate.is_file() else None
+
+
+def _verify_saved_artifacts(record: "P2TrialRecord") -> None:
+    """新格式记录恢复前逐件核对；旧证据仅可阅读，不能伪装为新格式。"""
+    for location, digest, label in (
+        (record.run_result_path, record.run_result_sha256, "run result"),
+        (record.agent_patch_path, record.agent_patch_sha256, "agent patch"),
+        (record.verification_path, record.verification_sha256, "verification"),
+    ):
+        if digest is not None and _artifact_sha256(location) != digest:
+            raise BenchmarkError("P2 persisted artifact identity does not match", context={"artifact": label})
 
 
 def _git_commit(root: Path) -> str:
@@ -868,6 +885,7 @@ def run_p2_experiment(
         path = trials_root / f"{plan.sequence:03d}.json"
         existing = _read_trial(path)
         if existing and existing.status == "verification_complete":
+            _verify_saved_artifacts(existing)
             results.append(existing.model_copy(update={"resumed": True}))
             continue
         if existing and existing.status not in {"agent_completed"}:
@@ -877,6 +895,7 @@ def run_p2_experiment(
             )
         task = tasks[plan.task_id]
         if existing:
+            _verify_saved_artifacts(existing)
             agent_record = existing.model_copy(update={"resumed": True})
         else:
             attempt_id = f"p2-{plan.sequence:03d}-{uuid4().hex}"
@@ -896,6 +915,7 @@ def run_p2_experiment(
             )
             if mode == "formal":
                 request_prefix[0] = attempt_id
+            agent_started = time.monotonic()
             result = runner.run(RunConfig(
                 repo=config.source_root / task.id, task=task.problem_statement,
                 model_name=model_name, output_dir=root / "agent-runs",
@@ -912,6 +932,9 @@ def run_p2_experiment(
                 input_tokens=result.input_tokens, output_tokens=result.output_tokens,
                 cost_usd=result.cost_usd, stop_reason=result.stop_reason,
                 run_result_path=result.result_path, agent_patch_path=result.diff_path,
+                agent_duration_seconds=result.duration_seconds,
+                run_result_sha256=_artifact_sha256(result.result_path),
+                agent_patch_sha256=_artifact_sha256(result.diff_path),
             )
             write_trial_record(path, agent_record)
             if mode == "formal" and config.formal is not None:
@@ -928,6 +951,7 @@ def run_p2_experiment(
             write_trial_record(path, record)
             results.append(record)
             continue
+        verification_started = time.monotonic()
         verification = validate_agent_patch_strict(
             task, source=config.source_root / task.id, agent_patch=Path(agent_record.agent_patch_path),
             test_python=resolve_managed_environment_python(config.test_env_root, task.id),
@@ -943,6 +967,8 @@ def run_p2_experiment(
             "independent_passed": verification.eligible,
             "verification_eligible": verification.eligible,
             "verification_path": str(verification_path),
+            "verification_duration_seconds": time.monotonic() - verification_started,
+            "verification_sha256": _artifact_sha256(str(verification_path)),
         })
         write_trial_record(path, record)
         results.append(record)
