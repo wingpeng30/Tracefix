@@ -26,6 +26,13 @@ def _run_result(status: AgentStatus = AgentStatus.COMPLETED):
     )
 
 
+def test_cli_p2_summarize_is_read_only(tmp_path, monkeypatch, capsys) -> None:
+    expected = tmp_path / "p2-summary.json"
+    monkeypatch.setattr("tracefix.cli.write_p2_summary", lambda root: expected)
+    assert main(["p2-summarize", "--experiment-dir", str(tmp_path)]) == 0
+    assert str(expected) in capsys.readouterr().out
+
+
 def test_cli_run_reads_task_file_and_cli_values_override_environment(
     tmp_path, monkeypatch, capsys
 ) -> None:

@@ -21,9 +21,9 @@ from tracefix.p2_protocol import (
     P2ProtocolConfig,
     run_p2_formal,
     run_p2_simulation,
-    write_p2_summary,
     write_p2_check,
     write_p2_dry_run,
+    write_p2_summary,
 )
 from tracefix.paired import PairedExperimentConfig, PairedExperimentRunner
 from tracefix.real_benchmark import load_real_issue_tasks

@@ -18,6 +18,7 @@ from tracefix.p2_protocol import (
     P2ProtocolConfig,
     P2SimulationLLM,
     P2TrialRecord,
+    _verify_saved_artifacts,
     build_p2_protocol,
     check_p2_inputs,
     estimated_request_reservation,
@@ -27,6 +28,7 @@ from tracefix.p2_protocol import (
     summarize_p2_experiment,
     write_p2_check,
     write_p2_dry_run,
+    write_p2_summary,
     write_trial_record,
 )
 from tracefix.paired import ExperimentArm
@@ -532,26 +534,43 @@ def _p1_qualification_evidence(
             ("execution.audit.json", "execution", reports),
             ("collection.audit.json", "collection", []),
         ):
-            (artifact_dir / name).write_text(json.dumps({
-                "stage": stage, "completed": True, "exitstatus": 0,
-                "collected_node_ids": nodes, "reports": reports_for_stage,
-            }), encoding="utf-8")
+            (artifact_dir / name).write_text(
+                json.dumps(
+                    {
+                        "stage": stage,
+                        "completed": True,
+                        "exitstatus": 0,
+                        "collected_node_ids": nodes,
+                        "reports": reports_for_stage,
+                    }
+                ),
+                encoding="utf-8",
+            )
         (artifact_dir / "junit.xml").write_text("<testsuites />", encoding="utf-8")
-        records.append({
-            "task_id": task.id,
-            "base_commit": task.base_commit,
-            "qualification_type": (
-                "expected_collection_failure" if task.id in collection_tasks else "assertion_failure"
-            ),
-            "test_environment": {"fingerprint_sha256": fingerprint},
-            "gold_evidence": {
-                "status": "passed", "returncode": 0, "audit_available": True,
-                "collection_audit_available": True, "source_import_audit_valid": True,
-                "skipped_count": 0, "xfailed_count": 0, "xpassed_count": 0,
-                "executed_node_ids": ["tests/test_hidden.py::test_hidden"],
-                "audit_path": str(artifact_dir / "execution.audit.json"),
-            },
-        })
+        records.append(
+            {
+                "task_id": task.id,
+                "base_commit": task.base_commit,
+                "qualification_type": (
+                    "expected_collection_failure"
+                    if task.id in collection_tasks
+                    else "assertion_failure"
+                ),
+                "test_environment": {"fingerprint_sha256": fingerprint},
+                "gold_evidence": {
+                    "status": "passed",
+                    "returncode": 0,
+                    "audit_available": True,
+                    "collection_audit_available": True,
+                    "source_import_audit_valid": True,
+                    "skipped_count": 0,
+                    "xfailed_count": 0,
+                    "xpassed_count": 0,
+                    "executed_node_ids": ["tests/test_hidden.py::test_hidden"],
+                    "audit_path": str(artifact_dir / "execution.audit.json"),
+                },
+            }
+        )
     path = tmp_path / "p1-evidence.json"
     path.write_text(json.dumps(records), encoding="utf-8")
     return path
@@ -690,7 +709,10 @@ def test_strict_agent_patch_validation_rejects_empty_patch(tmp_path: Path) -> No
     patch.write_text("", encoding="utf-8")
 
     result = validate_agent_patch_strict(
-        task, source=source, agent_patch=patch, test_python=Path(sys.executable),
+        task,
+        source=source,
+        agent_patch=patch,
+        test_python=Path(sys.executable),
         output_dir=tmp_path / "agent-validation",
     )
 
@@ -705,7 +727,10 @@ def test_strict_agent_patch_validation_accepts_complete_hidden_evidence(tmp_path
     patch.write_text(GOLD, encoding="utf-8")
 
     result = validate_agent_patch_strict(
-        task, source=source, agent_patch=patch, test_python=Path(sys.executable),
+        task,
+        source=source,
+        agent_patch=patch,
+        test_python=Path(sys.executable),
         output_dir=tmp_path / "strict-agent-validation",
         recipe=EnvironmentRecipe(task_id=task.id, source_import_probe="pkg.a"),
     )
@@ -727,7 +752,10 @@ def test_strict_agent_patch_validation_rejects_untracked_test_file(tmp_path: Pat
         encoding="utf-8",
     )
     result = validate_agent_patch_strict(
-        task, source=source, agent_patch=patch, test_python=Path(sys.executable),
+        task,
+        source=source,
+        agent_patch=patch,
+        test_python=Path(sys.executable),
         output_dir=tmp_path / "strict-agent-untracked",
     )
     assert result.patch_applied is True
@@ -877,10 +905,7 @@ def test_p2_protocol_fixes_whole_system_60_trial_schedule_and_offline_gate(
     task, _ = _fixture(tmp_path)
     ids = tuple(f"task-{index}" for index in range(10))
     tasks = tuple(task.model_copy(update={"id": task_id}) for task_id in ids)
-    recipes = {
-        task_id: EnvironmentRecipe(task_id=task_id)
-        for task_id in ids
-    }
+    recipes = {task_id: EnvironmentRecipe(task_id=task_id) for task_id in ids}
     monkeypatch.setattr("tracefix.p2_protocol.P1_QUALIFIED_TASK_IDS", ids)
     monkeypatch.setattr("tracefix.p2_protocol.COLLECTION_FAILURE_TASK_IDS", ids[-2:])
     monkeypatch.setattr("tracefix.p2_protocol.load_real_issue_tasks", lambda *args, **kwargs: tasks)
@@ -893,14 +918,20 @@ def test_p2_protocol_fixes_whole_system_60_trial_schedule_and_offline_gate(
     assert len(protocol.schedule) == 60
     assert protocol.formal_ready is False
     assert protocol.formal_missing == (
-        "model_name", "provider", "pricing_source", "total_cost_cap_usd",
-        "input_cost_per_million_usd", "output_cost_per_million_usd",
+        "model_name",
+        "provider",
+        "pricing_source",
+        "total_cost_cap_usd",
+        "input_cost_per_million_usd",
+        "output_cost_per_million_usd",
     )
     assert [item.arm for item in protocol.schedule[:2]] == [
-        ExperimentArm.CONTROL, ExperimentArm.TREATMENT
+        ExperimentArm.CONTROL,
+        ExperimentArm.TREATMENT,
     ]
     assert [item.arm for item in protocol.schedule[20:22]] == [
-        ExperimentArm.TREATMENT, ExperimentArm.CONTROL
+        ExperimentArm.TREATMENT,
+        ExperimentArm.CONTROL,
     ]
     assert protocol.schedule[0].token_optimization_enabled is False
     assert protocol.schedule[1].context_compaction_enabled is True
@@ -922,9 +953,12 @@ def test_p2_protocol_accepts_complete_commercial_requirements(tmp_path, monkeypa
     protocol = build_p2_protocol(
         P2ProtocolConfig(
             formal=P2FormalRunRequirements(
-                model_name="provider/model", provider="provider",
-                pricing_source="https://example.invalid/pricing", total_cost_cap_usd=1.0,
-                input_cost_per_million_usd=1.0, output_cost_per_million_usd=2.0,
+                model_name="provider/model",
+                provider="provider",
+                pricing_source="https://example.invalid/pricing",
+                total_cost_cap_usd=1.0,
+                input_cost_per_million_usd=1.0,
+                output_cost_per_million_usd=2.0,
             )
         ),
         repository_root=source,
@@ -938,39 +972,63 @@ def test_p2_protocol_accepts_complete_commercial_requirements(tmp_path, monkeypa
 
 def test_p2_trial_records_resume_only_completed_and_reserve_cost(tmp_path: Path) -> None:
     record = P2TrialRecord(
-        sequence=1, task_id="task", arm=ExperimentArm.CONTROL, repetition=1,
-        mode="simulation", status="verification_complete", input_tokens=10,
-        output_tokens=5, cost_usd=0,
+        sequence=1,
+        task_id="task",
+        arm=ExperimentArm.CONTROL,
+        repetition=1,
+        mode="simulation",
+        status="verification_complete",
+        input_tokens=10,
+        output_tokens=5,
+        cost_usd=0,
     )
     path = tmp_path / "trial.json"
     write_trial_record(path, record)
     resumed = read_completed_trial(path)
     assert resumed is not None and resumed.resumed is True
     requirements = P2FormalRunRequirements(
-        model_name="provider/model", provider="provider", pricing_source="source",
-        total_cost_cap_usd=1, input_cost_per_million_usd=2, output_cost_per_million_usd=4,
+        model_name="provider/model",
+        provider="provider",
+        pricing_source="source",
+        total_cost_cap_usd=1,
+        input_cost_per_million_usd=2,
+        output_cost_per_million_usd=4,
     )
     assert (
-        estimated_request_reservation(
-            requirements, input_tokens=1_000_000, output_tokens=500_000
-        )
+        estimated_request_reservation(requirements, input_tokens=1_000_000, output_tokens=500_000)
         == 4
     )
     write_trial_record(path, record.model_copy(update={"status": "request_uncertain"}))
     with pytest.raises(BenchmarkError, match="uncertain"):
         read_completed_trial(path)
+    artifact = tmp_path / "patch.diff"
+    artifact.write_text("changed", encoding="utf-8")
+    with pytest.raises(BenchmarkError, match="artifact identity"):
+        _verify_saved_artifacts(
+            record.model_copy(
+                update={
+                    "agent_patch_path": str(artifact),
+                    "agent_patch_sha256": "0" * 64,
+                }
+            )
+        )
 
 
 def test_p2_budgeted_llm_reserves_reconciles_and_freezes_uncertain_request(tmp_path) -> None:
     requirements = P2FormalRunRequirements(
-        model_name="provider/model", provider="provider", pricing_source="source",
-        total_cost_cap_usd=10, input_cost_per_million_usd=2,
+        model_name="provider/model",
+        provider="provider",
+        pricing_source="source",
+        total_cost_cap_usd=10,
+        input_cost_per_million_usd=2,
         output_cost_per_million_usd=4,
     )
     ledger = tmp_path / "ledger.json"
     llm = P2BudgetedLLM(
         LLMConfig(model_name="provider/model", max_output_tokens=100, max_retries=0),
-        ledger_path=ledger, formal=requirements, input_upper_bound=1000,
+        ledger_path=ledger,
+        formal=requirements,
+        input_upper_bound=1000,
     )
 
     class Delegate:
@@ -1001,32 +1059,41 @@ def test_p2_budgeted_llm_reserves_reconciles_and_freezes_uncertain_request(tmp_p
     too_small = requirements.model_copy(update={"total_cost_cap_usd": 0.0001})
     limited = P2BudgetedLLM(
         LLMConfig(model_name="provider/model", max_output_tokens=100, max_retries=0),
-        ledger_path=tmp_path / "limited.json", formal=too_small, input_upper_bound=1000,
+        ledger_path=tmp_path / "limited.json",
+        formal=too_small,
+        input_upper_bound=1000,
     )
     with pytest.raises(BenchmarkError, match="cost cap"):
         limited.complete(())
 
     mismatched_path = tmp_path / "mismatched.json"
-    mismatched_path.write_text(
-        P2CostLedgerRecord(cap_usd=1).model_dump_json(), encoding="utf-8"
-    )
+    mismatched_path.write_text(P2CostLedgerRecord(cap_usd=1).model_dump_json(), encoding="utf-8")
     mismatch = P2BudgetedLLM(
         LLMConfig(model_name="provider/model", max_output_tokens=100, max_retries=0),
-        ledger_path=mismatched_path, formal=requirements, input_upper_bound=1000,
+        ledger_path=mismatched_path,
+        formal=requirements,
+        input_upper_bound=1000,
     )
     with pytest.raises(BenchmarkError, match="does not match"):
         mismatch.complete(())
 
     missing_usage = P2BudgetedLLM(
         LLMConfig(model_name="provider/model", max_output_tokens=100, max_retries=0),
-        ledger_path=tmp_path / "missing-usage.json", formal=requirements, input_upper_bound=1000,
+        ledger_path=tmp_path / "missing-usage.json",
+        formal=requirements,
+        input_upper_bound=1000,
     )
-    missing_usage._delegate = type("MissingUsage", (), {
-        "complete": lambda *_: LLMResponse(
-            message=Message(role=MessageRole.ASSISTANT, content="done"),
-            usage=TokenUsage(), model_name="provider/model",
-        )
-    })()
+    missing_usage._delegate = type(
+        "MissingUsage",
+        (),
+        {
+            "complete": lambda *_: LLMResponse(
+                message=Message(role=MessageRole.ASSISTANT, content="done"),
+                usage=TokenUsage(),
+                model_name="provider/model",
+            )
+        },
+    )()
     with pytest.raises(BenchmarkError, match="usage"):
         missing_usage.complete(())
     frozen = P2CostLedgerRecord.model_validate_json(
@@ -1037,9 +1104,13 @@ def test_p2_budgeted_llm_reserves_reconciles_and_freezes_uncertain_request(tmp_p
     with pytest.raises(BenchmarkError, match="cost cap"):
         P2BudgetedLLM(
             LLMConfig(model_name="provider/model", max_output_tokens=100, max_retries=0),
-            ledger_path=tmp_path / "halted.json", formal=too_small, input_upper_bound=1000,
+            ledger_path=tmp_path / "halted.json",
+            formal=too_small,
+            input_upper_bound=1000,
         ).complete(())
-    halted = P2CostLedgerRecord.model_validate_json((tmp_path / "halted.json").read_text(encoding="utf-8"))
+    halted = P2CostLedgerRecord.model_validate_json(
+        (tmp_path / "halted.json").read_text(encoding="utf-8")
+    )
     assert halted.halt_reason == "cost_cap_would_be_exceeded"
 
 
@@ -1053,13 +1124,9 @@ def test_p2_simulation_model_emits_supported_nonempty_git_patch() -> None:
 
 def test_p2_formal_mode_rejects_missing_commercial_parameters(tmp_path) -> None:
     with pytest.raises(BenchmarkError, match="commercial parameters"):
-        run_p2_experiment(
-            P2ProtocolConfig(), experiment_dir=tmp_path / "formal", mode="formal"
-        )
+        run_p2_experiment(P2ProtocolConfig(), experiment_dir=tmp_path / "formal", mode="formal")
     with pytest.raises(BenchmarkError, match="unknown"):
-        run_p2_experiment(
-            P2ProtocolConfig(), experiment_dir=tmp_path / "unknown", mode="invalid"
-        )
+        run_p2_experiment(P2ProtocolConfig(), experiment_dir=tmp_path / "unknown", mode="invalid")
 
 
 def test_p2_simulation_completes_and_resumes_all_trials(tmp_path, monkeypatch) -> None:
@@ -1080,15 +1147,18 @@ def test_p2_simulation_completes_and_resumes_all_trials(tmp_path, monkeypatch) -
         "tracefix.p2_protocol.resolve_managed_environment_python",
         lambda *_: Path(sys.executable),
     )
+
     class Verification:
         eligible = False
 
         def model_dump_json(self, **kwargs):
             return '{"eligible": false}'
+
     monkeypatch.setattr(
         "tracefix.p2_protocol.validate_agent_patch_strict",
         lambda *args, **kwargs: Verification(),
     )
+
     # 此单测验证 60 次状态机与恢复，不重复运行真实 Agent 子进程；真实闭环由
     # P2 离线演练工件覆盖。
     class SimulationRunner:
@@ -1114,7 +1184,9 @@ def test_p2_simulation_completes_and_resumes_all_trials(tmp_path, monkeypatch) -
         run_p2_simulation(config, experiment_dir=root)
 
 
-def test_p2_summary_keeps_all_planned_positions_and_separates_failures(tmp_path, monkeypatch) -> None:
+def test_p2_summary_keeps_all_planned_positions_and_separates_failures(
+    tmp_path, monkeypatch
+) -> None:
     task, _ = _fixture(tmp_path)
     ids = ("task-a", "task-b")
     tasks = tuple(task.model_copy(update={"id": task_id}) for task_id in ids)
@@ -1126,24 +1198,42 @@ def test_p2_summary_keeps_all_planned_positions_and_separates_failures(tmp_path,
         lambda *_: {task_id: EnvironmentRecipe(task_id=task_id) for task_id in ids},
     )
     monkeypatch.setattr("tracefix.p2_protocol._git_commit", lambda *_: "s" * 40)
-    config = P2ProtocolConfig(p1_evidence_path=_p1_qualification_evidence(tmp_path, tasks, ("task-b",)))
+    config = P2ProtocolConfig(
+        p1_evidence_path=_p1_qualification_evidence(tmp_path, tasks, ("task-b",))
+    )
     protocol = build_p2_protocol(config)
     root = tmp_path / "summary"
     (root / "trials").mkdir(parents=True)
     (root / "protocol.json").write_text(protocol.model_dump_json(), encoding="utf-8")
     plan = protocol.schedule[0]
-    write_trial_record(root / "trials" / "001.json", P2TrialRecord(
-        sequence=plan.sequence, task_id=plan.task_id, arm=plan.arm, repetition=plan.repetition,
-        mode="simulation", status="verification_complete", input_tokens=5, output_tokens=2,
-        cost_usd=0, independent_passed=False, agent_duration_seconds=1,
-    ))
+    write_trial_record(
+        root / "trials" / "001.json",
+        P2TrialRecord(
+            sequence=plan.sequence,
+            task_id=plan.task_id,
+            arm=plan.arm,
+            repetition=plan.repetition,
+            mode="simulation",
+            status="verification_complete",
+            input_tokens=5,
+            output_tokens=2,
+            cost_usd=0,
+            independent_passed=False,
+            agent_duration_seconds=1,
+        ),
+    )
     summary = summarize_p2_experiment(root)
     assert summary.planned_count == 12
     assert summary.completed_count == 1 and summary.repair_failure_count == 1
     assert summary.unexecuted_count == 11 and summary.input_tokens is None
     assert {item.qualification_type for item in summary.task_summaries} == {
-        "assertion_failure", "expected_collection_failure"
+        "assertion_failure",
+        "expected_collection_failure",
     }
+    output = write_p2_summary(root)
+    assert output.is_file()
+    report = (root / "p2-summary.md").read_text(encoding="utf-8")
+    assert "计划 12 次" in report and "模拟结果仅验证工程流程" in report
 
 
 def test_p2_input_check_writes_snapshot_and_rejects_dirty_source(tmp_path, monkeypatch) -> None:
@@ -1166,7 +1256,8 @@ def test_p2_input_check_writes_snapshot_and_rejects_dirty_source(tmp_path, monke
     sources.mkdir()
     _run_git(tmp_path, "clone", "--quiet", str(source), str(sources / task.id))
     config = P2ProtocolConfig(
-        source_root=sources, output_dir=tmp_path / "runs",
+        source_root=sources,
+        output_dir=tmp_path / "runs",
         p1_evidence_path=_p1_qualification_evidence(tmp_path, (task,)),
     )
     check_path = write_p2_check(config)
@@ -1174,8 +1265,11 @@ def test_p2_input_check_writes_snapshot_and_rejects_dirty_source(tmp_path, monke
     frozen = json.loads(check_path.read_text(encoding="utf-8"))["protocol"]["p1_qualifications"]
     assert frozen[task.id]["expected_node_ids"] == ["tests/test_hidden.py::test_hidden"]
     formal = P2FormalRunRequirements(
-        model_name="provider/model", provider="provider", pricing_source="source",
-        total_cost_cap_usd=1, input_cost_per_million_usd=1,
+        model_name="provider/model",
+        provider="provider",
+        pricing_source="source",
+        total_cost_cap_usd=1,
+        input_cost_per_million_usd=1,
         output_cost_per_million_usd=1,
     )
     monkeypatch.setattr("tracefix.p2_protocol._tracked_diff", lambda *_: b"diff")
@@ -1191,11 +1285,16 @@ def test_p2_input_gate_rejects_missing_or_drifted_p1_identity(tmp_path, monkeypa
     task, source = _fixture(tmp_path)
     monkeypatch.setattr("tracefix.p2_protocol.P1_QUALIFIED_TASK_IDS", (task.id,))
     monkeypatch.setattr("tracefix.p2_protocol.COLLECTION_FAILURE_TASK_IDS", ())
-    monkeypatch.setattr("tracefix.p2_protocol.load_real_issue_tasks", lambda *args, **kwargs: (task,))
     monkeypatch.setattr(
-        "tracefix.p2_protocol.load_environment_recipes", lambda *_: {task.id: EnvironmentRecipe(task_id=task.id)}
+        "tracefix.p2_protocol.load_real_issue_tasks", lambda *args, **kwargs: (task,)
     )
-    monkeypatch.setattr("tracefix.p2_protocol.resolve_managed_environment_python", lambda *_: Path(sys.executable))
+    monkeypatch.setattr(
+        "tracefix.p2_protocol.load_environment_recipes",
+        lambda *_: {task.id: EnvironmentRecipe(task_id=task.id)},
+    )
+    monkeypatch.setattr(
+        "tracefix.p2_protocol.resolve_managed_environment_python", lambda *_: Path(sys.executable)
+    )
     sources = tmp_path / "sources"
     sources.mkdir()
     _run_git(tmp_path, "clone", "--quiet", str(source), str(sources / task.id))
@@ -1213,9 +1312,12 @@ def test_p2_protocol_rejects_malformed_raw_p1_evidence(tmp_path, monkeypatch) ->
     task, _ = _fixture(tmp_path)
     monkeypatch.setattr("tracefix.p2_protocol.P1_QUALIFIED_TASK_IDS", (task.id,))
     monkeypatch.setattr("tracefix.p2_protocol.COLLECTION_FAILURE_TASK_IDS", ())
-    monkeypatch.setattr("tracefix.p2_protocol.load_real_issue_tasks", lambda *args, **kwargs: (task,))
     monkeypatch.setattr(
-        "tracefix.p2_protocol.load_environment_recipes", lambda *_: {task.id: EnvironmentRecipe(task_id=task.id)}
+        "tracefix.p2_protocol.load_real_issue_tasks", lambda *args, **kwargs: (task,)
+    )
+    monkeypatch.setattr(
+        "tracefix.p2_protocol.load_environment_recipes",
+        lambda *_: {task.id: EnvironmentRecipe(task_id=task.id)},
     )
     malformed = tmp_path / "malformed-p1.json"
     malformed.write_text("{}", encoding="utf-8")
@@ -1239,16 +1341,23 @@ def test_p2_identity_helpers_fail_closed_when_git_cannot_answer(monkeypatch) -> 
     assert read_completed_trial(Path("missing-p2-trial.json")) is None
 
 
-def test_p2_resume_verifies_persisted_agent_result_without_rerunning_agent(tmp_path, monkeypatch) -> None:
+def test_p2_resume_verifies_persisted_agent_result_without_rerunning_agent(
+    tmp_path, monkeypatch
+) -> None:
     """Agent 已落盘但验收中断时，只能续验，不得重发模型请求。"""
     task, source = _fixture(tmp_path)
     monkeypatch.setattr("tracefix.p2_protocol.P1_QUALIFIED_TASK_IDS", (task.id,))
     monkeypatch.setattr("tracefix.p2_protocol.COLLECTION_FAILURE_TASK_IDS", ())
-    monkeypatch.setattr("tracefix.p2_protocol.load_real_issue_tasks", lambda *args, **kwargs: (task,))
     monkeypatch.setattr(
-        "tracefix.p2_protocol.load_environment_recipes", lambda *_: {task.id: EnvironmentRecipe(task_id=task.id)}
+        "tracefix.p2_protocol.load_real_issue_tasks", lambda *args, **kwargs: (task,)
     )
-    monkeypatch.setattr("tracefix.p2_protocol.resolve_managed_environment_python", lambda *_: Path(sys.executable))
+    monkeypatch.setattr(
+        "tracefix.p2_protocol.load_environment_recipes",
+        lambda *_: {task.id: EnvironmentRecipe(task_id=task.id)},
+    )
+    monkeypatch.setattr(
+        "tracefix.p2_protocol.resolve_managed_environment_python", lambda *_: Path(sys.executable)
+    )
     monkeypatch.setattr("tracefix.p2_protocol._git_commit", lambda *_: "r" * 40)
     sources = tmp_path / "sources"
     sources.mkdir()
@@ -1263,20 +1372,34 @@ def test_p2_resume_verifies_persisted_agent_result_without_rerunning_agent(tmp_p
     patch = tmp_path / "agent.diff"
     patch.write_text(GOLD, encoding="utf-8")
     for plan in protocol.schedule:
-        write_trial_record(trials / f"{plan.sequence:03d}.json", P2TrialRecord(
-            sequence=plan.sequence, task_id=plan.task_id, arm=plan.arm, repetition=plan.repetition,
-            mode="simulation", status="agent_completed", attempt_id=f"saved-{plan.sequence}",
-            agent_patch_path=str(patch), run_result_path="saved-result.json",
-        ))
+        write_trial_record(
+            trials / f"{plan.sequence:03d}.json",
+            P2TrialRecord(
+                sequence=plan.sequence,
+                task_id=plan.task_id,
+                arm=plan.arm,
+                repetition=plan.repetition,
+                mode="simulation",
+                status="agent_completed",
+                attempt_id=f"saved-{plan.sequence}",
+                agent_patch_path=str(patch),
+                run_result_path="saved-result.json",
+            ),
+        )
     calls = []
+
     class NoRerunRunner:
         def run(self, *args, **kwargs):
             pytest.fail("agent reran")
+
     monkeypatch.setattr("tracefix.p2_protocol.TraceFixRunner", lambda *_: NoRerunRunner())
+
     class Verification:
         eligible = False
+
         def model_dump_json(self, **kwargs):
-            return "{\"eligible\": false}"
+            return '{"eligible": false}'
+
     monkeypatch.setattr(
         "tracefix.p2_protocol.validate_agent_patch_strict",
         lambda *args, **kwargs: calls.append(kwargs["expected_node_ids"]) or Verification(),
@@ -1298,9 +1421,12 @@ def test_p2_simulation_rejects_existing_lock(tmp_path, monkeypatch) -> None:
         lambda *_: {task.id: EnvironmentRecipe(task_id=task.id)},
     )
     monkeypatch.setattr("tracefix.p2_protocol._git_commit", lambda *_: "e" * 40)
-    monkeypatch.setattr("tracefix.p2_protocol.check_p2_inputs", lambda *args, **kwargs: type(
-        "Check", (), {"protocol": build_p2_protocol(P2ProtocolConfig())}
-    )())
+    monkeypatch.setattr(
+        "tracefix.p2_protocol.check_p2_inputs",
+        lambda *args, **kwargs: type(
+            "Check", (), {"protocol": build_p2_protocol(P2ProtocolConfig())}
+        )(),
+    )
     root = tmp_path / "simulation"
     root.mkdir()
     (root / ".p2-run.lock").write_text("other", encoding="utf-8")
@@ -1327,13 +1453,15 @@ def test_p2_simulation_records_missing_agent_patch_as_infrastructure_error(
         lambda *_: Path(sys.executable),
     )
     protocol = build_p2_protocol(P2ProtocolConfig())
-    monkeypatch.setattr("tracefix.p2_protocol.check_p2_inputs", lambda *args, **kwargs: type(
-        "Check", (), {"protocol": protocol}
-    )())
+    monkeypatch.setattr(
+        "tracefix.p2_protocol.check_p2_inputs",
+        lambda *args, **kwargs: type("Check", (), {"protocol": protocol})(),
+    )
+
     class NoPatchRunner:
         def run(self, run_config):
-            return _FakeRunner().run(run_config).model_copy(
-                update={"diff_path": None, "cost_usd": 0}
+            return (
+                _FakeRunner().run(run_config).model_copy(update={"diff_path": None, "cost_usd": 0})
             )
 
     monkeypatch.setattr("tracefix.p2_protocol.TraceFixRunner", lambda *_: NoPatchRunner())
@@ -1362,9 +1490,7 @@ def test_p2_protocol_rejects_changed_repetition_and_missing_recipe(tmp_path, mon
         P2ProtocolConfig(repetitions=4)
     with pytest.raises(BenchmarkError, match="missing environment recipes"):
         build_p2_protocol(P2ProtocolConfig(), repository_root=source)
-    monkeypatch.setattr(
-        "tracefix.p2_protocol.P1_QUALIFIED_TASK_IDS", (*ids, "task-missing")
-    )
+    monkeypatch.setattr("tracefix.p2_protocol.P1_QUALIFIED_TASK_IDS", (*ids, "task-missing"))
     with pytest.raises(BenchmarkError, match="task set is incomplete"):
         build_p2_protocol(P2ProtocolConfig(), repository_root=source)
 

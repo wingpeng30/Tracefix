@@ -421,3 +421,28 @@ P2 收尾接通确定性模拟模型、正常 Agent 工具循环、严格独立�
 依赖漂移 0，恢复复用 60/60 且没有新增 Agent 运行。正式执行器接入持久化费用预留、实际 Token 核算、费用
 帽和不确定请求冻结。最终全量 260 passed，精确综合覆盖率 90.0270351456894%；原始验证工件位于
 `runs/p2-final-verification-20260918-v4/`。这些结果证明工程闭环，不是修复能力实验。
+
+### 2026-09-18 P2 正式启动门槛：身份与恢复
+
+P2 协议现在读取并哈希 P1 原始行为记录，逐题冻结资格类型、base commit、P1 环境依赖指纹及 gold
+完整执行的 node ID 集合。正式/模拟运行前必须重新检查受管环境指纹；严格 Agent 验收要求执行集合与
+冻结集合完全一致。另修复 collection-only 路径把 collection 审计误作 execution 审计的字段映射，并避免
+不存在的 execution 审计遮蔽有效 collection 审计。
+
+重新执行 Pylint-4551 与 4604 的 base/gold 验收：两题仍为配方精确声明的 collection ImportError，gold
+均通过，源码审计有效、依赖无漂移，新的 collection audit diagnostic 均为空。证据在
+`runs/p2-gate-p1-collection-audit-v2-20260918/`。新的 `p2-check` 已在 10 题 clean source 与 P1 管理环境
+上通过，路径为 `runs/p2-gate-input-check-20260918/p2-check/p2-input-check.json`。
+
+费用账本改为逐请求持久化预留/结算状态；缺失或越界 Token、费用超过预留、未知请求及费用帽不足都会冻结
+后续请求。试次在 Agent 结束后先持久化 `agent_completed`，恢复只续做严格验收，不重发 Agent 请求。定向
+P2 回归、Ruff 与 compileall 已执行；尚未调用供应商。下一步是补齐任务级 C/T 汇总和正式模式的模拟供应商
+端到端门槛，之后才可填写商业参数启动付费对照。
+
+本次完整回归为 `263 passed`、JUnit 0 failure/error；在全量数据上补入 P2 失败关闭分支后，综合覆盖率
+`90.02%`（语句 `92.23%`、分支 `81.38%`）。JUnit 在 `runs/p2-gate-coverage-v2-20260918.junit.xml`，
+最终 coverage JSON 在 `runs/p2-gate-coverage-v4-20260918.json`。
+
+### 2026-09-20 P2 工程最终交付
+
+执行代码 `f27f95b` 在 `runs/p2-agent-simulation-final5-20260920/` 完成 60/60 次模拟严格验收，恢复运行复用 60/60。最终全量 `265 passed`；汇总输出与工件篡改负例分别追加验证后，综合覆盖率 `90.00143864192202%`（语句 `92.26309113969923%`、分支 `81.28491620111731%`）。Ruff 与 compileall 通过，证据位于 `runs/p2-final-verification-20260920/`。模拟结果不代表修复能力。

@@ -32,9 +32,15 @@ from tracefix.runtime import RunConfig, TraceFixRunner
 from tracefix.tools.base import ToolSpec
 
 P1_QUALIFIED_TASK_IDS = (
-    "psf__requests-1142", "psf__requests-1766", "pylint-dev__pylint-4551",
-    "pylint-dev__pylint-4604", "pylint-dev__pylint-4661", "pytest-dev__pytest-10051",
-    "pytest-dev__pytest-10081", "pytest-dev__pytest-10356", "sphinx-doc__sphinx-10435",
+    "psf__requests-1142",
+    "psf__requests-1766",
+    "pylint-dev__pylint-4551",
+    "pylint-dev__pylint-4604",
+    "pylint-dev__pylint-4661",
+    "pytest-dev__pytest-10051",
+    "pytest-dev__pytest-10081",
+    "pytest-dev__pytest-10356",
+    "sphinx-doc__sphinx-10435",
     "sphinx-doc__sphinx-10449",
 )
 COLLECTION_FAILURE_TASK_IDS = ("pylint-dev__pylint-4551", "pylint-dev__pylint-4604")
@@ -49,7 +55,7 @@ def _artifact_sha256(path: str | None) -> str | None:
     return _sha256(candidate) if candidate and candidate.is_file() else None
 
 
-def _verify_saved_artifacts(record: "P2TrialRecord") -> None:
+def _verify_saved_artifacts(record: P2TrialRecord) -> None:
     """新格式记录恢复前逐件核对；旧证据仅可阅读，不能伪装为新格式。"""
     for location, digest, label in (
         (record.run_result_path, record.run_result_sha256, "run result"),
@@ -57,7 +63,9 @@ def _verify_saved_artifacts(record: "P2TrialRecord") -> None:
         (record.verification_path, record.verification_sha256, "verification"),
     ):
         if digest is not None and _artifact_sha256(location) != digest:
-            raise BenchmarkError("P2 persisted artifact identity does not match", context={"artifact": label})
+            raise BenchmarkError(
+                "P2 persisted artifact identity does not match", context={"artifact": label}
+            )
 
 
 def _git_commit(root: Path) -> str:
@@ -126,6 +134,7 @@ class P2ProtocolConfig(BaseModel):
     p1_evidence_path: Path | None = None
     formal: P2FormalRunRequirements | None = None
 
+
 class P2TrialPlan(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -155,7 +164,7 @@ class P2ProtocolRecord(BaseModel):
     task_hashes: dict[str, dict[str, str]]
     recipe_hashes: dict[str, str]
     p1_evidence_sha256: str | None = None
-    p1_qualifications: dict[str, "P2QualificationRecord"] = Field(default_factory=dict)
+    p1_qualifications: dict[str, P2QualificationRecord] = Field(default_factory=dict)
     code_hashes: dict[str, str] = Field(default_factory=dict)
     budgets: dict[str, int]
     arm_configurations: dict[str, dict[str, bool | int]]
@@ -242,16 +251,21 @@ class P2SimulationLLM(BaseLLM):
         if self.calls == 1:
             message = Message(
                 role=MessageRole.ASSISTANT,
-                tool_calls=(ToolCall(
-                    id="simulation-marker", name="apply_patch",
-                    arguments={"patch": (
-                        "diff --git a/tracefix_simulation_note.txt "
-                        "b/tracefix_simulation_note.txt\n"
-                        "new file mode 100644\n--- /dev/null\n"
-                        "+++ b/tracefix_simulation_note.txt\n@@ -0,0 +1 @@\n"
-                        "+P2 engineering simulation; no task answer.\n"
-                    )},
-                ),),
+                tool_calls=(
+                    ToolCall(
+                        id="simulation-marker",
+                        name="apply_patch",
+                        arguments={
+                            "patch": (
+                                "diff --git a/tracefix_simulation_note.txt "
+                                "b/tracefix_simulation_note.txt\n"
+                                "new file mode 100644\n--- /dev/null\n"
+                                "+++ b/tracefix_simulation_note.txt\n@@ -0,0 +1 @@\n"
+                                "+P2 engineering simulation; no task answer.\n"
+                            )
+                        },
+                    ),
+                ),
             )
         else:
             message = Message(role=MessageRole.ASSISTANT, content="simulation complete")
@@ -292,7 +306,7 @@ class P2CostLedgerRecord(BaseModel):
     protocol_identity: str | None = None
     provider: str | None = None
     model_name: str | None = None
-    requests: tuple["P2CostRequestRecord", ...] = ()
+    requests: tuple[P2CostRequestRecord, ...] = ()
 
 
 class P2CostRequestRecord(BaseModel):
@@ -355,14 +369,24 @@ class P2ExperimentSummary(BaseModel):
 class P2BudgetedLLM(BaseLLM):
     """在实际供应商调用边界进行费用预留和核算。"""
 
-    def __init__(self, config: LLMConfig, *, ledger_path: Path,
-                 formal: P2FormalRunRequirements, input_upper_bound: int,
-                 request_id_prefix: str = "p2") -> None:
+    def __init__(
+        self,
+        config: LLMConfig,
+        *,
+        ledger_path: Path,
+        formal: P2FormalRunRequirements,
+        input_upper_bound: int,
+        request_id_prefix: str = "p2",
+    ) -> None:
         super().__init__(config)
-        if not all(math.isfinite(value) and value > 0 for value in (
-            formal.total_cost_cap_usd, formal.input_cost_per_million_usd,
-            formal.output_cost_per_million_usd,
-        )):
+        if not all(
+            math.isfinite(value) and value > 0
+            for value in (
+                formal.total_cost_cap_usd,
+                formal.input_cost_per_million_usd,
+                formal.output_cost_per_million_usd,
+            )
+        ):
             raise BenchmarkError("P2 formal pricing must be finite and positive")
         self._delegate = LiteLLMAdapter(config.model_copy(update={"max_retries": 0}))
         self._ledger_path = ledger_path
@@ -373,15 +397,18 @@ class P2BudgetedLLM(BaseLLM):
 
     def complete(self, messages: Sequence[Message], tools: Sequence[ToolSpec] = ()) -> LLMResponse:
         ledger = _read_cost_ledger(
-            self._ledger_path, self._formal.total_cost_cap_usd,
-            self._formal.provider, self._formal.model_name,
+            self._ledger_path,
+            self._formal.total_cost_cap_usd,
+            self._formal.provider,
+            self._formal.model_name,
         )
         if ledger.uncertain_request or ledger.halt_reason:
             raise BenchmarkError("P2 cost ledger contains an uncertain request")
         self._request_number += 1
         request_id = f"{self._request_id_prefix}:{self._request_number}"
         reservation = estimated_request_reservation(
-            self._formal, input_tokens=self._input_upper_bound,
+            self._formal,
+            input_tokens=self._input_upper_bound,
             output_tokens=self.config.max_output_tokens or 0,
         )
         if ledger.spent_usd + ledger.reserved_usd + reservation > ledger.cap_usd:
@@ -391,16 +418,20 @@ class P2BudgetedLLM(BaseLLM):
             )
             raise BenchmarkError("P2 total cost cap would be exceeded")
         request = P2CostRequestRecord(
-            request_id=request_id, status="reserved", reserved_usd=reservation,
+            request_id=request_id,
+            status="reserved",
+            reserved_usd=reservation,
             input_token_upper_bound=self._input_upper_bound,
             output_token_upper_bound=self.config.max_output_tokens or 0,
         )
-        ledger = ledger.model_copy(update={
-            "reserved_usd": ledger.reserved_usd + reservation,
-            "request_count": ledger.request_count + 1,
-            "uncertain_request": True,
-            "requests": (*ledger.requests, request),
-        })
+        ledger = ledger.model_copy(
+            update={
+                "reserved_usd": ledger.reserved_usd + reservation,
+                "request_count": ledger.request_count + 1,
+                "uncertain_request": True,
+                "requests": (*ledger.requests, request),
+            }
+        )
         _write_cost_ledger(self._ledger_path, ledger)
         response = self._delegate.complete(messages, tools)
         usage = response.usage
@@ -413,26 +444,35 @@ class P2BudgetedLLM(BaseLLM):
         ):
             raise BenchmarkError("P2 provider usage is missing, inconsistent, or exceeds its bound")
         actual = estimated_request_reservation(
-            self._formal, input_tokens=usage.input_tokens, output_tokens=usage.output_tokens,
+            self._formal,
+            input_tokens=usage.input_tokens,
+            output_tokens=usage.output_tokens,
         )
         if actual > reservation or ledger.spent_usd + actual > ledger.cap_usd:
             raise BenchmarkError("P2 provider cost exceeds the persisted reservation")
-        settled = request.model_copy(update={
-            "status": "settled", "actual_input_tokens": usage.input_tokens,
-            "actual_output_tokens": usage.output_tokens, "actual_cost_usd": actual,
-        })
-        ledger = ledger.model_copy(update={
-            "spent_usd": ledger.spent_usd + actual,
-            "reserved_usd": max(0, ledger.reserved_usd - reservation),
-            "uncertain_request": False,
-            "requests": (*ledger.requests[:-1], settled),
-        })
+        settled = request.model_copy(
+            update={
+                "status": "settled",
+                "actual_input_tokens": usage.input_tokens,
+                "actual_output_tokens": usage.output_tokens,
+                "actual_cost_usd": actual,
+            }
+        )
+        ledger = ledger.model_copy(
+            update={
+                "spent_usd": ledger.spent_usd + actual,
+                "reserved_usd": max(0, ledger.reserved_usd - reservation),
+                "uncertain_request": False,
+                "requests": (*ledger.requests[:-1], settled),
+            }
+        )
         _write_cost_ledger(self._ledger_path, ledger)
         return response.model_copy(update={"usage": usage.model_copy(update={"cost_usd": actual})})
 
 
-def estimated_request_reservation(formal: P2FormalRunRequirements, *, input_tokens: int,
-                                  output_tokens: int) -> float:
+def estimated_request_reservation(
+    formal: P2FormalRunRequirements, *, input_tokens: int, output_tokens: int
+) -> float:
     """在供应商调用前按每次上限保留费用，避免超过总帽。"""
     return (
         input_tokens * formal.input_cost_per_million_usd
@@ -448,7 +488,10 @@ def _write_cost_ledger(path: Path, ledger: P2CostLedgerRecord) -> None:
 
 
 def _read_cost_ledger(
-    path: Path, cap_usd: float, provider: str | None = None, model_name: str | None = None,
+    path: Path,
+    cap_usd: float,
+    provider: str | None = None,
+    model_name: str | None = None,
 ) -> P2CostLedgerRecord:
     if not path.is_file():
         return P2CostLedgerRecord(cap_usd=cap_usd, provider=provider, model_name=model_name)
@@ -481,7 +524,11 @@ def read_completed_trial(path: Path) -> P2TrialRecord | None:
 
 
 def _read_trial(path: Path) -> P2TrialRecord | None:
-    return P2TrialRecord.model_validate_json(path.read_text(encoding="utf-8")) if path.is_file() else None
+    return (
+        P2TrialRecord.model_validate_json(path.read_text(encoding="utf-8"))
+        if path.is_file()
+        else None
+    )
 
 
 def summarize_p2_experiment(experiment_dir: Path) -> P2ExperimentSummary:
@@ -493,10 +540,11 @@ def summarize_p2_experiment(experiment_dir: Path) -> P2ExperimentSummary:
         plan.sequence: _read_trial(root / "trials" / f"{plan.sequence:03d}.json")
         for plan in protocol.schedule
     }
-    completed = [record for record in records.values() if record and record.status == "verification_complete"]
+    completed = [
+        record for record in records.values() if record and record.status == "verification_complete"
+    ]
     infrastructure = [
-        record for record in records.values()
-        if record and record.status == "infrastructure_error"
+        record for record in records.values() if record and record.status == "infrastructure_error"
     ]
     successes = [record for record in completed if record and record.independent_passed]
     failures = [record for record in completed if record and not record.independent_passed]
@@ -508,45 +556,91 @@ def summarize_p2_experiment(experiment_dir: Path) -> P2ExperimentSummary:
             arm: [record for plan, record in task_records if plan.arm is arm and record]
             for arm in (ExperimentArm.CONTROL, ExperimentArm.TREATMENT)
         }
+
         def _known_total(items: list[P2TrialRecord], field: str) -> int | None:
             return sum(getattr(item, field) for item in items) if len(items) == 3 else None
+
         def _known_duration(items: list[P2TrialRecord]) -> float | None:
             values = [item.agent_duration_seconds for item in items]
-            return sum(values) if len(items) == 3 and all(value is not None for value in values) else None
+            return (
+                sum(values)
+                if len(items) == 3 and all(value is not None for value in values)
+                else None
+            )
+
         control_tokens = _known_total(by_arm[ExperimentArm.CONTROL], "input_tokens")
         treatment_tokens = _known_total(by_arm[ExperimentArm.TREATMENT], "input_tokens")
         control_duration = _known_duration(by_arm[ExperimentArm.CONTROL])
         treatment_duration = _known_duration(by_arm[ExperimentArm.TREATMENT])
         paired = 0
         for repetition in range(1, 4):
-            pair = [record for plan, record in task_records if plan.repetition == repetition and record]
+            pair = [
+                record for plan, record in task_records if plan.repetition == repetition and record
+            ]
             if len(pair) == 2 and all(record.independent_passed for record in pair):
                 paired += 1
-        task_summaries.append(P2TaskSummary(
-            task_id=task_id,
-            qualification_type=protocol.p1_qualifications[task_id].qualification_type,
-            planned_count=6,
-            completed_count=sum(record.status == "verification_complete" for _, record in task_records if record),
-            repair_success_count=sum(bool(record and record.independent_passed) for _, record in task_records),
-            repair_failure_count=sum(bool(record and record.status == "verification_complete" and not record.independent_passed) for _, record in task_records),
-            infrastructure_error_count=sum(bool(record and record.status == "infrastructure_error") for _, record in task_records),
-            unexecuted_count=sum(record is None or record.status not in {"verification_complete", "infrastructure_error"} for _, record in task_records),
-            control_input_tokens=control_tokens, treatment_input_tokens=treatment_tokens,
-            input_token_delta_treatment_minus_control=(treatment_tokens - control_tokens if control_tokens is not None and treatment_tokens is not None else None),
-            control_duration_seconds=control_duration, treatment_duration_seconds=treatment_duration,
-            duration_delta_treatment_minus_control=(treatment_duration - control_duration if control_duration is not None and treatment_duration is not None else None),
-            paired_both_success_count=paired,
-        ))
+        task_summaries.append(
+            P2TaskSummary(
+                task_id=task_id,
+                qualification_type=protocol.p1_qualifications[task_id].qualification_type,
+                planned_count=6,
+                completed_count=sum(
+                    record.status == "verification_complete" for _, record in task_records if record
+                ),
+                repair_success_count=sum(
+                    bool(record and record.independent_passed) for _, record in task_records
+                ),
+                repair_failure_count=sum(
+                    bool(
+                        record
+                        and record.status == "verification_complete"
+                        and not record.independent_passed
+                    )
+                    for _, record in task_records
+                ),
+                infrastructure_error_count=sum(
+                    bool(record and record.status == "infrastructure_error")
+                    for _, record in task_records
+                ),
+                unexecuted_count=sum(
+                    record is None
+                    or record.status not in {"verification_complete", "infrastructure_error"}
+                    for _, record in task_records
+                ),
+                control_input_tokens=control_tokens,
+                treatment_input_tokens=treatment_tokens,
+                input_token_delta_treatment_minus_control=(
+                    treatment_tokens - control_tokens
+                    if control_tokens is not None and treatment_tokens is not None
+                    else None
+                ),
+                control_duration_seconds=control_duration,
+                treatment_duration_seconds=treatment_duration,
+                duration_delta_treatment_minus_control=(
+                    treatment_duration - control_duration
+                    if control_duration is not None and treatment_duration is not None
+                    else None
+                ),
+                paired_both_success_count=paired,
+            )
+        )
     all_complete = len(completed) == len(protocol.schedule)
     return P2ExperimentSummary(
-        protocol_sha256=_sha256(protocol_path), mode=(completed[0].mode if completed else "unknown"),
-        planned_count=len(protocol.schedule), completed_count=len(completed),
-        repair_success_count=len(successes), repair_failure_count=len(failures),
+        protocol_sha256=_sha256(protocol_path),
+        mode=(completed[0].mode if completed else "unknown"),
+        planned_count=len(protocol.schedule),
+        completed_count=len(completed),
+        repair_success_count=len(successes),
+        repair_failure_count=len(failures),
         infrastructure_error_count=len(infrastructure),
         unexecuted_count=len(protocol.schedule) - len(completed) - len(infrastructure),
         input_tokens=sum(record.input_tokens for record in completed) if all_complete else None,
         output_tokens=sum(record.output_tokens for record in completed) if all_complete else None,
-        cost_usd=(sum(record.cost_usd or 0 for record in completed) if all_complete and all(record.cost_usd is not None for record in completed) else None),
+        cost_usd=(
+            sum(record.cost_usd or 0 for record in completed)
+            if all_complete and all(record.cost_usd is not None for record in completed)
+            else None
+        ),
         task_summaries=tuple(task_summaries),
     )
 
@@ -562,7 +656,8 @@ def write_p2_summary(experiment_dir: Path) -> Path:
         "# P2 实验汇总\n\n"
         f"计划 {summary.planned_count} 次，完成 {summary.completed_count} 次；"
         f"独立验收成功 {summary.repair_success_count} 次，失败 {summary.repair_failure_count} 次，"
-        f"基础设施错误 {summary.infrastructure_error_count} 次，未执行 {summary.unexecuted_count} 次。\n\n"
+        f"基础设施错误 {summary.infrastructure_error_count} 次，"
+        f"未执行 {summary.unexecuted_count} 次。\n\n"
         "模拟结果仅验证工程流程，不构成 Agent 修复能力结论。\n",
         encoding="utf-8",
     )
@@ -588,23 +683,34 @@ def _freeze_p1_qualifications(
             raise BenchmarkError("P1 qualification evidence has an invalid task record")
         task_id = item["task_id"]
         if task_id in by_task:
-            raise BenchmarkError("P1 qualification evidence has duplicate task records", context={"task_id": task_id})
+            raise BenchmarkError(
+                "P1 qualification evidence has duplicate task records", context={"task_id": task_id}
+            )
         by_task[task_id] = item
     frozen: dict[str, P2QualificationRecord] = {}
     for task in tasks:
         item = by_task.get(task.id)
         if item is None:
-            raise BenchmarkError("P1 qualification evidence is missing a P2 task", context={"task_id": task.id})
+            raise BenchmarkError(
+                "P1 qualification evidence is missing a P2 task", context={"task_id": task.id}
+            )
         qualification = item.get("qualification_type")
         expected_type = (
-            "expected_collection_failure" if task.id in COLLECTION_FAILURE_TASK_IDS else "assertion_failure"
+            "expected_collection_failure"
+            if task.id in COLLECTION_FAILURE_TASK_IDS
+            else "assertion_failure"
         )
         if qualification != expected_type or item.get("base_commit") != task.base_commit:
-            raise BenchmarkError("P1 qualification identity does not match the fixed task", context={"task_id": task.id})
+            raise BenchmarkError(
+                "P1 qualification identity does not match the fixed task",
+                context={"task_id": task.id},
+            )
         environment = item.get("test_environment")
         gold = item.get("gold_evidence")
         if not isinstance(environment, dict) or not isinstance(gold, dict):
-            raise BenchmarkError("P1 qualification evidence is structurally incomplete", context={"task_id": task.id})
+            raise BenchmarkError(
+                "P1 qualification evidence is structurally incomplete", context={"task_id": task.id}
+            )
         fingerprint = environment.get("fingerprint_sha256")
         nodes = gold.get("executed_node_ids")
         complete_gold = (
@@ -617,14 +723,27 @@ def _freeze_p1_qualifications(
             and gold.get("xfailed_count") == 0
             and gold.get("xpassed_count") == 0
         )
-        if not isinstance(fingerprint, str) or not isinstance(nodes, list) or not nodes or not complete_gold:
-            raise BenchmarkError("P1 qualification lacks complete gold execution evidence", context={"task_id": task.id})
+        if (
+            not isinstance(fingerprint, str)
+            or not isinstance(nodes, list)
+            or not nodes
+            or not complete_gold
+        ):
+            raise BenchmarkError(
+                "P1 qualification lacks complete gold execution evidence",
+                context={"task_id": task.id},
+            )
         if not all(isinstance(node, str) for node in nodes) or len(set(nodes)) != len(nodes):
-            raise BenchmarkError("P1 qualification has invalid frozen node IDs", context={"task_id": task.id})
+            raise BenchmarkError(
+                "P1 qualification has invalid frozen node IDs", context={"task_id": task.id}
+            )
         _validate_p1_gold_artifacts(task.id, gold, tuple(nodes))
         frozen[task.id] = P2QualificationRecord(
-            task_id=task.id, qualification_type=qualification, base_commit=task.base_commit,
-            dependency_fingerprint=fingerprint, expected_node_ids=tuple(nodes),
+            task_id=task.id,
+            qualification_type=qualification,
+            base_commit=task.base_commit,
+            dependency_fingerprint=fingerprint,
+            expected_node_ids=tuple(nodes),
         )
     return hashlib.sha256(raw).hexdigest(), frozen
 
@@ -634,7 +753,9 @@ def _validate_p1_gold_artifacts(task_id: str, gold: object, nodes: tuple[str, ..
     assert isinstance(gold, dict)
     audit_path = gold.get("audit_path")
     if not isinstance(audit_path, str):
-        raise BenchmarkError("P1 gold evidence is missing its execution audit", context={"task_id": task_id})
+        raise BenchmarkError(
+            "P1 gold evidence is missing its execution audit", context={"task_id": task_id}
+        )
     audit_file = Path(audit_path)
     collection_file = audit_file.with_name("collection.audit.json")
     junit_file = audit_file.parent / "junit.xml"
@@ -642,24 +763,38 @@ def _validate_p1_gold_artifacts(task_id: str, gold: object, nodes: tuple[str, ..
         execution = json.loads(audit_file.read_text(encoding="utf-8"))
         collection = json.loads(collection_file.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
-        raise BenchmarkError("P1 gold audit artifacts are unavailable", context={"task_id": task_id}) from exc
+        raise BenchmarkError(
+            "P1 gold audit artifacts are unavailable", context={"task_id": task_id}
+        ) from exc
     if not junit_file.is_file():
         raise BenchmarkError("P1 gold JUnit artifact is unavailable", context={"task_id": task_id})
     executed = execution.get("collected_node_ids")
     reports = execution.get("reports")
     expected_stages = {(node, stage) for node in nodes for stage in ("setup", "call", "teardown")}
-    actual_stages = {
-        (report.get("nodeid"), report.get("when"))
-        for report in reports if isinstance(report, dict) and report.get("outcome") == "passed"
-    } if isinstance(reports, list) else set()
+    actual_stages = (
+        {
+            (report.get("nodeid"), report.get("when"))
+            for report in reports
+            if isinstance(report, dict) and report.get("outcome") == "passed"
+        }
+        if isinstance(reports, list)
+        else set()
+    )
     if (
-        execution.get("stage") != "execution" or execution.get("completed") is not True
-        or execution.get("exitstatus") != 0 or not isinstance(executed, list)
-        or tuple(executed) != nodes or actual_stages != expected_stages
-        or collection.get("stage") != "collection" or collection.get("completed") is not True
-        or collection.get("exitstatus") != 0 or tuple(collection.get("collected_node_ids", ())) != nodes
+        execution.get("stage") != "execution"
+        or execution.get("completed") is not True
+        or execution.get("exitstatus") != 0
+        or not isinstance(executed, list)
+        or tuple(executed) != nodes
+        or actual_stages != expected_stages
+        or collection.get("stage") != "collection"
+        or collection.get("completed") is not True
+        or collection.get("exitstatus") != 0
+        or tuple(collection.get("collected_node_ids", ())) != nodes
     ):
-        raise BenchmarkError("P1 gold audit artifacts conflict with its qualification", context={"task_id": task_id})
+        raise BenchmarkError(
+            "P1 gold audit artifacts conflict with its qualification", context={"task_id": task_id}
+        )
 
 
 def _task_hashes(tasks: tuple[RealIssueTask, ...]) -> dict[str, dict[str, str]]:
@@ -677,18 +812,27 @@ def _task_hashes(tasks: tuple[RealIssueTask, ...]) -> dict[str, dict[str, str]]:
 def _schedule(task_ids: tuple[str, ...]) -> tuple[P2TrialPlan, ...]:
     plans: list[P2TrialPlan] = []
     for repetition, arms in enumerate(
-        ((ExperimentArm.CONTROL, ExperimentArm.TREATMENT),
-         (ExperimentArm.TREATMENT, ExperimentArm.CONTROL),
-         (ExperimentArm.CONTROL, ExperimentArm.TREATMENT)), start=1
+        (
+            (ExperimentArm.CONTROL, ExperimentArm.TREATMENT),
+            (ExperimentArm.TREATMENT, ExperimentArm.CONTROL),
+            (ExperimentArm.CONTROL, ExperimentArm.TREATMENT),
+        ),
+        start=1,
     ):
         for task_id in task_ids:
             for arm in arms:
                 enabled = arm is ExperimentArm.TREATMENT
-                plans.append(P2TrialPlan(
-                    sequence=len(plans) + 1, task_id=task_id, repetition=repetition, arm=arm,
-                    token_optimization_enabled=enabled, repo_map_enabled=enabled,
-                    context_compaction_enabled=enabled,
-                ))
+                plans.append(
+                    P2TrialPlan(
+                        sequence=len(plans) + 1,
+                        task_id=task_id,
+                        repetition=repetition,
+                        arm=arm,
+                        token_optimization_enabled=enabled,
+                        repo_map_enabled=enabled,
+                        context_compaction_enabled=enabled,
+                    )
+                )
     return tuple(plans)
 
 
@@ -711,8 +855,12 @@ def build_p2_protocol(
         ()
         if config.formal
         else (
-            "model_name", "provider", "pricing_source", "total_cost_cap_usd",
-            "input_cost_per_million_usd", "output_cost_per_million_usd",
+            "model_name",
+            "provider",
+            "pricing_source",
+            "total_cost_cap_usd",
+            "input_cost_per_million_usd",
+            "output_cost_per_million_usd",
         )
     )
     return P2ProtocolRecord(
@@ -781,31 +929,43 @@ def check_p2_inputs(
         source = (config.source_root / task.id).expanduser().resolve()
         task.validate_checkout(source)
         dirty = subprocess.run(
-            ["git", "status", "--porcelain"], cwd=source, capture_output=True,
-            text=True, check=False,
+            ["git", "status", "--porcelain"],
+            cwd=source,
+            capture_output=True,
+            text=True,
+            check=False,
         )
         if dirty.returncode or dirty.stdout.strip():
             raise BenchmarkError("P2 source checkout is not clean", context={"task_id": task.id})
         python = resolve_managed_environment_python(config.test_env_root, task.id)
-        provenance = inspect_test_environment(
-            python, pythonpath_entries=task.test_pythonpath_paths
-        )
+        provenance = inspect_test_environment(python, pythonpath_entries=task.test_pythonpath_paths)
         frozen = protocol.p1_qualifications.get(task.id)
         if frozen is None or provenance.fingerprint_sha256 != frozen.dependency_fingerprint:
-            raise BenchmarkError("P2 environment differs from the P1-qualified environment", context={"task_id": task.id})
-        inputs.append(P2InputCheck(
-            task_id=task.id, source=str(source), source_commit=task.base_commit,
-            source_clean=True, recipe_fingerprint=recipes[task.id].fingerprint,
-            test_python=str(python), dependency_fingerprint=provenance.fingerprint_sha256,
-        ))
+            raise BenchmarkError(
+                "P2 environment differs from the P1-qualified environment",
+                context={"task_id": task.id},
+            )
+        inputs.append(
+            P2InputCheck(
+                task_id=task.id,
+                source=str(source),
+                source_commit=task.base_commit,
+                source_clean=True,
+                recipe_fingerprint=recipes[task.id].fingerprint,
+                test_python=str(python),
+                dependency_fingerprint=provenance.fingerprint_sha256,
+            )
+        )
     tracked_diff = _tracked_diff(repository_root)
     if config.formal is not None and tracked_diff:
         raise BenchmarkError("formal P2 run requires a clean tracked worktree")
     return P2CheckRecord(
-        generated_at=datetime.now(UTC), code_commit=_git_commit(repository_root),
+        generated_at=datetime.now(UTC),
+        code_commit=_git_commit(repository_root),
         tracked_worktree_dirty=bool(tracked_diff),
         tracked_diff_sha256=hashlib.sha256(tracked_diff).hexdigest(),
-        protocol=protocol, inputs=tuple(inputs),
+        protocol=protocol,
+        inputs=tuple(inputs),
     )
 
 
@@ -820,8 +980,7 @@ def write_p2_check(config: P2ProtocolConfig, *, repository_root: Path = Path("."
 
 
 def run_p2_experiment(
-    config: P2ProtocolConfig, *, experiment_dir: Path, mode: str,
-    repository_root: Path = Path(".")
+    config: P2ProtocolConfig, *, experiment_dir: Path, mode: str, repository_root: Path = Path(".")
 ) -> P2RunSummary:
     """执行并恢复统一 P2 流程；仅 formal 模式创建供应商客户端。"""
     if mode not in {"simulation", "formal"}:
@@ -846,9 +1005,7 @@ def run_p2_experiment(
     trials_root.mkdir(parents=True, exist_ok=True)
     protocol_path = root / "protocol.json"
     if protocol_path.exists():
-        persisted = P2ProtocolRecord.model_validate_json(
-            protocol_path.read_text(encoding="utf-8")
-        )
+        persisted = P2ProtocolRecord.model_validate_json(protocol_path.read_text(encoding="utf-8"))
         comparable = protocol.model_copy(update={"generated_at": persisted.generated_at})
         if comparable != persisted:
             raise BenchmarkError("P2 resume protocol identity does not match")
@@ -857,9 +1014,7 @@ def run_p2_experiment(
     results: list[P2TrialRecord] = []
     tasks = {
         item.id: item
-        for item in load_real_issue_tasks(
-            config.tasks_dir, task_ids=protocol.qualified_task_ids
-        )
+        for item in load_real_issue_tasks(config.tasks_dir, task_ids=protocol.qualified_task_ids)
     }
     recipes = load_environment_recipes(config.recipes_dir)
     if mode == "simulation":
@@ -873,7 +1028,9 @@ def run_p2_experiment(
 
         def formal_factory(llm_config: LLMConfig) -> BaseLLM:
             return P2BudgetedLLM(
-                llm_config, ledger_path=ledger_path, formal=formal,
+                llm_config,
+                ledger_path=ledger_path,
+                formal=formal,
                 input_upper_bound=config.per_request_input_tokens,
                 request_id_prefix=request_prefix[0],
             )
@@ -881,109 +1038,146 @@ def run_p2_experiment(
         runner = TraceFixRunner(formal_factory)
         model_name = formal.model_name
     try:
-      for plan in protocol.schedule:
-        path = trials_root / f"{plan.sequence:03d}.json"
-        existing = _read_trial(path)
-        if existing and existing.status == "verification_complete":
-            _verify_saved_artifacts(existing)
-            results.append(existing.model_copy(update={"resumed": True}))
-            continue
-        if existing and existing.status not in {"agent_completed"}:
-            raise BenchmarkError(
-                "P2 trial has uncertain prior state; do not resend request",
-                context={"path": str(path), "status": existing.status},
-            )
-        task = tasks[plan.task_id]
-        if existing:
-            _verify_saved_artifacts(existing)
-            agent_record = existing.model_copy(update={"resumed": True})
-        else:
-            attempt_id = f"p2-{plan.sequence:03d}-{uuid4().hex}"
-            write_trial_record(path, P2TrialRecord(
-                sequence=plan.sequence, task_id=plan.task_id, arm=plan.arm,
-                repetition=plan.repetition, mode=mode, status="agent_running", attempt_id=attempt_id,
-            ))
-            enabled = plan.arm is ExperimentArm.TREATMENT
-            agent_config = AgentConfig(
-                max_steps=config.max_steps, max_input_tokens=config.max_input_tokens,
-                max_output_tokens=config.max_output_tokens, wall_time_seconds=config.wall_time_seconds,
-                max_test_runs=config.max_test_runs, token_optimization_enabled=enabled,
-                context=ContextConfig(
-                    enabled=enabled, compaction_trigger_tokens=config.context_trigger_tokens
-                ),
-                repo_map=RepoMapConfig(enabled=enabled), record_request_views=True,
-            )
-            if mode == "formal":
-                request_prefix[0] = attempt_id
-            agent_started = time.monotonic()
-            result = runner.run(RunConfig(
-                repo=config.source_root / task.id, task=task.problem_statement,
-                model_name=model_name, output_dir=root / "agent-runs",
-                env_file=None, llm_max_retries=0,
-                per_request_output_tokens=config.per_request_output_tokens,
-                test_python_executable=resolve_managed_environment_python(
-                    config.test_env_root, task.id
-                ),
-                test_pythonpath_entries=task.test_pythonpath_paths, agent_config=agent_config,
-            ))
-            agent_record = P2TrialRecord(
-                sequence=plan.sequence, task_id=plan.task_id, arm=plan.arm,
-                repetition=plan.repetition, mode=mode, status="agent_completed", attempt_id=attempt_id,
-                input_tokens=result.input_tokens, output_tokens=result.output_tokens,
-                cost_usd=result.cost_usd, stop_reason=result.stop_reason,
-                run_result_path=result.result_path, agent_patch_path=result.diff_path,
-                agent_duration_seconds=result.duration_seconds,
-                run_result_sha256=_artifact_sha256(result.result_path),
-                agent_patch_sha256=_artifact_sha256(result.diff_path),
-            )
-            write_trial_record(path, agent_record)
-            if mode == "formal" and config.formal is not None:
-                ledger = _read_cost_ledger(
-                    root / "cost-ledger.json", config.formal.total_cost_cap_usd,
-                    config.formal.provider, config.formal.model_name,
+        for plan in protocol.schedule:
+            path = trials_root / f"{plan.sequence:03d}.json"
+            existing = _read_trial(path)
+            if existing and existing.status == "verification_complete":
+                _verify_saved_artifacts(existing)
+                results.append(existing.model_copy(update={"resumed": True}))
+                continue
+            if existing and existing.status not in {"agent_completed"}:
+                raise BenchmarkError(
+                    "P2 trial has uncertain prior state; do not resend request",
+                    context={"path": str(path), "status": existing.status},
                 )
-                if ledger.uncertain_request or ledger.halt_reason:
-                    stopped = agent_record.model_copy(update={"status": "request_uncertain"})
-                    write_trial_record(path, stopped)
-                    raise BenchmarkError("P2 formal run stopped before another provider request")
-        if not agent_record.agent_patch_path:
-            record = agent_record.model_copy(update={"status": "infrastructure_error"})
+            task = tasks[plan.task_id]
+            if existing:
+                _verify_saved_artifacts(existing)
+                agent_record = existing.model_copy(update={"resumed": True})
+            else:
+                attempt_id = f"p2-{plan.sequence:03d}-{uuid4().hex}"
+                write_trial_record(
+                    path,
+                    P2TrialRecord(
+                        sequence=plan.sequence,
+                        task_id=plan.task_id,
+                        arm=plan.arm,
+                        repetition=plan.repetition,
+                        mode=mode,
+                        status="agent_running",
+                        attempt_id=attempt_id,
+                    ),
+                )
+                enabled = plan.arm is ExperimentArm.TREATMENT
+                agent_config = AgentConfig(
+                    max_steps=config.max_steps,
+                    max_input_tokens=config.max_input_tokens,
+                    max_output_tokens=config.max_output_tokens,
+                    wall_time_seconds=config.wall_time_seconds,
+                    max_test_runs=config.max_test_runs,
+                    token_optimization_enabled=enabled,
+                    context=ContextConfig(
+                        enabled=enabled, compaction_trigger_tokens=config.context_trigger_tokens
+                    ),
+                    repo_map=RepoMapConfig(enabled=enabled),
+                    record_request_views=True,
+                )
+                if mode == "formal":
+                    request_prefix[0] = attempt_id
+                result = runner.run(
+                    RunConfig(
+                        repo=config.source_root / task.id,
+                        task=task.problem_statement,
+                        model_name=model_name,
+                        output_dir=root / "agent-runs",
+                        env_file=None,
+                        llm_max_retries=0,
+                        per_request_output_tokens=config.per_request_output_tokens,
+                        test_python_executable=resolve_managed_environment_python(
+                            config.test_env_root, task.id
+                        ),
+                        test_pythonpath_entries=task.test_pythonpath_paths,
+                        agent_config=agent_config,
+                    )
+                )
+                agent_record = P2TrialRecord(
+                    sequence=plan.sequence,
+                    task_id=plan.task_id,
+                    arm=plan.arm,
+                    repetition=plan.repetition,
+                    mode=mode,
+                    status="agent_completed",
+                    attempt_id=attempt_id,
+                    input_tokens=result.input_tokens,
+                    output_tokens=result.output_tokens,
+                    cost_usd=result.cost_usd,
+                    stop_reason=result.stop_reason,
+                    run_result_path=result.result_path,
+                    agent_patch_path=result.diff_path,
+                    agent_duration_seconds=result.duration_seconds,
+                    run_result_sha256=_artifact_sha256(result.result_path),
+                    agent_patch_sha256=_artifact_sha256(result.diff_path),
+                )
+                write_trial_record(path, agent_record)
+                if mode == "formal" and config.formal is not None:
+                    ledger = _read_cost_ledger(
+                        root / "cost-ledger.json",
+                        config.formal.total_cost_cap_usd,
+                        config.formal.provider,
+                        config.formal.model_name,
+                    )
+                    if ledger.uncertain_request or ledger.halt_reason:
+                        stopped = agent_record.model_copy(update={"status": "request_uncertain"})
+                        write_trial_record(path, stopped)
+                        raise BenchmarkError(
+                            "P2 formal run stopped before another provider request"
+                        )
+            if not agent_record.agent_patch_path:
+                record = agent_record.model_copy(update={"status": "infrastructure_error"})
+                write_trial_record(path, record)
+                results.append(record)
+                continue
+            verification_started = time.monotonic()
+            verification = validate_agent_patch_strict(
+                task,
+                source=config.source_root / task.id,
+                agent_patch=Path(agent_record.agent_patch_path),
+                test_python=resolve_managed_environment_python(config.test_env_root, task.id),
+                output_dir=root / "verification" / f"{plan.sequence:03d}",
+                recipe=recipes[task.id],
+                expected_node_ids=protocol.p1_qualifications[task.id].expected_node_ids,
+            )
+            verification_path = root / "verification" / f"{plan.sequence:03d}" / "result.json"
+            verification_path.parent.mkdir(parents=True, exist_ok=True)
+            verification_path.write_text(verification.model_dump_json(indent=2), encoding="utf-8")
+            record = agent_record.model_copy(
+                update={
+                    "status": "verification_complete",
+                    "independent_passed": verification.eligible,
+                    "verification_eligible": verification.eligible,
+                    "verification_path": str(verification_path),
+                    "verification_duration_seconds": time.monotonic() - verification_started,
+                    "verification_sha256": _artifact_sha256(str(verification_path)),
+                }
+            )
             write_trial_record(path, record)
             results.append(record)
-            continue
-        verification_started = time.monotonic()
-        verification = validate_agent_patch_strict(
-            task, source=config.source_root / task.id, agent_patch=Path(agent_record.agent_patch_path),
-            test_python=resolve_managed_environment_python(config.test_env_root, task.id),
-            output_dir=root / "verification" / f"{plan.sequence:03d}",
-            recipe=recipes[task.id],
-            expected_node_ids=protocol.p1_qualifications[task.id].expected_node_ids,
-        )
-        verification_path = root / "verification" / f"{plan.sequence:03d}" / "result.json"
-        verification_path.parent.mkdir(parents=True, exist_ok=True)
-        verification_path.write_text(verification.model_dump_json(indent=2), encoding="utf-8")
-        record = agent_record.model_copy(update={
-            "status": "verification_complete",
-            "independent_passed": verification.eligible,
-            "verification_eligible": verification.eligible,
-            "verification_path": str(verification_path),
-            "verification_duration_seconds": time.monotonic() - verification_started,
-            "verification_sha256": _artifact_sha256(str(verification_path)),
-        })
-        write_trial_record(path, record)
-        results.append(record)
     finally:
         if lock_path.exists():
             lock_path.unlink()
     summary_path = root / "summary.json"
     summary = P2RunSummary(
-        mode=mode, protocol_path=str(protocol_path), trial_count=len(results),
+        mode=mode,
+        protocol_path=str(protocol_path),
+        trial_count=len(results),
         completed_count=sum(item.status == "verification_complete" for item in results),
         resumed_count=sum(item.resumed for item in results),
         input_tokens=sum(item.input_tokens for item in results),
         output_tokens=sum(item.output_tokens for item in results),
-        cost_usd=sum(item.cost_usd or 0 for item in results), results=tuple(results),
-        engineering_simulation_only=mode == "simulation", summary_path=str(summary_path),
+        cost_usd=sum(item.cost_usd or 0 for item in results),
+        results=tuple(results),
+        engineering_simulation_only=mode == "simulation",
+        summary_path=str(summary_path),
     )
     temporary = summary_path.with_suffix(".tmp")
     temporary.write_text(summary.model_dump_json(indent=2), encoding="utf-8")
@@ -995,7 +1189,9 @@ def run_p2_simulation(
     config: P2ProtocolConfig, *, experiment_dir: Path, repository_root: Path = Path(".")
 ) -> P2RunSummary:
     return run_p2_experiment(
-        config, experiment_dir=experiment_dir, mode="simulation",
+        config,
+        experiment_dir=experiment_dir,
+        mode="simulation",
         repository_root=repository_root,
     )
 
@@ -1004,6 +1200,8 @@ def run_p2_formal(
     config: P2ProtocolConfig, *, experiment_dir: Path, repository_root: Path = Path(".")
 ) -> P2RunSummary:
     return run_p2_experiment(
-        config, experiment_dir=experiment_dir, mode="formal",
+        config,
+        experiment_dir=experiment_dir,
+        mode="formal",
         repository_root=repository_root,
     )
