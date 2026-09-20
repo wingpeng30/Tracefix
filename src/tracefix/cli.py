@@ -313,7 +313,8 @@ def build_parser() -> argparse.ArgumentParser:
         "--test-env-root", type=Path, default=Path("runs/p1-revalidation-20260917/environments")
     )
     p2_parser.add_argument(
-        "--p1-evidence", type=Path,
+        "--p1-evidence",
+        type=Path,
         default=Path("runs/p1-revalidation-20260917/behavior-validation/behavior-validation.json"),
     )
     p2_parser.add_argument("--output-dir", type=Path, default=Path("runs"))
@@ -324,29 +325,38 @@ def build_parser() -> argparse.ArgumentParser:
     p2_run.add_argument("--recipes", type=Path, default=Path("benchmarks/real_recipes"))
     p2_run.add_argument("--source-root", type=Path, required=True)
     p2_run.add_argument(
-        "--test-env-root", type=Path,
+        "--test-env-root",
+        type=Path,
         default=Path("runs/p1-revalidation-20260917/environments"),
     )
     p2_run.add_argument(
-        "--p1-evidence", type=Path,
+        "--p1-evidence",
+        type=Path,
         default=Path("runs/p1-revalidation-20260917/behavior-validation/behavior-validation.json"),
     )
     p2_run.add_argument("--model-name")
     p2_run.add_argument("--provider")
     p2_run.add_argument("--pricing-source")
     p2_run.add_argument("--total-cost-cap-usd", type=float)
+    p2_run.add_argument("--total-cost-cap-cny", type=float)
     p2_run.add_argument("--input-cost-per-million-usd", type=float)
     p2_run.add_argument("--output-cost-per-million-usd", type=float)
+    p2_run.add_argument("--currency", choices=("USD", "CNY"), default="USD")
+    p2_run.add_argument("--input-cache-hit-cost-per-million", type=float)
+    p2_run.add_argument("--input-cache-miss-cost-per-million", type=float)
+    p2_run.add_argument("--output-cost-per-million", type=float)
     p2_check = subparsers.add_parser("p2-check", help="检查并冻结 P2 的源码、配方和受管环境")
     p2_check.add_argument("--tasks", type=Path, default=Path("benchmarks/real_candidates"))
     p2_check.add_argument("--recipes", type=Path, default=Path("benchmarks/real_recipes"))
     p2_check.add_argument("--source-root", type=Path, required=True)
     p2_check.add_argument(
-        "--test-env-root", type=Path,
+        "--test-env-root",
+        type=Path,
         default=Path("runs/p1-revalidation-20260917/environments"),
     )
     p2_check.add_argument(
-        "--p1-evidence", type=Path,
+        "--p1-evidence",
+        type=Path,
         default=Path("runs/p1-revalidation-20260917/behavior-validation/behavior-validation.json"),
     )
     p2_check.add_argument("--output-dir", type=Path, default=Path("runs"))
@@ -777,16 +787,34 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "p2-run":
             formal = None
             if args.mode == "formal":
+                cap = args.total_cost_cap_cny if args.currency == "CNY" else args.total_cost_cap_usd
+                input_price = (
+                    args.input_cache_miss_cost_per_million
+                    if args.currency == "CNY"
+                    else args.input_cost_per_million_usd
+                )
+                output_price = (
+                    args.output_cost_per_million
+                    if args.currency == "CNY"
+                    else args.output_cost_per_million_usd
+                )
                 formal = P2FormalRunRequirements(
-                    model_name=args.model_name, provider=args.provider,
+                    model_name=args.model_name,
+                    provider=args.provider,
                     pricing_source=args.pricing_source,
-                    total_cost_cap_usd=args.total_cost_cap_usd,
-                    input_cost_per_million_usd=args.input_cost_per_million_usd,
-                    output_cost_per_million_usd=args.output_cost_per_million_usd,
+                    total_cost_cap_usd=cap,
+                    input_cost_per_million_usd=input_price,
+                    output_cost_per_million_usd=output_price,
+                    currency=args.currency,
+                    input_cache_hit_cost_per_million=args.input_cache_hit_cost_per_million,
+                    input_cache_miss_cost_per_million=args.input_cache_miss_cost_per_million,
+                    output_cost_per_million=args.output_cost_per_million,
                 )
             config = P2ProtocolConfig(
-                tasks_dir=args.tasks, recipes_dir=args.recipes,
-                source_root=args.source_root, test_env_root=args.test_env_root,
+                tasks_dir=args.tasks,
+                recipes_dir=args.recipes,
+                source_root=args.source_root,
+                test_env_root=args.test_env_root,
                 p1_evidence_path=args.p1_evidence,
                 formal=formal,
             )
@@ -799,8 +827,10 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "p2-check":
             path = write_p2_check(
                 P2ProtocolConfig(
-                    tasks_dir=args.tasks, recipes_dir=args.recipes,
-                    source_root=args.source_root, test_env_root=args.test_env_root,
+                    tasks_dir=args.tasks,
+                    recipes_dir=args.recipes,
+                    source_root=args.source_root,
+                    test_env_root=args.test_env_root,
                     p1_evidence_path=args.p1_evidence,
                     output_dir=args.output_dir,
                 )

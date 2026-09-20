@@ -13,7 +13,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from uuid import uuid4
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from tracefix.agent import AgentConfig
 from tracefix.context import ContextConfig
@@ -107,6 +107,38 @@ class P2FormalRunRequirements(BaseModel):
     total_cost_cap_usd: float = Field(gt=0)
     input_cost_per_million_usd: float = Field(gt=0)
     output_cost_per_million_usd: float = Field(gt=0)
+    currency: str = "USD"
+    input_cache_hit_cost_per_million: float | None = Field(default=None, gt=0)
+    input_cache_miss_cost_per_million: float | None = Field(default=None, gt=0)
+    output_cost_per_million: float | None = Field(default=None, gt=0)
+    peak_pricing: bool = True
+
+    @model_validator(mode="after")
+    def validate_currency_pricing(self) -> P2FormalRunRequirements:
+        if self.currency == "CNY":
+            if None in (
+                self.input_cache_hit_cost_per_million,
+                self.input_cache_miss_cost_per_million,
+                self.output_cost_per_million,
+            ):
+                raise ValueError(
+                    "CNY formal pricing requires cache-hit, cache-miss, and output prices"
+                )
+        elif self.currency != "USD":
+            raise ValueError("P2 formal currency must be USD or CNY")
+        return self
+
+    @property
+    def cap(self) -> float:
+        return self.total_cost_cap_usd
+
+    @property
+    def conservative_input_price(self) -> float:
+        return self.input_cache_miss_cost_per_million or self.input_cost_per_million_usd
+
+    @property
+    def effective_output_price(self) -> float:
+        return self.output_cost_per_million or self.output_cost_per_million_usd
 
 
 class P2ProtocolConfig(BaseModel):
@@ -306,6 +338,7 @@ class P2CostLedgerRecord(BaseModel):
     protocol_identity: str | None = None
     provider: str | None = None
     model_name: str | None = None
+    currency: str = "USD"
     requests: tuple[P2CostRequestRecord, ...] = ()
 
 
@@ -322,6 +355,9 @@ class P2CostRequestRecord(BaseModel):
     actual_input_tokens: int | None = None
     actual_output_tokens: int | None = None
     actual_cost_usd: float | None = None
+    actual_cost_source: str | None = None
+    input_cache_hit_tokens: int | None = None
+    input_cache_miss_tokens: int | None = None
 
 
 class P2TaskSummary(BaseModel):
@@ -456,6 +492,7 @@ class P2BudgetedLLM(BaseLLM):
                 "actual_input_tokens": usage.input_tokens,
                 "actual_output_tokens": usage.output_tokens,
                 "actual_cost_usd": actual,
+                "actual_cost_source": "conservative_calculation_not_provider_bill",
             }
         )
         ledger = ledger.model_copy(
@@ -475,8 +512,8 @@ def estimated_request_reservation(
 ) -> float:
     """在供应商调用前按每次上限保留费用，避免超过总帽。"""
     return (
-        input_tokens * formal.input_cost_per_million_usd
-        + output_tokens * formal.output_cost_per_million_usd
+        input_tokens * formal.conservative_input_price
+        + output_tokens * formal.effective_output_price
     ) / 1_000_000
 
 
