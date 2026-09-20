@@ -33,6 +33,55 @@ def test_cli_p2_summarize_is_read_only(tmp_path, monkeypatch, capsys) -> None:
     assert str(expected) in capsys.readouterr().out
 
 
+def test_cli_p2_formal_freezes_cny_cache_pricing(tmp_path, monkeypatch, capsys) -> None:
+    """正式入口必须把人民币缓存价格和上限原样交给冻结协议。"""
+    captured = []
+    summary = SimpleNamespace(
+        completed_count=0, trial_count=60, resumed_count=0, summary_path="p2.json"
+    )
+    monkeypatch.setattr(
+        "tracefix.cli.run_p2_formal",
+        lambda config, *, experiment_dir: captured.append((config, experiment_dir)) or summary,
+    )
+
+    assert (
+        main(
+            [
+                "p2-run",
+                "--mode",
+                "formal",
+                "--experiment-dir",
+                str(tmp_path / "formal"),
+                "--source-root",
+                str(tmp_path / "sources"),
+                "--model-name",
+                "deepseek/deepseek-flash",
+                "--provider",
+                "DeepSeek official direct",
+                "--pricing-source",
+                "https://api-docs.deepseek.com/zh-cn/quick_start/pricing/",
+                "--currency",
+                "CNY",
+                "--total-cost-cap-cny",
+                "100",
+                "--input-cache-hit-cost-per-million",
+                "0.04",
+                "--input-cache-miss-cost-per-million",
+                "2",
+                "--output-cost-per-million",
+                "8",
+            ]
+        )
+        == 0
+    )
+    config, root = captured[0]
+    assert root == tmp_path / "formal"
+    assert config.formal.currency == "CNY"
+    assert config.formal.total_cost_cap_usd == 100
+    assert config.formal.conservative_input_price == 2
+    assert "P2 正式实验: 0/60" in capsys.readouterr().out
+
+
 def test_cli_run_reads_task_file_and_cli_values_override_environment(
     tmp_path, monkeypatch, capsys
 ) -> None:
