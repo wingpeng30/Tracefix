@@ -21,6 +21,7 @@ from tracefix.p2_protocol import (
     P2ProtocolConfig,
     run_p2_formal,
     run_p2_simulation,
+    write_p2_summary,
     write_p2_check,
     write_p2_dry_run,
 )
@@ -311,6 +312,10 @@ def build_parser() -> argparse.ArgumentParser:
     p2_parser.add_argument(
         "--test-env-root", type=Path, default=Path("runs/p1-revalidation-20260917/environments")
     )
+    p2_parser.add_argument(
+        "--p1-evidence", type=Path,
+        default=Path("runs/p1-revalidation-20260917/behavior-validation/behavior-validation.json"),
+    )
     p2_parser.add_argument("--output-dir", type=Path, default=Path("runs"))
     p2_run = subparsers.add_parser("p2-run", help="执行或恢复 P2 零费用工程演练")
     p2_run.add_argument("--mode", choices=("simulation", "formal"), default="simulation")
@@ -321,6 +326,10 @@ def build_parser() -> argparse.ArgumentParser:
     p2_run.add_argument(
         "--test-env-root", type=Path,
         default=Path("runs/p1-revalidation-20260917/environments"),
+    )
+    p2_run.add_argument(
+        "--p1-evidence", type=Path,
+        default=Path("runs/p1-revalidation-20260917/behavior-validation/behavior-validation.json"),
     )
     p2_run.add_argument("--model-name")
     p2_run.add_argument("--provider")
@@ -336,7 +345,13 @@ def build_parser() -> argparse.ArgumentParser:
         "--test-env-root", type=Path,
         default=Path("runs/p1-revalidation-20260917/environments"),
     )
+    p2_check.add_argument(
+        "--p1-evidence", type=Path,
+        default=Path("runs/p1-revalidation-20260917/behavior-validation/behavior-validation.json"),
+    )
     p2_check.add_argument("--output-dir", type=Path, default=Path("runs"))
+    p2_summary = subparsers.add_parser("p2-summarize", help="汇总已保存的 P2 试次，不执行 Agent")
+    p2_summary.add_argument("--experiment-dir", type=Path, required=True)
 
     retrieval_parser = subparsers.add_parser(
         "retrieval-eval", help="离线比较文件名关键词基线与 Repo Map 的文件定位能力"
@@ -751,6 +766,7 @@ def main(argv: list[str] | None = None) -> int:
                     recipes_dir=args.recipes,
                     source_root=args.source_root,
                     test_env_root=args.test_env_root,
+                    p1_evidence_path=args.p1_evidence,
                     output_dir=args.output_dir,
                 )
             )
@@ -771,6 +787,7 @@ def main(argv: list[str] | None = None) -> int:
             config = P2ProtocolConfig(
                 tasks_dir=args.tasks, recipes_dir=args.recipes,
                 source_root=args.source_root, test_env_root=args.test_env_root,
+                p1_evidence_path=args.p1_evidence,
                 formal=formal,
             )
             run = run_p2_formal if args.mode == "formal" else run_p2_simulation
@@ -784,10 +801,16 @@ def main(argv: list[str] | None = None) -> int:
                 P2ProtocolConfig(
                     tasks_dir=args.tasks, recipes_dir=args.recipes,
                     source_root=args.source_root, test_env_root=args.test_env_root,
+                    p1_evidence_path=args.p1_evidence,
                     output_dir=args.output_dir,
                 )
             )
             print(f"P2 输入检查通过：{path}")
+            return 0
+
+        if args.command == "p2-summarize":
+            path = write_p2_summary(args.experiment_dir)
+            print(f"P2 汇总: {path}")
             return 0
 
         if args.command == "clean-real-artifacts":

@@ -402,6 +402,7 @@ def validate_real_task_behavior(
 def validate_agent_patch_strict(
     task: RealIssueTask, *, source: Path, agent_patch: Path, test_python: Path,
     output_dir: Path, recipe: EnvironmentRecipe | None = None,
+    expected_node_ids: tuple[str, ...] | None = None,
 ) -> AgentPatchValidation:
     """在全新 checkout 中验收 Agent 补丁，拒绝不完整证据与环境漂移。"""
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -418,14 +419,28 @@ def validate_agent_patch_strict(
         _git(["apply", str(agent_patch)], checkout)
         # ``git diff`` 不会列出 Agent 新建但尚未追踪的文件；测试篡改也可能
         # 恰好以这种形式出现。因此合并 HEAD 差异和未追踪文件清单。
-        changed = _git(["diff", "--name-only", "HEAD"], checkout).stdout.splitlines()
+        # NUL 分隔避免 Windows 路径、空格或重命名记录被按行截断；name-status
+        # 的 rename/copy 记录携带旧、新两个路径，二者都必须通过保护检查。
+        status_fields = _git(["diff", "--name-status", "-z", "HEAD"], checkout).stdout.split("\0")
+        changed: list[str] = []
+        index = 0
+        while index < len(status_fields) and status_fields[index]:
+            status = status_fields[index]
+            index += 1
+            path_count = 2 if status[:1] in {"R", "C"} else 1
+            changed.extend(field for field in status_fields[index:index + path_count] if field)
+            index += path_count
         changed.extend(
-            _git(["ls-files", "--others", "--exclude-standard"], checkout).stdout.splitlines()
+            field for field in _git(
+                ["ls-files", "-z", "--others", "--exclude-standard"], checkout
+            ).stdout.split("\0") if field
         )
         forbidden = _changed_test_files(task, tuple(changed))
         forbidden += tuple(
             path for path in changed
-            if Path(path).name in {"conftest.py", "pytest.ini", "tox.ini", "pyproject.toml"}
+            if Path(path).name in {
+                "conftest.py", "pytest.ini", "tox.ini", "pyproject.toml", "setup.cfg",
+            }
         )
         if forbidden:
             after = inspect_test_environment(
@@ -449,15 +464,26 @@ def validate_agent_patch_strict(
     after = inspect_test_environment(test_python, pythonpath_entries=task.test_pythonpath_paths)
     evidence = _pytest_evidence(result, checkout)
     drift = before.fingerprint_sha256 != after.fingerprint_sha256
+    frozen_nodes_match = (
+        expected_node_ids is None
+        or _canonical_node_ids(evidence.executed_node_ids, checkout)
+        == _canonical_node_ids(expected_node_ids, checkout)
+    )
     eligible = (
         evidence.status == "passed" and evidence.junit_available and evidence.audit_available
         and evidence.collection_audit_available and evidence.source_import_audit_valid
         and bool(evidence.executed_node_ids) and evidence.skipped_count == 0
         and evidence.xfailed_count == 0 and evidence.xpassed_count == 0 and not drift
+        and frozen_nodes_match
     )
     return AgentPatchValidation(
         task_id=task.id, patch_applied=True, eligible=eligible,
-        reason=None if eligible else evidence.audit_diagnostic or evidence.diagnostic or evidence.status,
+        reason=(
+            None if eligible else
+            evidence.audit_diagnostic or evidence.diagnostic if evidence.status == "collection_error" else
+            "executed_node_ids_differ_from_frozen_p1_set" if not frozen_nodes_match else
+            evidence.audit_diagnostic or evidence.diagnostic or evidence.status
+        ),
         evidence=evidence, environment_before=before, environment_after=after,
         dependency_drift_detected=drift,
     )
@@ -728,7 +754,11 @@ def _failed_validation_result(
         "build_steps": [step.model_dump(mode="json") for step in build_steps],
         "collection": collection.model_dump(mode="json") if collection else None,
         "execution": execution.model_dump(mode="json") if execution else None,
-        "audit_path": audit_path, "collection_audit_path": audit_path,
+        # A collection-only failure has no execution audit.  Reusing its path for
+        # both fields makes the verifier compare a collection record to an
+        # execution run-id and produces a misleading stage-identity failure.
+        "audit_path": audit_path if execution else None,
+        "collection_audit_path": audit_path if collection else None,
         "audit_run_id": audit_run_id or call_id, "import_probe_path": import_probe_path,
         "source_import_probe": source_import_probe,
     }
@@ -1130,7 +1160,11 @@ def _pytest_evidence(result: ToolResult, checkout: Path) -> PytestExecutionEvide
         audit_available=audit_available,
         collection_audit_available=collection_available,
         execution_audit_available=execution_available,
-        audit_diagnostic=execution_diagnostic or collection_diagnostic,
+        # Collection failure is a complete validation path of its own.  There is
+        # deliberately no execution report, so its absent audit must not mask a
+        # valid collection audit with an irrelevant diagnostic.
+        audit_diagnostic=(execution_diagnostic if execution_data is not None else None)
+        or collection_diagnostic,
         source_import_audit_valid=source_import_audit_valid,
         imported_source_paths=imported_source_paths,
         collection_errors=collection_errors,

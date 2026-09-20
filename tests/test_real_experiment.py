@@ -24,12 +24,13 @@ from tracefix.p2_protocol import (
     read_completed_trial,
     run_p2_experiment,
     run_p2_simulation,
+    summarize_p2_experiment,
     write_p2_check,
     write_p2_dry_run,
     write_trial_record,
 )
 from tracefix.paired import ExperimentArm
-from tracefix.provenance import collect_run_provenance
+from tracefix.provenance import collect_run_provenance, inspect_test_environment
 from tracefix.real_benchmark import RealIssueTask
 from tracefix.real_experiment import (
     RealExperimentConfig,
@@ -405,6 +406,7 @@ def test_reviewed_collection_failure_must_match_every_declared_field(tmp_path: P
     )
 
     assert _matches_expected_collection_failure(evidence, rule)
+    assert evidence.audit_diagnostic is None
     assert not _matches_expected_collection_failure(
         evidence, rule.model_copy(update={"symbol": "OTHER_API"})
     )
@@ -510,6 +512,49 @@ def _fixture(tmp_path: Path) -> tuple[RealIssueTask, Path]:
     }
     (task_dir / "task.json").write_text(json.dumps(manifest), encoding="utf-8")
     return RealIssueTask.load(task_dir), source
+
+
+def _p1_qualification_evidence(
+    tmp_path: Path, tasks: tuple[RealIssueTask, ...], collection_tasks: tuple[str, ...] = ()
+) -> Path:
+    """构造与当前测试解释器一致的最小 P1 原始资格记录。"""
+    fingerprint = inspect_test_environment(Path(sys.executable)).fingerprint_sha256
+    records = []
+    for task in tasks:
+        artifact_dir = tmp_path / "p1-artifacts" / task.id / ".tracefix-validation"
+        artifact_dir.mkdir(parents=True)
+        nodes = ["tests/test_hidden.py::test_hidden"]
+        reports = [
+            {"nodeid": nodes[0], "when": stage, "outcome": "passed"}
+            for stage in ("setup", "call", "teardown")
+        ]
+        for name, stage, reports_for_stage in (
+            ("execution.audit.json", "execution", reports),
+            ("collection.audit.json", "collection", []),
+        ):
+            (artifact_dir / name).write_text(json.dumps({
+                "stage": stage, "completed": True, "exitstatus": 0,
+                "collected_node_ids": nodes, "reports": reports_for_stage,
+            }), encoding="utf-8")
+        (artifact_dir / "junit.xml").write_text("<testsuites />", encoding="utf-8")
+        records.append({
+            "task_id": task.id,
+            "base_commit": task.base_commit,
+            "qualification_type": (
+                "expected_collection_failure" if task.id in collection_tasks else "assertion_failure"
+            ),
+            "test_environment": {"fingerprint_sha256": fingerprint},
+            "gold_evidence": {
+                "status": "passed", "returncode": 0, "audit_available": True,
+                "collection_audit_available": True, "source_import_audit_valid": True,
+                "skipped_count": 0, "xfailed_count": 0, "xpassed_count": 0,
+                "executed_node_ids": ["tests/test_hidden.py::test_hidden"],
+                "audit_path": str(artifact_dir / "execution.audit.json"),
+            },
+        })
+    path = tmp_path / "p1-evidence.json"
+    path.write_text(json.dumps(records), encoding="utf-8")
+    return path
 
 
 def _trace(path: Path, *, eligible: bool = True) -> None:
@@ -972,6 +1017,31 @@ def test_p2_budgeted_llm_reserves_reconciles_and_freezes_uncertain_request(tmp_p
     with pytest.raises(BenchmarkError, match="does not match"):
         mismatch.complete(())
 
+    missing_usage = P2BudgetedLLM(
+        LLMConfig(model_name="provider/model", max_output_tokens=100, max_retries=0),
+        ledger_path=tmp_path / "missing-usage.json", formal=requirements, input_upper_bound=1000,
+    )
+    missing_usage._delegate = type("MissingUsage", (), {
+        "complete": lambda *_: LLMResponse(
+            message=Message(role=MessageRole.ASSISTANT, content="done"),
+            usage=TokenUsage(), model_name="provider/model",
+        )
+    })()
+    with pytest.raises(BenchmarkError, match="usage"):
+        missing_usage.complete(())
+    frozen = P2CostLedgerRecord.model_validate_json(
+        (tmp_path / "missing-usage.json").read_text(encoding="utf-8")
+    )
+    assert frozen.uncertain_request is True and frozen.requests[0].status == "reserved"
+
+    with pytest.raises(BenchmarkError, match="cost cap"):
+        P2BudgetedLLM(
+            LLMConfig(model_name="provider/model", max_output_tokens=100, max_retries=0),
+            ledger_path=tmp_path / "halted.json", formal=too_small, input_upper_bound=1000,
+        ).complete(())
+    halted = P2CostLedgerRecord.model_validate_json((tmp_path / "halted.json").read_text(encoding="utf-8"))
+    assert halted.halt_reason == "cost_cap_would_be_exceeded"
+
 
 def test_p2_simulation_model_emits_supported_nonempty_git_patch() -> None:
     response = P2SimulationLLM(LLMConfig(model_name="simulation")).complete(())
@@ -1027,7 +1097,10 @@ def test_p2_simulation_completes_and_resumes_all_trials(tmp_path, monkeypatch) -
 
     monkeypatch.setattr("tracefix.p2_protocol.TraceFixRunner", lambda *_: SimulationRunner())
     root = tmp_path / "simulation"
-    config = P2ProtocolConfig(source_root=sources)
+    config = P2ProtocolConfig(
+        source_root=sources,
+        p1_evidence_path=_p1_qualification_evidence(tmp_path, tasks, ids[-2:]),
+    )
     first = run_p2_simulation(config, experiment_dir=root)
     resumed = run_p2_simulation(config, experiment_dir=root)
     assert first.completed_count == 60 and first.resumed_count == 0
@@ -1039,6 +1112,38 @@ def test_p2_simulation_completes_and_resumes_all_trials(tmp_path, monkeypatch) -
     protocol_path.write_text(json.dumps(payload), encoding="utf-8")
     with pytest.raises(BenchmarkError, match="identity does not match"):
         run_p2_simulation(config, experiment_dir=root)
+
+
+def test_p2_summary_keeps_all_planned_positions_and_separates_failures(tmp_path, monkeypatch) -> None:
+    task, _ = _fixture(tmp_path)
+    ids = ("task-a", "task-b")
+    tasks = tuple(task.model_copy(update={"id": task_id}) for task_id in ids)
+    monkeypatch.setattr("tracefix.p2_protocol.P1_QUALIFIED_TASK_IDS", ids)
+    monkeypatch.setattr("tracefix.p2_protocol.COLLECTION_FAILURE_TASK_IDS", ("task-b",))
+    monkeypatch.setattr("tracefix.p2_protocol.load_real_issue_tasks", lambda *args, **kwargs: tasks)
+    monkeypatch.setattr(
+        "tracefix.p2_protocol.load_environment_recipes",
+        lambda *_: {task_id: EnvironmentRecipe(task_id=task_id) for task_id in ids},
+    )
+    monkeypatch.setattr("tracefix.p2_protocol._git_commit", lambda *_: "s" * 40)
+    config = P2ProtocolConfig(p1_evidence_path=_p1_qualification_evidence(tmp_path, tasks, ("task-b",)))
+    protocol = build_p2_protocol(config)
+    root = tmp_path / "summary"
+    (root / "trials").mkdir(parents=True)
+    (root / "protocol.json").write_text(protocol.model_dump_json(), encoding="utf-8")
+    plan = protocol.schedule[0]
+    write_trial_record(root / "trials" / "001.json", P2TrialRecord(
+        sequence=plan.sequence, task_id=plan.task_id, arm=plan.arm, repetition=plan.repetition,
+        mode="simulation", status="verification_complete", input_tokens=5, output_tokens=2,
+        cost_usd=0, independent_passed=False, agent_duration_seconds=1,
+    ))
+    summary = summarize_p2_experiment(root)
+    assert summary.planned_count == 12
+    assert summary.completed_count == 1 and summary.repair_failure_count == 1
+    assert summary.unexecuted_count == 11 and summary.input_tokens is None
+    assert {item.qualification_type for item in summary.task_summaries} == {
+        "assertion_failure", "expected_collection_failure"
+    }
 
 
 def test_p2_input_check_writes_snapshot_and_rejects_dirty_source(tmp_path, monkeypatch) -> None:
@@ -1060,8 +1165,14 @@ def test_p2_input_check_writes_snapshot_and_rejects_dirty_source(tmp_path, monke
     sources = tmp_path / "sources"
     sources.mkdir()
     _run_git(tmp_path, "clone", "--quiet", str(source), str(sources / task.id))
-    config = P2ProtocolConfig(source_root=sources, output_dir=tmp_path / "runs")
-    assert write_p2_check(config).is_file()
+    config = P2ProtocolConfig(
+        source_root=sources, output_dir=tmp_path / "runs",
+        p1_evidence_path=_p1_qualification_evidence(tmp_path, (task,)),
+    )
+    check_path = write_p2_check(config)
+    assert check_path.is_file()
+    frozen = json.loads(check_path.read_text(encoding="utf-8"))["protocol"]["p1_qualifications"]
+    assert frozen[task.id]["expected_node_ids"] == ["tests/test_hidden.py::test_hidden"]
     formal = P2FormalRunRequirements(
         model_name="provider/model", provider="provider", pricing_source="source",
         total_cost_cap_usd=1, input_cost_per_million_usd=1,
@@ -1073,6 +1184,106 @@ def test_p2_input_check_writes_snapshot_and_rejects_dirty_source(tmp_path, monke
     (sources / task.id / "dirty.txt").write_text("x", encoding="utf-8")
     with pytest.raises(BenchmarkError, match="not clean"):
         check_p2_inputs(config)
+
+
+def test_p2_input_gate_rejects_missing_or_drifted_p1_identity(tmp_path, monkeypatch) -> None:
+    """P2 不得在缺失 P1 记录或更换受管依赖后开始。"""
+    task, source = _fixture(tmp_path)
+    monkeypatch.setattr("tracefix.p2_protocol.P1_QUALIFIED_TASK_IDS", (task.id,))
+    monkeypatch.setattr("tracefix.p2_protocol.COLLECTION_FAILURE_TASK_IDS", ())
+    monkeypatch.setattr("tracefix.p2_protocol.load_real_issue_tasks", lambda *args, **kwargs: (task,))
+    monkeypatch.setattr(
+        "tracefix.p2_protocol.load_environment_recipes", lambda *_: {task.id: EnvironmentRecipe(task_id=task.id)}
+    )
+    monkeypatch.setattr("tracefix.p2_protocol.resolve_managed_environment_python", lambda *_: Path(sys.executable))
+    sources = tmp_path / "sources"
+    sources.mkdir()
+    _run_git(tmp_path, "clone", "--quiet", str(source), str(sources / task.id))
+    with pytest.raises(BenchmarkError, match="requires the retained P1"):
+        check_p2_inputs(P2ProtocolConfig(source_root=sources))
+    evidence = _p1_qualification_evidence(tmp_path, (task,))
+    payload = json.loads(evidence.read_text(encoding="utf-8"))
+    payload[0]["test_environment"]["fingerprint_sha256"] = "drifted"
+    evidence.write_text(json.dumps(payload), encoding="utf-8")
+    with pytest.raises(BenchmarkError, match="differs from the P1-qualified"):
+        check_p2_inputs(P2ProtocolConfig(source_root=sources, p1_evidence_path=evidence))
+
+
+def test_p2_protocol_rejects_malformed_raw_p1_evidence(tmp_path, monkeypatch) -> None:
+    task, _ = _fixture(tmp_path)
+    monkeypatch.setattr("tracefix.p2_protocol.P1_QUALIFIED_TASK_IDS", (task.id,))
+    monkeypatch.setattr("tracefix.p2_protocol.COLLECTION_FAILURE_TASK_IDS", ())
+    monkeypatch.setattr("tracefix.p2_protocol.load_real_issue_tasks", lambda *args, **kwargs: (task,))
+    monkeypatch.setattr(
+        "tracefix.p2_protocol.load_environment_recipes", lambda *_: {task.id: EnvironmentRecipe(task_id=task.id)}
+    )
+    malformed = tmp_path / "malformed-p1.json"
+    malformed.write_text("{}", encoding="utf-8")
+    with pytest.raises(BenchmarkError, match="must be a JSON list"):
+        build_p2_protocol(P2ProtocolConfig(p1_evidence_path=malformed))
+    malformed.write_text("[]", encoding="utf-8")
+    with pytest.raises(BenchmarkError, match="missing a P2 task"):
+        build_p2_protocol(P2ProtocolConfig(p1_evidence_path=malformed))
+
+
+def test_p2_identity_helpers_fail_closed_when_git_cannot_answer(monkeypatch) -> None:
+    """代码身份或工作区差异不可读取时，P2 不得静默继续。"""
+    import tracefix.p2_protocol as p2
+
+    failed = type("Result", (), {"returncode": 1, "stdout": b""})()
+    monkeypatch.setattr(p2.subprocess, "run", lambda *args, **kwargs: failed)
+    with pytest.raises(BenchmarkError, match="code commit"):
+        p2._git_commit(Path("."))
+    with pytest.raises(BenchmarkError, match="tracked worktree"):
+        p2._tracked_diff(Path("."))
+    assert read_completed_trial(Path("missing-p2-trial.json")) is None
+
+
+def test_p2_resume_verifies_persisted_agent_result_without_rerunning_agent(tmp_path, monkeypatch) -> None:
+    """Agent 已落盘但验收中断时，只能续验，不得重发模型请求。"""
+    task, source = _fixture(tmp_path)
+    monkeypatch.setattr("tracefix.p2_protocol.P1_QUALIFIED_TASK_IDS", (task.id,))
+    monkeypatch.setattr("tracefix.p2_protocol.COLLECTION_FAILURE_TASK_IDS", ())
+    monkeypatch.setattr("tracefix.p2_protocol.load_real_issue_tasks", lambda *args, **kwargs: (task,))
+    monkeypatch.setattr(
+        "tracefix.p2_protocol.load_environment_recipes", lambda *_: {task.id: EnvironmentRecipe(task_id=task.id)}
+    )
+    monkeypatch.setattr("tracefix.p2_protocol.resolve_managed_environment_python", lambda *_: Path(sys.executable))
+    monkeypatch.setattr("tracefix.p2_protocol._git_commit", lambda *_: "r" * 40)
+    sources = tmp_path / "sources"
+    sources.mkdir()
+    _run_git(tmp_path, "clone", "--quiet", str(source), str(sources / task.id))
+    config = P2ProtocolConfig(
+        source_root=sources, p1_evidence_path=_p1_qualification_evidence(tmp_path, (task,))
+    )
+    protocol = build_p2_protocol(config)
+    root = tmp_path / "resume"
+    trials = root / "trials"
+    trials.mkdir(parents=True)
+    patch = tmp_path / "agent.diff"
+    patch.write_text(GOLD, encoding="utf-8")
+    for plan in protocol.schedule:
+        write_trial_record(trials / f"{plan.sequence:03d}.json", P2TrialRecord(
+            sequence=plan.sequence, task_id=plan.task_id, arm=plan.arm, repetition=plan.repetition,
+            mode="simulation", status="agent_completed", attempt_id=f"saved-{plan.sequence}",
+            agent_patch_path=str(patch), run_result_path="saved-result.json",
+        ))
+    calls = []
+    class NoRerunRunner:
+        def run(self, *args, **kwargs):
+            pytest.fail("agent reran")
+    monkeypatch.setattr("tracefix.p2_protocol.TraceFixRunner", lambda *_: NoRerunRunner())
+    class Verification:
+        eligible = False
+        def model_dump_json(self, **kwargs):
+            return "{\"eligible\": false}"
+    monkeypatch.setattr(
+        "tracefix.p2_protocol.validate_agent_patch_strict",
+        lambda *args, **kwargs: calls.append(kwargs["expected_node_ids"]) or Verification(),
+    )
+    summary = run_p2_simulation(config, experiment_dir=root)
+    assert summary.completed_count == 6 and summary.resumed_count == 6
+    assert len(calls) == 6
 
 
 def test_p2_simulation_rejects_existing_lock(tmp_path, monkeypatch) -> None:
