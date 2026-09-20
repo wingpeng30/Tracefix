@@ -1127,7 +1127,9 @@ def run_p2_experiment(
                         task=task.problem_statement,
                         model_name=model_name,
                         output_dir=root / "agent-runs",
-                        env_file=None,
+                        # 正式实验只从本机 .env 加载凭据；模拟模式保持完全离线，
+                        # 避免测试或工程演练接触供应商配置。
+                        env_file=Path(".env") if mode == "formal" else None,
                         llm_max_retries=0,
                         per_request_output_tokens=config.per_request_output_tokens,
                         test_python_executable=resolve_managed_environment_python(

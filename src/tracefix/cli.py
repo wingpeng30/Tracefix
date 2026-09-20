@@ -820,7 +820,8 @@ def main(argv: list[str] | None = None) -> int:
             )
             run = run_p2_formal if args.mode == "formal" else run_p2_simulation
             summary = run(config, experiment_dir=args.experiment_dir)
-            print(f"P2 零费用工程演练: {summary.completed_count}/{summary.trial_count}")
+            label = "P2 正式实验" if args.mode == "formal" else "P2 零费用工程演练"
+            print(f"{label}: {summary.completed_count}/{summary.trial_count}")
             print(f"恢复复用: {summary.resumed_count}; 汇总: {summary.summary_path}")
             return 0
 
