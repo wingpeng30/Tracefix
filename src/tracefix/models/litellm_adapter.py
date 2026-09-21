@@ -53,19 +53,7 @@ class LiteLLMAdapter(BaseLLM):
         tools: Sequence[ToolSpec] = (),
     ) -> LLMResponse:
         client = self.client
-        kwargs: dict[str, Any] = {
-            "model": self.config.model_name,
-            "messages": [self._format_message(message) for message in messages],
-            "timeout": self.config.timeout_seconds,
-            "num_retries": self.config.max_retries,
-            **self.config.extra_kwargs,
-        }
-        if self.config.temperature is not None:
-            kwargs["temperature"] = self.config.temperature
-        if self.config.max_output_tokens is not None:
-            kwargs["max_tokens"] = self.config.max_output_tokens
-        if tools:
-            kwargs["tools"] = [tool.to_openai_tool() for tool in tools]
+        kwargs = self.request_kwargs(messages, tools)
 
         try:
             response = client.completion(**kwargs)
@@ -117,6 +105,40 @@ class LiteLLMAdapter(BaseLLM):
             finish_reason=_get(choice, "finish_reason"),
             raw_response=raw_response,
         )
+
+    def request_kwargs(
+        self, messages: Sequence[Message], tools: Sequence[ToolSpec] = ()
+    ) -> dict[str, Any]:
+        """构造实际供应商调用参数，供调用和预算计数共用。"""
+        kwargs: dict[str, Any] = {
+            "model": self.config.model_name,
+            "messages": [self._format_message(message) for message in messages],
+            "timeout": self.config.timeout_seconds,
+            "num_retries": self.config.max_retries,
+            **self.config.extra_kwargs,
+        }
+        if self.config.temperature is not None:
+            kwargs["temperature"] = self.config.temperature
+        if self.config.max_output_tokens is not None:
+            kwargs["max_tokens"] = self.config.max_output_tokens
+        if tools:
+            kwargs["tools"] = [tool.to_openai_tool() for tool in tools]
+        return kwargs
+
+    def count_input_tokens(
+        self, messages: Sequence[Message], tools: Sequence[ToolSpec] = ()
+    ) -> int:
+        """用供应商适配库对将要发送的同一请求做模型相关计数。"""
+        kwargs = self.request_kwargs(messages, tools)
+        counter = getattr(self.client, "token_counter", None)
+        if counter is None:
+            raise LLMProviderError("provider adapter exposes no auditable token counter")
+        value = counter(
+            model=kwargs["model"], messages=kwargs["messages"], tools=kwargs.get("tools")
+        )
+        if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
+            raise LLMProviderError("provider token counter returned an invalid input bound")
+        return value
 
     @staticmethod
     def _format_message(message: Message) -> dict[str, Any]:

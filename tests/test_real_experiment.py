@@ -14,6 +14,7 @@ from tracefix.models import LLMResponse, TokenUsage
 from tracefix.p2_protocol import (
     P2BudgetedLLM,
     P2CostLedgerRecord,
+    P2CostRequestRecord,
     P2FormalRunRequirements,
     P2ProtocolConfig,
     P2SimulationLLM,
@@ -28,6 +29,7 @@ from tracefix.p2_protocol import (
     summarize_p2_experiment,
     write_p2_check,
     write_p2_dry_run,
+    write_p2_reconciliation,
     write_p2_summary,
     write_trial_record,
 )
@@ -1032,6 +1034,11 @@ def test_p2_budgeted_llm_reserves_reconciles_and_freezes_uncertain_request(tmp_p
     )
 
     class Delegate:
+        config = LLMConfig(model_name="provider/model", max_output_tokens=100, max_retries=0)
+
+        def count_input_tokens(self, messages, tools=()):
+            return 100
+
         def complete(self, messages, tools=()):
             return LLMResponse(
                 message=Message(role=MessageRole.ASSISTANT, content="done"),
@@ -1046,7 +1053,7 @@ def test_p2_budgeted_llm_reserves_reconciles_and_freezes_uncertain_request(tmp_p
     assert saved.spent_usd == pytest.approx(0.00028)
     assert saved.reserved_usd == 0 and saved.uncertain_request is False
 
-    class Uncertain:
+    class Uncertain(Delegate):
         def complete(self, messages, tools=()):
             raise RuntimeError("connection lost after send")
 
@@ -1063,6 +1070,7 @@ def test_p2_budgeted_llm_reserves_reconciles_and_freezes_uncertain_request(tmp_p
         formal=too_small,
         input_upper_bound=1000,
     )
+    limited._delegate = Delegate()
     with pytest.raises(BenchmarkError, match="cost cap"):
         limited.complete(())
 
@@ -1087,6 +1095,10 @@ def test_p2_budgeted_llm_reserves_reconciles_and_freezes_uncertain_request(tmp_p
         "MissingUsage",
         (),
         {
+            "config": LLMConfig(
+                model_name="provider/model", max_output_tokens=100, max_retries=0
+            ),
+            "count_input_tokens": lambda *_: 100,
             "complete": lambda *_: LLMResponse(
                 message=Message(role=MessageRole.ASSISTANT, content="done"),
                 usage=TokenUsage(),
@@ -1099,19 +1111,179 @@ def test_p2_budgeted_llm_reserves_reconciles_and_freezes_uncertain_request(tmp_p
     frozen = P2CostLedgerRecord.model_validate_json(
         (tmp_path / "missing-usage.json").read_text(encoding="utf-8")
     )
-    assert frozen.uncertain_request is True and frozen.requests[0].status == "reserved"
+    assert frozen.uncertain_request is False
+    assert frozen.halt_reason == "response_usage_unknown"
+    assert frozen.requests[0].status == "response_received_usage_unknown"
+    assert frozen.requests[0].response_evidence_sha256
 
+    halted_llm = P2BudgetedLLM(
+        LLMConfig(model_name="provider/model", max_output_tokens=100, max_retries=0),
+        ledger_path=tmp_path / "halted.json",
+        formal=too_small,
+        input_upper_bound=1000,
+    )
+    halted_llm._delegate = Delegate()
     with pytest.raises(BenchmarkError, match="cost cap"):
-        P2BudgetedLLM(
-            LLMConfig(model_name="provider/model", max_output_tokens=100, max_retries=0),
-            ledger_path=tmp_path / "halted.json",
-            formal=too_small,
-            input_upper_bound=1000,
-        ).complete(())
+        halted_llm.complete(())
     halted = P2CostLedgerRecord.model_validate_json(
         (tmp_path / "halted.json").read_text(encoding="utf-8")
     )
     assert halted.halt_reason == "cost_cap_would_be_exceeded"
+
+
+def test_p2_budget_gate_blocks_provider_before_remaining_input_is_exceeded(tmp_path) -> None:
+    requirements = P2FormalRunRequirements(
+        model_name="provider/model",
+        provider="provider",
+        pricing_source="source",
+        total_cost_cap_usd=10,
+        input_cost_per_million_usd=2,
+        output_cost_per_million_usd=4,
+        currency="USD",
+    )
+    calls = []
+
+    class Delegate:
+        config = LLMConfig(model_name="provider/model", max_output_tokens=4096, max_retries=0)
+
+        def count_input_tokens(self, messages, tools=()):
+            return 27_091
+
+        def complete(self, messages, tools=()):
+            calls.append(True)
+            raise AssertionError("provider must not be called")
+
+    llm = P2BudgetedLLM(
+        LLMConfig(model_name="provider/model", max_output_tokens=4096, max_retries=0),
+        ledger_path=tmp_path / "boundary.json",
+        formal=requirements,
+        input_upper_bound=128_000,
+        trial_input_budget=350_000,
+    )
+    llm._delegate = Delegate()
+    llm._trial_input_used = 322_910
+    with pytest.raises(BenchmarkError, match="before provider invocation"):
+        llm.complete(())
+    assert calls == []
+    assert not (tmp_path / "boundary.json").exists()
+
+
+def test_p2_budget_gate_sends_remaining_output_limit_and_records_currency(tmp_path) -> None:
+    requirements = P2FormalRunRequirements(
+        model_name="provider/model",
+        provider="provider",
+        pricing_source="source",
+        total_cost_cap_usd=100,
+        input_cost_per_million_usd=2,
+        output_cost_per_million_usd=8,
+        currency="CNY",
+        input_cache_hit_cost_per_million=0.04,
+        input_cache_miss_cost_per_million=2,
+        output_cost_per_million=8,
+    )
+
+    class Delegate:
+        config = LLMConfig(model_name="provider/model", max_output_tokens=4096, max_retries=0)
+
+        def count_input_tokens(self, messages, tools=()):
+            return 100
+
+        def complete(self, messages, tools=()):
+            assert self.config.max_output_tokens == 50
+            return LLMResponse(
+                message=Message(role=MessageRole.ASSISTANT, content="done"),
+                usage=TokenUsage(input_tokens=100, output_tokens=20, total_tokens=120),
+                model_name="provider/model-v1",
+            )
+
+    ledger_path = tmp_path / "ledger.json"
+    llm = P2BudgetedLLM(
+        LLMConfig(model_name="provider/model", max_output_tokens=4096, max_retries=0),
+        ledger_path=ledger_path,
+        formal=requirements,
+        input_upper_bound=128_000,
+    )
+    llm._trial_output_used = 19_950
+    llm._delegate = Delegate()
+    llm.complete(())
+    ledger = P2CostLedgerRecord.model_validate_json(ledger_path.read_text(encoding="utf-8"))
+    assert ledger.currency == "CNY"
+    assert ledger.calculated_spent_amount == ledger.spent_usd
+    assert ledger.requests[0].response_model_name == "provider/model-v1"
+    assert ledger.requests[0].response_evidence_sha256
+
+
+def test_p2_returned_response_exceeding_bound_is_preserved_and_halted(tmp_path) -> None:
+    requirements = P2FormalRunRequirements(
+        model_name="provider/model",
+        provider="provider",
+        pricing_source="source",
+        total_cost_cap_usd=10,
+        input_cost_per_million_usd=2,
+        output_cost_per_million_usd=4,
+    )
+
+    class Delegate:
+        config = LLMConfig(model_name="provider/model", max_output_tokens=100, max_retries=0)
+
+        def count_input_tokens(self, messages, tools=()):
+            return 100
+
+        def complete(self, messages, tools=()):
+            return LLMResponse(
+                message=Message(role=MessageRole.ASSISTANT, content="returned"),
+                usage=TokenUsage(input_tokens=101, output_tokens=5, total_tokens=106),
+                model_name="provider/model-v1",
+            )
+
+    ledger_path = tmp_path / "exceeded.json"
+    llm = P2BudgetedLLM(
+        LLMConfig(model_name="provider/model", max_output_tokens=100, max_retries=0),
+        ledger_path=ledger_path,
+        formal=requirements,
+        input_upper_bound=1000,
+    )
+    llm._delegate = Delegate()
+    with pytest.raises(BenchmarkError, match="exceeds the persisted request bound"):
+        llm.complete(())
+    ledger = P2CostLedgerRecord.model_validate_json(ledger_path.read_text(encoding="utf-8"))
+    request = ledger.requests[0]
+    assert ledger.uncertain_request is False
+    assert ledger.halt_reason == "provider_usage_exceeded_request_bound"
+    assert request.status == "response_received_bound_exceeded"
+    assert request.actual_input_tokens == 101
+    assert request.response_received is True and request.response_evidence_sha256
+
+
+def test_p2_reconciliation_preserves_unknown_legacy_request(tmp_path) -> None:
+    root = tmp_path / "old"
+    root.mkdir()
+    (root / "protocol.json").write_text(
+        json.dumps({"formal": {"currency": "CNY"}}), encoding="utf-8"
+    )
+    ledger = P2CostLedgerRecord(
+        cap_usd=100,
+        spent_usd=1.4,
+        reserved_usd=0.08,
+        uncertain_request=True,
+        currency="USD",
+        requests=(
+            P2CostRequestRecord(
+                request_id="old:67",
+                status="reserved",
+                reserved_usd=0.08,
+                input_token_upper_bound=27_090,
+                output_token_upper_bound=4096,
+            ),
+        ),
+    )
+    ledger_path = root / "cost-ledger.json"
+    ledger_path.write_text(ledger.model_dump_json(indent=2), encoding="utf-8")
+    output = write_p2_reconciliation(root)
+    result = json.loads(output.read_text(encoding="utf-8"))
+    assert result["unresolved_request_ids"] == ["old:67"]
+    assert result["safe_to_resume_or_start_paid_run"] is False
+    assert hashlib.sha256(ledger_path.read_bytes()).hexdigest() == result["ledger_sha256"]
 
 
 def test_p2_simulation_model_emits_supported_nonempty_git_patch() -> None:

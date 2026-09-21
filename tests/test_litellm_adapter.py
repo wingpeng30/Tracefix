@@ -52,6 +52,10 @@ class FakeLiteLLM:
             raise self.error
         return self.response
 
+    def token_counter(self, **kwargs):
+        self.counted = kwargs
+        return 17
+
     @staticmethod
     def completion_cost(*, completion_response) -> float:
         return 0.0125
@@ -94,6 +98,8 @@ def test_adapter_normalizes_text_response_and_request() -> None:
     assert client.calls[0]["num_retries"] == 1
     assert client.calls[0]["extra_body"] == {"thinking": {"type": "disabled"}}
     assert "thinking" not in client.calls[0]
+    assert adapter.count_input_tokens([Message(role=MessageRole.USER, content="hello")]) == 17
+    assert client.counted["messages"] == client.calls[0]["messages"]
 
 
 def test_adapter_normalizes_multiple_tool_calls_and_tool_specs() -> None:

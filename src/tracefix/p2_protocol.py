@@ -112,6 +112,8 @@ class P2FormalRunRequirements(BaseModel):
     input_cache_miss_cost_per_million: float | None = Field(default=None, gt=0)
     output_cost_per_million: float | None = Field(default=None, gt=0)
     peak_pricing: bool = True
+    prior_calculated_amount: float = Field(default=0, ge=0)
+    prior_unsettled_reservation: float = Field(default=0, ge=0)
 
     @model_validator(mode="after")
     def validate_currency_pricing(self) -> P2FormalRunRequirements:
@@ -126,6 +128,8 @@ class P2FormalRunRequirements(BaseModel):
                 )
         elif self.currency != "USD":
             raise ValueError("P2 formal currency must be USD or CNY")
+        if self.prior_calculated_amount + self.prior_unsettled_reservation >= self.cap:
+            raise ValueError("prior P2 costs leave no usable formal experiment budget")
         return self
 
     @property
@@ -332,14 +336,29 @@ class P2CostLedgerRecord(BaseModel):
     cap_usd: float
     spent_usd: float = 0
     reserved_usd: float = 0
+    cap_amount: float | None = None
+    calculated_spent_amount: float | None = None
+    reserved_amount: float | None = None
     request_count: int = 0
     uncertain_request: bool = False
     halt_reason: str | None = None
     protocol_identity: str | None = None
+    pricing_identity: str | None = None
     provider: str | None = None
     model_name: str | None = None
     currency: str = "USD"
     requests: tuple[P2CostRequestRecord, ...] = ()
+
+    @model_validator(mode="after")
+    def fill_currency_amounts(self) -> P2CostLedgerRecord:
+        """为旧 USD 字段提供带币种的新格式，同时保持旧证据可读。"""
+        if self.cap_amount is None:
+            self.cap_amount = self.cap_usd
+        if self.calculated_spent_amount is None:
+            self.calculated_spent_amount = self.spent_usd
+        if self.reserved_amount is None:
+            self.reserved_amount = self.reserved_usd
+        return self
 
 
 class P2CostRequestRecord(BaseModel):
@@ -350,14 +369,28 @@ class P2CostRequestRecord(BaseModel):
     request_id: str
     status: str
     reserved_usd: float
+    reserved_amount: float | None = None
     input_token_upper_bound: int
     output_token_upper_bound: int
     actual_input_tokens: int | None = None
     actual_output_tokens: int | None = None
     actual_cost_usd: float | None = None
+    calculated_cost_amount: float | None = None
     actual_cost_source: str | None = None
     input_cache_hit_tokens: int | None = None
     input_cache_miss_tokens: int | None = None
+    response_received: bool = False
+    response_model_name: str | None = None
+    response_evidence_path: str | None = None
+    response_evidence_sha256: str | None = None
+
+    @model_validator(mode="after")
+    def fill_currency_amounts(self) -> P2CostRequestRecord:
+        if self.reserved_amount is None:
+            self.reserved_amount = self.reserved_usd
+        if self.calculated_cost_amount is None:
+            self.calculated_cost_amount = self.actual_cost_usd
+        return self
 
 
 class P2TaskSummary(BaseModel):
@@ -415,6 +448,7 @@ class P2BudgetedLLM(BaseLLM):
         trial_input_budget: int = 350_000,
         trial_output_budget: int = 20_000,
         request_id_prefix: str = "p2",
+        protocol_identity: str | None = None,
     ) -> None:
         super().__init__(config)
         if not all(
@@ -435,6 +469,7 @@ class P2BudgetedLLM(BaseLLM):
         self._trial_input_used = 0
         self._trial_output_used = 0
         self._request_id_prefix = request_id_prefix
+        self._protocol_identity = protocol_identity
         self._request_number = 0
 
     def complete(self, messages: Sequence[Message], tools: Sequence[ToolSpec] = ()) -> LLMResponse:
@@ -443,14 +478,30 @@ class P2BudgetedLLM(BaseLLM):
             self._formal.total_cost_cap_usd,
             self._formal.provider,
             self._formal.model_name,
+            self._formal.currency,
+            self._protocol_identity,
+            hashlib.sha256(
+                self._formal.model_dump_json(
+                    exclude={"prior_calculated_amount", "prior_unsettled_reservation"}
+                ).encode()
+            ).hexdigest(),
+            self._formal.prior_calculated_amount,
+            self._formal.prior_unsettled_reservation,
         )
         if ledger.uncertain_request or ledger.halt_reason:
             raise BenchmarkError("P2 cost ledger contains an uncertain request")
         self._request_number += 1
         request_id = f"{self._request_id_prefix}:{self._request_number}"
-        input_upper_bound = min(
-            self._input_upper_bound, self._trial_input_budget - self._trial_input_used
-        )
+        remaining_input = self._trial_input_budget - self._trial_input_used
+        count_input = getattr(self._delegate, "count_input_tokens", None)
+        if count_input is None:
+            raise BenchmarkError("P2 provider exposes no auditable request token counter")
+        request_input_tokens = count_input(messages, tools)
+        if request_input_tokens > self._input_upper_bound:
+            raise BenchmarkError("P2 request exceeds the configured per-request input bound")
+        if request_input_tokens > remaining_input:
+            raise BenchmarkError("P2 trial input budget is exhausted before provider invocation")
+        input_upper_bound = request_input_tokens
         output_upper_bound = min(
             self.config.max_output_tokens or 0,
             self._trial_output_budget - self._trial_output_used,
@@ -474,48 +525,116 @@ class P2BudgetedLLM(BaseLLM):
             request_id=request_id,
             status="reserved",
             reserved_usd=reservation,
+            reserved_amount=reservation,
             input_token_upper_bound=input_upper_bound,
             output_token_upper_bound=output_upper_bound,
         )
         ledger = ledger.model_copy(
             update={
                 "reserved_usd": ledger.reserved_usd + reservation,
+                "reserved_amount": ledger.reserved_usd + reservation,
                 "request_count": ledger.request_count + 1,
                 "uncertain_request": True,
                 "requests": (*ledger.requests, request),
             }
         )
         _write_cost_ledger(self._ledger_path, ledger)
+        if hasattr(self._delegate, "config"):
+            self._delegate.config = self._delegate.config.model_copy(
+                update={"max_output_tokens": output_upper_bound}
+            )
         response = self._delegate.complete(messages, tools)
+        evidence_path, evidence_sha256 = _write_response_evidence(
+            self._ledger_path, request_id, response
+        )
         usage = response.usage
-        if (
+        usage_valid = not (
             usage.input_tokens <= 0
             or usage.output_tokens < 0
             or usage.total_tokens != usage.input_tokens + usage.output_tokens
-            or usage.input_tokens > input_upper_bound
-            or usage.output_tokens > output_upper_bound
-        ):
-            raise BenchmarkError("P2 provider usage is missing, inconsistent, or exceeds its bound")
+        )
+        if not usage_valid:
+            rejected = request.model_copy(
+                update={
+                    "status": "response_received_usage_unknown",
+                    "response_received": True,
+                    "response_model_name": response.model_name,
+                    "response_evidence_path": str(evidence_path),
+                    "response_evidence_sha256": evidence_sha256,
+                }
+            )
+            _write_cost_ledger(
+                self._ledger_path,
+                ledger.model_copy(
+                    update={
+                        "uncertain_request": False,
+                        "halt_reason": "response_usage_unknown",
+                        "requests": (*ledger.requests[:-1], rejected),
+                    }
+                ),
+            )
+            raise BenchmarkError("P2 provider response usage is missing or inconsistent")
         actual = estimated_request_reservation(
             self._formal,
             input_tokens=usage.input_tokens,
             output_tokens=usage.output_tokens,
         )
-        if actual > reservation or ledger.spent_usd + actual > ledger.cap_usd:
-            raise BenchmarkError("P2 provider cost exceeds the persisted reservation")
+        if (
+            usage.input_tokens > input_upper_bound
+            or usage.output_tokens > output_upper_bound
+            or actual > reservation
+            or ledger.spent_usd + actual > ledger.cap_usd
+        ):
+            rejected = request.model_copy(
+                update={
+                    "status": "response_received_bound_exceeded",
+                    "actual_input_tokens": usage.input_tokens,
+                    "actual_output_tokens": usage.output_tokens,
+                    "actual_cost_usd": actual,
+                    "calculated_cost_amount": actual,
+                    "actual_cost_source": "conservative_calculation_not_provider_bill",
+                    "response_received": True,
+                    "response_model_name": response.model_name,
+                    "response_evidence_path": str(evidence_path),
+                    "response_evidence_sha256": evidence_sha256,
+                }
+            )
+            spent = ledger.spent_usd + actual
+            _write_cost_ledger(
+                self._ledger_path,
+                ledger.model_copy(
+                    update={
+                        "spent_usd": spent,
+                        "calculated_spent_amount": spent,
+                        "reserved_usd": max(0, ledger.reserved_usd - reservation),
+                        "reserved_amount": max(0, ledger.reserved_usd - reservation),
+                        "uncertain_request": False,
+                        "halt_reason": "provider_usage_exceeded_request_bound",
+                        "requests": (*ledger.requests[:-1], rejected),
+                    }
+                ),
+            )
+            raise BenchmarkError("P2 provider usage exceeds the persisted request bound")
         settled = request.model_copy(
             update={
                 "status": "settled",
                 "actual_input_tokens": usage.input_tokens,
                 "actual_output_tokens": usage.output_tokens,
                 "actual_cost_usd": actual,
+                "calculated_cost_amount": actual,
                 "actual_cost_source": "conservative_calculation_not_provider_bill",
+                "response_received": True,
+                "response_model_name": response.model_name,
+                "response_evidence_path": str(evidence_path),
+                "response_evidence_sha256": evidence_sha256,
             }
         )
         ledger = ledger.model_copy(
             update={
                 "spent_usd": ledger.spent_usd + actual,
+                "calculated_spent_amount": ledger.spent_usd + actual,
                 "reserved_usd": max(0, ledger.reserved_usd - reservation),
+                "reserved_amount": max(0, ledger.reserved_usd - reservation),
                 "uncertain_request": False,
                 "requests": (*ledger.requests[:-1], settled),
             }
@@ -524,6 +643,29 @@ class P2BudgetedLLM(BaseLLM):
         self._trial_input_used += usage.input_tokens
         self._trial_output_used += usage.output_tokens
         return response.model_copy(update={"usage": usage.model_copy(update={"cost_usd": actual})})
+
+
+def _write_response_evidence(
+    ledger_path: Path, request_id: str, response: LLMResponse
+) -> tuple[Path, str]:
+    """先保存响应身份和用量，避免校验失败后丢失已返回请求的证据。"""
+    root = ledger_path.parent / "request-responses"
+    root.mkdir(parents=True, exist_ok=True)
+    safe_name = request_id.replace(":", "-")
+    path = root / f"{safe_name}.json"
+    payload = {
+        "request_id": request_id,
+        "model_name": response.model_name,
+        "finish_reason": response.finish_reason,
+        "usage": response.usage.model_dump(mode="json"),
+        "raw_response_sha256": hashlib.sha256(
+            json.dumps(response.raw_response, sort_keys=True, ensure_ascii=False).encode("utf-8")
+        ).hexdigest(),
+    }
+    temporary = path.with_suffix(".tmp")
+    temporary.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    os.replace(temporary, path)
+    return path, _sha256(path)
 
 
 def estimated_request_reservation(
@@ -548,14 +690,37 @@ def _read_cost_ledger(
     cap_usd: float,
     provider: str | None = None,
     model_name: str | None = None,
+    currency: str | None = None,
+    protocol_identity: str | None = None,
+    pricing_identity: str | None = None,
+    initial_spent: float = 0,
+    initial_reserved: float = 0,
 ) -> P2CostLedgerRecord:
     if not path.is_file():
-        return P2CostLedgerRecord(cap_usd=cap_usd, provider=provider, model_name=model_name)
+        return P2CostLedgerRecord(
+            cap_usd=cap_usd,
+            cap_amount=cap_usd,
+            provider=provider,
+            model_name=model_name,
+            currency=currency or "USD",
+            spent_usd=initial_spent,
+            reserved_usd=initial_reserved,
+            calculated_spent_amount=initial_spent,
+            reserved_amount=initial_reserved,
+            protocol_identity=protocol_identity,
+            pricing_identity=pricing_identity,
+        )
     ledger = P2CostLedgerRecord.model_validate_json(path.read_text(encoding="utf-8"))
     if ledger.cap_usd != cap_usd:
         raise BenchmarkError("P2 cost cap does not match the persisted ledger")
     if provider is not None and (ledger.provider != provider or ledger.model_name != model_name):
         raise BenchmarkError("P2 cost ledger provider identity does not match the formal protocol")
+    if currency is not None and ledger.currency != currency:
+        raise BenchmarkError("P2 cost ledger currency does not match the formal protocol")
+    if protocol_identity is not None and ledger.protocol_identity != protocol_identity:
+        raise BenchmarkError("P2 cost ledger protocol identity does not match")
+    if pricing_identity is not None and ledger.pricing_identity != pricing_identity:
+        raise BenchmarkError("P2 cost ledger pricing identity does not match")
     return ledger
 
 
@@ -577,6 +742,63 @@ def read_completed_trial(path: Path) -> P2TrialRecord | None:
         "P2 trial has uncertain prior state; do not resend request",
         context={"path": str(path)},
     )
+
+
+def write_p2_reconciliation(experiment_dir: Path) -> Path:
+    """只读核对旧实验，另写更正记录且绝不改写原账本。"""
+    root = experiment_dir.expanduser().resolve()
+    protocol_path = root / "protocol.json"
+    ledger_path = root / "cost-ledger.json"
+    if not protocol_path.is_file() or not ledger_path.is_file():
+        raise BenchmarkError("P2 reconciliation requires protocol and cost ledger")
+    protocol_payload = json.loads(protocol_path.read_text(encoding="utf-8"))
+    ledger_payload = json.loads(ledger_path.read_text(encoding="utf-8"))
+    requests = ledger_payload.get("requests", [])
+    unresolved = [item["request_id"] for item in requests if item.get("status") == "reserved"]
+    response_evidence = [
+        item.get("response_evidence_path")
+        for item in requests
+        if item.get("response_evidence_path")
+    ]
+    formal = protocol_payload.get("formal") or {}
+    formal_currency = formal.get("currency")
+    evidence_hashes = {
+        path.relative_to(root).as_posix(): _sha256(path)
+        for path in sorted(root.rglob("*"))
+        if path.is_file()
+        and not path.name.startswith("reconciliation-")
+        and path.name != ".p2-run.lock"
+    }
+    result = {
+        "kind": "p2_reconciliation",
+        "format_version": 2,
+        "generated_at": datetime.now(UTC).isoformat(),
+        "experiment_dir": str(root),
+        "protocol_sha256": _sha256(protocol_path),
+        "ledger_sha256": _sha256(ledger_path),
+        "evidence_hashes": evidence_hashes,
+        "formal_currency": formal_currency,
+        "persisted_ledger_currency": ledger_payload.get("currency", "USD"),
+        "legacy_amount_fields_mislabeled": (
+            formal_currency is not None
+            and formal_currency != ledger_payload.get("currency", "USD")
+        ),
+        "settled_calculated_amount": ledger_payload.get("spent_usd", 0),
+        "reserved_unsettled_amount": ledger_payload.get("reserved_usd", 0),
+        "amount_currency": formal_currency,
+        "request_count": ledger_payload.get("request_count", len(requests)),
+        "response_evidence_count": len(response_evidence),
+        "unresolved_request_ids": unresolved,
+        "safe_to_resume_or_start_paid_run": not unresolved,
+        "conclusion": (
+            "request state remains unknown; paid execution stays frozen"
+            if unresolved
+            else "all persisted requests have a terminal local state"
+        ),
+    }
+    output = root / f"reconciliation-{uuid4().hex}.json"
+    output.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
+    return output
 
 
 def _read_trial(path: Path) -> P2TrialRecord | None:
@@ -1081,6 +1303,12 @@ def run_p2_experiment(
         ledger_path = root / "cost-ledger.json"
         formal = config.formal
         request_prefix = ["unassigned"]
+        protocol_identity = _sha256(protocol_path)
+        pricing_identity = hashlib.sha256(
+            formal.model_dump_json(
+                exclude={"prior_calculated_amount", "prior_unsettled_reservation"}
+            ).encode()
+        ).hexdigest()
 
         def formal_factory(llm_config: LLMConfig) -> BaseLLM:
             return P2BudgetedLLM(
@@ -1091,6 +1319,7 @@ def run_p2_experiment(
                 trial_input_budget=config.max_input_tokens,
                 trial_output_budget=config.max_output_tokens,
                 request_id_prefix=request_prefix[0],
+                protocol_identity=protocol_identity,
             )
 
         runner = TraceFixRunner(formal_factory)
@@ -1185,6 +1414,11 @@ def run_p2_experiment(
                         config.formal.total_cost_cap_usd,
                         config.formal.provider,
                         config.formal.model_name,
+                        config.formal.currency,
+                        protocol_identity,
+                        pricing_identity,
+                        config.formal.prior_calculated_amount,
+                        config.formal.prior_unsettled_reservation,
                     )
                     if ledger.uncertain_request or ledger.halt_reason:
                         stopped = agent_record.model_copy(update={"status": "request_uncertain"})
@@ -1198,16 +1432,21 @@ def run_p2_experiment(
                 results.append(record)
                 continue
             verification_started = time.monotonic()
+            verification_dir = (
+                root
+                / "verification"
+                / f"{plan.sequence:03d}-{agent_record.attempt_id or 'legacy'}-{uuid4().hex[:8]}"
+            )
             verification = validate_agent_patch_strict(
                 task,
                 source=config.source_root / task.id,
                 agent_patch=Path(agent_record.agent_patch_path),
                 test_python=resolve_managed_environment_python(config.test_env_root, task.id),
-                output_dir=root / "verification" / f"{plan.sequence:03d}",
+                output_dir=verification_dir,
                 recipe=recipes[task.id],
                 expected_node_ids=protocol.p1_qualifications[task.id].expected_node_ids,
             )
-            verification_path = root / "verification" / f"{plan.sequence:03d}" / "result.json"
+            verification_path = verification_dir / "result.json"
             verification_path.parent.mkdir(parents=True, exist_ok=True)
             verification_path.write_text(verification.model_dump_json(indent=2), encoding="utf-8")
             record = agent_record.model_copy(
