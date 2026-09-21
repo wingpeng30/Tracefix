@@ -1286,6 +1286,131 @@ def test_p2_reconciliation_preserves_unknown_legacy_request(tmp_path) -> None:
     assert hashlib.sha256(ledger_path.read_bytes()).hexdigest() == result["ledger_sha256"]
 
 
+def test_p2_reconciliation_imports_filtered_provider_bill_without_rewriting_ledger(
+    tmp_path,
+) -> None:
+    root = tmp_path / "old"
+    root.mkdir()
+    (root / "protocol.json").write_text(
+        json.dumps({"formal": {"currency": "CNY"}}), encoding="utf-8"
+    )
+    ledger = P2CostLedgerRecord(
+        cap_usd=100,
+        spent_usd=1.4,
+        reserved_usd=0.08,
+        uncertain_request=True,
+        currency="USD",
+        requests=(
+            P2CostRequestRecord(
+                request_id="old:67",
+                status="reserved",
+                reserved_usd=0.08,
+                input_token_upper_bound=27_090,
+                output_token_upper_bound=4096,
+            ),
+        ),
+    )
+    ledger_path = root / "cost-ledger.json"
+    ledger_path.write_text(ledger.model_dump_json(indent=2), encoding="utf-8")
+    before = hashlib.sha256(ledger_path.read_bytes()).hexdigest()
+    bill = tmp_path / "bill.csv"
+    bill.write_text(
+        "api_key_name,start_time_iso,end_time_iso,model,type,price,amount\n"
+        "Tracefix,2026-09-20,2026-09-21,deepseek-flash,request_count,,67\n"
+        "Tracefix,2026-09-20,2026-09-21,deepseek-flash,output_tokens,0.000004,10241\n"
+        "Other,2026-09-20,2026-09-21,deepseek-flash,output_tokens,1,999\n",
+        encoding="utf-8",
+    )
+    output = write_p2_reconciliation(root, bill_path=bill, api_key_name="Tracefix")
+    result = json.loads(output.read_text(encoding="utf-8"))
+    assert result["provider_bill"]["request_count"] == 67
+    assert result["provider_bill"]["billed_amount"] == "0.040964"
+    assert result["provider_bill"]["currency"] == "CNY"
+    assert result["safe_to_resume_or_start_paid_run"] is True
+    assert hashlib.sha256(ledger_path.read_bytes()).hexdigest() == before
+
+
+def test_p2_cny_calculated_amount_is_not_returned_as_usd(tmp_path) -> None:
+    requirements = P2FormalRunRequirements(
+        model_name="provider/model",
+        provider="provider",
+        pricing_source="source",
+        total_cost_cap_usd=100,
+        input_cost_per_million_usd=2,
+        output_cost_per_million_usd=8,
+        currency="CNY",
+        input_cache_hit_cost_per_million=0.04,
+        input_cache_miss_cost_per_million=2,
+        output_cost_per_million=8,
+    )
+
+    class Delegate:
+        config = LLMConfig(model_name="provider/model", max_output_tokens=100, max_retries=0)
+
+        def count_input_tokens(self, messages, tools=()):
+            return 100
+
+        def complete(self, messages, tools=()):
+            return LLMResponse(
+                message=Message(role=MessageRole.ASSISTANT, content="done"),
+                usage=TokenUsage(input_tokens=100, output_tokens=20, total_tokens=120),
+                model_name="provider/model",
+            )
+
+    llm = P2BudgetedLLM(
+        LLMConfig(model_name="provider/model", max_output_tokens=100, max_retries=0),
+        ledger_path=tmp_path / "ledger.json",
+        formal=requirements,
+        input_upper_bound=1000,
+    )
+    llm._delegate = Delegate()
+    response = llm.complete(())
+    assert response.usage.cost_usd is None
+    ledger = P2CostLedgerRecord.model_validate_json(
+        (tmp_path / "ledger.json").read_text(encoding="utf-8")
+    )
+    assert ledger.calculated_spent_amount == pytest.approx(0.00036)
+
+
+def test_p2_formal_prices_and_bill_fail_closed(tmp_path) -> None:
+    common = {
+        "model_name": "provider/model",
+        "provider": "provider",
+        "pricing_source": "source",
+        "total_cost_cap_usd": 100,
+        "input_cost_per_million_usd": 2,
+        "output_cost_per_million_usd": 8,
+    }
+    with pytest.raises(ValueError, match="finite"):
+        P2FormalRunRequirements(**(common | {"output_cost_per_million_usd": float("inf")}))
+    with pytest.raises(ValueError, match="cache-hit"):
+        P2FormalRunRequirements(**common, currency="CNY")
+    with pytest.raises(ValueError, match="USD or CNY"):
+        P2FormalRunRequirements(**common, currency="EUR")
+    with pytest.raises(ValueError, match="no usable"):
+        P2FormalRunRequirements(**common, prior_calculated_amount=100)
+
+    root = tmp_path / "missing"
+    root.mkdir()
+    with pytest.raises(BenchmarkError, match="requires protocol"):
+        write_p2_reconciliation(root)
+
+    bill = tmp_path / "invalid.csv"
+    bill.write_text(
+        "api_key_name,start_time_iso,end_time_iso,model,type,price,amount\n"
+        "Tracefix,a,b,m,output_tokens,bad,1\n",
+        encoding="utf-8",
+    )
+    valid_root = tmp_path / "old"
+    valid_root.mkdir()
+    (valid_root / "protocol.json").write_text("{}", encoding="utf-8")
+    (valid_root / "cost-ledger.json").write_text(
+        P2CostLedgerRecord(cap_usd=100).model_dump_json(), encoding="utf-8"
+    )
+    with pytest.raises(BenchmarkError, match="invalid numeric"):
+        write_p2_reconciliation(valid_root, bill_path=bill)
+
+
 def test_p2_simulation_model_emits_supported_nonempty_git_patch() -> None:
     response = P2SimulationLLM(LLMConfig(model_name="simulation")).complete(())
     patch = response.message.tool_calls[0].arguments["patch"]

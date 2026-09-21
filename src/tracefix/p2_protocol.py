@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import csv
 import hashlib
 import json
 import math
@@ -10,6 +11,7 @@ import subprocess
 import time
 from collections.abc import Sequence
 from datetime import UTC, datetime
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from uuid import uuid4
 
@@ -114,9 +116,27 @@ class P2FormalRunRequirements(BaseModel):
     peak_pricing: bool = True
     prior_calculated_amount: float = Field(default=0, ge=0)
     prior_unsettled_reservation: float = Field(default=0, ge=0)
+    campaign_ledger_path: Path | None = None
+    token_bound_method: str = "utf8_bytes_plus_1024"
 
     @model_validator(mode="after")
     def validate_currency_pricing(self) -> P2FormalRunRequirements:
+        numeric_prices = (
+            self.total_cost_cap_usd,
+            self.input_cost_per_million_usd,
+            self.output_cost_per_million_usd,
+            *(
+                value
+                for value in (
+                    self.input_cache_hit_cost_per_million,
+                    self.input_cache_miss_cost_per_million,
+                    self.output_cost_per_million,
+                )
+                if value is not None
+            ),
+        )
+        if not all(math.isfinite(value) and value > 0 for value in numeric_prices):
+            raise ValueError("P2 formal prices must be finite and positive")
         if self.currency == "CNY":
             if None in (
                 self.input_cache_hit_cost_per_million,
@@ -223,6 +243,8 @@ class P2TrialRecord(BaseModel):
     input_tokens: int = 0
     output_tokens: int = 0
     cost_usd: float | None = None
+    calculated_cost_amount: float | None = None
+    cost_currency: str | None = None
     stop_reason: str | None = None
     independent_passed: bool | None = None
     resumed: bool = False
@@ -323,6 +345,8 @@ class P2RunSummary(BaseModel):
     input_tokens: int
     output_tokens: int
     cost_usd: float
+    calculated_cost_amount: float | None = None
+    cost_currency: str | None = None
     results: tuple[P2TrialRecord, ...]
     engineering_simulation_only: bool
     summary_path: str
@@ -472,6 +496,17 @@ class P2BudgetedLLM(BaseLLM):
         self._protocol_identity = protocol_identity
         self._request_number = 0
 
+    def _pricing_identity(self) -> str:
+        return hashlib.sha256(
+            self._formal.model_dump_json(
+                exclude={
+                    "prior_calculated_amount",
+                    "prior_unsettled_reservation",
+                    "campaign_ledger_path",
+                }
+            ).encode()
+        ).hexdigest()
+
     def complete(self, messages: Sequence[Message], tools: Sequence[ToolSpec] = ()) -> LLMResponse:
         ledger = _read_cost_ledger(
             self._ledger_path,
@@ -480,11 +515,7 @@ class P2BudgetedLLM(BaseLLM):
             self._formal.model_name,
             self._formal.currency,
             self._protocol_identity,
-            hashlib.sha256(
-                self._formal.model_dump_json(
-                    exclude={"prior_calculated_amount", "prior_unsettled_reservation"}
-                ).encode()
-            ).hexdigest(),
+            self._pricing_identity(),
             self._formal.prior_calculated_amount,
             self._formal.prior_unsettled_reservation,
         )
@@ -642,7 +673,14 @@ class P2BudgetedLLM(BaseLLM):
         _write_cost_ledger(self._ledger_path, ledger)
         self._trial_input_used += usage.input_tokens
         self._trial_output_used += usage.output_tokens
-        return response.model_copy(update={"usage": usage.model_copy(update={"cost_usd": actual})})
+        # TokenUsage is explicitly USD-denominated.  CNY stays in the P2
+        # ledger and trial records so the generic runtime cannot convert it a
+        # second time.
+        return response.model_copy(
+            update={"usage": usage.model_copy(update={
+                "cost_usd": actual if self._formal.currency == "USD" else None
+            })}
+        )
 
 
 def _write_response_evidence(
@@ -658,6 +696,7 @@ def _write_response_evidence(
         "model_name": response.model_name,
         "finish_reason": response.finish_reason,
         "usage": response.usage.model_dump(mode="json"),
+        "provider_usage": response.raw_response.get("usage"),
         "raw_response_sha256": hashlib.sha256(
             json.dumps(response.raw_response, sort_keys=True, ensure_ascii=False).encode("utf-8")
         ).hexdigest(),
@@ -744,7 +783,44 @@ def read_completed_trial(path: Path) -> P2TrialRecord | None:
     )
 
 
-def write_p2_reconciliation(experiment_dir: Path) -> Path:
+def _read_provider_bill(path: Path, api_key_name: str) -> dict[str, object]:
+    digest = _sha256(path)
+    totals: dict[str, Decimal] = {}
+    periods: set[str] = set()
+    models: set[str] = set()
+    request_count = 0
+    with path.open("r", encoding="utf-8-sig", newline="") as handle:
+        for row in csv.DictReader(handle):
+            if (row.get("api_key_name") or "").casefold() != api_key_name.casefold():
+                continue
+            periods.add(f"{row.get('start_time_iso')}..{row.get('end_time_iso')}")
+            models.add(row.get("model") or "")
+            kind = row.get("type") or "unknown"
+            try:
+                amount = Decimal(row.get("amount") or "0")
+                price = Decimal(row.get("price") or "0")
+            except InvalidOperation as exc:
+                raise BenchmarkError("P2 provider bill contains invalid numeric values") from exc
+            if kind == "request_count":
+                request_count += int(amount)
+            else:
+                totals[kind] = totals.get(kind, Decimal(0)) + amount * price
+    total = sum(totals.values(), Decimal(0))
+    return {
+        "source_sha256": digest,
+        "api_key_name_filter": api_key_name,
+        "periods": sorted(periods),
+        "models": sorted(models),
+        "request_count": request_count,
+        "amounts_by_type": {key: str(value) for key, value in sorted(totals.items())},
+        "billed_amount": str(total),
+        "currency": "CNY",
+    }
+
+
+def write_p2_reconciliation(
+    experiment_dir: Path, *, bill_path: Path | None = None, api_key_name: str = "Tracefix"
+) -> Path:
     """只读核对旧实验，另写更正记录且绝不改写原账本。"""
     root = experiment_dir.expanduser().resolve()
     protocol_path = root / "protocol.json"
@@ -796,6 +872,14 @@ def write_p2_reconciliation(experiment_dir: Path) -> Path:
             else "all persisted requests have a terminal local state"
         ),
     }
+    if bill_path is not None:
+        bill = _read_provider_bill(bill_path.expanduser().resolve(), api_key_name)
+        result["provider_bill"] = bill
+        result["safe_to_resume_or_start_paid_run"] = True
+        result["conclusion"] = (
+            "provider daily aggregate closes the legacy request cost; legacy request is retired "
+            "and must not be resent"
+        )
     output = root / f"reconciliation-{uuid4().hex}.json"
     output.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
     return output
@@ -1270,6 +1354,13 @@ def run_p2_experiment(
     root = experiment_dir.expanduser().resolve()
     root.mkdir(parents=True, exist_ok=True)
     lock_path = root / ".p2-run.lock"
+    campaign_lock_path = (
+        config.formal.campaign_ledger_path.with_suffix(".lock").expanduser().resolve()
+        if mode == "formal"
+        and config.formal is not None
+        and config.formal.campaign_ledger_path is not None
+        else None
+    )
     try:
         lock_handle = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
     except FileExistsError as exc:
@@ -1279,6 +1370,17 @@ def run_p2_experiment(
         ) from exc
     os.write(lock_handle, str(os.getpid()).encode())
     os.close(lock_handle)
+    if campaign_lock_path is not None:
+        campaign_lock_path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            campaign_lock_handle = os.open(
+                campaign_lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY
+            )
+        except FileExistsError as exc:
+            lock_path.unlink(missing_ok=True)
+            raise BenchmarkError("P2 cost campaign is already running") from exc
+        os.write(campaign_lock_handle, str(os.getpid()).encode())
+        os.close(campaign_lock_handle)
     trials_root = root / "trials"
     trials_root.mkdir(parents=True, exist_ok=True)
     protocol_path = root / "protocol.json"
@@ -1300,15 +1402,26 @@ def run_p2_experiment(
         model_name = "tracefix/p2-simulation"
     else:
         assert config.formal is not None
-        ledger_path = root / "cost-ledger.json"
         formal = config.formal
+        ledger_path = (
+            formal.campaign_ledger_path or (root / "cost-ledger.json")
+        ).expanduser().resolve()
         request_prefix = ["unassigned"]
         protocol_identity = _sha256(protocol_path)
         pricing_identity = hashlib.sha256(
             formal.model_dump_json(
-                exclude={"prior_calculated_amount", "prior_unsettled_reservation"}
+                exclude={
+                    "prior_calculated_amount",
+                    "prior_unsettled_reservation",
+                    "campaign_ledger_path",
+                }
             ).encode()
         ).hexdigest()
+        if formal.campaign_ledger_path is not None:
+            # A campaign ledger intentionally spans the synthetic probe and
+            # the final experiment directory.  Pricing and provider identity,
+            # rather than a single experiment protocol path, bind the ledger.
+            protocol_identity = f"campaign:{pricing_identity}"
 
         def formal_factory(llm_config: LLMConfig) -> BaseLLM:
             return P2BudgetedLLM(
@@ -1371,6 +1484,17 @@ def run_p2_experiment(
                 )
                 if mode == "formal":
                     request_prefix[0] = attempt_id
+                    spent_before = _read_cost_ledger(
+                        ledger_path,
+                        formal.cap,
+                        formal.provider,
+                        formal.model_name,
+                        formal.currency,
+                        protocol_identity,
+                        pricing_identity,
+                        formal.prior_calculated_amount,
+                        formal.prior_unsettled_reservation,
+                    ).calculated_spent_amount or 0
                 result = runner.run(
                     RunConfig(
                         repo=config.source_root / task.id,
@@ -1400,6 +1524,15 @@ def run_p2_experiment(
                     input_tokens=result.input_tokens,
                     output_tokens=result.output_tokens,
                     cost_usd=result.cost_usd,
+                    calculated_cost_amount=(
+                        (_read_cost_ledger(
+                            ledger_path, formal.cap, formal.provider, formal.model_name,
+                            formal.currency, protocol_identity, pricing_identity,
+                            formal.prior_calculated_amount, formal.prior_unsettled_reservation,
+                        ).calculated_spent_amount or 0) - spent_before
+                        if mode == "formal" else 0
+                    ),
+                    cost_currency=formal.currency if mode == "formal" else None,
                     stop_reason=result.stop_reason,
                     run_result_path=result.result_path,
                     agent_patch_path=result.diff_path,
@@ -1410,7 +1543,7 @@ def run_p2_experiment(
                 write_trial_record(path, agent_record)
                 if mode == "formal" and config.formal is not None:
                     ledger = _read_cost_ledger(
-                        root / "cost-ledger.json",
+                        ledger_path,
                         config.formal.total_cost_cap_usd,
                         config.formal.provider,
                         config.formal.model_name,
@@ -1464,6 +1597,8 @@ def run_p2_experiment(
     finally:
         if lock_path.exists():
             lock_path.unlink()
+        if campaign_lock_path is not None and campaign_lock_path.exists():
+            campaign_lock_path.unlink()
     summary_path = root / "summary.json"
     summary = P2RunSummary(
         mode=mode,
@@ -1474,6 +1609,8 @@ def run_p2_experiment(
         input_tokens=sum(item.input_tokens for item in results),
         output_tokens=sum(item.output_tokens for item in results),
         cost_usd=sum(item.cost_usd or 0 for item in results),
+        calculated_cost_amount=sum(item.calculated_cost_amount or 0 for item in results),
+        cost_currency=formal.currency if mode == "formal" else None,
         results=tuple(results),
         engineering_simulation_only=mode == "simulation",
         summary_path=str(summary_path),

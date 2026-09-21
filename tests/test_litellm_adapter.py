@@ -278,3 +278,29 @@ def test_missing_litellm_dependency_is_a_provider_error(monkeypatch) -> None:
     monkeypatch.setattr("tracefix.models.litellm_adapter.importlib.import_module", missing)
     with pytest.raises(LLMProviderError, match="not installed"):
         adapter.complete([Message(role=MessageRole.USER, content="hello")])
+
+
+def test_deepseek_budget_count_uses_serialized_byte_upper_bound_with_tools() -> None:
+    from tracefix.tools.base import ToolSpec
+
+    adapter = LiteLLMAdapter(
+        LLMConfig(model_name="deepseek/deepseek-flash"), client=FakeLiteLLM(make_response())
+    )
+    messages = [Message(role=MessageRole.USER, content="修复这个问题")]
+    plain = adapter.count_input_tokens(messages)
+    with_tool = adapter.count_input_tokens(
+        messages,
+        [
+            ToolSpec(
+                name="read_file",
+                description="读取文件内容",
+                input_schema={
+                    "type": "object",
+                    "properties": {"path": {"type": "string"}},
+                },
+            )
+        ],
+    )
+    assert plain > len("修复这个问题".encode())
+    assert with_tool > plain
+    assert getattr(adapter.client, "token_counter", None) is not None

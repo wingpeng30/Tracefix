@@ -82,6 +82,34 @@ def test_cli_p2_formal_freezes_cny_cache_pricing(tmp_path, monkeypatch, capsys) 
     assert "P2 正式实验: 0/60" in capsys.readouterr().out
 
 
+def test_cli_p2_reconcile_passes_bill_filter(tmp_path, monkeypatch) -> None:
+    captured = []
+    expected = tmp_path / "reconciliation.json"
+    monkeypatch.setattr(
+        "tracefix.cli.write_p2_reconciliation",
+        lambda root, *, bill_path, api_key_name: captured.append(
+            (root, bill_path, api_key_name)
+        )
+        or expected,
+    )
+    bill = tmp_path / "bill.csv"
+    assert (
+        main(
+            [
+                "p2-reconcile",
+                "--experiment-dir",
+                str(tmp_path / "old"),
+                "--bill",
+                str(bill),
+                "--api-key-name",
+                "Tracefix",
+            ]
+        )
+        == 0
+    )
+    assert captured == [(tmp_path / "old", bill, "Tracefix")]
+
+
 def test_cli_run_reads_task_file_and_cli_values_override_environment(
     tmp_path, monkeypatch, capsys
 ) -> None:

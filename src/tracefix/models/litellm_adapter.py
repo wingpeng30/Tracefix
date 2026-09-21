@@ -128,8 +128,25 @@ class LiteLLMAdapter(BaseLLM):
     def count_input_tokens(
         self, messages: Sequence[Message], tools: Sequence[ToolSpec] = ()
     ) -> int:
-        """用供应商适配库对将要发送的同一请求做模型相关计数。"""
+        """Return an auditable upper bound for the exact serialized request.
+
+        LiteLLM silently falls back to an OpenAI tokenizer for unknown model
+        names.  That estimate is useful for display, but it must not guard a
+        hard DeepSeek budget.  A UTF-8 byte count is conservative for the
+        byte-based tokenizer family and includes the tool schema verbatim.
+        The fixed allowance covers provider-added chat framing.
+        """
         kwargs = self.request_kwargs(messages, tools)
+        if self.config.model_name.casefold().startswith("deepseek/"):
+            payload = {
+                "model": kwargs["model"].split("/", 1)[-1],
+                "messages": kwargs["messages"],
+                "tools": kwargs.get("tools", []),
+            }
+            serialized = json.dumps(
+                payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+            ).encode("utf-8")
+            return len(serialized) + 1024
         counter = getattr(self.client, "token_counter", None)
         if counter is None:
             raise LLMProviderError("provider adapter exposes no auditable token counter")

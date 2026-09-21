@@ -348,6 +348,7 @@ def build_parser() -> argparse.ArgumentParser:
     p2_run.add_argument("--output-cost-per-million", type=float)
     p2_run.add_argument("--prior-calculated-amount", type=float, default=0)
     p2_run.add_argument("--prior-unsettled-reservation", type=float, default=0)
+    p2_run.add_argument("--campaign-ledger", type=Path)
     p2_check = subparsers.add_parser("p2-check", help="检查并冻结 P2 的源码、配方和受管环境")
     p2_check.add_argument("--tasks", type=Path, default=Path("benchmarks/real_candidates"))
     p2_check.add_argument("--recipes", type=Path, default=Path("benchmarks/real_recipes"))
@@ -367,6 +368,8 @@ def build_parser() -> argparse.ArgumentParser:
     p2_summary.add_argument("--experiment-dir", type=Path, required=True)
     p2_reconcile = subparsers.add_parser("p2-reconcile", help="只读核对 P2 账本与响应证据")
     p2_reconcile.add_argument("--experiment-dir", type=Path, required=True)
+    p2_reconcile.add_argument("--bill", type=Path)
+    p2_reconcile.add_argument("--api-key-name", default="Tracefix")
 
     retrieval_parser = subparsers.add_parser(
         "retrieval-eval", help="离线比较文件名关键词基线与 Repo Map 的文件定位能力"
@@ -816,6 +819,7 @@ def main(argv: list[str] | None = None) -> int:
                     output_cost_per_million=args.output_cost_per_million,
                     prior_calculated_amount=args.prior_calculated_amount,
                     prior_unsettled_reservation=args.prior_unsettled_reservation,
+                    campaign_ledger_path=args.campaign_ledger,
                 )
             config = P2ProtocolConfig(
                 tasks_dir=args.tasks,
@@ -852,7 +856,9 @@ def main(argv: list[str] | None = None) -> int:
             return 0
 
         if args.command == "p2-reconcile":
-            path = write_p2_reconciliation(args.experiment_dir)
+            path = write_p2_reconciliation(
+                args.experiment_dir, bill_path=args.bill, api_key_name=args.api_key_name
+            )
             print(f"P2 对账记录: {path}")
             return 0
 
