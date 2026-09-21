@@ -94,3 +94,8 @@ V0.3.2 多文件任务的离线验收数据见
 - 真实探测：`deepseek-flash`，20 输入、4 输出 Token；共享账本累计人民币 3.24560520 元。
 - 工程门槛：276 passed，综合覆盖率 90.06228373702422%；Ruff、compileall 通过。
 - 正式 60 项尚未启动。自动审批要求用户明确授权将任务、源码片段与工具输出发送给 DeepSeek。
+
+用户授权后正式重跑已完成。脱敏结果见
+[`../../benchmarks/experiments/v0.8.6-p2-formal-rerun.json`](../../benchmarks/experiments/v0.8.6-p2-formal-rerun.json)，
+解释见 [`v0.8.6-p2-formal-rerun.md`](v0.8.6-p2-formal-rerun.md)。C 成功 8/30、T 成功 7/30；
+T 输入 -2.73%、Agent 用时 -6.14%，但成功率 -3.33pp，因此尚未达到长期目标中的成功率约束。

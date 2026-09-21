@@ -1523,6 +1523,8 @@ def test_p2_summary_keeps_all_planned_positions_and_separates_failures(
     assert summary.planned_count == 12
     assert summary.completed_count == 1 and summary.repair_failure_count == 1
     assert summary.unexecuted_count == 11 and summary.input_tokens is None
+    assert summary.calculated_cost_amount is None
+    assert summary.cost_currency is None
     assert {item.qualification_type for item in summary.task_summaries} == {
         "assertion_failure",
         "expected_collection_failure",

@@ -456,6 +456,8 @@ class P2ExperimentSummary(BaseModel):
     input_tokens: int | None
     output_tokens: int | None
     cost_usd: float | None
+    calculated_cost_amount: float | None = None
+    cost_currency: str | None = None
     task_summaries: tuple[P2TaskSummary, ...]
 
 
@@ -910,6 +912,12 @@ def summarize_p2_experiment(experiment_dir: Path) -> P2ExperimentSummary:
     ]
     successes = [record for record in completed if record and record.independent_passed]
     failures = [record for record in completed if record and not record.independent_passed]
+    currencies = {record.cost_currency for record in completed if record.cost_currency}
+    calculated_amount = (
+        sum(record.calculated_cost_amount or 0 for record in completed)
+        if completed and all(record.calculated_cost_amount is not None for record in completed)
+        else None
+    )
     task_summaries: list[P2TaskSummary] = []
     for task_id in protocol.qualified_task_ids:
         task_plans = [plan for plan in protocol.schedule if plan.task_id == task_id]
@@ -1000,9 +1008,13 @@ def summarize_p2_experiment(experiment_dir: Path) -> P2ExperimentSummary:
         output_tokens=sum(record.output_tokens for record in completed) if all_complete else None,
         cost_usd=(
             sum(record.cost_usd or 0 for record in completed)
-            if all_complete and all(record.cost_usd is not None for record in completed)
+            if all_complete
+            and (not currencies or currencies == {"USD"})
+            and all(record.cost_usd is not None for record in completed)
             else None
         ),
+        calculated_cost_amount=calculated_amount,
+        cost_currency=next(iter(currencies)) if len(currencies) == 1 else None,
         task_summaries=tuple(task_summaries),
     )
 
