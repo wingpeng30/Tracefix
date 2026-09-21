@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 from tracefix import AgentConfig, AgentStatus, LLMConfig, RunResult
-from tracefix.exceptions import BenchmarkError, P2TrialBudgetExceeded
+from tracefix.exceptions import AgentLimitExceeded, BenchmarkError, P2TrialBudgetExceeded
 from tracefix.messages import Message, MessageRole
 from tracefix.models import LLMResponse, TokenUsage
 from tracefix.p2_protocol import (
@@ -23,6 +23,7 @@ from tracefix.p2_protocol import (
     _write_cost_ledger,
     build_p2_protocol,
     check_p2_inputs,
+    diagnose_p2_experiment,
     estimated_request_reservation,
     read_completed_trial,
     run_p2_experiment,
@@ -31,6 +32,7 @@ from tracefix.p2_protocol import (
     write_p2_check,
     write_p2_diagnostic,
     write_p2_dry_run,
+    write_p2_followup_plan,
     write_p2_reconciliation,
     write_p2_summary,
     write_trial_record,
@@ -54,6 +56,8 @@ from tracefix.real_experiment import (
     _pytest_evidence,
     _task_python,
     analyze_real_trajectory,
+    classify_p2_paths,
+    p2_scoring_instruction,
     validate_agent_patch_strict,
     validate_real_task_behavior,
 )
@@ -1590,61 +1594,10 @@ def test_p2_diagnostic_separates_budget_stop_and_test_patch(tmp_path, monkeypatc
             independent_passed=False,
         ),
     )
-    variants = (
-        (2, "agent_error", "unexpected agent error: busy", {}),
-        (3, "step_limit_exceeded", "", {}),
-        (4, "benchmark_error", "P2 request exceeds configured per-request input bound", {}),
-        (5, "benchmark_error", "other benchmark failure", {}),
-        (
-            6,
-            None,
-            "",
-            {
-                "context_metrics": {"compaction_count": 1, "tool_results_pruned": 2},
-                "presentation_metrics": {
-                    "result_count": 3,
-                    "compacted_result_count": 2,
-                },
-                "cached_tool_calls": 1,
-                "repo_map": {"text": "map"},
-            },
-        ),
-    )
-    passed = root / "passed.json"
-    passed.write_text(json.dumps({"reason": None}), encoding="utf-8")
-    for sequence, stop_reason, message, extra in variants:
-        variant_run = root / f"run-{sequence}.json"
-        variant_run.write_text(
-            json.dumps({"error": {"message": message}, **extra}), encoding="utf-8"
-        )
-        variant_plan = protocol.schedule[sequence - 1]
-        write_trial_record(
-            root / "trials" / f"{sequence:03d}.json",
-            P2TrialRecord(
-                sequence=sequence,
-                task_id=task.id,
-                arm=variant_plan.arm,
-                repetition=variant_plan.repetition,
-                mode="formal",
-                status="verification_complete",
-                stop_reason=stop_reason,
-                run_result_path=str(variant_run),
-                verification_path=str(passed),
-                independent_passed=True,
-                input_tokens=sequence,
-                output_tokens=sequence,
-                agent_duration_seconds=float(sequence),
-            ),
-        )
     output = write_p2_diagnostic(root)
     payload = json.loads(output.read_text(encoding="utf-8"))
     assert payload["termination_categories"]["normal_trial_budget_stop"] == 1
     assert payload["test_modification_categories"]["source_and_test"] == 1
-    assert payload["termination_categories"]["infrastructure_error"] == 1
-    assert payload["termination_categories"]["request_bound_violation"] == 1
-    assert payload["termination_categories"]["benchmark_error"] == 1
-    assert payload["termination_categories"]["unknown"] == 1
-    assert payload["interpretation"]["compaction_activated"] is True
     assert payload["paid_requests_made"] == 0
 
 
@@ -1668,6 +1621,214 @@ def test_cost_ledger_atomic_write_retries_permission_error(tmp_path, monkeypatch
 
 def test_p2_trial_budget_exception_has_dedicated_code() -> None:
     assert P2TrialBudgetExceeded.code == "p2_trial_budget_exhausted"
+    assert issubclass(P2TrialBudgetExceeded, AgentLimitExceeded)
+
+
+def test_p2_scoring_contract_uses_exact_paths_and_shared_instruction() -> None:
+    category, forbidden = classify_p2_paths(
+        (
+            "src/contest/helpers.py",
+            "tests space/test_feature.py",
+            "pkg/setup.cfg",
+            "docs/testing-notes.md",
+        )
+    )
+    assert category == "config_modified"
+    assert forbidden == ("pkg/setup.cfg", "tests space/test_feature.py")
+    assert "禁止修改、新增、删除或重命名测试" in p2_scoring_instruction()
+
+
+def test_p2_summary_and_diagnostic_share_evidence_classification(tmp_path, monkeypatch) -> None:
+    task, _ = _fixture(tmp_path)
+    monkeypatch.setattr("tracefix.p2_protocol.P1_QUALIFIED_TASK_IDS", (task.id,))
+    monkeypatch.setattr("tracefix.p2_protocol.COLLECTION_FAILURE_TASK_IDS", ())
+    monkeypatch.setattr("tracefix.p2_protocol.load_real_issue_tasks", lambda *a, **k: (task,))
+    monkeypatch.setattr(
+        "tracefix.p2_protocol.load_environment_recipes",
+        lambda *_: {task.id: EnvironmentRecipe(task_id=task.id)},
+    )
+    monkeypatch.setattr("tracefix.p2_protocol._git_commit", lambda *_: "c" * 40)
+    protocol = build_p2_protocol(
+        P2ProtocolConfig(p1_evidence_path=_p1_qualification_evidence(tmp_path, (task,), ()))
+    )
+    root = tmp_path / "shared-audit"
+    (root / "trials").mkdir(parents=True)
+    (root / "protocol.json").write_text(protocol.model_dump_json(), encoding="utf-8")
+    run = root / "run.json"
+    patch = root / "patch.diff"
+    run.write_text(json.dumps({"error": None}), encoding="utf-8")
+    patch.write_text("diff --git a/pkg/a.py b/pkg/a.py\n", encoding="utf-8")
+    plan = protocol.schedule[0]
+    write_trial_record(
+        root / "trials" / "001.json",
+        P2TrialRecord(
+            sequence=plan.sequence,
+            task_id=plan.task_id,
+            arm=plan.arm,
+            repetition=plan.repetition,
+            mode="formal",
+            status="verification_complete",
+            run_result_path=str(run),
+            run_result_sha256=hashlib.sha256(run.read_bytes()).hexdigest(),
+            agent_patch_path=str(patch),
+            agent_patch_sha256=hashlib.sha256(patch.read_bytes()).hexdigest(),
+            verification_path=str(root / "missing-verification.json"),
+            verification_sha256="0" * 64,
+            independent_passed=True,
+        ),
+    )
+    summary = summarize_p2_experiment(root)
+    diagnostic = diagnose_p2_experiment(root)
+    assert summary.evidence_issue_count == diagnostic["evidence_issue_count"] == 6
+    assert summary.verification_reasons == diagnostic["verification_reasons"]
+    assert summary.repair_success_count == 0
+    assert diagnostic["trials"][0]["verification_reason"] == "evidence_invalid"
+
+
+def test_p2_audit_reads_valid_trajectory_and_freezes_followup_design(
+    tmp_path, monkeypatch
+) -> None:
+    task, _ = _fixture(tmp_path)
+    monkeypatch.setattr("tracefix.p2_protocol.P1_QUALIFIED_TASK_IDS", (task.id,))
+    monkeypatch.setattr("tracefix.p2_protocol.COLLECTION_FAILURE_TASK_IDS", ())
+    monkeypatch.setattr("tracefix.p2_protocol.load_real_issue_tasks", lambda *a, **k: (task,))
+    monkeypatch.setattr(
+        "tracefix.p2_protocol.load_environment_recipes",
+        lambda *_: {task.id: EnvironmentRecipe(task_id=task.id)},
+    )
+    monkeypatch.setattr("tracefix.p2_protocol._git_commit", lambda *_: "d" * 40)
+    protocol = build_p2_protocol(
+        P2ProtocolConfig(p1_evidence_path=_p1_qualification_evidence(tmp_path, (task,), ()))
+    )
+    root = tmp_path / "complete-audit"
+    (root / "trials").mkdir(parents=True)
+    (root / "protocol.json").write_text(protocol.model_dump_json(), encoding="utf-8")
+    trace = root / "trajectory.jsonl"
+    events = (
+        {"event_type": "task_started", "payload": {"task": "Add a regression test"}},
+        {"event_type": "context_prepared", "payload": {"estimated_tokens_before": 33000}},
+        {
+            "event_type": "tool_called",
+            "payload": {
+                "call": {"name": "read_file", "arguments": {"path": "pkg/a.py"}}
+            },
+        },
+        {
+            "event_type": "tool_called",
+            "payload": {
+                "call": {"name": "read_file", "arguments": {"path": "pkg/a.py"}}
+            },
+        },
+        {"event_type": "tool_returned", "payload": {"result": {"success": False}}},
+        {
+            "event_type": "tool_result_presented",
+            "payload": {"original_chars": 20, "presented_chars": 10},
+        },
+        {
+            "event_type": "tool_result_presented",
+            "payload": {"original_chars": 10, "presented_chars": 12},
+        },
+        {
+            "event_type": "tool_result_presented",
+            "payload": {"original_chars": 5, "presented_chars": 5},
+        },
+    )
+    trace.write_text(
+        "not-json\n" + "\n".join(json.dumps(event) for event in events), encoding="utf-8"
+    )
+    verification = root / "verification.json"
+    verification.write_text(
+        json.dumps({"eligible": False, "reason": "pytest failed"}), encoding="utf-8"
+    )
+    patch = root / "patch.diff"
+    patch.write_text(
+        'diff --git "a/pkg/file name.py" "b/pkg/file name.py"\n', encoding="utf-8"
+    )
+    stops = (
+        ("p2_trial_budget_exhausted", ""),
+        ("benchmark_error", "configured per-request input bound"),
+        ("agent_error", "unexpected agent error"),
+        ("step_limit_exceeded", ""),
+        ("test_limit_exceeded", ""),
+        ("agent_completed", ""),
+    )
+    instruction = p2_scoring_instruction()
+    for plan, (stop_reason, message) in zip(protocol.schedule, stops, strict=True):
+        run = root / f"run-{plan.sequence}.json"
+        run.write_text(
+            json.dumps(
+                {
+                    "error": {"message": message},
+                    "trace_path": str(trace),
+                    "repo_map": {"candidate_files": ["pkg/a.py"]},
+                    "context_metrics": {"compaction_count": 1},
+                    "presentation_metrics": {
+                        "original_chars": 35,
+                        "presented_chars": 27,
+                        "compacted_result_count": 2,
+                    },
+                    "agent_config": {"system_prompt": instruction},
+                }
+            ),
+            encoding="utf-8",
+        )
+        write_trial_record(
+            root / "trials" / f"{plan.sequence:03d}.json",
+            P2TrialRecord(
+                sequence=plan.sequence,
+                task_id=plan.task_id,
+                arm=plan.arm,
+                repetition=plan.repetition,
+                mode="formal",
+                status="verification_complete",
+                stop_reason=stop_reason,
+                run_result_path=str(run),
+                run_result_sha256=hashlib.sha256(run.read_bytes()).hexdigest(),
+                agent_patch_path=str(patch),
+                agent_patch_sha256=hashlib.sha256(patch.read_bytes()).hexdigest(),
+                verification_path=str(verification),
+                verification_sha256=hashlib.sha256(verification.read_bytes()).hexdigest(),
+                independent_passed=False,
+                input_tokens=10,
+                output_tokens=2,
+                agent_duration_seconds=1,
+            ),
+        )
+    diagnostic = diagnose_p2_experiment(root)
+    assert diagnostic["evidence_valid_count"] == 6
+    assert diagnostic["termination_categories"] == {
+        "agent_completed": 1,
+        "infrastructure_error": 1,
+        "normal_trial_budget_stop": 1,
+        "request_bound_violation": 1,
+        "step_limit_exceeded": 1,
+        "test_limit_exceeded": 1,
+    }
+    first = diagnostic["trials"][0]
+    assert first["changed_paths"] == ["pkg/file name.py"]
+    assert first["tool_results_shortened"] == 1
+    assert first["tool_results_lengthened"] == 1
+    assert first["tool_results_unchanged"] == 1
+    assert first["context_peak_tokens"] == 33000
+    assert first["repo_map_candidate_reads"] == 1
+    assert first["file_rereads"] == 1 and first["failed_tool_calls"] == 1
+    assert first["task_explicitly_requests_test_change"] is True
+    assert first["scoring_instruction_present"] is True
+    candidates = tmp_path / "candidates"
+    (candidates / task.id).mkdir(parents=True)
+    (candidates / task.id / "task.json").write_text("{}", encoding="utf-8")
+    followup = write_p2_followup_plan(
+        root, candidates_dir=candidates, output_dir=tmp_path / "output"
+    )
+    design = json.loads(followup.read_text(encoding="utf-8"))
+    assert design["paid_requests_made"] == 0
+    assert design["holdout"]["candidate_deficit"] == 20
+    assert set(design["ablation_arms"]) == {
+        "baseline_all_off",
+        "repo_map_only",
+        "action_optimization_bundle",
+        "context_management_only",
+    }
 
 
 def test_p2_input_check_writes_snapshot_and_rejects_dirty_source(tmp_path, monkeypatch) -> None:

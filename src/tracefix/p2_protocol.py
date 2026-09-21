@@ -8,6 +8,7 @@ import json
 import math
 import os
 import re
+import shlex
 import subprocess
 import time
 from collections import Counter, defaultdict
@@ -30,7 +31,12 @@ from tracefix.paired import ExperimentArm
 from tracefix.provenance import inspect_test_environment
 from tracefix.real_benchmark import RealIssueTask, load_real_issue_tasks
 from tracefix.real_environment import resolve_managed_environment_python
-from tracefix.real_experiment import validate_agent_patch_strict
+from tracefix.real_experiment import (
+    P2_SCORING_CONTRACT_VERSION,
+    classify_p2_paths,
+    p2_scoring_instruction,
+    validate_agent_patch_strict,
+)
 from tracefix.real_recipes import load_environment_recipes
 from tracefix.repository import RepoMapConfig
 from tracefix.runtime import RunConfig, TraceFixRunner
@@ -229,6 +235,8 @@ class P2ProtocolRecord(BaseModel):
     arm_configurations: dict[str, dict[str, bool | int]]
     schedule: tuple[P2TrialPlan, ...]
     formal: P2FormalRunRequirements | None = None
+    scoring_contract_version: str | None = None
+    scoring_instruction_sha256: str | None = None
 
 
 class P2TrialRecord(BaseModel):
@@ -462,6 +470,11 @@ class P2ExperimentSummary(BaseModel):
     calculated_cost_amount: float | None = None
     cost_currency: str | None = None
     task_summaries: tuple[P2TaskSummary, ...]
+    schema_version: str = "2"
+    evidence_valid_count: int = 0
+    evidence_issue_count: int = 0
+    termination_categories: dict[str, int] = Field(default_factory=dict)
+    verification_reasons: dict[str, int] = Field(default_factory=dict)
 
 
 class P2BudgetedLLM(BaseLLM):
@@ -908,87 +921,356 @@ def _read_trial(path: Path) -> P2TrialRecord | None:
     )
 
 
-def summarize_p2_experiment(experiment_dir: Path) -> P2ExperimentSummary:
-    """只读取冻结协议和试次记录，覆盖每个计划位置而不补写运行结果。"""
+def _patch_declared_paths(path: Path) -> tuple[str, ...]:
+    """Read both sides of Git patch declarations, including quoted paths and renames."""
+    paths: list[str] = []
+    for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+        if not line.startswith("diff --git "):
+            continue
+        try:
+            fields = shlex.split(line)
+        except ValueError:
+            continue
+        for value in fields[2:4]:
+            normalized = value[2:] if value.startswith(("a/", "b/")) else value
+            if normalized not in paths:
+                paths.append(normalized)
+    return tuple(paths)
+
+
+def _termination_category(stop_reason: str | None, message: str) -> str:
+    if stop_reason == "p2_trial_budget_exhausted" or any(
+        fragment in message
+        for fragment in ("trial input budget is exhausted", "trial token budget is exhausted")
+    ):
+        return "normal_trial_budget_stop"
+    if "configured per-request input bound" in message:
+        return "request_bound_violation"
+    if stop_reason == "agent_error" or "unexpected agent error" in message:
+        return "infrastructure_error"
+    if stop_reason in {"step_limit_exceeded", "test_limit_exceeded", "agent_completed"}:
+        return stop_reason
+    return stop_reason or "unknown"
+
+
+def _read_json_artifact(
+    path: str | None, digest: str | None
+) -> tuple[dict[str, object], str | None]:
+    candidate = Path(path) if path else None
+    if candidate is None or not candidate.is_file():
+        return {}, "artifact_missing"
+    identity_issue = (
+        "artifact_hash_missing"
+        if digest is None
+        else "artifact_hash_mismatch"
+        if _sha256(candidate) != digest
+        else None
+    )
+    try:
+        payload = json.loads(candidate.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}, "artifact_invalid_json"
+    return (
+        (payload, identity_issue)
+        if isinstance(payload, dict)
+        else ({}, "artifact_invalid_shape")
+    )
+
+
+def _trajectory_mechanisms(run_payload: dict[str, object]) -> dict[str, int | None]:
+    presentation = run_payload.get("presentation_metrics")
+    presentation = presentation if isinstance(presentation, dict) else {}
+    original = presentation.get("original_chars")
+    presented = presentation.get("presented_chars")
+    changed = presentation.get("compacted_result_count")
+    if not all(isinstance(value, int) for value in (original, presented, changed)):
+        return {
+            "tool_results_changed": None,
+            "tool_results_shortened": None,
+            "tool_results_lengthened": None,
+            "tool_results_unchanged": None,
+            "original_chars": None,
+            "presented_chars": None,
+            "character_delta": None,
+            "estimated_tokens_saved": None,
+            "context_peak_tokens": None,
+            "repo_map_candidate_count": None,
+            "repo_map_candidate_reads": None,
+            "first_repo_map_candidate_read": None,
+            "file_rereads": None,
+            "failed_tool_calls": None,
+            "task_explicitly_requests_test_change": None,
+        }
+    assert isinstance(original, int) and isinstance(presented, int) and isinstance(changed, int)
+    delta = presented - original
+    result = {
+        "tool_results_changed": changed,
+        # Persisted aggregate metrics prove the net direction, not the direction of every result.
+        "tool_results_shortened": changed if delta < 0 else 0 if delta == 0 else None,
+        "tool_results_lengthened": changed if delta > 0 else 0 if delta == 0 else None,
+        "tool_results_unchanged": None,
+        "original_chars": original,
+        "presented_chars": presented,
+        "character_delta": delta,
+        "estimated_tokens_saved": max(0, -delta // 4),
+        "context_peak_tokens": None,
+        "repo_map_candidate_count": None,
+        "repo_map_candidate_reads": None,
+        "first_repo_map_candidate_read": None,
+        "file_rereads": None,
+        "failed_tool_calls": None,
+        "task_explicitly_requests_test_change": None,
+    }
+    trace_path = run_payload.get("trace_path")
+    if not isinstance(trace_path, str) or not Path(trace_path).is_file():
+        return result
+    peak = 0
+    calls: list[tuple[str, str]] = []
+    task_text = ""
+    shortened = 0
+    lengthened = 0
+    unchanged = 0
+    failed_tools = 0
+    for line in Path(trace_path).read_text(encoding="utf-8", errors="replace").splitlines():
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        payload = event.get("payload") if isinstance(event.get("payload"), dict) else {}
+        if event.get("event_type") == "context_prepared":
+            peak = max(peak, int(payload.get("estimated_tokens_before", 0) or 0))
+        elif event.get("event_type") == "tool_called":
+            call = payload.get("call") if isinstance(payload.get("call"), dict) else {}
+            arguments = call.get("arguments") if isinstance(call.get("arguments"), dict) else {}
+            calls.append((str(call.get("name", "")), str(arguments.get("path", ""))))
+        elif event.get("event_type") == "tool_result_presented":
+            original_chars = int(payload.get("original_chars", 0) or 0)
+            presented_chars = int(payload.get("presented_chars", 0) or 0)
+            if presented_chars < original_chars:
+                shortened += 1
+            elif presented_chars > original_chars:
+                lengthened += 1
+            else:
+                unchanged += 1
+        elif event.get("event_type") == "tool_returned":
+            tool_result = (
+                payload.get("result") if isinstance(payload.get("result"), dict) else {}
+            )
+            failed_tools += int(tool_result.get("success") is False)
+        elif event.get("event_type") == "task_started":
+            task_text = str(payload.get("task", ""))
+    repo_map = run_payload.get("repo_map")
+    repo_map = repo_map if isinstance(repo_map, dict) else {}
+    candidates = repo_map.get("candidate_files")
+    candidate_set = {str(path) for path in candidates} if isinstance(candidates, list) else set()
+    read_paths = [path for name, path in calls if name == "read_file" and path]
+    first_candidate = next(
+        (index for index, path in enumerate(read_paths, start=1) if path in candidate_set), None
+    )
+    result.update(
+        {
+            "context_peak_tokens": peak or None,
+            "repo_map_candidate_count": len(candidate_set) if candidates is not None else None,
+            "repo_map_candidate_reads": len(candidate_set.intersection(read_paths)),
+            "first_repo_map_candidate_read": first_candidate,
+            "file_rereads": len(read_paths) - len(set(read_paths)),
+            "failed_tool_calls": failed_tools,
+            "tool_results_shortened": shortened,
+            "tool_results_lengthened": lengthened,
+            "tool_results_unchanged": unchanged,
+            "task_explicitly_requests_test_change": bool(
+                re.search(
+                    r"\b(add|write|update|modify)\b.{0,30}\b(test|tests)\b|"
+                    r"(新增|添加|编写|修改).{0,12}测试",
+                    task_text,
+                    re.IGNORECASE,
+                )
+            ),
+        }
+    )
+    return result
+
+
+def _audit_p2_evidence(experiment_dir: Path) -> dict[str, object]:
+    """Build the single evidence model consumed by summary and diagnostic outputs."""
     root = experiment_dir.expanduser().resolve()
     protocol_path = root / "protocol.json"
     protocol = P2ProtocolRecord.model_validate_json(protocol_path.read_text(encoding="utf-8"))
-    records = {
-        plan.sequence: _read_trial(root / "trials" / f"{plan.sequence:03d}.json")
-        for plan in protocol.schedule
+    rows: list[dict[str, object]] = []
+    for plan in protocol.schedule:
+        trial_path = root / "trials" / f"{plan.sequence:03d}.json"
+        record = _read_trial(trial_path)
+        if record is None:
+            rows.append({
+                "sequence": plan.sequence,
+                "task_id": plan.task_id,
+                "arm": plan.arm.value,
+                "repetition": plan.repetition,
+                "evidence_valid": False,
+                "evidence_issues": ["trial_record_missing"],
+                "termination_category": "unexecuted",
+                "verification_reason": "evidence_missing",
+                "independent_passed": False,
+                "infrastructure_error": False,
+                "artifact_hashes": {},
+                "input_tokens": 0,
+                "output_tokens": 0,
+                "agent_duration_seconds": None,
+            })
+            continue
+        issues: list[str] = []
+        if (record.sequence, record.task_id, record.arm, record.repetition) != (
+            plan.sequence, plan.task_id, plan.arm, plan.repetition
+        ):
+            issues.append("trial_identity_conflict")
+        run_payload, run_issue = _read_json_artifact(
+            record.run_result_path, record.run_result_sha256
+        )
+        verification_payload, verification_issue = _read_json_artifact(
+            record.verification_path, record.verification_sha256
+        )
+        if run_issue:
+            issues.append(f"run_{run_issue}")
+        patch = Path(record.agent_patch_path) if record.agent_patch_path else None
+        if patch is None or not patch.is_file():
+            issues.append("patch_artifact_missing")
+        elif record.agent_patch_sha256 is None:
+            issues.append("patch_artifact_hash_missing")
+        elif _sha256(patch) != record.agent_patch_sha256:
+            issues.append("patch_artifact_hash_mismatch")
+        if verification_issue:
+            issues.append(f"verification_{verification_issue}")
+        if verification_payload:
+            eligible = verification_payload.get("eligible")
+            if not isinstance(eligible, bool) or eligible != record.independent_passed:
+                issues.append("verification_result_conflict")
+        error = run_payload.get("error") if isinstance(run_payload.get("error"), dict) else {}
+        message = str(error.get("message", "")) if isinstance(error, dict) else ""
+        termination = _termination_category(record.stop_reason, message)
+        reason_value = verification_payload.get("reason") if verification_payload else None
+        verification_reason = (
+            "evidence_invalid"
+            if issues
+            else str(reason_value)
+            if reason_value
+            else "passed"
+            if record.independent_passed is True
+            else "verification_failed_unspecified"
+        )
+        paths = _patch_declared_paths(patch) if patch and patch.is_file() else ()
+        patch_category, forbidden_paths = classify_p2_paths(paths)
+        context = run_payload.get("context_metrics")
+        context = context if isinstance(context, dict) else {}
+        mechanisms = _trajectory_mechanisms(run_payload)
+        agent_config = run_payload.get("agent_config")
+        agent_config = agent_config if isinstance(agent_config, dict) else {}
+        system_prompt = agent_config.get("system_prompt")
+        prompt_hash = (
+            hashlib.sha256(system_prompt.encode("utf-8")).hexdigest()
+            if isinstance(system_prompt, str)
+            else None
+        )
+        scoring_instruction_present = (
+            p2_scoring_instruction() in system_prompt if isinstance(system_prompt, str) else None
+        )
+        test_change_prohibition_present = (
+            "禁止修改" in system_prompt and "测试" in system_prompt
+            if isinstance(system_prompt, str)
+            else None
+        )
+        rows.append({
+            "sequence": plan.sequence,
+            "task_id": plan.task_id,
+            "arm": plan.arm.value,
+            "repetition": plan.repetition,
+            "evidence_valid": not issues,
+            "evidence_issues": issues,
+            "termination_category": termination,
+            "original_stop_reason": record.stop_reason,
+            "verification_reason": verification_reason,
+            "independent_passed": bool(record.independent_passed) and not issues,
+            "infrastructure_error": termination == "infrastructure_error",
+            "artifact_hashes": {
+                "run_result": record.run_result_sha256,
+                "agent_patch": record.agent_patch_sha256,
+                "verification": record.verification_sha256,
+            },
+            "patch_category": patch_category,
+            "changed_paths": list(paths),
+            "forbidden_paths": list(forbidden_paths),
+            "input_tokens": record.input_tokens,
+            "output_tokens": record.output_tokens,
+            "agent_duration_seconds": record.agent_duration_seconds,
+            "compaction_count": int(context.get("compaction_count", 0) or 0),
+            "repo_map_present": bool(run_payload.get("repo_map")),
+            "system_prompt_sha256": prompt_hash,
+            "scoring_instruction_present": scoring_instruction_present,
+            "test_change_prohibition_present": test_change_prohibition_present,
+            **mechanisms,
+        })
+    return {
+        "schema_version": "2",
+        "protocol": protocol,
+        "protocol_sha256": _sha256(protocol_path),
+        "rows": rows,
     }
-    completed = [
-        record for record in records.values() if record and record.status == "verification_complete"
-    ]
-    infrastructure = [
-        record for record in records.values() if record and record.status == "infrastructure_error"
-    ]
-    successes = [record for record in completed if record and record.independent_passed]
-    failures = [record for record in completed if record and not record.independent_passed]
-    currencies = {record.cost_currency for record in completed if record.cost_currency}
-    calculated_amount = (
-        sum(record.calculated_cost_amount or 0 for record in completed)
-        if completed and all(record.calculated_cost_amount is not None for record in completed)
-        else None
-    )
+
+
+def summarize_p2_experiment(experiment_dir: Path) -> P2ExperimentSummary:
+    """只读取冻结协议和试次记录，覆盖每个计划位置而不补写运行结果。"""
+    audit = _audit_p2_evidence(experiment_dir)
+    protocol = audit["protocol"]
+    assert isinstance(protocol, P2ProtocolRecord)
+    rows = audit["rows"]
+    assert isinstance(rows, list)
+    valid = [row for row in rows if row["evidence_valid"]]
+    successes = [row for row in rows if row["independent_passed"]]
+    terminations = Counter(str(row["termination_category"]) for row in rows)
+    reasons = Counter(str(row["verification_reason"]) for row in rows)
     task_summaries: list[P2TaskSummary] = []
     for task_id in protocol.qualified_task_ids:
-        task_plans = [plan for plan in protocol.schedule if plan.task_id == task_id]
-        task_records = [(plan, records[plan.sequence]) for plan in task_plans]
+        task_rows = [row for row in rows if row["task_id"] == task_id]
         by_arm = {
-            arm: [record for plan, record in task_records if plan.arm is arm and record]
+            arm.value: [row for row in task_rows if row["arm"] == arm.value]
             for arm in (ExperimentArm.CONTROL, ExperimentArm.TREATMENT)
         }
-
-        def _known_total(items: list[P2TrialRecord], field: str) -> int | None:
-            return sum(getattr(item, field) for item in items) if len(items) == 3 else None
-
-        def _known_duration(items: list[P2TrialRecord]) -> float | None:
-            values = [item.agent_duration_seconds for item in items]
+        def _known_total(items: list[dict[str, object]], field: str) -> int | None:
+            return sum(int(item[field]) for item in items) if len(items) == 3 else None
+        def _known_duration(items: list[dict[str, object]]) -> float | None:
+            values = [item["agent_duration_seconds"] for item in items]
             return (
-                sum(values)
+                sum(float(value) for value in values)
                 if len(items) == 3 and all(value is not None for value in values)
                 else None
             )
-
-        control_tokens = _known_total(by_arm[ExperimentArm.CONTROL], "input_tokens")
-        treatment_tokens = _known_total(by_arm[ExperimentArm.TREATMENT], "input_tokens")
-        control_duration = _known_duration(by_arm[ExperimentArm.CONTROL])
-        treatment_duration = _known_duration(by_arm[ExperimentArm.TREATMENT])
+        control = by_arm[ExperimentArm.CONTROL.value]
+        treatment = by_arm[ExperimentArm.TREATMENT.value]
+        control_tokens = _known_total(control, "input_tokens")
+        treatment_tokens = _known_total(treatment, "input_tokens")
+        control_duration = _known_duration(control)
+        treatment_duration = _known_duration(treatment)
         paired = 0
         for repetition in range(1, 4):
-            pair = [
-                record for plan, record in task_records if plan.repetition == repetition and record
-            ]
-            if len(pair) == 2 and all(record.independent_passed for record in pair):
+            pair = [row for row in task_rows if row["repetition"] == repetition]
+            if len(pair) == 2 and all(row["independent_passed"] for row in pair):
                 paired += 1
         task_summaries.append(
             P2TaskSummary(
                 task_id=task_id,
                 qualification_type=protocol.p1_qualifications[task_id].qualification_type,
                 planned_count=6,
-                completed_count=sum(
-                    record.status == "verification_complete" for _, record in task_records if record
-                ),
-                repair_success_count=sum(
-                    bool(record and record.independent_passed) for _, record in task_records
-                ),
+                completed_count=len(task_rows),
+                repair_success_count=sum(bool(row["independent_passed"]) for row in task_rows),
                 repair_failure_count=sum(
-                    bool(
-                        record
-                        and record.status == "verification_complete"
-                        and not record.independent_passed
-                    )
-                    for _, record in task_records
+                    row["termination_category"] != "unexecuted"
+                    and not bool(row["independent_passed"])
+                    for row in task_rows
                 ),
                 infrastructure_error_count=sum(
-                    bool(record and record.status == "infrastructure_error")
-                    for _, record in task_records
+                    bool(row["infrastructure_error"]) for row in task_rows
                 ),
                 unexecuted_count=sum(
-                    record is None
-                    or record.status not in {"verification_complete", "infrastructure_error"}
-                    for _, record in task_records
+                    row["termination_category"] == "unexecuted" for row in task_rows
                 ),
                 control_input_tokens=control_tokens,
                 treatment_input_tokens=treatment_tokens,
@@ -1007,28 +1289,47 @@ def summarize_p2_experiment(experiment_dir: Path) -> P2ExperimentSummary:
                 paired_both_success_count=paired,
             )
         )
-    all_complete = len(completed) == len(protocol.schedule)
+    records = [
+        _read_trial(Path(experiment_dir) / "trials" / f"{plan.sequence:03d}.json")
+        for plan in protocol.schedule
+    ]
+    complete_records = [record for record in records if record is not None]
+    currencies = {record.cost_currency for record in complete_records if record.cost_currency}
+    all_present = len(complete_records) == len(protocol.schedule)
     return P2ExperimentSummary(
-        protocol_sha256=_sha256(protocol_path),
-        mode=(completed[0].mode if completed else "unknown"),
+        protocol_sha256=str(audit["protocol_sha256"]),
+        mode=(complete_records[0].mode if complete_records else "unknown"),
         planned_count=len(protocol.schedule),
-        completed_count=len(completed),
+        completed_count=len(complete_records),
         repair_success_count=len(successes),
-        repair_failure_count=len(failures),
-        infrastructure_error_count=len(infrastructure),
-        unexecuted_count=len(protocol.schedule) - len(completed) - len(infrastructure),
-        input_tokens=sum(record.input_tokens for record in completed) if all_complete else None,
-        output_tokens=sum(record.output_tokens for record in completed) if all_complete else None,
+        repair_failure_count=len(complete_records) - len(successes),
+        infrastructure_error_count=terminations["infrastructure_error"],
+        unexecuted_count=terminations["unexecuted"],
+        input_tokens=(
+            sum(record.input_tokens for record in complete_records) if all_present else None
+        ),
+        output_tokens=(
+            sum(record.output_tokens for record in complete_records) if all_present else None
+        ),
         cost_usd=(
-            sum(record.cost_usd or 0 for record in completed)
-            if all_complete
+            sum(record.cost_usd or 0 for record in complete_records)
+            if all_present
             and (not currencies or currencies == {"USD"})
-            and all(record.cost_usd is not None for record in completed)
+            and all(record.cost_usd is not None for record in complete_records)
             else None
         ),
-        calculated_cost_amount=calculated_amount,
+        calculated_cost_amount=(
+            sum(record.calculated_cost_amount or 0 for record in complete_records)
+            if all_present
+            and all(record.calculated_cost_amount is not None for record in complete_records)
+            else None
+        ),
         cost_currency=next(iter(currencies)) if len(currencies) == 1 else None,
         task_summaries=tuple(task_summaries),
+        evidence_valid_count=len(valid),
+        evidence_issue_count=len(rows) - len(valid),
+        termination_categories=dict(sorted(terminations.items())),
+        verification_reasons=dict(sorted(reasons.items())),
     )
 
 
@@ -1053,7 +1354,12 @@ def write_p2_summary(experiment_dir: Path) -> Path:
 
 def diagnose_p2_experiment(experiment_dir: Path) -> dict[str, object]:
     """只读审计既有 P2 轨迹，分开报告验收、预算停止和基础设施故障。"""
+    audit = _audit_p2_evidence(experiment_dir)
     root = experiment_dir.expanduser().resolve()
+    try:
+        display_root = root.relative_to(Path.cwd().resolve()).as_posix()
+    except ValueError:
+        display_root = root.name
     protocol_path = root / "protocol.json"
     protocol = P2ProtocolRecord.model_validate_json(protocol_path.read_text(encoding="utf-8"))
     rows: list[dict[str, object]] = []
@@ -1184,13 +1490,80 @@ def diagnose_p2_experiment(experiment_dir: Path) -> dict[str, object]:
                     row.get("termination_category") == "infrastructure_error" for row in selected
                 ),
             }
+    audited_rows = audit["rows"]
+    assert isinstance(audited_rows, list)
+    termination_categories = Counter(
+        str(row["termination_category"]) for row in audited_rows
+    )
+    failure_reasons = Counter(str(row["verification_reason"]) for row in audited_rows)
+    patch_categories = Counter(
+        str(row["patch_category"])
+        for row in audited_rows
+        if row.get("patch_category") is not None
+    )
+    task_arm = {}
+    for task_id in protocol.qualified_task_ids:
+        task_arm[task_id] = {}
+        for arm in (ExperimentArm.CONTROL.value, ExperimentArm.TREATMENT.value):
+            selected = [
+                row
+                for row in audited_rows
+                if row.get("task_id") == task_id and row.get("arm") == arm
+            ]
+            task_arm[task_id][arm] = {
+                "trial_count": len(selected),
+                "success_count": sum(bool(row.get("independent_passed")) for row in selected),
+                "input_tokens": sum(int(row.get("input_tokens", 0)) for row in selected),
+                "output_tokens": sum(int(row.get("output_tokens", 0)) for row in selected),
+                "agent_duration_seconds": round(
+                    sum(float(row.get("agent_duration_seconds") or 0) for row in selected), 6
+                ),
+                "budget_stop_count": sum(
+                    row.get("termination_category") == "normal_trial_budget_stop"
+                    for row in selected
+                ),
+                "infrastructure_error_count": sum(
+                    bool(row.get("infrastructure_error")) for row in selected
+                ),
+            }
+    arm_totals = defaultdict(Counter)
+    for row in audited_rows:
+        arm = str(row.get("arm", "unknown"))
+        arm_totals[arm]["trials"] += 1
+        for field in (
+            "compaction_count",
+            "tool_results_changed",
+            "tool_results_shortened",
+            "tool_results_lengthened",
+            "tool_results_unchanged",
+            "original_chars",
+            "presented_chars",
+            "character_delta",
+            "estimated_tokens_saved",
+            "repo_map_candidate_count",
+            "repo_map_candidate_reads",
+            "file_rereads",
+            "failed_tool_calls",
+        ):
+            value = row.get(field)
+            if isinstance(value, int):
+                arm_totals[arm][field] += value
+        peak = row.get("context_peak_tokens")
+        if isinstance(peak, int):
+            arm_totals[arm]["max_context_tokens"] = max(
+                arm_totals[arm]["max_context_tokens"], peak
+            )
+        arm_totals[arm]["repo_map_present"] += int(bool(row.get("repo_map_present")))
     return {
         "kind": "p2_existing_evidence_diagnostic",
+        "schema_version": "2",
         "generated_at": datetime.now(UTC).isoformat(),
-        "experiment_dir": str(root),
+        "experiment_dir": display_root,
         "protocol_sha256": _sha256(protocol_path),
         "paid_requests_made": 0,
-        "trial_count": len(rows),
+        "trial_count": len(audited_rows),
+        "evidence_valid_count": sum(bool(row["evidence_valid"]) for row in audited_rows),
+        "evidence_issue_count": sum(not bool(row["evidence_valid"]) for row in audited_rows),
         "termination_categories": dict(sorted(termination_categories.items())),
         "verification_reasons": dict(sorted(failure_reasons.items())),
         "test_modification_categories": dict(sorted(patch_categories.items())),
@@ -1199,12 +1572,14 @@ def diagnose_p2_experiment(experiment_dir: Path) -> dict[str, object]:
         },
         "task_arm_summaries": task_arm,
         "interpretation": {
-            "compaction_activated": any(row.get("compaction_count", 0) for row in rows),
+            "compaction_activated": any(
+                row.get("compaction_count", 0) for row in audited_rows
+            ),
             "token_delta_attributable_to_compaction": False,
-            "strict_test_policy_mismatch": patch_categories.get("source_and_test", 0) > 0,
+            "test_change_motive": "unknown_without_explicit_task_or_request_instruction",
             "infrastructure_incident_count": termination_categories["infrastructure_error"],
         },
-        "trials": rows,
+        "trials": audited_rows,
     }
 
 
@@ -1232,6 +1607,80 @@ def write_p2_diagnostic(experiment_dir: Path, *, output_dir: Path | None = None)
         + f"- 基础设施事故：{incident_count} 次。\n",
         encoding="utf-8",
     )
+    return path
+
+
+def write_p2_followup_plan(
+    experiment_dir: Path,
+    *,
+    candidates_dir: Path = Path("benchmarks/real_candidates"),
+    output_dir: Path = Path("benchmarks/experiments"),
+) -> Path:
+    """Freeze an offline-only ablation and holdout design from audited evidence."""
+    diagnostic = diagnose_p2_experiment(experiment_dir)
+    manifests = sorted(candidates_dir.expanduser().resolve().glob("*/task.json"))
+    candidate_ids = tuple(path.parent.name for path in manifests)
+    development_ids = tuple(P1_QUALIFIED_TASK_IDS)
+    previously_reviewed = tuple(sorted(set(candidate_ids).union(development_ids)))
+    holdout_candidates = tuple(sorted(set(candidate_ids) - set(previously_reviewed)))
+    payload = {
+        "kind": "p2_followup_experiment_design",
+        "schema_version": "1",
+        "generated_at": datetime.now(UTC).isoformat(),
+        "source_protocol_sha256": diagnostic["protocol_sha256"],
+        "paid_requests_made": 0,
+        "development_task_ids": development_ids,
+        "ablation_arms": {
+            "baseline_all_off": {
+                "token_optimization_enabled": False,
+                "repo_map_enabled": False,
+                "context_compaction_enabled": False,
+            },
+            "repo_map_only": {
+                "token_optimization_enabled": False,
+                "repo_map_enabled": True,
+                "context_compaction_enabled": False,
+            },
+            "action_optimization_bundle": {
+                "token_optimization_enabled": True,
+                "repo_map_enabled": False,
+                "context_compaction_enabled": False,
+                "includes": ["tool_result_presentation", "action_guidance", "read_cache"],
+            },
+            "context_management_only": {
+                "token_optimization_enabled": False,
+                "repo_map_enabled": False,
+                "context_compaction_enabled": True,
+                "context_trigger_tokens": 32_000,
+            },
+        },
+        "holdout": {
+            "target_count": 20,
+            "selection_seed": 20260921,
+            "selection": "repository-stratified before any Agent run",
+            "qualification": "base/gold and environment evidence only",
+            "excluded_previously_reviewed_task_ids": previously_reviewed,
+            "local_unseen_candidate_ids": holdout_candidates,
+            "local_candidate_count": len(holdout_candidates),
+            "candidate_deficit": max(0, 20 - len(holdout_candidates)),
+        },
+        "long_context_mechanism_set": {
+            "purpose": "mechanism validation only",
+            "selection_rule": (
+                "freeze synthetic or independent tasks whose predeclared context fixture exceeds "
+                "32000 estimated tokens before observing model output"
+            ),
+            "must_not_enter_holdout_effect_estimate": True,
+        },
+        "evidence_limit": (
+            "existing trajectories support associations and activation checks only; "
+            "causal module effects require the frozen ablations"
+        ),
+    }
+    output_dir = output_dir.expanduser().resolve()
+    output_dir.mkdir(parents=True, exist_ok=True)
+    path = output_dir / "p2-followup-design.json"
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
     return path
 
 
@@ -1473,6 +1922,10 @@ def build_p2_protocol(
         },
         schedule=_schedule(ids),
         formal=config.formal,
+        scoring_contract_version=P2_SCORING_CONTRACT_VERSION,
+        scoring_instruction_sha256=hashlib.sha256(
+            p2_scoring_instruction().encode("utf-8")
+        ).hexdigest(),
     )
 
 
@@ -1679,9 +2132,8 @@ def run_p2_experiment(
                 agent_config = AgentConfig(
                     system_prompt=(
                         DEFAULT_SYSTEM_PROMPT
-                        + "\n本次 P2 独立验收禁止修改或新增测试、conftest、pytest 配置"
-                        "及 setup.cfg；"
-                        "只修改产品源码或必要的非测试文档。可运行现有测试，但不要提交测试改动。"
+                        + "\n"
+                        + p2_scoring_instruction()
                     ),
                     max_steps=config.max_steps,
                     max_input_tokens=config.max_input_tokens,

@@ -1,0 +1,76 @@
+{
+  "kind": "p2_followup_experiment_design",
+  "schema_version": "1",
+  "generated_at": "2026-09-21T08:29:24.064017+00:00",
+  "source_protocol_sha256": "f1709d03af0bdee15a97246fb4acfb88adeb58808d28e96c197b8259e4631fc8",
+  "paid_requests_made": 0,
+  "development_task_ids": [
+    "psf__requests-1142",
+    "psf__requests-1766",
+    "pylint-dev__pylint-4551",
+    "pylint-dev__pylint-4604",
+    "pylint-dev__pylint-4661",
+    "pytest-dev__pytest-10051",
+    "pytest-dev__pytest-10081",
+    "pytest-dev__pytest-10356",
+    "sphinx-doc__sphinx-10435",
+    "sphinx-doc__sphinx-10449"
+  ],
+  "ablation_arms": {
+    "baseline_all_off": {
+      "token_optimization_enabled": false,
+      "repo_map_enabled": false,
+      "context_compaction_enabled": false
+    },
+    "repo_map_only": {
+      "token_optimization_enabled": false,
+      "repo_map_enabled": true,
+      "context_compaction_enabled": false
+    },
+    "action_optimization_bundle": {
+      "token_optimization_enabled": true,
+      "repo_map_enabled": false,
+      "context_compaction_enabled": false,
+      "includes": [
+        "tool_result_presentation",
+        "action_guidance",
+        "read_cache"
+      ]
+    },
+    "context_management_only": {
+      "token_optimization_enabled": false,
+      "repo_map_enabled": false,
+      "context_compaction_enabled": true,
+      "context_trigger_tokens": 32000
+    }
+  },
+  "holdout": {
+    "target_count": 20,
+    "selection_seed": 20260921,
+    "selection": "repository-stratified before any Agent run",
+    "qualification": "base/gold and environment evidence only",
+    "excluded_previously_reviewed_task_ids": [
+      "psf__requests-1142",
+      "psf__requests-1724",
+      "psf__requests-1766",
+      "pylint-dev__pylint-4551",
+      "pylint-dev__pylint-4604",
+      "pylint-dev__pylint-4661",
+      "pytest-dev__pytest-10051",
+      "pytest-dev__pytest-10081",
+      "pytest-dev__pytest-10356",
+      "sphinx-doc__sphinx-10323",
+      "sphinx-doc__sphinx-10435",
+      "sphinx-doc__sphinx-10449"
+    ],
+    "local_unseen_candidate_ids": [],
+    "local_candidate_count": 0,
+    "candidate_deficit": 20
+  },
+  "long_context_mechanism_set": {
+    "purpose": "mechanism validation only",
+    "selection_rule": "freeze synthetic or independent tasks whose predeclared context fixture exceeds 32000 estimated tokens before observing model output",
+    "must_not_enter_holdout_effect_estimate": true
+  },
+  "evidence_limit": "existing trajectories support associations and activation checks only; causal module effects require the frozen ablations"
+}

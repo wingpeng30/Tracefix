@@ -33,6 +33,57 @@ from tracefix.runtime import (
 )
 from tracefix.tools import RunTestsTool, ToolResult
 
+P2_SCORING_CONTRACT_VERSION = "p2-scoring-v1"
+P2_FORBIDDEN_CONFIG_NAMES = frozenset(
+    {"conftest.py", "pytest.ini", "tox.ini", "pyproject.toml", "setup.cfg"}
+)
+
+
+def p2_scoring_instruction() -> str:
+    """Return the exact Agent-visible rule enforced by strict P2 scoring."""
+    return (
+        "本次 P2 独立验收禁止修改、新增、删除或重命名测试、conftest、pytest 配置"
+        "及 setup.cfg；只修改产品源码或必要的非测试文档。可运行现有测试，但不要提交测试改动。"
+    )
+
+
+def classify_p2_changed_paths(
+    task: RealIssueTask, paths: tuple[str, ...]
+) -> tuple[str | None, tuple[str, ...]]:
+    """Classify changed paths with the same exact rules used by strict scoring."""
+    return classify_p2_paths(paths, expected_test_files=task.expected_test_files)
+
+
+def classify_p2_paths(
+    paths: tuple[str, ...], *, expected_test_files: tuple[str, ...] = ()
+) -> tuple[str | None, tuple[str, ...]]:
+    """Classify P2 paths without substring matching or checkout access."""
+    normalized = tuple(Path(path).as_posix() for path in paths)
+    expected = {Path(path).as_posix() for path in expected_test_files}
+    forbidden = {
+        path
+        for path in normalized
+        if path in expected
+        or path.startswith(("tests/", "testing/"))
+        or Path(path).name.startswith("test_")
+    }
+    forbidden.update(path for path in normalized if Path(path).name in P2_FORBIDDEN_CONFIG_NAMES)
+    if not forbidden:
+        return None, ()
+    config_changed = any(Path(path).name in P2_FORBIDDEN_CONFIG_NAMES for path in forbidden)
+    test_paths = {path for path in forbidden if Path(path).name not in P2_FORBIDDEN_CONFIG_NAMES}
+    product_python = {
+        path for path in normalized if path.endswith(".py") and path not in forbidden
+    }
+    category = (
+        "config_modified"
+        if config_changed
+        else "source_and_test"
+        if product_python and test_paths
+        else "test_only"
+    )
+    return category, tuple(sorted(forbidden))
+
 
 class RealTaskBehaviorValidation(BaseModel):
     """原始提交失败、标准补丁通过以及独立测试环境的可复现证据。"""
@@ -435,13 +486,7 @@ def validate_agent_patch_strict(
                 ["ls-files", "-z", "--others", "--exclude-standard"], checkout
             ).stdout.split("\0") if field
         )
-        forbidden = _changed_test_files(task, tuple(changed))
-        forbidden += tuple(
-            path for path in changed
-            if Path(path).name in {
-                "conftest.py", "pytest.ini", "tox.ini", "pyproject.toml", "setup.cfg",
-            }
-        )
+        _, forbidden = classify_p2_changed_paths(task, tuple(changed))
         if forbidden:
             after = inspect_test_environment(
                 test_python, pythonpath_entries=task.test_pythonpath_paths

@@ -243,7 +243,7 @@ class BenchmarkError(TraceFixError):
     code = "benchmark_error"
 
 
-class P2TrialBudgetExceeded(BenchmarkError):
+class P2TrialBudgetExceeded(AgentLimitExceeded, BenchmarkError):
     """P2 单项预算在供应商调用前耗尽；这是正常终止而非基础设施故障。"""
 
     code = "p2_trial_budget_exhausted"
