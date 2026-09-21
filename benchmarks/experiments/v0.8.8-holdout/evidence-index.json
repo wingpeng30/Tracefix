@@ -1,0 +1,16 @@
+{
+  "kind": "tracefix_holdout_evidence_index",
+  "schema_version": 1,
+  "dataset": "SWE-bench/SWE-bench_Verified",
+  "dataset_revision": "78f471bf655a3137b2e8a75af1501690ec009ec3",
+  "selection_seed": 20260921,
+  "files": {
+    "benchmarks/holdout_candidates/candidate-pool.json": "4e56d826128a55591ac64f88de44e17962d81dffe521174b07d5912e21cb37db",
+    "runs/holdout-environment-preparation-20260921/environment-preparation.json": "bf4339af54c5fa89d068484dad201f13f655d61494f42e3724e215c60c1530bb",
+    "runs/holdout-environment-replacements-20260921/environment-preparation.json": "67b785975f328a0ee4f6dd6bb8bd0f07aded3c2d702bf168c4ca02dfa122b1d7",
+    "runs/holdout-behavior-validation-20260921/behavior-validation.json": "0b02b875550e26d893dcf320282154e9dbec388acfb30489d3ed360f3b8d85a7",
+    "benchmarks/experiments/v0.8.8-holdout/holdout-freeze.json": "8f6179e3fb5a7da8d788dc1c373112fc336ae951260f99c20f6ae5643bf76999",
+    "benchmarks/experiments/v0.8.8-holdout/long-context-mechanism.json": "479290f95825e30275f1e7ec3ecd70b0d7cc62a193e86744d62ae8b475e5c09c"
+  },
+  "raw_run_files_committed": false
+}

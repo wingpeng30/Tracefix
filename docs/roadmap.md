@@ -39,3 +39,9 @@ Requests-1724 在现有 Python 3 环境中未复现，不为提高合格数放�
 证据统计和评分规则已在 V0.8.7 统一；本地没有可充当独立留出集的未查看任务。下一阶段先补充并
 冻结 20 道新留出任务，再按已冻结的单项消融方案决定是否开展新的付费运行。详见
 [`experiments/v0.8.7-p2-evidence-contract.md`](experiments/v0.8.7-p2-evidence-contract.md)。
+
+2026-09-21 已从不可变 SWE-bench Verified revision 冻结 69 道候选顺序，并完成首轮 19 道
+base/gold 验收；当前只有 4 道普通资格，16 道缺口主要来自历史 Python/测试依赖配方尚未冻结，
+不能宣称 20 题留出集完成。两道合成长上下文机制任务的确定性回放均超过 32k 并成功折叠，继续与
+真实留出集效果估计分开。详见
+[`experiments/v0.8.8-holdout-freeze.md`](experiments/v0.8.8-holdout-freeze.md)。

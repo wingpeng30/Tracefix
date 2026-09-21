@@ -35,6 +35,9 @@ class CandidateCollectionConfig(BaseModel):
     per_repository: int = Field(default=3, ge=1)
     min_source_files: int = Field(default=1, ge=1)
     repositories: tuple[str, ...] = _REPOSITORIES
+    holdout_mode: bool = False
+    selection_seed: int = 20260921
+    excluded_task_ids: tuple[str, ...] = ()
 
 
 class CandidateRecord(BaseModel):
@@ -56,6 +59,8 @@ class CandidateRecord(BaseModel):
     test_file_count: int = Field(ge=0)
     eligible: bool
     exclusion_reasons: tuple[str, ...] = ()
+    selection_rank: int | None = None
+    duplicate_of: str | None = None
 
 
 class CandidateCollectionResult(BaseModel):
@@ -71,6 +76,12 @@ class CandidateCollectionResult(BaseModel):
     selected: tuple[CandidateRecord, ...]
     excluded: tuple[CandidateRecord, ...]
     output_path: str
+    schema_version: int = 2
+    source_sha256: str | None = None
+    selection_seed: int | None = None
+    excluded_task_ids: tuple[str, ...] = ()
+    candidate_order: tuple[str, ...] = ()
+    candidate_order_sha256: str | None = None
 
 
 def _normalized_text(text: str) -> str:
@@ -124,6 +135,17 @@ def _load_rows(config: CandidateCollectionConfig) -> tuple[dict[str, Any], ...]:
             "cannot download SWE-bench dataset",
             context={"dataset": config.dataset, "revision": config.revision},
         ) from exc
+
+
+def _rows_hash(rows: tuple[dict[str, Any], ...]) -> str:
+    """Hash the normalized source rows without depending on input file formatting."""
+    payload = json.dumps(rows, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def _selection_key(seed: int, record: CandidateRecord) -> str:
+    value = f"{seed}:{record.repo}:{record.instance_id}"
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
 
 def _record(row: dict[str, Any], repositories: set[str], min_source_files: int) -> CandidateRecord:
@@ -233,15 +255,57 @@ def collect_candidates(config: CandidateCollectionConfig) -> CandidateCollection
     """按仓库配额稳定选择候选，并写出不含补丁正文的清单。"""
     rows = tuple(sorted(_load_rows(config), key=lambda row: str(row.get("instance_id", ""))))
     records = tuple(_record(row, set(config.repositories), config.min_source_files) for row in rows)
+    excluded_ids = set(config.excluded_task_ids)
+    seen_problem: dict[tuple[str, str], str] = {}
+    seen_patch: dict[tuple[str, str], str] = {}
+    reviewed: list[CandidateRecord] = []
+    for record in records:
+        reasons = list(record.exclusion_reasons)
+        duplicate_of = None
+        if record.instance_id in excluded_ids:
+            reasons.append("previously_reviewed_task")
+        problem_key = (record.repo, record.problem_statement_sha256)
+        patch_key = (record.repo, record.patch_sha256)
+        if config.holdout_mode and problem_key in seen_problem:
+            duplicate_of = seen_problem[problem_key]
+            reasons.append("duplicate_problem_statement")
+        elif config.holdout_mode and patch_key in seen_patch:
+            duplicate_of = seen_patch[patch_key]
+            reasons.append("duplicate_patch")
+        else:
+            seen_problem[problem_key] = record.instance_id
+            seen_patch[patch_key] = record.instance_id
+        reviewed.append(
+            record.model_copy(
+                update={
+                    "eligible": not reasons,
+                    "exclusion_reasons": tuple(dict.fromkeys(reasons)),
+                    "duplicate_of": duplicate_of,
+                }
+            )
+        )
+    records = tuple(reviewed)
+    ordered = tuple(
+        sorted(
+            (record for record in records if record.eligible),
+            key=lambda item: (_selection_key(config.selection_seed, item), item.instance_id),
+        )
+        if config.holdout_mode
+        else records
+    )
     selected: list[CandidateRecord] = []
     counts = {repo: 0 for repo in config.repositories}
-    for record in records:
+    candidate_order: list[str] = []
+    ranks = {record.instance_id: index for index, record in enumerate(ordered, start=1)}
+    for record in ordered:
+        if record.eligible and record.repo in counts:
+            candidate_order.append(record.instance_id)
         if (
             record.eligible
             and record.repo in counts
-            and counts[record.repo] < config.per_repository
+            and (config.holdout_mode or counts[record.repo] < config.per_repository)
         ):
-            selected.append(record)
+            selected.append(record.model_copy(update={"selection_rank": ranks[record.instance_id]}))
             counts[record.repo] += 1
     output = config.output_dir.expanduser().resolve()
     output.mkdir(parents=True, exist_ok=True)
@@ -263,6 +327,8 @@ def collect_candidates(config: CandidateCollectionConfig) -> CandidateCollection
         (task_dir / "candidate.json").write_text(record.model_dump_json(indent=2), encoding="utf-8")
         _write_task_manifest(task_dir, row, record)
     path = output / "candidate-pool.json"
+    portable_output_path = (config.output_dir / "candidate-pool.json").as_posix()
+    order_hash = _sha("\n".join(candidate_order))
     result = CandidateCollectionResult(
         dataset=config.dataset,
         revision=config.revision,
@@ -270,18 +336,31 @@ def collect_candidates(config: CandidateCollectionConfig) -> CandidateCollection
         requested_repositories=config.repositories,
         per_repository=config.per_repository,
         selected=tuple(selected),
-        excluded=tuple(record for record in records if record not in selected),
-        output_path=str(path),
+        excluded=tuple(
+            record
+            for record in records
+            if record.instance_id not in {item.instance_id for item in selected}
+        ),
+        output_path=portable_output_path,
+        source_sha256=_rows_hash(rows),
+        selection_seed=config.selection_seed if config.holdout_mode else None,
+        excluded_task_ids=tuple(sorted(excluded_ids)),
+        candidate_order=tuple(candidate_order),
+        candidate_order_sha256=order_hash,
     )
     path.write_text(result.model_dump_json(indent=2), encoding="utf-8")
-    missing = [repo for repo, count in counts.items() if count < config.per_repository]
+    available_counts = {
+        repo: sum(record.eligible and record.repo == repo for record in records)
+        for repo in config.repositories
+    }
+    missing = [repo for repo, count in available_counts.items() if count < config.per_repository]
     if missing:
         # 即使配额失败也持久化报告，避免用户只能得到一条无法诊断的错误消息。
         raise BenchmarkError(
             "candidate quota is not satisfied",
             context={
                 "missing_repositories": missing,
-                "counts": counts,
+                "counts": available_counts,
                 "report_path": str(path),
             },
         )

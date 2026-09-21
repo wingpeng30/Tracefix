@@ -16,6 +16,7 @@ from tracefix.agent import AgentConfig, AgentStatus
 from tracefix.benchmark import BenchmarkConfig, BenchmarkRunner
 from tracefix.context import ContextConfig
 from tracefix.exceptions import BenchmarkError, TraceFixError
+from tracefix.holdout import freeze_holdout, freeze_long_context_mechanism
 from tracefix.p2_protocol import (
     P2FormalRunRequirements,
     P2ProtocolConfig,
@@ -425,6 +426,30 @@ def build_parser() -> argparse.ArgumentParser:
         help="gold patch 至少修改的非测试 Python 文件数，默认 1",
     )
     collect_parser.add_argument("--repository", action="append", dest="repositories")
+    collect_parser.add_argument(
+        "--holdout", action="store_true", help="冻结全部合格候选的固定种子顺序"
+    )
+    collect_parser.add_argument("--selection-seed", type=int, default=20260921)
+    collect_parser.add_argument(
+        "--exclude-task", action="append", default=[], help="排除已审查任务，可重复传入"
+    )
+
+    freeze_parser = subparsers.add_parser(
+        "freeze-holdout", help="按冻结顺序从行为资格证据生成留出集"
+    )
+    freeze_parser.add_argument("--candidate-pool", type=Path, required=True)
+    freeze_parser.add_argument("--behavior-report", type=Path, required=True)
+    freeze_parser.add_argument("--output", type=Path, required=True)
+    freeze_parser.add_argument("--per-repository", type=int, default=5)
+
+    mechanism_parser = subparsers.add_parser(
+        "freeze-long-context", help="确定性回放并冻结长上下文机制集合"
+    )
+    mechanism_parser.add_argument(
+        "--tasks", type=Path, default=Path("benchmarks/long_context_tasks")
+    )
+    mechanism_parser.add_argument("--work-dir", type=Path, required=True)
+    mechanism_parser.add_argument("--output", type=Path, required=True)
 
     screen_parser = subparsers.add_parser(
         "screen-real-candidates", help="对固定源码候选执行离线 Repo Map 结构筛选"
@@ -930,11 +955,31 @@ def main(argv: list[str] | None = None) -> int:
                 repositories=tuple(args.repositories)
                 if args.repositories
                 else CandidateCollectionConfig().repositories,
+                holdout_mode=args.holdout,
+                selection_seed=args.selection_seed,
+                excluded_task_ids=tuple(args.exclude_task),
             )
             result = collect_candidates(config)
             print(f"候选池生成完成: {len(result.selected)} 题")
             print(f"清单文件: {result.output_path}")
             return 0
+
+        if args.command == "freeze-holdout":
+            result = freeze_holdout(
+                args.candidate_pool,
+                args.behavior_report,
+                args.output,
+                per_repository=args.per_repository,
+            )
+            print(f"留出集冻结完成: {result['qualified_count']}/{result['target_count']}")
+            print(f"冻结文件: {args.output.resolve()}")
+            return 0 if result["deficit"] == 0 else 3
+
+        if args.command == "freeze-long-context":
+            result = freeze_long_context_mechanism(args.tasks, args.work_dir, args.output)
+            print(f"长上下文机制集合: {len(result['tasks'])} 题；有效={result['valid']}")
+            print(f"冻结文件: {args.output.resolve()}")
+            return 0 if result["valid"] else 3
 
         if args.command == "screen-real-candidates":
             task_ids = list(args.task_id)
