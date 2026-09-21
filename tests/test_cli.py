@@ -33,6 +33,13 @@ def test_cli_p2_summarize_is_read_only(tmp_path, monkeypatch, capsys) -> None:
     assert str(expected) in capsys.readouterr().out
 
 
+def test_cli_p2_diagnose_is_read_only(tmp_path, monkeypatch, capsys) -> None:
+    expected = tmp_path / "p2-diagnostic.json"
+    monkeypatch.setattr("tracefix.cli.write_p2_diagnostic", lambda root, output_dir=None: expected)
+    assert main(["p2-diagnose", "--experiment-dir", str(tmp_path)]) == 0
+    assert str(expected) in capsys.readouterr().out
+
+
 def test_cli_p2_formal_freezes_cny_cache_pricing(tmp_path, monkeypatch, capsys) -> None:
     """正式入口必须把人民币缓存价格和上限原样交给冻结协议。"""
     captured = []
@@ -87,10 +94,9 @@ def test_cli_p2_reconcile_passes_bill_filter(tmp_path, monkeypatch) -> None:
     expected = tmp_path / "reconciliation.json"
     monkeypatch.setattr(
         "tracefix.cli.write_p2_reconciliation",
-        lambda root, *, bill_path, api_key_name: captured.append(
-            (root, bill_path, api_key_name)
-        )
-        or expected,
+        lambda root, *, bill_path, api_key_name: (
+            captured.append((root, bill_path, api_key_name)) or expected
+        ),
     )
     bill = tmp_path / "bill.csv"
     assert (
@@ -581,19 +587,22 @@ def test_cli_validate_real_behavior_persists_success_and_task_error(
 
     monkeypatch.setattr("tracefix.cli.validate_real_task_behavior", validate)
     output = tmp_path / "behavior"
-    assert main(
-        [
-            "validate-real-behavior",
-            "--tasks",
-            str(tmp_path),
-            "--source-root",
-            str(tmp_path),
-            "--test-env-root",
-            str(tmp_path),
-            "--output-dir",
-            str(output),
-        ]
-    ) == 0
+    assert (
+        main(
+            [
+                "validate-real-behavior",
+                "--tasks",
+                str(tmp_path),
+                "--source-root",
+                str(tmp_path),
+                "--test-env-root",
+                str(tmp_path),
+                "--output-dir",
+                str(output),
+            ]
+        )
+        == 0
+    )
     payload = (output / "behavior-validation.json").read_text(encoding="utf-8")
     assert calls == ["owner__repo-1", "owner__repo-2"]
     assert "fixture failure" in payload
@@ -602,6 +611,7 @@ def test_cli_validate_real_behavior_persists_success_and_task_error(
 
 def test_cli_validate_real_tasks_and_candidate_commands(tmp_path, monkeypatch, capsys) -> None:
     """真实任务清单校验、候选收集和结构筛选均应传递显式配置。"""
+
     class Dumpable(SimpleNamespace):
         def model_dump(self, **_kwargs):
             return vars(self)
@@ -614,8 +624,9 @@ def test_cli_validate_real_tasks_and_candidate_commands(tmp_path, monkeypatch, c
     collected = []
     monkeypatch.setattr(
         "tracefix.cli.collect_candidates",
-        lambda config: collected.append(config)
-        or SimpleNamespace(selected=(1, 2), output_path="pool.json"),
+        lambda config: (
+            collected.append(config) or SimpleNamespace(selected=(1, 2), output_path="pool.json")
+        ),
     )
 
     class FakeEvaluator:
@@ -629,30 +640,36 @@ def test_cli_validate_real_tasks_and_candidate_commands(tmp_path, monkeypatch, c
 
     monkeypatch.setattr("tracefix.cli.RetrievalEvaluator", FakeEvaluator)
     assert main(["validate-real-tasks", "--tasks", str(tmp_path)]) == 0
-    assert main(
-        [
-            "collect-real-candidates",
-            "--source",
-            str(tmp_path / "source.json"),
-            "--output-dir",
-            str(tmp_path / "out"),
-            "--per-repository",
-            "1",
-        ]
-    ) == 0
-    assert main(
-        [
-            "screen-real-candidates",
-            "--tasks",
-            str(tmp_path),
-            "--source-root",
-            str(tmp_path),
-            "--output-dir",
-            str(tmp_path / "screen"),
-            "--task-id",
-            "owner__repo-1",
-        ]
-    ) == 0
+    assert (
+        main(
+            [
+                "collect-real-candidates",
+                "--source",
+                str(tmp_path / "source.json"),
+                "--output-dir",
+                str(tmp_path / "out"),
+                "--per-repository",
+                "1",
+            ]
+        )
+        == 0
+    )
+    assert (
+        main(
+            [
+                "screen-real-candidates",
+                "--tasks",
+                str(tmp_path),
+                "--source-root",
+                str(tmp_path),
+                "--output-dir",
+                str(tmp_path / "screen"),
+                "--task-id",
+                "owner__repo-1",
+            ]
+        )
+        == 0
+    )
     assert len(collected) == 2
     output = capsys.readouterr().out
     assert "候选池生成完成: 2" in output
@@ -673,23 +690,24 @@ def test_cli_validate_real_tasks_prepares_missing_checkout(tmp_path, monkeypatch
     task.validate_checkout = lambda path: calls.append(("validate", path)) or Dumpable(valid=True)
     monkeypatch.setattr("tracefix.cli.load_real_issue_tasks", lambda *_args, **_kwargs: (task,))
     checkout_root = tmp_path / "checkouts"
-    assert main(
-        [
-            "validate-real-tasks",
-            "--tasks",
-            str(tmp_path),
-            "--with-checkout",
-            "--checkout-dir",
-            str(checkout_root),
-        ]
-    ) == 0
+    assert (
+        main(
+            [
+                "validate-real-tasks",
+                "--tasks",
+                str(tmp_path),
+                "--with-checkout",
+                "--checkout-dir",
+                str(checkout_root),
+            ]
+        )
+        == 0
+    )
     expected = (checkout_root / task.id).resolve()
     assert calls == [("prepare", expected), ("validate", expected)]
 
 
-def test_cli_behavior_rejects_unsupported_and_incompatible_recipe(
-    tmp_path, monkeypatch
-) -> None:
+def test_cli_behavior_rejects_unsupported_and_incompatible_recipe(tmp_path, monkeypatch) -> None:
     """平台与 Python 不兼容必须逐题落盘，不能开始行为验收。"""
     tasks = (SimpleNamespace(id="unsupported"), SimpleNamespace(id="incompatible"))
 
@@ -709,19 +727,22 @@ def test_cli_behavior_rejects_unsupported_and_incompatible_recipe(
         lambda _path: {"unsupported": Recipe(False), "incompatible": Recipe(True)},
     )
     output = tmp_path / "behavior-errors"
-    assert main(
-        [
-            "validate-real-behavior",
-            "--tasks",
-            str(tmp_path),
-            "--source-root",
-            str(tmp_path),
-            "--output-dir",
-            str(output),
-            "--test-python",
-            sys.executable,
-        ]
-    ) == 0
+    assert (
+        main(
+            [
+                "validate-real-behavior",
+                "--tasks",
+                str(tmp_path),
+                "--source-root",
+                str(tmp_path),
+                "--output-dir",
+                str(output),
+                "--test-python",
+                sys.executable,
+            ]
+        )
+        == 0
+    )
     payload = (output / "behavior-validation.json").read_text(encoding="utf-8")
     assert "platform is unsupported" in payload
     assert "incompatible with task recipe" in payload
@@ -755,13 +776,16 @@ def test_cli_real_repo_map_prescreen_runs_both_arms(tmp_path, monkeypatch, capsy
     assert captured[0].agent_config.max_input_tokens == 350_000
     assert "关闭 1/2；开启 1/2" in capsys.readouterr().out
 
-    assert main(
-        [
-            "real-repo-map-prescreen",
-            "--tasks",
-            str(tmp_path),
-            "--repo-map",
-            "--env-file",
-            str(tmp_path / "missing.env"),
-        ]
-    ) == 2
+    assert (
+        main(
+            [
+                "real-repo-map-prescreen",
+                "--tasks",
+                str(tmp_path),
+                "--repo-map",
+                "--env-file",
+                str(tmp_path / "missing.env"),
+            ]
+        )
+        == 2
+    )

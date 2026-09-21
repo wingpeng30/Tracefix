@@ -35,11 +35,7 @@ def sanitize_payload(value: Any) -> Any:
     """生成适合 JSON 的数据，并脱敏常见凭据字段。"""
     if isinstance(value, Mapping):
         return {
-            str(key): (
-                "<redacted>"
-                if _is_sensitive_key(str(key))
-                else sanitize_payload(item)
-            )
+            str(key): ("<redacted>" if _is_sensitive_key(str(key)) else sanitize_payload(item))
             for key, item in value.items()
         }
     if isinstance(value, (list, tuple)):
@@ -245,3 +241,9 @@ class BenchmarkError(TraceFixError):
     """基准任务定义或批量评测过程不符合约定。"""
 
     code = "benchmark_error"
+
+
+class P2TrialBudgetExceeded(BenchmarkError):
+    """P2 单项预算在供应商调用前耗尽；这是正常终止而非基础设施故障。"""
+
+    code = "p2_trial_budget_exhausted"

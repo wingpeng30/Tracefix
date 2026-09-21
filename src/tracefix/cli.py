@@ -22,6 +22,7 @@ from tracefix.p2_protocol import (
     run_p2_formal,
     run_p2_simulation,
     write_p2_check,
+    write_p2_diagnostic,
     write_p2_dry_run,
     write_p2_reconciliation,
     write_p2_summary,
@@ -366,6 +367,9 @@ def build_parser() -> argparse.ArgumentParser:
     p2_check.add_argument("--output-dir", type=Path, default=Path("runs"))
     p2_summary = subparsers.add_parser("p2-summarize", help="汇总已保存的 P2 试次，不执行 Agent")
     p2_summary.add_argument("--experiment-dir", type=Path, required=True)
+    p2_diagnostic = subparsers.add_parser("p2-diagnose", help="只读诊断已有 P2 轨迹")
+    p2_diagnostic.add_argument("--experiment-dir", type=Path, required=True)
+    p2_diagnostic.add_argument("--output-dir", type=Path)
     p2_reconcile = subparsers.add_parser("p2-reconcile", help="只读核对 P2 账本与响应证据")
     p2_reconcile.add_argument("--experiment-dir", type=Path, required=True)
     p2_reconcile.add_argument("--bill", type=Path)
@@ -853,6 +857,11 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "p2-summarize":
             path = write_p2_summary(args.experiment_dir)
             print(f"P2 汇总: {path}")
+            return 0
+
+        if args.command == "p2-diagnose":
+            path = write_p2_diagnostic(args.experiment_dir, output_dir=args.output_dir)
+            print(f"P2 诊断: {path}")
             return 0
 
         if args.command == "p2-reconcile":

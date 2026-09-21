@@ -55,6 +55,8 @@
   新环境、固定配方下 12 道真实任务的统一 base/gold 行为复核。
 - [`experiments/v0.8.6-p2-whole-system-protocol.md`](experiments/v0.8.6-p2-whole-system-protocol.md)：
   10 道任务、60 次整体优化 C/T 的冻结协议与零费用演练。
+- [`experiments/v0.8.6-p2-formal-diagnostic.md`](experiments/v0.8.6-p2-formal-diagnostic.md)：
+  已有 60 项正式轨迹的终止分类、测试修改细分和机制触发诊断；未新增付费调用。
 - [`experiments/v0.8.4-real-environment-validation.md`](experiments/v0.8.4-real-environment-validation.md)：
   12 道真实候选严格重验的 10/12 行为资格结果与边界。
 - [`../benchmarks/experiments/v0.8.4-real-environment-validation.json`](../benchmarks/experiments/v0.8.4-real-environment-validation.json)：

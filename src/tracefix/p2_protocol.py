@@ -7,8 +7,10 @@ import hashlib
 import json
 import math
 import os
+import re
 import subprocess
 import time
+from collections import Counter, defaultdict
 from collections.abc import Sequence
 from datetime import UTC, datetime
 from decimal import Decimal, InvalidOperation
@@ -18,8 +20,9 @@ from uuid import uuid4
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from tracefix.agent import AgentConfig
+from tracefix.agent.base import DEFAULT_SYSTEM_PROMPT
 from tracefix.context import ContextConfig
-from tracefix.exceptions import BenchmarkError
+from tracefix.exceptions import BenchmarkError, P2TrialBudgetExceeded
 from tracefix.messages import Message, MessageRole, ToolCall
 from tracefix.models import BaseLLM, LLMConfig, LLMResponse, TokenUsage
 from tracefix.models.litellm_adapter import LiteLLMAdapter
@@ -533,14 +536,16 @@ class P2BudgetedLLM(BaseLLM):
         if request_input_tokens > self._input_upper_bound:
             raise BenchmarkError("P2 request exceeds the configured per-request input bound")
         if request_input_tokens > remaining_input:
-            raise BenchmarkError("P2 trial input budget is exhausted before provider invocation")
+            raise P2TrialBudgetExceeded(
+                "P2 trial input budget is exhausted before provider invocation"
+            )
         input_upper_bound = request_input_tokens
         output_upper_bound = min(
             self.config.max_output_tokens or 0,
             self._trial_output_budget - self._trial_output_used,
         )
         if input_upper_bound <= 0 or output_upper_bound <= 0:
-            raise BenchmarkError(
+            raise P2TrialBudgetExceeded(
                 "P2 trial token budget is exhausted before another provider request"
             )
         reservation = estimated_request_reservation(
@@ -679,9 +684,11 @@ class P2BudgetedLLM(BaseLLM):
         # ledger and trial records so the generic runtime cannot convert it a
         # second time.
         return response.model_copy(
-            update={"usage": usage.model_copy(update={
-                "cost_usd": actual if self._formal.currency == "USD" else None
-            })}
+            update={
+                "usage": usage.model_copy(
+                    update={"cost_usd": actual if self._formal.currency == "USD" else None}
+                )
+            }
         )
 
 
@@ -721,9 +728,16 @@ def estimated_request_reservation(
 
 def _write_cost_ledger(path: Path, ledger: P2CostLedgerRecord) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_suffix(".tmp")
+    temporary = path.with_name(f"{path.name}.{uuid4().hex}.tmp")
     temporary.write_text(ledger.model_dump_json(indent=2), encoding="utf-8")
-    os.replace(temporary, path)
+    for attempt in range(5):
+        try:
+            os.replace(temporary, path)
+            return
+        except PermissionError:
+            if attempt == 4:
+                raise
+            time.sleep(0.05 * (attempt + 1))
 
 
 def _read_cost_ledger(
@@ -858,8 +872,7 @@ def write_p2_reconciliation(
         "formal_currency": formal_currency,
         "persisted_ledger_currency": ledger_payload.get("currency", "USD"),
         "legacy_amount_fields_mislabeled": (
-            formal_currency is not None
-            and formal_currency != ledger_payload.get("currency", "USD")
+            formal_currency is not None and formal_currency != ledger_payload.get("currency", "USD")
         ),
         "settled_calculated_amount": ledger_payload.get("spent_usd", 0),
         "reserved_unsettled_amount": ledger_payload.get("reserved_usd", 0),
@@ -1033,6 +1046,190 @@ def write_p2_summary(experiment_dir: Path) -> Path:
         f"基础设施错误 {summary.infrastructure_error_count} 次，"
         f"未执行 {summary.unexecuted_count} 次。\n\n"
         "模拟结果仅验证工程流程，不构成 Agent 修复能力结论。\n",
+        encoding="utf-8",
+    )
+    return path
+
+
+def diagnose_p2_experiment(experiment_dir: Path) -> dict[str, object]:
+    """只读审计既有 P2 轨迹，分开报告验收、预算停止和基础设施故障。"""
+    root = experiment_dir.expanduser().resolve()
+    protocol_path = root / "protocol.json"
+    protocol = P2ProtocolRecord.model_validate_json(protocol_path.read_text(encoding="utf-8"))
+    rows: list[dict[str, object]] = []
+    failure_reasons: Counter[str] = Counter()
+    termination_categories: Counter[str] = Counter()
+    patch_categories: Counter[str] = Counter()
+    arm_totals: dict[str, Counter[str]] = defaultdict(Counter)
+    for plan in protocol.schedule:
+        record = _read_trial(root / "trials" / f"{plan.sequence:03d}.json")
+        if record is None:
+            rows.append({"sequence": plan.sequence, "task_id": plan.task_id, "status": "missing"})
+            termination_categories["unexecuted"] += 1
+            continue
+        run_payload: dict[str, object] = {}
+        verification_payload: dict[str, object] = {}
+        if record.run_result_path and Path(record.run_result_path).is_file():
+            run_payload = json.loads(Path(record.run_result_path).read_text(encoding="utf-8"))
+        if record.verification_path and Path(record.verification_path).is_file():
+            verification_payload = json.loads(
+                Path(record.verification_path).read_text(encoding="utf-8")
+            )
+        error = run_payload.get("error") if isinstance(run_payload.get("error"), dict) else {}
+        message = str(error.get("message", "")) if isinstance(error, dict) else ""
+        if (
+            "trial input budget is exhausted" in message
+            or "trial token budget is exhausted" in message
+        ):
+            termination = "normal_trial_budget_stop"
+        elif "configured per-request input bound" in message:
+            termination = "request_bound_violation"
+        elif record.stop_reason == "agent_error" or "unexpected agent error" in message:
+            termination = "infrastructure_error"
+        elif record.stop_reason in {
+            "step_limit_exceeded",
+            "test_limit_exceeded",
+            "agent_completed",
+        }:
+            termination = record.stop_reason
+        elif record.stop_reason == "benchmark_error":
+            termination = "benchmark_error"
+        else:
+            termination = record.stop_reason or "unknown"
+        termination_categories[termination] += 1
+        reason = str(verification_payload.get("reason") or "passed")
+        failure_reasons[reason] += 1
+        patch_category = None
+        changed_paths: list[str] = []
+        if reason == "agent_modified_test_or_pytest_configuration" and record.agent_patch_path:
+            patch_text = Path(record.agent_patch_path).read_text(encoding="utf-8", errors="replace")
+            changed_paths = [
+                m.group(1)
+                for m in re.finditer(r"^diff --git a/.+? b/(.+)$", patch_text, re.MULTILINE)
+            ]
+            lowered = [item.casefold().replace("\\", "/") for item in changed_paths]
+            config_changed = any(
+                item.endswith(
+                    ("conftest.py", "pytest.ini", "setup.cfg", "tox.ini", "pyproject.toml")
+                )
+                for item in lowered
+            )
+            tests = [item for item in lowered if item.startswith("test") or "/test" in item]
+            source = [item for item in lowered if item.endswith(".py") and item not in tests]
+            patch_category = (
+                "config_modified"
+                if config_changed
+                else "source_and_test"
+                if source and tests
+                else "test_only"
+                if tests
+                else "other"
+            )
+            patch_categories[patch_category] += 1
+        context = run_payload.get("context_metrics")
+        context = context if isinstance(context, dict) else {}
+        presentation = run_payload.get("presentation_metrics")
+        presentation = presentation if isinstance(presentation, dict) else {}
+        compactions = int(context.get("compaction_count", 0) or 0)
+        pruned = int(context.get("tool_results_pruned", 0) or 0)
+        arm = str(record.arm.value)
+        arm_totals[arm]["trials"] += 1
+        arm_totals[arm]["compactions"] += compactions
+        arm_totals[arm]["pruned_tool_results"] += pruned
+        arm_totals[arm]["cached_tool_calls"] += int(run_payload.get("cached_tool_calls", 0) or 0)
+        arm_totals[arm]["repo_map_present"] += int(bool(run_payload.get("repo_map")))
+        arm_totals[arm]["presented_tool_results"] += int(presentation.get("result_count", 0) or 0)
+        arm_totals[arm]["compacted_tool_results"] += int(
+            presentation.get("compacted_result_count", 0) or 0
+        )
+        rows.append(
+            {
+                "sequence": plan.sequence,
+                "task_id": plan.task_id,
+                "arm": arm,
+                "repetition": plan.repetition,
+                "termination_category": termination,
+                "original_stop_reason": record.stop_reason,
+                "verification_reason": reason,
+                "independent_passed": record.independent_passed,
+                "patch_category": patch_category,
+                "changed_paths": changed_paths,
+                "input_tokens": record.input_tokens,
+                "output_tokens": record.output_tokens,
+                "agent_duration_seconds": record.agent_duration_seconds,
+                "compaction_count": compactions,
+                "pruned_tool_results": pruned,
+            }
+        )
+    task_arm: dict[str, dict[str, dict[str, int | float]]] = {}
+    for task_id in protocol.qualified_task_ids:
+        task_arm[task_id] = {}
+        for arm in (ExperimentArm.CONTROL.value, ExperimentArm.TREATMENT.value):
+            selected = [
+                row for row in rows if row.get("task_id") == task_id and row.get("arm") == arm
+            ]
+            task_arm[task_id][arm] = {
+                "trial_count": len(selected),
+                "success_count": sum(bool(row.get("independent_passed")) for row in selected),
+                "input_tokens": sum(int(row.get("input_tokens", 0)) for row in selected),
+                "output_tokens": sum(int(row.get("output_tokens", 0)) for row in selected),
+                "agent_duration_seconds": round(
+                    sum(float(row.get("agent_duration_seconds") or 0) for row in selected), 6
+                ),
+                "budget_stop_count": sum(
+                    row.get("termination_category") == "normal_trial_budget_stop"
+                    for row in selected
+                ),
+                "infrastructure_error_count": sum(
+                    row.get("termination_category") == "infrastructure_error" for row in selected
+                ),
+            }
+    return {
+        "kind": "p2_existing_evidence_diagnostic",
+        "generated_at": datetime.now(UTC).isoformat(),
+        "experiment_dir": str(root),
+        "protocol_sha256": _sha256(protocol_path),
+        "paid_requests_made": 0,
+        "trial_count": len(rows),
+        "termination_categories": dict(sorted(termination_categories.items())),
+        "verification_reasons": dict(sorted(failure_reasons.items())),
+        "test_modification_categories": dict(sorted(patch_categories.items())),
+        "arm_mechanism_totals": {
+            arm: dict(sorted(values.items())) for arm, values in sorted(arm_totals.items())
+        },
+        "task_arm_summaries": task_arm,
+        "interpretation": {
+            "compaction_activated": any(row.get("compaction_count", 0) for row in rows),
+            "token_delta_attributable_to_compaction": False,
+            "strict_test_policy_mismatch": patch_categories.get("source_and_test", 0) > 0,
+            "infrastructure_incident_count": termination_categories["infrastructure_error"],
+        },
+        "trials": rows,
+    }
+
+
+def write_p2_diagnostic(experiment_dir: Path, *, output_dir: Path | None = None) -> Path:
+    """保存独立诊断 JSON 与中文说明；不改写正式实验原始工件。"""
+    payload = diagnose_p2_experiment(experiment_dir)
+    root = (output_dir or experiment_dir).expanduser().resolve()
+    root.mkdir(parents=True, exist_ok=True)
+    path = root / "p2-diagnostic.json"
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    report = root / "p2-diagnostic.md"
+    term_text = json.dumps(payload["termination_categories"], ensure_ascii=False, sort_keys=True)
+    patch_text = json.dumps(
+        payload["test_modification_categories"], ensure_ascii=False, sort_keys=True
+    )
+    mechanism_text = json.dumps(payload["arm_mechanism_totals"], ensure_ascii=False, sort_keys=True)
+    compaction = payload["interpretation"]["compaction_activated"]
+    incident_count = payload["interpretation"]["infrastructure_incident_count"]
+    report.write_text(
+        "# P2 已有轨迹诊断\n\n本报告只读取已保存工件，未发起供应商请求。\n\n"
+        + f"- 终止分类：`{term_text}`\n"
+        + f"- 测试修改分类：`{patch_text}`\n"
+        + f"- 机制计数：`{mechanism_text}`\n"
+        + f"- 压缩实际触发：{compaction}。现有输入 Token 差异不能归因于上下文压缩。\n"
+        + f"- 基础设施事故：{incident_count} 次。\n",
         encoding="utf-8",
     )
     return path
@@ -1385,9 +1582,7 @@ def run_p2_experiment(
     if campaign_lock_path is not None:
         campaign_lock_path.parent.mkdir(parents=True, exist_ok=True)
         try:
-            campaign_lock_handle = os.open(
-                campaign_lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY
-            )
+            campaign_lock_handle = os.open(campaign_lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
         except FileExistsError as exc:
             lock_path.unlink(missing_ok=True)
             raise BenchmarkError("P2 cost campaign is already running") from exc
@@ -1416,8 +1611,8 @@ def run_p2_experiment(
         assert config.formal is not None
         formal = config.formal
         ledger_path = (
-            formal.campaign_ledger_path or (root / "cost-ledger.json")
-        ).expanduser().resolve()
+            (formal.campaign_ledger_path or (root / "cost-ledger.json")).expanduser().resolve()
+        )
         request_prefix = ["unassigned"]
         protocol_identity = _sha256(protocol_path)
         pricing_identity = hashlib.sha256(
@@ -1482,6 +1677,12 @@ def run_p2_experiment(
                 )
                 enabled = plan.arm is ExperimentArm.TREATMENT
                 agent_config = AgentConfig(
+                    system_prompt=(
+                        DEFAULT_SYSTEM_PROMPT
+                        + "\n本次 P2 独立验收禁止修改或新增测试、conftest、pytest 配置"
+                        "及 setup.cfg；"
+                        "只修改产品源码或必要的非测试文档。可运行现有测试，但不要提交测试改动。"
+                    ),
                     max_steps=config.max_steps,
                     max_input_tokens=config.max_input_tokens,
                     max_output_tokens=config.max_output_tokens,
@@ -1496,17 +1697,20 @@ def run_p2_experiment(
                 )
                 if mode == "formal":
                     request_prefix[0] = attempt_id
-                    spent_before = _read_cost_ledger(
-                        ledger_path,
-                        formal.cap,
-                        formal.provider,
-                        formal.model_name,
-                        formal.currency,
-                        protocol_identity,
-                        pricing_identity,
-                        formal.prior_calculated_amount,
-                        formal.prior_unsettled_reservation,
-                    ).calculated_spent_amount or 0
+                    spent_before = (
+                        _read_cost_ledger(
+                            ledger_path,
+                            formal.cap,
+                            formal.provider,
+                            formal.model_name,
+                            formal.currency,
+                            protocol_identity,
+                            pricing_identity,
+                            formal.prior_calculated_amount,
+                            formal.prior_unsettled_reservation,
+                        ).calculated_spent_amount
+                        or 0
+                    )
                 result = runner.run(
                     RunConfig(
                         repo=config.source_root / task.id,
@@ -1537,12 +1741,23 @@ def run_p2_experiment(
                     output_tokens=result.output_tokens,
                     cost_usd=result.cost_usd,
                     calculated_cost_amount=(
-                        (_read_cost_ledger(
-                            ledger_path, formal.cap, formal.provider, formal.model_name,
-                            formal.currency, protocol_identity, pricing_identity,
-                            formal.prior_calculated_amount, formal.prior_unsettled_reservation,
-                        ).calculated_spent_amount or 0) - spent_before
-                        if mode == "formal" else 0
+                        (
+                            _read_cost_ledger(
+                                ledger_path,
+                                formal.cap,
+                                formal.provider,
+                                formal.model_name,
+                                formal.currency,
+                                protocol_identity,
+                                pricing_identity,
+                                formal.prior_calculated_amount,
+                                formal.prior_unsettled_reservation,
+                            ).calculated_spent_amount
+                            or 0
+                        )
+                        - spent_before
+                        if mode == "formal"
+                        else 0
                     ),
                     cost_currency=formal.currency if mode == "formal" else None,
                     stop_reason=result.stop_reason,
