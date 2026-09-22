@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "selected_task_ids": [
+    "sphinx-doc__sphinx-8056",
+    "sphinx-doc__sphinx-8551",
+    "sphinx-doc__sphinx-8593",
+    "pytest-dev__pytest-7205",
+    "sphinx-doc__sphinx-7889",
+    "psf__requests-5414",
+    "pytest-dev__pytest-6197",
+    "sphinx-doc__sphinx-8120",
+    "pylint-dev__pylint-6903",
+    "pytest-dev__pytest-5262",
+    "pylint-dev__pylint-7277",
+    "psf__requests-6028",
+    "psf__requests-1921",
+    "pytest-dev__pytest-7432",
+    "pytest-dev__pytest-7324",
+    "pylint-dev__pylint-6528",
+    "pylint-dev__pylint-4970",
+    "pylint-dev__pylint-6386",
+    "psf__requests-2317",
+    "psf__requests-2931"
+  ],
+  "selected_count": 20,
+  "unchanged_from_previous_freeze": true,
+  "raw_reaudit_sha256": "d686877c1b213dfed6989439aede4725b7c615c6b62e73d32468dbafd7618a0f",
+  "prior_freeze_sha256": "513c1a249ee97d3ba22c8f069529d0596fc268de59b933740ef1b52bb8d2e28b",
+  "no_holdout_agent_evaluation": true
+}

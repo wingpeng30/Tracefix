@@ -1547,7 +1547,8 @@ def test_p2_summary_keeps_all_planned_positions_and_separates_failures(
     )
     summary = summarize_p2_experiment(root)
     assert summary.planned_count == 12
-    assert summary.completed_count == 1 and summary.repair_failure_count == 1
+    assert summary.completed_count == 1 and summary.repair_failure_count == 0
+    assert summary.evidence_issue_count == 12
     assert summary.unexecuted_count == 11 and summary.input_tokens is None
     assert summary.calculated_cost_amount is None
     assert summary.cost_currency is None
@@ -1597,7 +1598,8 @@ def test_p2_diagnostic_separates_budget_stop_and_test_patch(tmp_path, monkeypatc
     )
     verification = root / "verification.json"
     verification.write_text(
-        json.dumps({"reason": "agent_modified_test_or_pytest_configuration"}), encoding="utf-8"
+        json.dumps({"eligible": False, "reason": "agent_modified_test_or_pytest_configuration"}),
+        encoding="utf-8",
     )
     plan = protocol.schedule[0]
     write_trial_record(
@@ -1754,7 +1756,23 @@ def test_p2_audit_reads_valid_trajectory_and_freezes_followup_design(tmp_path, m
     )
     verification = root / "verification.json"
     verification.write_text(
-        json.dumps({"eligible": False, "reason": "pytest failed"}), encoding="utf-8"
+        json.dumps(
+            {
+                "eligible": False,
+                "reason": "pytest failed",
+                "evidence": {
+                    "status": "assertion_failed",
+                    "error_count": 0,
+                    "failure_count": 1,
+                    "junit_available": True,
+                    "audit_available": True,
+                    "collection_audit_available": True,
+                    "execution_audit_available": True,
+                    "source_import_audit_valid": True,
+                },
+            }
+        ),
+        encoding="utf-8",
     )
     patch = root / "patch.diff"
     patch.write_text('diff --git "a/pkg/file name.py" "b/pkg/file name.py"\n', encoding="utf-8")

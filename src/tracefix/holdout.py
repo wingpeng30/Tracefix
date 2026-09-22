@@ -28,7 +28,12 @@ def _text_sha(value: str) -> str:
     return hashlib.sha256(normalized.encode()).hexdigest()
 
 
-def _evidence_artifacts(evidence: dict[str, Any]) -> tuple[dict[str, str], list[str]]:
+def _evidence_artifacts(
+    evidence: dict[str, Any],
+    *,
+    source_module: str | None = None,
+    expected_run_prefix: str | None = None,
+) -> tuple[dict[str, str], list[str]]:
     """Hash every raw pytest artifact needed to independently check a result."""
     candidates: list[Path] = []
     for stage in ("collection", "execution"):
@@ -43,6 +48,7 @@ def _evidence_artifacts(evidence: dict[str, Any]) -> tuple[dict[str, str], list[
         )
     hashes: dict[str, str] = {}
     errors: list[str] = []
+    run_ids: dict[str, str] = {}
     for path in dict.fromkeys(candidates):
         if not path.is_file():
             errors.append(f"missing_artifact:{path.name}")
@@ -62,6 +68,19 @@ def _evidence_artifacts(evidence: dict[str, Any]) -> tuple[dict[str, str], list[
         except (OSError, json.JSONDecodeError):
             errors.append(f"malformed_{stage}_audit")
             continue
+        if not isinstance(audit, dict):
+            errors.append(f"malformed_{stage}_audit")
+            continue
+        run_id = audit.get("run_id")
+        suffix = f":{stage}"
+        if not isinstance(run_id, str) or not run_id.endswith(suffix) or run_id == suffix:
+            errors.append(f"invalid_{stage}_run_id")
+        else:
+            run_ids[stage] = run_id.removesuffix(suffix)
+            if expected_run_prefix and not run_id.startswith(expected_run_prefix):
+                errors.append(f"{stage}_run_task_identity_mismatch")
+        if audit.get("collection_errors"):
+            errors.append(f"{stage}_collection_errors")
         if (
             audit.get("format_version") != 2
             or audit.get("stage") != stage
@@ -86,21 +105,42 @@ def _evidence_artifacts(evidence: dict[str, Any]) -> tuple[dict[str, str], list[
                 }
                 if len(keys) != len(set(keys)) or set(keys) != expected_keys:
                     errors.append("execution_phase_evidence_mismatch")
+                failed_calls = 0
+                for row in reports:
+                    if not isinstance(row, dict):
+                        errors.append("malformed_execution_report")
+                        continue
+                    outcome = row.get("outcome")
+                    if row.get("wasxfail") or outcome not in {"passed", "failed"}:
+                        errors.append("nonordinary_execution_outcome")
+                    if row.get("when") != "call" and outcome != "passed":
+                        errors.append("execution_fixture_failure")
+                    failed_calls += row.get("when") == "call" and outcome == "failed"
+                if failed_calls != evidence.get("failure_count"):
+                    errors.append("execution_failure_count_mismatch")
             working_root = Path(str(process.get("working_directory", ""))).resolve()
             imported = audit.get("imported_source_paths")
             source_paths: list[Path] = []
             if isinstance(imported, dict):
                 for name, raw in imported.items():
+                    if source_module and not (
+                        name == source_module or name.startswith(source_module + ".")
+                    ):
+                        continue
                     if name == "tracefix_pytest_audit" or not isinstance(raw, str):
                         continue
                     try:
                         path = Path(raw).resolve()
                         path.relative_to(working_root)
                     except (OSError, ValueError):
+                        if source_module:
+                            errors.append("target_source_outside_checkout")
                         continue
                     source_paths.append(path)
             if not source_paths:
                 errors.append("execution_source_identity_missing")
+    if len(run_ids) == 2 and len(set(run_ids.values())) != 1:
+        errors.append("audit_run_identity_mismatch")
     raw_audit_path = evidence.get("audit_path")
     if not raw_audit_path:
         errors.append("missing_junit")
@@ -185,7 +225,19 @@ def _validate_ordinary_evidence(
             or expected != evidence.get("executed_node_ids")
         ):
             errors.append(f"{variant}_target_set_mismatch")
-        hashes, artifact_errors = _evidence_artifacts(evidence)
+        source_module = {
+            "psf/requests": "requests",
+            "pytest-dev/pytest": "_pytest",
+            "pylint-dev/pylint": "pylint",
+            "sphinx-doc/sphinx": "sphinx",
+        }.get(record.get("repo"))
+        hashes, artifact_errors = _evidence_artifacts(
+            evidence,
+            source_module=source_module,
+            expected_run_prefix=(
+                f"behavior-{item.get('task_id')}-{variant}:" if source_module else None
+            ),
+        )
         artifact_hashes.update({f"{variant}/{name}": value for name, value in hashes.items()})
         errors.extend(f"{variant}_{error}" for error in artifact_errors)
     if item.get("initial_hidden_failed") is not True or item.get("gold_hidden_passed") is not True:

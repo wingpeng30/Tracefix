@@ -6,8 +6,8 @@
 ## 新任务交接入口
 
 - [`handoffs/2026-09-17-v084.md`](handoffs/2026-09-17-v084.md)：当前版本、优先级任务、
-  必读代码、原始证据位置和可复制启动提示。V0.8.4 的全量测试与严格资格证据仍需复核，
-  不应仅依据历史 10/12 汇总直接启动付费实验。
+  必读代码、原始证据位置和可复制启动提示。最新状态见文末第 22 节：四组消融零费用预检已完成，
+  开发集付费阶段预算尚待解决；历史 10/12 始终仅表示任务资格。
 
 ## 项目历程
 
@@ -63,6 +63,8 @@
   不可变候选顺序、首轮留出资格缺口及独立长上下文机制集合。
 - [`experiments/v0.8.9-holdout-final-freeze.md`](experiments/v0.8.9-holdout-final-freeze.md)：
   20 道普通资格留出任务的兼容重验、严格证据冻结及长上下文关键信息保留验证。
+- [`experiments/v0.8.10-ablation-preflight.md`](experiments/v0.8.10-ablation-preflight.md)：
+  四组 120 项协议、真实任务与正式入口零费用模拟、恢复、完整依赖锁及共享预算预检。
 - [`experiments/v0.8.4-real-environment-validation.md`](experiments/v0.8.4-real-environment-validation.md)：
   12 道真实候选严格重验的 10/12 行为资格结果与边界。
 - [`../benchmarks/experiments/v0.8.4-real-environment-validation.json`](../benchmarks/experiments/v0.8.4-real-environment-validation.json)：

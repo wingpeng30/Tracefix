@@ -2,6 +2,8 @@ import hashlib
 import json
 from pathlib import Path
 
+import pytest
+
 from tracefix.holdout import freeze_holdout, freeze_long_context_mechanism
 
 
@@ -193,3 +195,77 @@ def test_freeze_long_context_replays_two_independent_mechanism_tasks(tmp_path) -
     assert all(item["treatment"]["compacted"] is True for item in result["tasks"])
     assert all(item["critical_facts_retained"] is True for item in result["tasks"])
     assert all(item["critical_fact_checks"] for item in result["tasks"])
+
+
+@pytest.mark.parametrize(
+    "change,expected",
+    [
+        ("run_id", "audit_run_identity_mismatch"),
+        ("outcome", "nonordinary_execution_outcome"),
+        ("setup", "execution_fixture_failure"),
+        ("failure_count", "execution_failure_count_mismatch"),
+        ("source", "execution_source_identity_missing"),
+        ("outside", "target_source_outside_checkout"),
+        ("collection_error", "execution_collection_errors"),
+        ("missing", "missing_artifact"),
+        ("malformed", "malformed_execution_audit"),
+        ("duplicate", "execution_phase_evidence_mismatch"),
+    ],
+)
+def test_raw_audit_rejects_identity_stage_and_target_source_tampering(tmp_path, change, expected):
+    from tracefix.holdout import _evidence_artifacts
+
+    test_freeze_holdout_uses_order_and_only_ordinary_qualification(tmp_path)
+    behavior = json.loads((tmp_path / "behavior.json").read_text(encoding="utf-8"))
+    evidence = behavior[-1]["initial_evidence"]
+    path = Path(evidence["audit_path"])
+    audit = json.loads(path.read_text(encoding="utf-8"))
+    if change == "run_id":
+        audit["run_id"] = "another:execution"
+    elif change == "outcome":
+        audit["reports"][1]["outcome"] = "skipped"
+    elif change == "setup":
+        audit["reports"][0]["outcome"] = "failed"
+    elif change == "failure_count":
+        audit["reports"][1]["outcome"] = "passed"
+    elif change == "source":
+        audit["imported_source_paths"] = {"tests": str(path)}
+    elif change == "outside":
+        audit["imported_source_paths"] = {"pkg": str(tmp_path / "wrong" / "pkg.py")}
+    elif change == "collection_error":
+        audit["collection_errors"] = ["extra collection exception"]
+    elif change == "duplicate":
+        audit["reports"].append(audit["reports"][0])
+    path.write_text(json.dumps(audit), encoding="utf-8")
+    if change == "missing":
+        path.unlink()
+    elif change == "malformed":
+        path.write_text("[", encoding="utf-8")
+    _, errors = _evidence_artifacts(evidence, source_module="pkg")
+    assert any(expected in error for error in errors)
+
+
+@pytest.mark.parametrize("stage", ["gold", "collection"])
+def test_freeze_entrypoint_rejects_tampered_gold_and_collection(tmp_path, stage):
+    test_freeze_holdout_uses_order_and_only_ordinary_qualification(tmp_path)
+    old_freeze = (tmp_path / "freeze.json").read_bytes()
+    behavior = json.loads((tmp_path / "behavior.json").read_text(encoding="utf-8"))
+    evidence = behavior[-1]["gold_evidence" if stage == "gold" else "initial_evidence"]
+    path = Path(evidence["audit_path"])
+    if stage == "collection":
+        path = path.with_name("collection.audit.json")
+    audit = json.loads(path.read_text(encoding="utf-8"))
+    if stage == "gold":
+        audit["reports"][1]["outcome"] = "skipped"
+    else:
+        audit["run_id"] = "different:collection"
+    path.write_text(json.dumps(audit), encoding="utf-8")
+    result = freeze_holdout(
+        tmp_path / "pool.json",
+        tmp_path / "behavior.json",
+        tmp_path / "rejected.json",
+        per_repository=1,
+    )
+    assert result["selected_task_ids"] == []
+    assert result["decisions"][-1]["category"] == "evidence_invalid"
+    assert (tmp_path / "freeze.json").read_bytes() == old_freeze

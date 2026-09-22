@@ -1,0 +1,21 @@
+{
+  "currency": "CNY",
+  "amount_kind": "conservative_calculated_upper_bound",
+  "cap": "100.0",
+  "spent": "29.2955412",
+  "reserved": "0.0",
+  "remaining": "70.7044588",
+  "per_trial": "0.86",
+  "development_trials": 120,
+  "development_upper_bound": "103.20",
+  "holdout_trials": 120,
+  "holdout_upper_bound": "103.20",
+  "both_stages_upper_bound": "206.40",
+  "development_fully_funded": false,
+  "both_stages_fully_funded": false,
+  "paid_execution_authorized_by_this_report": false,
+  "ledger_sha256": "306ab2203e80ec919f1a4bc7a6781a101b845fc725221e071228f44d88d39fba",
+  "pricing_source": "https://api-docs.deepseek.com/zh-cn/quick_start/pricing/",
+  "pricing_checked_at": "2026-09-22T05:48:16.012595+00:00",
+  "pricing_evidence_sha256": "4b4da47e45361a3b2efc002d2b06dd7045f4d8cc526c730b9bc57bea9ce3d264"
+}

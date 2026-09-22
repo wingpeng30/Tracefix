@@ -1,0 +1,972 @@
+{
+  "kind": "engineering_rehearsal_only",
+  "planned": 120,
+  "completed": 120,
+  "expected_base_behavior": 120,
+  "statuses": {
+    "assertion_failed": 96,
+    "collection_error": 24
+  },
+  "rows": [
+    {
+      "sequence": 1,
+      "task_id": "psf__requests-1142",
+      "arm": "no_compaction",
+      "status": "assertion_failed",
+      "expected_base_behavior": true,
+      "verification_sha256": "1c6f766638da93f46c33c3f6ae748629267df99bdaf19b4d9a2a168b9924e551"
+    },
+    {
+      "sequence": 2,
+      "task_id": "psf__requests-1142",
+      "arm": "repo_map_only",
+      "status": "assertion_failed",
+      "expected_base_behavior": true,
+      "verification_sha256": "0cbb15027e60c108228d8567bcf91792ebbc13ef03502122bada3adb9541a5bf"
+    },
+    {
+      "sequence": 3,
+      "task_id": "psf__requests-1142",
+      "arm": "action_optimization_bundle",
+      "status": "assertion_failed",
+      "expected_base_behavior": true,
+      "verification_sha256": "f16de69272e6b687245c3720595282e874813cafdb93786d1f2c29479612eab8"
+    },
+    {
+      "sequence": 4,
+      "task_id": "psf__requests-1142",
+      "arm": "context_management_only",
+      "status": "assertion_failed",
+      "expected_base_behavior": true,
+      "verification_sha256": "e876a1a8e60e8b85df8b91499f578ded02d90768d9461f749737dc1bb9b1f54a"
+    },
+    {
+      "sequence": 5,
+      "task_id": "psf__requests-1766",
+      "arm": "repo_map_only",
+      "status": "assertion_failed",
+      "expected_base_behavior": true,
+      "verification_sha256": "db36c67014b1d6a416a56aaba5776fac5b6d65ab87ceafbb71d9fa02c006c791"
+    },
+    {
+      "sequence": 6,
+      "task_id": "psf__requests-1766",
+      "arm": "action_optimization_bundle",
+      "status": "assertion_failed",
+      "expected_base_behavior": true,
+      "verification_sha256": "9d105e7965e4e03576a4b4928906441b5964c76e90a1e5f42e45748c71dd79ab"
+    },
+    {
+      "sequence": 7,
+      "task_id": "psf__requests-1766",
+      "arm": "context_management_only",
+      "status": "assertion_failed",
+      "expected_base_behavior": true,
+      "verification_sha256": "ecb096ed48a0cd0d70a50eefd4d5485b1851dafa833ef9afe7d838daa1437716"
+    },
+    {
+      "sequence": 8,
+      "task_id": "psf__requests-1766",
+      "arm": "no_compaction",
+      "status": "assertion_failed",
+      "expected_base_behavior": true,
+      "verification_sha256": "8626df200ca6a65ae32b4f7818e55e5e078fa6ccc85709661fc96f6b973056a5"
+    },
+    {
+      "sequence": 9,
+      "task_id": "pylint-dev__pylint-4551",
+      "arm": "action_optimization_bundle",
+      "status": "collection_error",
+      "expected_base_behavior": true,
+      "verification_sha256": "cb2030f4c5044a4780ce5133da4940a5bd59f211034defa54ead55ff5fcf3f72"
+    },
+    {
+      "sequence": 10,
+      "task_id": "pylint-dev__pylint-4551",
+      "arm": "context_management_only",
+      "status": "collection_error",
+      "expected_base_behavior": true,
+      "verification_sha256": "0f2b7eacbf894d37b577b3e43b2d686f66b00f5cfc2634ff192f09c5c4c58974"
+    },
+    {
+      "sequence": 11,
+      "task_id": "pylint-dev__pylint-4551",
+      "arm": "no_compaction",
+      "status": "collection_error",
+      "expected_base_behavior": true,
+      "verification_sha256": "89549af89549ffef2c0de0834f426337c64a83578314e27248f1b361bbaa962d"
+    },
+    {
+      "sequence": 12,
+      "task_id": "pylint-dev__pylint-4551",
+      "arm": "repo_map_only",
+      "status": "collection_error",
+      "expected_base_behavior": true,
+      "verification_sha256": "19567b00588d10cdadaa045ef1148f9d27a37c8fff6c45698ebc3aa6e814b55c"
+    },
+    {
+      "sequence": 13,
+      "task_id": "pylint-dev__pylint-4604",
+      "arm": "context_management_only",
+      "status": "collection_error",
+      "expected_base_behavior": true,
+      "verification_sha256": "e80ed3211e835a9780baa276cf6e742597344c36b5facc3906b5c1eedbda29f2"
+    },
+    {
+      "sequence": 14,
+      "task_id": "pylint-dev__pylint-4604",
+      "arm": "no_compaction",
+      "status": "collection_error",
+      "expected_base_behavior": true,
+      "verification_sha256": "ea4d7123b736eab85de47550fd2fa7e397b93acbb70afd16cdb157485f8a6755"
+    },
+    {
+      "sequence": 15,
+      "task_id": "pylint-dev__pylint-4604",
+      "arm": "repo_map_only",
+      "status": "collection_error",
+      "expected_base_behavior": true,
+      "verification_sha256": "f63bd5015ef0b4446a53d970c236b79b0df806a92df9690f3183380e4646c71f"
+    },
+    {
+      "sequence": 16,
+      "task_id": "pylint-dev__pylint-4604",
+      "arm": "action_optimization_bundle",
+      "status": "collection_error",
+      "expected_base_behavior": true,
+      "verification_sha256": "75a574a6e891c33992a29c698968b6df356208f553a18d9fec1e27955e2860a0"
+    },
+    {
+      "sequence": 17,
+      "task_id": "pylint-dev__pylint-4661",
+      "arm": "no_compaction",
+      "status": "assertion_failed",
+      "expected_base_behavior": true,
+      "verification_sha256": "99e4599a7330575f236270304d01751537873c0e37b7ced5e39d2de73db38e22"
+    },
+    {
+      "sequence": 18,
+      "task_id": "pylint-dev__pylint-4661",
+      "arm": "repo_map_only",
+      "status": "assertion_failed",
+      "expected_base_behavior": true,
+      "verification_sha256": "5bdccbc566d10cef9a0591f9afb197332f12cbbe93159c2ef377b28f34870126"
+    },
+    {
+      "sequence": 19,
+      "task_id": "pylint-dev__pylint-4661",
+      "arm": "action_optimization_bundle",
+      "status": "assertion_failed",
+      "expected_base_behavior": true,
+      "verification_sha256": "51b4b2bf702ee85ceac8cf3986a9924d9345070e4d7bcd28cf1af0244e459ed3"
+    },
+    {
+      "sequence": 20,
+      "task_id": "pylint-dev__pylint-4661",
+      "arm": "context_management_only",
+      "status": "assertion_failed",
+      "expected_base_behavior": true,
+      "verification_sha256": "09a10c9a4681403ef128c83a7cc5c226678fda66bd9a5d1b4ea95c1f38bc6fd4"
+    },
+    {
+      "sequence": 21,
+      "task_id": "pytest-dev__pytest-10051",
+      "arm": "repo_map_only",
+      "status": "assertion_failed",
+      "expected_base_behavior": true,
+      "verification_sha256": "38dadd91be8c134f33a744c856463a9585fcabaa05c9e7a796187c94fdb8b67f"
+    },
+    {
+      "sequence": 22,
+      "task_id": "pytest-dev__pytest-10051",
+      "arm": "action_optimization_bundle",
+      "status": "assertion_failed",
+      "expected_base_behavior": true,
+      "verification_sha256": "1d425bfa51b6c129a4b773263dd48604399233060aebbf6687b6c55a8183668f"
+    },
+    {
+      "sequence": 23,
+      "task_id": "pytest-dev__pytest-10051",
+      "arm": "context_management_only",
+      "status": "assertion_failed",
+      "expected_base_behavior": true,
+      "verification_sha256": "ed095832f8072414cf56635e73e61a7b540b3eaf1fe773c8a56bb1d4cf8ee9bf"
+    },
+    {
+      "sequence": 24,
+      "task_id": "pytest-dev__pytest-10051",
+      "arm": "no_compaction",
+      "status": "assertion_failed",
+      "expected_base_behavior": true,
+      "verification_sha256": "0ab10d4f51743d3b84c5836bf2dae2e38522a5559d83677db4dbda574bcec04c"
+    },
+    {
+      "sequence": 25,
+      "task_id": "pytest-dev__pytest-10081",
+      "arm": "action_optimization_bundle",
+      "status": "assertion_failed",
+      "expected_base_behavior": true,
+      "verification_sha256": "07f14bcdac10edd32707c2b71877a3450e4f0ee02c13a33e1c4d0478e3d4c177"
+    },
+    {
+      "sequence": 26,
+      "task_id": "pytest-dev__pytest-10081",
+      "arm": "context_management_only",
+      "status": "assertion_failed",
+      "expected_base_behavior": true,
+      "verification_sha256": "2bea718bc4cec55128dd540ba038f47ebb604c59ab3d7408eb00aba12744173d"
+    },
+    {
+      "sequence": 27,
+      "task_id": "pytest-dev__pytest-10081",
+      "arm": "no_compaction",
+      "status": "assertion_failed",
+      "expected_base_behavior": true,
+      "verification_sha256": "e033bcb371794debe566f3be6b333c64998eff2e04ed9c897db9876592b6c905"
+    },
+    {
+      "sequence": 28,
+      "task_id": "pytest-dev__pytest-10081",
+      "arm": "repo_map_only",
+      "status": "assertion_failed",
+      "expected_base_behavior": true,
+      "verification_sha256": "6a7690b20d350765c2639284d63abc41970cf605f7aec84e8c50bc0103c7f759"
+    },
+    {
+      "sequence": 29,
+      "task_id": "pytest-dev__pytest-10356",
+      "arm": "context_management_only",
+      "status": "assertion_failed",
+      "expected_base_behavior": true,
+      "verification_sha256": "1cb5e0f526e2e5b28d63164aeca8e3c978dcc88143aaa777e6e847eef45e17d0"
+    },
+    {
+      "sequence": 30,
+      "task_id": "pytest-dev__pytest-10356",
+      "arm": "no_compaction",
+      "status": "assertion_failed",
+      "expected_base_behavior": true,
+      "verification_sha256": "cfa03f9fe8654ecb0502da37a4b008dd62b12466c4f8be323648753addc50e46"
+    },
+    {
+      "sequence": 31,
+      "task_id": "pytest-dev__pytest-10356",
+      "arm": "repo_map_only",
+      "status": "assertion_failed",
+      "expected_base_behavior": true,
+      "verification_sha256": "2e2dd61782ed6dddc9aa7989053ddd8e362970f1acd3e49e616b7eabeaae19fd"
+    },
+    {
+      "sequence": 32,
+      "task_id": "pytest-dev__pytest-10356",
+      "arm": "action_optimization_bundle",
+      "status": "assertion_failed",
+      "expected_base_behavior": true,
+      "verification_sha256": "f05e55a37445d8b14524fbb6c2f183cc40a2956afac6ddba2f4f557f9d0f57fa"
+    },
+    {
+      "sequence": 33,
+      "task_id": "sphinx-doc__sphinx-10435",
+      "arm": "no_compaction",
+      "status": "assertion_failed",
+      "expected_base_behavior": true,
+      "verification_sha256": "50bbf4bbef5fd27100b1dc735d600a19ce8eb0cd751bfc58a037fe1226dfed65"
+    },
+    {
+      "sequence": 34,
+      "task_id": "sphinx-doc__sphinx-10435",
+      "arm": "repo_map_only",
+      "status": "assertion_failed",
+      "expected_base_behavior": true,
+      "verification_sha256": "82bd4eb1764e4a5eb7978805ab19b8a42a5a061e15a9deaf952ca98c779bd85c"
+    },
+    {
+      "sequence": 35,
+      "task_id": "sphinx-doc__sphinx-10435",
+      "arm": "action_optimization_bundle",
+      "status": "assertion_failed",
+      "expected_base_behavior": true,
+      "verification_sha256": "4005497fb7e0ab7df3351ad8cb0a039fee101e2d73aa0d66c01bb184213af696"
+    },
+    {
+      "sequence": 36,
+      "task_id": "sphinx-doc__sphinx-10435",
+      "arm": "context_management_only",
+      "status": "assertion_failed",
+      "expected_base_behavior": true,
+      "verification_sha256": "69b62f24ccd5e0b3b81997f2461991cdbec0c6a1f761066314640d2c9c2f78ed"
+    },
+    {
+      "sequence": 37,
+      "task_id": "sphinx-doc__sphinx-10449",
+      "arm": "repo_map_only",
+      "status": "assertion_failed",
+      "expected_base_behavior": true,
+      "verification_sha256": "38d434cf487acb7691e6ad0d9080507bf5782f0a5fd3ce5ff5370f8498835941"
+    },
+    {
+      "sequence": 38,
+      "task_id": "sphinx-doc__sphinx-10449",
+      "arm": "action_optimization_bundle",
+      "status": "assertion_failed",
+      "expected_base_behavior": true,
+      "verification_sha256": "a05d40236699da2648a37aa1fa391a0a1b59ef3d241218688d0428d2f6b84666"
+    },
+    {
+      "sequence": 39,
+      "task_id": "sphinx-doc__sphinx-10449",
+      "arm": "context_management_only",
+      "status": "assertion_failed",
+      "expected_base_behavior": true,
+      "verification_sha256": "5efd012513aec9eeb7a6f99a2489e0d20d3710d397ad326cc09ec60daa0b5d54"
+    },
+    {
+      "sequence": 40,
+      "task_id": "sphinx-doc__sphinx-10449",
+      "arm": "no_compaction",
+      "status": "assertion_failed",
+      "expected_base_behavior": true,
+      "verification_sha256": "ffe61bd7af7683733b6f74218d10ea62045b4cb2b0cc8f925f71fa60a99df6fd"
+    },
+    {
+      "sequence": 41,
+      "task_id": "psf__requests-1142",
+      "arm": "repo_map_only",
+      "status": "assertion_failed",
+      "expected_base_behavior": true,
+      "verification_sha256": "f8d589982be251525d1bb476e6168f32b6d5d9d7bbc164c26d48948f0bd9e404"
+    },
+    {
+      "sequence": 42,
+      "task_id": "psf__requests-1142",
+      "arm": "action_optimization_bundle",
+      "status": "assertion_failed",
+      "expected_base_behavior": true,
+      "verification_sha256": "abb1647c811c087ec062cb669823433e149c8578b37e2d2af90805d07e5cda5e"
+    },
+    {
+      "sequence": 43,
+      "task_id": "psf__requests-1142",
+      "arm": "context_management_only",
+      "status": "assertion_failed",
+      "expected_base_behavior": true,
+      "verification_sha256": "662a8d5d8efea1454958387158a086af2fdd7a09193a42293b4703ffc3090f26"
+    },
+    {
+      "sequence": 44,
+      "task_id": "psf__requests-1142",
+      "arm": "no_compaction",
+      "status": "assertion_failed",
+      "expected_base_behavior": true,
+      "verification_sha256": "540dbfda11ef82f1dfd1e8b600c1c08c02ce5ccc2e36ca83c0d9c9bc684973f6"
+    },
+    {
+      "sequence": 45,
+      "task_id": "psf__requests-1766",
+      "arm": "action_optimization_bundle",
+      "status": "assertion_failed",
+      "expected_base_behavior": true,
+      "verification_sha256": "2bb46215ec1abf6cac9744dee88efc83f2128f7b010d4d6280f73be17df55b3d"
+    },
+    {
+      "sequence": 46,
+      "task_id": "psf__requests-1766",
+      "arm": "context_management_only",
+      "status": "assertion_failed",
+      "expected_base_behavior": true,
+      "verification_sha256": "e624a6476a091f8e343873d867204e3c68b9c9730abdd9041fbb2b192ee079d7"
+    },
+    {
+      "sequence": 47,
+      "task_id": "psf__requests-1766",
+      "arm": "no_compaction",
+      "status": "assertion_failed",
+      "expected_base_behavior": true,
+      "verification_sha256": "8d3436d9867046427876ce36c5ddd36dd98b190eb095366e57daafdf9e1dde67"
+    },
+    {
+      "sequence": 48,
+      "task_id": "psf__requests-1766",
+      "arm": "repo_map_only",
+      "status": "assertion_failed",
+      "expected_base_behavior": true,
+      "verification_sha256": "c1957acbcf5196fdf6fd24ceb76ab1d4676fb5eb5d29c2dc072bc9ace5472366"
+    },
+    {
+      "sequence": 49,
+      "task_id": "pylint-dev__pylint-4551",
+      "arm": "context_management_only",
+      "status": "collection_error",
+      "expected_base_behavior": true,
+      "verification_sha256": "de4d174d8787bb01dc25c19afb5fe701a43846ccdfbe2377893237f4ade5725d"
+    },
+    {
+      "sequence": 50,
+      "task_id": "pylint-dev__pylint-4551",
+      "arm": "no_compaction",
+      "status": "collection_error",
+      "expected_base_behavior": true,
+      "verification_sha256": "d0d21176232a1c68d90aeeb02c7b0f80903490b2f87e8c52b418e22103a8e705"
+    },
+    {
+      "sequence": 51,
+      "task_id": "pylint-dev__pylint-4551",
+      "arm": "repo_map_only",
+      "status": "collection_error",
+      "expected_base_behavior": true,
+      "verification_sha256": "6712da512b61fa3cca825c088c6f68cd572059c2f43910c9cf561a138b03d612"
+    },
+    {
+      "sequence": 52,
+      "task_id": "pylint-dev__pylint-4551",
+      "arm": "action_optimization_bundle",
+      "status": "collection_error",
+      "expected_base_behavior": true,
+      "verification_sha256": "2209a07bdacb493712c226897987840088f7cb6008b08dd8fae93b700160b4ad"
+    },
+    {
+      "sequence": 53,
+      "task_id": "pylint-dev__pylint-4604",
+      "arm": "no_compaction",
+      "status": "collection_error",
+      "expected_base_behavior": true,
+      "verification_sha256": "c761296577a4b851df02d4b861b95364fa3127d50e7273778441b989ee674acc"
+    },
+    {
+      "sequence": 54,
+      "task_id": "pylint-dev__pylint-4604",
+      "arm": "repo_map_only",
+      "status": "collection_error",
+      "expected_base_behavior": true,
+      "verification_sha256": "b870a36e79ea903c5757282d092074b1ba17e6ca8bbd2fe7aea0b383acc2d160"
+    },
+    {
+      "sequence": 55,
+      "task_id": "pylint-dev__pylint-4604",
+      "arm": "action_optimization_bundle",
+      "status": "collection_error",
+      "expected_base_behavior": true,
+      "verification_sha256": "77107e08743632dae337fbf346277ca343ad3225467a633ccb6d296a435ad562"
+    },
+    {
+      "sequence": 56,
+      "task_id": "pylint-dev__pylint-4604",
+      "arm": "context_management_only",
+      "status": "collection_error",
+      "expected_base_behavior": true,
+      "verification_sha256": "b576cca8901e5d0582bf215caa578f9d2ca6644c443d1b9b744d25c112145e65"
+    },
+    {
+      "sequence": 57,
+      "task_id": "pylint-dev__pylint-4661",
+      "arm": "repo_map_only",
+      "status": "assertion_failed",
+      "expected_base_behavior": true,
+      "verification_sha256": "805cbfa30b6c03d04ffbb3126304d5523e76dc21df555a4066368bb7fb053db1"
+    },
+    {
+      "sequence": 58,
+      "task_id": "pylint-dev__pylint-4661",
+      "arm": "action_optimization_bundle",
+      "status": "assertion_failed",
+      "expected_base_behavior": true,
+      "verification_sha256": "bc91462ecfb7bb935c81546b660ebf4f50a7ec779a33cfe5f042e0a410888d53"
+    },
+    {
+      "sequence": 59,
+      "task_id": "pylint-dev__pylint-4661",
+      "arm": "context_management_only",
+      "status": "assertion_failed",
+      "expected_base_behavior": true,
+      "verification_sha256": "6da8363bf96673d92ce20a63b2d55423358005802d8e96b9219f5a82d96955f5"
+    },
+    {
+      "sequence": 60,
+      "task_id": "pylint-dev__pylint-4661",
+      "arm": "no_compaction",
+      "status": "assertion_failed",
+      "expected_base_behavior": true,
+      "verification_sha256": "1fe929cd5b9fc6a3327668ac3fb68b7324893f83530ebc6b6946e9f9c63db25d"
+    },
+    {
+      "sequence": 61,
+      "task_id": "pytest-dev__pytest-10051",
+      "arm": "action_optimization_bundle",
+      "status": "assertion_failed",
+      "expected_base_behavior": true,
+      "verification_sha256": "011550800890f44558267cb89113c4f7d7461d4a3a40969bb7490c82266bf15b"
+    },
+    {
+      "sequence": 62,
+      "task_id": "pytest-dev__pytest-10051",
+      "arm": "context_management_only",
+      "status": "assertion_failed",
+      "expected_base_behavior": true,
+      "verification_sha256": "6245e1367b39b02e7336af71cd82203e62b940dd7a74cfa8a6543b4f5924980d"
+    },
+    {
+      "sequence": 63,
+      "task_id": "pytest-dev__pytest-10051",
+      "arm": "no_compaction",
+      "status": "assertion_failed",
+      "expected_base_behavior": true,
+      "verification_sha256": "3a7d8d0a78bd28f0eb834411804c6dc21c835e1d2a5a2f51cf1678eb4bd2eb03"
+    },
+    {
+      "sequence": 64,
+      "task_id": "pytest-dev__pytest-10051",
+      "arm": "repo_map_only",
+      "status": "assertion_failed",
+      "expected_base_behavior": true,
+      "verification_sha256": "6e07456aafec5288efaf5d1ec961eeff6a608f243ebbb131ae6ab857b0f65600"
+    },
+    {
+      "sequence": 65,
+      "task_id": "pytest-dev__pytest-10081",
+      "arm": "context_management_only",
+      "status": "assertion_failed",
+      "expected_base_behavior": true,
+      "verification_sha256": "a3d1d5739394095e4b7272ac52c4db53ccc97a00b8f15003bba256aedbcb5090"
+    },
+    {
+      "sequence": 66,
+      "task_id": "pytest-dev__pytest-10081",
+      "arm": "no_compaction",
+      "status": "assertion_failed",
+      "expected_base_behavior": true,
+      "verification_sha256": "142e51f6c5e5038be9daba952d3ec20878cf75e51ee621be82b4071429199e6b"
+    },
+    {
+      "sequence": 67,
+      "task_id": "pytest-dev__pytest-10081",
+      "arm": "repo_map_only",
+      "status": "assertion_failed",
+      "expected_base_behavior": true,
+      "verification_sha256": "7bda772c98cc8aab8bc4fa1d08252bd9451620811f102801a221227b167704ed"
+    },
+    {
+      "sequence": 68,
+      "task_id": "pytest-dev__pytest-10081",
+      "arm": "action_optimization_bundle",
+      "status": "assertion_failed",
+      "expected_base_behavior": true,
+      "verification_sha256": "a5d7e5d80ce222e19ba008aa76386edd83e409835cb9041078d66cd45aa44478"
+    },
+    {
+      "sequence": 69,
+      "task_id": "pytest-dev__pytest-10356",
+      "arm": "no_compaction",
+      "status": "assertion_failed",
+      "expected_base_behavior": true,
+      "verification_sha256": "0b7e8e8b63bd57119fecb9257b30ef7c18fe23ca03e0e15b004ea85a190b2ac5"
+    },
+    {
+      "sequence": 70,
+      "task_id": "pytest-dev__pytest-10356",
+      "arm": "repo_map_only",
+      "status": "assertion_failed",
+      "expected_base_behavior": true,
+      "verification_sha256": "98a2f5cad6699cc30ef3818a49c3feaf273392edee273b1cee5a751e6086b116"
+    },
+    {
+      "sequence": 71,
+      "task_id": "pytest-dev__pytest-10356",
+      "arm": "action_optimization_bundle",
+      "status": "assertion_failed",
+      "expected_base_behavior": true,
+      "verification_sha256": "30998df67538f0efb287aa11f4a0a029c30a368746b831661614b2953b536893"
+    },
+    {
+      "sequence": 72,
+      "task_id": "pytest-dev__pytest-10356",
+      "arm": "context_management_only",
+      "status": "assertion_failed",
+      "expected_base_behavior": true,
+      "verification_sha256": "83b471d2cd0148d3aa5bc38eba1a5772de35d084750b64e11d54da60b3dd3b83"
+    },
+    {
+      "sequence": 73,
+      "task_id": "sphinx-doc__sphinx-10435",
+      "arm": "repo_map_only",
+      "status": "assertion_failed",
+      "expected_base_behavior": true,
+      "verification_sha256": "f370bff1629a464b30d380463ad9fa4bc6d446c62a2067a87c62400339710014"
+    },
+    {
+      "sequence": 74,
+      "task_id": "sphinx-doc__sphinx-10435",
+      "arm": "action_optimization_bundle",
+      "status": "assertion_failed",
+      "expected_base_behavior": true,
+      "verification_sha256": "f6f9b9937518786db590e9d514e7dfe4be029b405b59340145de5d34b5a54293"
+    },
+    {
+      "sequence": 75,
+      "task_id": "sphinx-doc__sphinx-10435",
+      "arm": "context_management_only",
+      "status": "assertion_failed",
+      "expected_base_behavior": true,
+      "verification_sha256": "45bb153c9b80f221dcec1f0940142a833a2ac3ae37ae76af6ef9f37d7590a29b"
+    },
+    {
+      "sequence": 76,
+      "task_id": "sphinx-doc__sphinx-10435",
+      "arm": "no_compaction",
+      "status": "assertion_failed",
+      "expected_base_behavior": true,
+      "verification_sha256": "690aa8f885be4680820b0fa1900b745f839ef192bd081f6e2fc890161b16e9e2"
+    },
+    {
+      "sequence": 77,
+      "task_id": "sphinx-doc__sphinx-10449",
+      "arm": "action_optimization_bundle",
+      "status": "assertion_failed",
+      "expected_base_behavior": true,
+      "verification_sha256": "0ac13dfdbe5ad4febb1e18fbcfe0ac919476c97af2f36b254f6fd36b997248c7"
+    },
+    {
+      "sequence": 78,
+      "task_id": "sphinx-doc__sphinx-10449",
+      "arm": "context_management_only",
+      "status": "assertion_failed",
+      "expected_base_behavior": true,
+      "verification_sha256": "0df17252c3c86d17de394197d419eac65258d14045b4361006ac25c57d464a04"
+    },
+    {
+      "sequence": 79,
+      "task_id": "sphinx-doc__sphinx-10449",
+      "arm": "no_compaction",
+      "status": "assertion_failed",
+      "expected_base_behavior": true,
+      "verification_sha256": "fb29b3c2a2358cfc907a6f01640908dd77ba56ddcad0501e3a90ccb5fdcc638f"
+    },
+    {
+      "sequence": 80,
+      "task_id": "sphinx-doc__sphinx-10449",
+      "arm": "repo_map_only",
+      "status": "assertion_failed",
+      "expected_base_behavior": true,
+      "verification_sha256": "a014ec97c2a23f723fff320824d5ae988a58a80e070ce5d13251096846584b84"
+    },
+    {
+      "sequence": 81,
+      "task_id": "psf__requests-1142",
+      "arm": "action_optimization_bundle",
+      "status": "assertion_failed",
+      "expected_base_behavior": true,
+      "verification_sha256": "8cd5825704bc3b8220bcec0add7bb9179944945ee88d141f2ec2341e6f2cd67e"
+    },
+    {
+      "sequence": 82,
+      "task_id": "psf__requests-1142",
+      "arm": "context_management_only",
+      "status": "assertion_failed",
+      "expected_base_behavior": true,
+      "verification_sha256": "fc9b2f4da3a88a7923aa1600465e8162502a181efd56699dbc73606ebad89c44"
+    },
+    {
+      "sequence": 83,
+      "task_id": "psf__requests-1142",
+      "arm": "no_compaction",
+      "status": "assertion_failed",
+      "expected_base_behavior": true,
+      "verification_sha256": "939b8dac8d8bc51b360a9afd3dda9008b5a992fa0aed1deb53ca7dfdaa2e0a94"
+    },
+    {
+      "sequence": 84,
+      "task_id": "psf__requests-1142",
+      "arm": "repo_map_only",
+      "status": "assertion_failed",
+      "expected_base_behavior": true,
+      "verification_sha256": "896ca42e1a958c9e799932f35c7a4be6165e7b64bab9b8ca73cee85755d97722"
+    },
+    {
+      "sequence": 85,
+      "task_id": "psf__requests-1766",
+      "arm": "context_management_only",
+      "status": "assertion_failed",
+      "expected_base_behavior": true,
+      "verification_sha256": "aafa86f239c9627891321abfe91d27cdbf796755d08c01a2e87fff817d87960b"
+    },
+    {
+      "sequence": 86,
+      "task_id": "psf__requests-1766",
+      "arm": "no_compaction",
+      "status": "assertion_failed",
+      "expected_base_behavior": true,
+      "verification_sha256": "b84843589c967bb411bc568fd1a0d03423e73bc2fcc285e8648fb57ef6b90176"
+    },
+    {
+      "sequence": 87,
+      "task_id": "psf__requests-1766",
+      "arm": "repo_map_only",
+      "status": "assertion_failed",
+      "expected_base_behavior": true,
+      "verification_sha256": "54f854e79a77c778275783b5f0d18679e007d2ccfffc9992212157b746f0b92e"
+    },
+    {
+      "sequence": 88,
+      "task_id": "psf__requests-1766",
+      "arm": "action_optimization_bundle",
+      "status": "assertion_failed",
+      "expected_base_behavior": true,
+      "verification_sha256": "2cb93f5d96189b683627237d8ed0b38e4484a7cd3da0c06c6aa92618d48f550a"
+    },
+    {
+      "sequence": 89,
+      "task_id": "pylint-dev__pylint-4551",
+      "arm": "no_compaction",
+      "status": "collection_error",
+      "expected_base_behavior": true,
+      "verification_sha256": "3845abfbd3f29f106ce1cd64bc759d34e7c689df1b83ab0560d14dc2aaf69b60"
+    },
+    {
+      "sequence": 90,
+      "task_id": "pylint-dev__pylint-4551",
+      "arm": "repo_map_only",
+      "status": "collection_error",
+      "expected_base_behavior": true,
+      "verification_sha256": "c3b2a381859f27fcf37b372dbeb5e673d62371bc68c3db06488f6d24d70916bc"
+    },
+    {
+      "sequence": 91,
+      "task_id": "pylint-dev__pylint-4551",
+      "arm": "action_optimization_bundle",
+      "status": "collection_error",
+      "expected_base_behavior": true,
+      "verification_sha256": "aef0d712e0e15250acfb0ac8828c7369fd647ac1f248d53e42c825ebf4c4a100"
+    },
+    {
+      "sequence": 92,
+      "task_id": "pylint-dev__pylint-4551",
+      "arm": "context_management_only",
+      "status": "collection_error",
+      "expected_base_behavior": true,
+      "verification_sha256": "9ca6f837702cc80ec9bce15b91c1f55d086622615ee2c2bfe840b33d734914e6"
+    },
+    {
+      "sequence": 93,
+      "task_id": "pylint-dev__pylint-4604",
+      "arm": "repo_map_only",
+      "status": "collection_error",
+      "expected_base_behavior": true,
+      "verification_sha256": "d968b5c713a225b939d28628e346cf8a8633e15ec315603ba10f6c1fc47b582d"
+    },
+    {
+      "sequence": 94,
+      "task_id": "pylint-dev__pylint-4604",
+      "arm": "action_optimization_bundle",
+      "status": "collection_error",
+      "expected_base_behavior": true,
+      "verification_sha256": "ef093625d9a9583b38fcb0036eb4b4cf34abb8d205fcd4819192cc6aa5f8a0f7"
+    },
+    {
+      "sequence": 95,
+      "task_id": "pylint-dev__pylint-4604",
+      "arm": "context_management_only",
+      "status": "collection_error",
+      "expected_base_behavior": true,
+      "verification_sha256": "20578bf58aa39c16ec31e438ec6c7fd0d7c6440e551ada693fc18cf99658a232"
+    },
+    {
+      "sequence": 96,
+      "task_id": "pylint-dev__pylint-4604",
+      "arm": "no_compaction",
+      "status": "collection_error",
+      "expected_base_behavior": true,
+      "verification_sha256": "4019d3d311cca5df2ce279f7c7498c2d757febe2c6524d20fff9347f99618c10"
+    },
+    {
+      "sequence": 97,
+      "task_id": "pylint-dev__pylint-4661",
+      "arm": "action_optimization_bundle",
+      "status": "assertion_failed",
+      "expected_base_behavior": true,
+      "verification_sha256": "a3528659e7223da91e4cb5fd38e734ec8c793a3101d3cc46327ac93ca06516c0"
+    },
+    {
+      "sequence": 98,
+      "task_id": "pylint-dev__pylint-4661",
+      "arm": "context_management_only",
+      "status": "assertion_failed",
+      "expected_base_behavior": true,
+      "verification_sha256": "43f1dc88e1cac275d77083cd40a344c59a47b6bd24a2df343bbd107c23c2e360"
+    },
+    {
+      "sequence": 99,
+      "task_id": "pylint-dev__pylint-4661",
+      "arm": "no_compaction",
+      "status": "assertion_failed",
+      "expected_base_behavior": true,
+      "verification_sha256": "5134f1e79d09998fd315c3f29f97aa787ef4b6fefae2566787acff943d3dc254"
+    },
+    {
+      "sequence": 100,
+      "task_id": "pylint-dev__pylint-4661",
+      "arm": "repo_map_only",
+      "status": "assertion_failed",
+      "expected_base_behavior": true,
+      "verification_sha256": "63d373809e867a7307bccb3c115e6974c2095605dc32a3b1d070294ec8fd77cd"
+    },
+    {
+      "sequence": 101,
+      "task_id": "pytest-dev__pytest-10051",
+      "arm": "context_management_only",
+      "status": "assertion_failed",
+      "expected_base_behavior": true,
+      "verification_sha256": "65ad874c569e09658ad571b28c7744bc8ddd6d76dce017caf58bebbf9a13bdc9"
+    },
+    {
+      "sequence": 102,
+      "task_id": "pytest-dev__pytest-10051",
+      "arm": "no_compaction",
+      "status": "assertion_failed",
+      "expected_base_behavior": true,
+      "verification_sha256": "bb89d11915f49e4035eb2cf4b72ffe9fd8663c83c47beb42c4390973599098ac"
+    },
+    {
+      "sequence": 103,
+      "task_id": "pytest-dev__pytest-10051",
+      "arm": "repo_map_only",
+      "status": "assertion_failed",
+      "expected_base_behavior": true,
+      "verification_sha256": "437d39a32e5846d2ea0da4fb3b8d2da185e5ca31a24f0f43248d452abf379f40"
+    },
+    {
+      "sequence": 104,
+      "task_id": "pytest-dev__pytest-10051",
+      "arm": "action_optimization_bundle",
+      "status": "assertion_failed",
+      "expected_base_behavior": true,
+      "verification_sha256": "9c647bd2a8e88ad91bcafd3fac046689aa20e2f5fe2041a7517c73db4eeec6de"
+    },
+    {
+      "sequence": 105,
+      "task_id": "pytest-dev__pytest-10081",
+      "arm": "no_compaction",
+      "status": "assertion_failed",
+      "expected_base_behavior": true,
+      "verification_sha256": "370fe385aa043bd899f5d4bf63cf33a0f87a5d44e39ec68b5e240c8c935032d9"
+    },
+    {
+      "sequence": 106,
+      "task_id": "pytest-dev__pytest-10081",
+      "arm": "repo_map_only",
+      "status": "assertion_failed",
+      "expected_base_behavior": true,
+      "verification_sha256": "214894314f54258d1665c10b266281b3ea233a9de234c89af14bdd861ee765f2"
+    },
+    {
+      "sequence": 107,
+      "task_id": "pytest-dev__pytest-10081",
+      "arm": "action_optimization_bundle",
+      "status": "assertion_failed",
+      "expected_base_behavior": true,
+      "verification_sha256": "e88bef1118d05d5ec13e550f57846599dbb535d90dfc6791afbbfde061ee6d97"
+    },
+    {
+      "sequence": 108,
+      "task_id": "pytest-dev__pytest-10081",
+      "arm": "context_management_only",
+      "status": "assertion_failed",
+      "expected_base_behavior": true,
+      "verification_sha256": "578da80848b779da48994eebe3bd0c43a1c2c0f882f3726b409740c1bae6395d"
+    },
+    {
+      "sequence": 109,
+      "task_id": "pytest-dev__pytest-10356",
+      "arm": "repo_map_only",
+      "status": "assertion_failed",
+      "expected_base_behavior": true,
+      "verification_sha256": "13ed6c94058caf3124cf0fc03c25b60be107a9929b4a775b5dd2d2fb2da35695"
+    },
+    {
+      "sequence": 110,
+      "task_id": "pytest-dev__pytest-10356",
+      "arm": "action_optimization_bundle",
+      "status": "assertion_failed",
+      "expected_base_behavior": true,
+      "verification_sha256": "f8063c3ee64e2643efbd3d476b5171998f82a145141b61178ca3b54486b8c199"
+    },
+    {
+      "sequence": 111,
+      "task_id": "pytest-dev__pytest-10356",
+      "arm": "context_management_only",
+      "status": "assertion_failed",
+      "expected_base_behavior": true,
+      "verification_sha256": "4a85cb83adb8a5858680571977cf1bcd84b430234130db93ef162c3a2f3fd5cc"
+    },
+    {
+      "sequence": 112,
+      "task_id": "pytest-dev__pytest-10356",
+      "arm": "no_compaction",
+      "status": "assertion_failed",
+      "expected_base_behavior": true,
+      "verification_sha256": "69577c6bbf9b39b06beec6f335b47be8905d24ac9942dcc77f116def5afd109e"
+    },
+    {
+      "sequence": 113,
+      "task_id": "sphinx-doc__sphinx-10435",
+      "arm": "action_optimization_bundle",
+      "status": "assertion_failed",
+      "expected_base_behavior": true,
+      "verification_sha256": "ed5983eb3491209fb76829ba4ad3f0fed93ed5451299e465382d1890a45b85e5"
+    },
+    {
+      "sequence": 114,
+      "task_id": "sphinx-doc__sphinx-10435",
+      "arm": "context_management_only",
+      "status": "assertion_failed",
+      "expected_base_behavior": true,
+      "verification_sha256": "7c4d128976af8843917b2d9386aca8d2979d83dd353c0ab34b6983d4e5880640"
+    },
+    {
+      "sequence": 115,
+      "task_id": "sphinx-doc__sphinx-10435",
+      "arm": "no_compaction",
+      "status": "assertion_failed",
+      "expected_base_behavior": true,
+      "verification_sha256": "916270dd8d24c3beeb683a192822fc4e8e70b6f476412a90f06478ca3669090f"
+    },
+    {
+      "sequence": 116,
+      "task_id": "sphinx-doc__sphinx-10435",
+      "arm": "repo_map_only",
+      "status": "assertion_failed",
+      "expected_base_behavior": true,
+      "verification_sha256": "e3b94d345d75872bc7fa23e3931deff778b278b7a80bc1f5da56fa22ca79d2a7"
+    },
+    {
+      "sequence": 117,
+      "task_id": "sphinx-doc__sphinx-10449",
+      "arm": "context_management_only",
+      "status": "assertion_failed",
+      "expected_base_behavior": true,
+      "verification_sha256": "3e465d586aa9a57b239c000aa08397ba74dca05da8ecf4e8262e063ae318d6b1"
+    },
+    {
+      "sequence": 118,
+      "task_id": "sphinx-doc__sphinx-10449",
+      "arm": "no_compaction",
+      "status": "assertion_failed",
+      "expected_base_behavior": true,
+      "verification_sha256": "8d0f8aba16d8657c1982ac5ca6a387c047da4e7211ac000ebdd7d65f530b44ce"
+    },
+    {
+      "sequence": 119,
+      "task_id": "sphinx-doc__sphinx-10449",
+      "arm": "repo_map_only",
+      "status": "assertion_failed",
+      "expected_base_behavior": true,
+      "verification_sha256": "be96bc175b2c334004b875ffc673fa93afb79bba87583a5a51f8f6e43ec967c2"
+    },
+    {
+      "sequence": 120,
+      "task_id": "sphinx-doc__sphinx-10449",
+      "arm": "action_optimization_bundle",
+      "status": "assertion_failed",
+      "expected_base_behavior": true,
+      "verification_sha256": "5127f3688573ca0da7859cd6f22b2769dcb9382d6dd35101dc472047b01ed034"
+    }
+  ]
+}

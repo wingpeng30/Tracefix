@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "kind": "retained_failed_engineering_attempt",
+  "scheduled": 120,
+  "completed": 120,
+  "posthoc_verification_indeterminate": 12,
+  "valid_repair_failures": 108,
+  "assertion_failures": 84,
+  "reviewed_collection_failures": 24,
+  "engineering_acceptance_passed": false,
+  "affected_task": "pytest-dev__pytest-10081",
+  "confirmed_cause": "tox.ini selected instead of pyproject.toml; pytester plugin missing",
+  "correction": "explicit pytest_config=pyproject.toml; revalidated base/gold unchanged target and dependency fingerprint",
+  "initial_status": "assertion_failed",
+  "gold_status": "passed",
+  "test_nodes": [
+    "testing/test_unittest.py::test_pdb_teardown_skipped_for_classes[@unittest.skip]"
+  ],
+  "dependency_fingerprint": "1586c22a191bde2d3c1b142328c4de5091ebdade37d3ea84a4cf95cab93da5df",
+  "recipe_file_sha256": "25526fd5169fca228d02068ef163da243599db7e34de0fbb31af873b5e0dd6d6",
+  "combined_p1_sha256": "58a302febbe8986e7350a6b60244a53ffb07eb89c5a4dcb23be95267fade6014",
+  "original_protocol_sha256": "52cb3fe82e2e97533e9ea4844cd28cd9c36343839cfd25c560a20b2d70fc600b",
+  "corrected_summary_sha256": "6cbc843f33d3d1e8638a6644102cc9d4b79431a2f7b6c589daf91cf1cf0b0ff7",
+  "revalidation_provenance_sha256": "5d0f999395a2d29da95e05c648fa03c2f65c54b9e8482696d4853894d67a4b95",
+  "old_attempt_unchanged": true
+}

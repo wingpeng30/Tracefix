@@ -25,6 +25,9 @@ class ExperimentArm(StrEnum):
 
     CONTROL = "no_compaction"
     TREATMENT = "compaction_32k"
+    REPO_MAP_ONLY = "repo_map_only"
+    ACTION_ONLY = "action_optimization_bundle"
+    CONTEXT_ONLY = "context_management_only"
 
 
 class TrajectoryMetrics(BaseModel):

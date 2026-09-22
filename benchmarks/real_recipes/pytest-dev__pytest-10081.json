@@ -6,5 +6,6 @@
   "build_commands": [["{python}", "setup.py", "--version"]],
   "selector_overrides": [],
   "supported_platforms": ["windows"],
-  "source_import_probe": "_pytest._version"
+  "source_import_probe": "_pytest._version",
+  "pytest_config": "pyproject.toml"
 }

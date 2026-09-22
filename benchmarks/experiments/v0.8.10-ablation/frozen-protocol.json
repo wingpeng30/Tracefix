@@ -1,0 +1,1430 @@
+{
+  "kind": "p2_four_arm_ablation_protocol",
+  "generated_at": "2026-09-22T06:58:04.148211Z",
+  "code_commit": "f352e4b309ff43fe2bd564b421ff1cfbb5c47141",
+  "offline_only": true,
+  "qualified_task_ids": [
+    "psf__requests-1142",
+    "psf__requests-1766",
+    "pylint-dev__pylint-4551",
+    "pylint-dev__pylint-4604",
+    "pylint-dev__pylint-4661",
+    "pytest-dev__pytest-10051",
+    "pytest-dev__pytest-10081",
+    "pytest-dev__pytest-10356",
+    "sphinx-doc__sphinx-10435",
+    "sphinx-doc__sphinx-10449"
+  ],
+  "primary_task_ids": [
+    "psf__requests-1142",
+    "psf__requests-1766",
+    "pylint-dev__pylint-4661",
+    "pytest-dev__pytest-10051",
+    "pytest-dev__pytest-10081",
+    "pytest-dev__pytest-10356",
+    "sphinx-doc__sphinx-10435",
+    "sphinx-doc__sphinx-10449"
+  ],
+  "collection_failure_task_ids": [
+    "pylint-dev__pylint-4551",
+    "pylint-dev__pylint-4604"
+  ],
+  "task_hashes": {
+    "psf__requests-1142": {
+      "base_commit": "22623bd8c265b78b161542663ee980738441c307",
+      "problem_statement": "0192533ff2ef0c53a600b3ef02cb9dc20bf0998d56eeaee80ca1a76c46758eec",
+      "gold_patch": "c25c1f930edaf8514d3a5f2bc5631a8e8080ecb2511c789ec171f37d14e627a6",
+      "test_patch": "6671e023a6f6ed84969327ccee025cb8ab81e79c9477a7d635640c0b03836769"
+    },
+    "psf__requests-1766": {
+      "base_commit": "847735553aeda6e6633f2b32e14ba14ba86887a4",
+      "problem_statement": "90d541e87a05a5135b7ee242c82702e5cad1e2cae9e5571fcbc032d7d6d80682",
+      "gold_patch": "fdf4dc67f564bc801f1fe74b1e6000a3186f19acec083f7585caef1b58671b12",
+      "test_patch": "8104cc2c46abb076affea41d2f19d40a908fbc696aee3115dfffc5b0354662b4"
+    },
+    "pylint-dev__pylint-4551": {
+      "base_commit": "99589b08de8c5a2c6cc61e13a37420a868c80599",
+      "problem_statement": "1063099828aeeacebfc53c30685b582300effb7b59574cd5f94bf3cefa00ace1",
+      "gold_patch": "06a5ae87f8794dff30b6733c4427cf46fed7ae67c545449b3168977be5cf215c",
+      "test_patch": "ccdbb6351dd77464ac7429d8a43de3fc42088c03aed9618e5ba77bc8178fec87"
+    },
+    "pylint-dev__pylint-4604": {
+      "base_commit": "1e55ae64624d28c5fe8b63ad7979880ee2e6ef3f",
+      "problem_statement": "3a15517e96657a1f4c7e3f2c42f6646f8ea333d67cd36bc8cb351682ab8bba80",
+      "gold_patch": "b50bd937b95d0b58008208d4e7cd122bb869602d0c84319bbae3ebf0f024887c",
+      "test_patch": "1d84ca139e0defdacbc56094a916a83dff514c77fbc446a0d015dbd260c264bb"
+    },
+    "pylint-dev__pylint-4661": {
+      "base_commit": "1d1619ef913b99b06647d2030bddff4800abdf63",
+      "problem_statement": "395bcc4416ce0df3efc8563bf0f1b7db0df75e92ee6ff1dd354146bcb9d82403",
+      "gold_patch": "43b3e2e849942d287987af5f42b532695dac6e68625778d6d29981cb0dcb3b59",
+      "test_patch": "ee7c4ca17fff72e7af07a9876cf1aa07552ae49099831b42f5d429c3132dcaaf"
+    },
+    "pytest-dev__pytest-10051": {
+      "base_commit": "aa55975c7d3f6c9f6d7f68accc41bb7cadf0eb9a",
+      "problem_statement": "2dba823bc7a4b4055c67db909fbf7a85cc1fc2bf9785c54d8d83d37bee0a3377",
+      "gold_patch": "9662c12536a07d0cc5a6ce6f781edb31ea013af4df0e156522ca624aaed634c0",
+      "test_patch": "c25a4ee0d66c1dc4c219f3bd54a0f9b7a9d96513d2d3a42cecb050b7182f3557"
+    },
+    "pytest-dev__pytest-10081": {
+      "base_commit": "da9a2b584eb7a6c7e924b2621ed0ddaeca0a7bea",
+      "problem_statement": "e1050eb13b4293040f7850d8c12a41328fe4bc30e0216c113cd10fe8e939d046",
+      "gold_patch": "30b7bbcd61e92e71c186f5c36c622301a6d5dde818e67c97535fa30d7897af93",
+      "test_patch": "cfb967eb1057797551c234d12dfb83eefacddfb1089e0ae97e183227f7c0e055"
+    },
+    "pytest-dev__pytest-10356": {
+      "base_commit": "3c1534944cbd34e8a41bc9e76818018fadefc9a1",
+      "problem_statement": "29937d6855a9a1edba0894bb65835216298255230a8f42e3b2b33683cd02c414",
+      "gold_patch": "99d679e52efb6f3a8e9370d597653996c8866ab086935e187d469dafe86e76a2",
+      "test_patch": "547d6960987bcf7820991b7c56d3c7245275789ab0f1cb352e7d1486d2fe9d79"
+    },
+    "sphinx-doc__sphinx-10435": {
+      "base_commit": "f1061c012e214f16fd8790dec3c283d787e3daa8",
+      "problem_statement": "0570ee51a381375e1d7cf73809446a73e0ce26f01742a06da36d0d46500b77f1",
+      "gold_patch": "2584394a681f5a2f8dfd5312eabceb9bea865580a85cbcd7d0975da42c39f0e5",
+      "test_patch": "31b719cc3d54f539d1e5e3632599048a8d7e13878091477c75157942f429ab44"
+    },
+    "sphinx-doc__sphinx-10449": {
+      "base_commit": "36367765fe780f962bba861bf368a765380bbc68",
+      "problem_statement": "ec42a659cf88e4be0bcb0b2ef418a57804e28a8ef4ef32659fe92abfc95f665b",
+      "gold_patch": "686d63a8c9b8ee171de780e334fa9ec3a84bbf0d88deb0fa5533cd816282da74",
+      "test_patch": "d91618e097a8fc4fbe5563a018167bb677636de2b3d2d1a5e73912ab06ec68db"
+    }
+  },
+  "recipe_hashes": {
+    "psf__requests-1142": "af79db603d66bbf37f6f2f95c5af808436c12cff2f1b9cff14e5fe0fe263e07d",
+    "psf__requests-1766": "24a899273beb58bb6a59be3a110ea42080b7245d1c184dd9c08ba2f5b3ce0a1b",
+    "pylint-dev__pylint-4551": "c1a06476d5ebfea70d5a4f85eaf4ba25460439b649ef7fd408d9e29b5918451b",
+    "pylint-dev__pylint-4604": "79c135d88cd20a290305cea60e097f8172e8828a22d486a765c9655e99c8bff6",
+    "pylint-dev__pylint-4661": "d7e8b0b55328023fd1bcd6de8bc2ecb680b6a8a4a77c267da199232ca62ce07f",
+    "pytest-dev__pytest-10051": "97ed96150bc7beb7757cb65df20dee49b222239954867e1538f95d1c4ef55496",
+    "pytest-dev__pytest-10081": "458de83ae88df1942e039f9fe3651e5eae1f86387ca9557de9edc8511025a055",
+    "pytest-dev__pytest-10356": "d13a01f464083b27993d801ac5e2fa119723125abd8100d976b40a3d863ffdc0",
+    "sphinx-doc__sphinx-10435": "5827f531f565aa9641ef76f08b48dc2a8f6df2efe5e9a8e43bf3eebc7f061b6d",
+    "sphinx-doc__sphinx-10449": "7f1e715219a677b7670f10aa0ce0c3737d5cfe7b5c9d4f937f2449b67149132e"
+  },
+  "p1_evidence_sha256": "58a302febbe8986e7350a6b60244a53ffb07eb89c5a4dcb23be95267fade6014",
+  "code_hashes": {
+    "src/tracefix/__init__.py": "2e6ba81db95d0c1ba8871f380ef837db65329c0b50659ab4bd1319db1201ef0e",
+    "src/tracefix/_version.py": "eaea906988db2301bac1bcabe89dd5660ef685cdac7475ae3c08b12743a7ffb6",
+    "src/tracefix/ablation.py": "b77d5bab516e61179a1c60338dfb9bb4db260a84e7d9dada80142a858a59ae0d",
+    "src/tracefix/agent/__init__.py": "1a99a4cc224bdfe95c0e5ebec90fc4f12858ed7eeb4d9f9629e8d7f0ac23ab15",
+    "src/tracefix/agent/base.py": "dc71e80c12a9d939e542276d0ccd928bb1fa3cbe694edab07966f0495d0ea04e",
+    "src/tracefix/agent/minimal.py": "6e8f46b7e8bb7b524eedce5620b54fdf1670ebe30ccf118bb06bc6a332dc725e",
+    "src/tracefix/agent/presentation.py": "c30644713cd618b082d5fceef64b72c80efa07860a1fbd8ed50640008b03ba96",
+    "src/tracefix/benchmark.py": "73681666f740ffb9f7d7e73c96ddfe94695abd87d960fea0e64ed013fe75fb86",
+    "src/tracefix/cli.py": "c49c2cf1541e3c7d3f552a126d272b98de64ce3c441387c5c5310d2c1bbe9d15",
+    "src/tracefix/context/__init__.py": "59c77135f1348b9a0dfcc6a883a5a8abdfb221e0049bced7dc2455a2367bfb59",
+    "src/tracefix/context/manager.py": "18126146d77e7eefad8e6c504feaf36d3c8c33290f2f6864a81f64c81ee27fc7",
+    "src/tracefix/exceptions.py": "d95afdf178a1ff5319890eeb2edcf33c87d6022d8bb60161097c90acfd7e60e3",
+    "src/tracefix/holdout.py": "e128e82b41ffdfb95f83c3a40d340b15a797bd394ba1942d72bbe0684b26db03",
+    "src/tracefix/messages.py": "d1ab34a8d78747472330706e6ee0b434c09d22613c6b1842faf74a5ca7bc148b",
+    "src/tracefix/models/__init__.py": "e38f4de5e92f51e9642ee31cbd4134abda162e6c1037e048252ddd93f0aa65fd",
+    "src/tracefix/models/base.py": "06c5065bb393a5b892d50de32e4c9998d2397ca9952061ce56b508f1fdf5f4ab",
+    "src/tracefix/models/litellm_adapter.py": "de145a92c2c32d0d924b7ecfc2ac6e4cf1ee559695d3997f11f62983285cd2e3",
+    "src/tracefix/p2_protocol.py": "2e51674ab66f8de7c410ead1739b3ab16ec58b67f41aaf514cff70792d662931",
+    "src/tracefix/paired.py": "545320762868b29eea432dcdf128664a2a955b3d5d9f7923f4d75bce6c0f0af8",
+    "src/tracefix/provenance.py": "714d5be21186ba7eb529541dd3f0918aeec8c22afb3a7dbf8ccf770c23db95c5",
+    "src/tracefix/real_benchmark.py": "5b2da12a56a5ef296f6fd9896abe1bc194d4ee9b0c505b6348e50490f68ed46a",
+    "src/tracefix/real_candidates.py": "81e1ec5540d1991c461318ff4a2a509f238654a97038a69c6c4fe594bcf056d0",
+    "src/tracefix/real_environment.py": "94b78e4e808df239c02cdc7753d9eebb302b6054407bcb3b1dea3ace20157ed1",
+    "src/tracefix/real_experiment.py": "63de00dfaf3e64b83273fb1035a2fb59215eb867a625da2b9d2bdf6005be0757",
+    "src/tracefix/real_recipes.py": "713d093edf562114ee198b77a8aebcbc90dc4d4fbf891b1bf73e22b81ea9643a",
+    "src/tracefix/repository/__init__.py": "a5eeaff32e0e83cb6b9e7a06a76b8540cd36f9a3892a1343baced4086ec9fae4",
+    "src/tracefix/repository/indexer.py": "263dcacf1ff9d66d0d4c01e7110f196d4168487e0e10c97b9c96919f6f5ad2b7",
+    "src/tracefix/retrieval_eval.py": "456deb6e9c1ecd59e842a0def07008a66faa8b89622eaeffaab88efa98a8ecbb",
+    "src/tracefix/runtime.py": "07d8c22f9a3d7b3254d64c4edbe89d28c70565a34a5c2a2fce1e14b6e996e4af",
+    "src/tracefix/tools/__init__.py": "6aaad9c74b097b2555ab7b4bcda3867401966bcf18ff4af20c87baef5a7d1a0f",
+    "src/tracefix/tools/base.py": "a2dd31135349b57cf9b73b517e9c54ddd42e7652991829bcd32f2919be18ec2c",
+    "src/tracefix/tools/builtin.py": "0a2b0aebca91131960bf3c09665ca192b6ab150f420f5581d32c12a38329c684",
+    "src/tracefix/tracing/__init__.py": "28fc1f7857b98c9a4d7046d0ce5ba94273624c2be42d8f4213b1a52d24d851c4",
+    "src/tracefix/tracing/base.py": "b93d73f2802d2071f6c868b6b4aa1b316d429aed50798dcb252f497281581074",
+    "src/tracefix/tracing/jsonl.py": "a88ea770ef347573eb13b02e06be2c4320fd0efd53696e835a1777afee1983bf"
+  },
+  "budgets": {
+    "max_input_tokens": 350000,
+    "max_output_tokens": 20000,
+    "max_steps": 24,
+    "max_test_runs": 6,
+    "wall_time_seconds": 900,
+    "per_request_input_tokens": 128000,
+    "per_request_output_tokens": 4096
+  },
+  "arm_configurations": {
+    "no_compaction": {
+      "token_optimization_enabled": false,
+      "repo_map_enabled": false,
+      "context_compaction_enabled": false,
+      "context_trigger_tokens": 32000
+    },
+    "repo_map_only": {
+      "token_optimization_enabled": false,
+      "repo_map_enabled": true,
+      "context_compaction_enabled": false,
+      "context_trigger_tokens": 32000
+    },
+    "action_optimization_bundle": {
+      "token_optimization_enabled": true,
+      "repo_map_enabled": false,
+      "context_compaction_enabled": false,
+      "context_trigger_tokens": 32000
+    },
+    "context_management_only": {
+      "token_optimization_enabled": false,
+      "repo_map_enabled": false,
+      "context_compaction_enabled": true,
+      "context_trigger_tokens": 32000
+    }
+  },
+  "schedule": [
+    {
+      "sequence": 1,
+      "task_id": "psf__requests-1142",
+      "repetition": 1,
+      "arm": "no_compaction",
+      "token_optimization_enabled": false,
+      "repo_map_enabled": false,
+      "context_compaction_enabled": false
+    },
+    {
+      "sequence": 2,
+      "task_id": "psf__requests-1142",
+      "repetition": 1,
+      "arm": "repo_map_only",
+      "token_optimization_enabled": false,
+      "repo_map_enabled": true,
+      "context_compaction_enabled": false
+    },
+    {
+      "sequence": 3,
+      "task_id": "psf__requests-1142",
+      "repetition": 1,
+      "arm": "action_optimization_bundle",
+      "token_optimization_enabled": true,
+      "repo_map_enabled": false,
+      "context_compaction_enabled": false
+    },
+    {
+      "sequence": 4,
+      "task_id": "psf__requests-1142",
+      "repetition": 1,
+      "arm": "context_management_only",
+      "token_optimization_enabled": false,
+      "repo_map_enabled": false,
+      "context_compaction_enabled": true
+    },
+    {
+      "sequence": 5,
+      "task_id": "psf__requests-1766",
+      "repetition": 1,
+      "arm": "repo_map_only",
+      "token_optimization_enabled": false,
+      "repo_map_enabled": true,
+      "context_compaction_enabled": false
+    },
+    {
+      "sequence": 6,
+      "task_id": "psf__requests-1766",
+      "repetition": 1,
+      "arm": "action_optimization_bundle",
+      "token_optimization_enabled": true,
+      "repo_map_enabled": false,
+      "context_compaction_enabled": false
+    },
+    {
+      "sequence": 7,
+      "task_id": "psf__requests-1766",
+      "repetition": 1,
+      "arm": "context_management_only",
+      "token_optimization_enabled": false,
+      "repo_map_enabled": false,
+      "context_compaction_enabled": true
+    },
+    {
+      "sequence": 8,
+      "task_id": "psf__requests-1766",
+      "repetition": 1,
+      "arm": "no_compaction",
+      "token_optimization_enabled": false,
+      "repo_map_enabled": false,
+      "context_compaction_enabled": false
+    },
+    {
+      "sequence": 9,
+      "task_id": "pylint-dev__pylint-4551",
+      "repetition": 1,
+      "arm": "action_optimization_bundle",
+      "token_optimization_enabled": true,
+      "repo_map_enabled": false,
+      "context_compaction_enabled": false
+    },
+    {
+      "sequence": 10,
+      "task_id": "pylint-dev__pylint-4551",
+      "repetition": 1,
+      "arm": "context_management_only",
+      "token_optimization_enabled": false,
+      "repo_map_enabled": false,
+      "context_compaction_enabled": true
+    },
+    {
+      "sequence": 11,
+      "task_id": "pylint-dev__pylint-4551",
+      "repetition": 1,
+      "arm": "no_compaction",
+      "token_optimization_enabled": false,
+      "repo_map_enabled": false,
+      "context_compaction_enabled": false
+    },
+    {
+      "sequence": 12,
+      "task_id": "pylint-dev__pylint-4551",
+      "repetition": 1,
+      "arm": "repo_map_only",
+      "token_optimization_enabled": false,
+      "repo_map_enabled": true,
+      "context_compaction_enabled": false
+    },
+    {
+      "sequence": 13,
+      "task_id": "pylint-dev__pylint-4604",
+      "repetition": 1,
+      "arm": "context_management_only",
+      "token_optimization_enabled": false,
+      "repo_map_enabled": false,
+      "context_compaction_enabled": true
+    },
+    {
+      "sequence": 14,
+      "task_id": "pylint-dev__pylint-4604",
+      "repetition": 1,
+      "arm": "no_compaction",
+      "token_optimization_enabled": false,
+      "repo_map_enabled": false,
+      "context_compaction_enabled": false
+    },
+    {
+      "sequence": 15,
+      "task_id": "pylint-dev__pylint-4604",
+      "repetition": 1,
+      "arm": "repo_map_only",
+      "token_optimization_enabled": false,
+      "repo_map_enabled": true,
+      "context_compaction_enabled": false
+    },
+    {
+      "sequence": 16,
+      "task_id": "pylint-dev__pylint-4604",
+      "repetition": 1,
+      "arm": "action_optimization_bundle",
+      "token_optimization_enabled": true,
+      "repo_map_enabled": false,
+      "context_compaction_enabled": false
+    },
+    {
+      "sequence": 17,
+      "task_id": "pylint-dev__pylint-4661",
+      "repetition": 1,
+      "arm": "no_compaction",
+      "token_optimization_enabled": false,
+      "repo_map_enabled": false,
+      "context_compaction_enabled": false
+    },
+    {
+      "sequence": 18,
+      "task_id": "pylint-dev__pylint-4661",
+      "repetition": 1,
+      "arm": "repo_map_only",
+      "token_optimization_enabled": false,
+      "repo_map_enabled": true,
+      "context_compaction_enabled": false
+    },
+    {
+      "sequence": 19,
+      "task_id": "pylint-dev__pylint-4661",
+      "repetition": 1,
+      "arm": "action_optimization_bundle",
+      "token_optimization_enabled": true,
+      "repo_map_enabled": false,
+      "context_compaction_enabled": false
+    },
+    {
+      "sequence": 20,
+      "task_id": "pylint-dev__pylint-4661",
+      "repetition": 1,
+      "arm": "context_management_only",
+      "token_optimization_enabled": false,
+      "repo_map_enabled": false,
+      "context_compaction_enabled": true
+    },
+    {
+      "sequence": 21,
+      "task_id": "pytest-dev__pytest-10051",
+      "repetition": 1,
+      "arm": "repo_map_only",
+      "token_optimization_enabled": false,
+      "repo_map_enabled": true,
+      "context_compaction_enabled": false
+    },
+    {
+      "sequence": 22,
+      "task_id": "pytest-dev__pytest-10051",
+      "repetition": 1,
+      "arm": "action_optimization_bundle",
+      "token_optimization_enabled": true,
+      "repo_map_enabled": false,
+      "context_compaction_enabled": false
+    },
+    {
+      "sequence": 23,
+      "task_id": "pytest-dev__pytest-10051",
+      "repetition": 1,
+      "arm": "context_management_only",
+      "token_optimization_enabled": false,
+      "repo_map_enabled": false,
+      "context_compaction_enabled": true
+    },
+    {
+      "sequence": 24,
+      "task_id": "pytest-dev__pytest-10051",
+      "repetition": 1,
+      "arm": "no_compaction",
+      "token_optimization_enabled": false,
+      "repo_map_enabled": false,
+      "context_compaction_enabled": false
+    },
+    {
+      "sequence": 25,
+      "task_id": "pytest-dev__pytest-10081",
+      "repetition": 1,
+      "arm": "action_optimization_bundle",
+      "token_optimization_enabled": true,
+      "repo_map_enabled": false,
+      "context_compaction_enabled": false
+    },
+    {
+      "sequence": 26,
+      "task_id": "pytest-dev__pytest-10081",
+      "repetition": 1,
+      "arm": "context_management_only",
+      "token_optimization_enabled": false,
+      "repo_map_enabled": false,
+      "context_compaction_enabled": true
+    },
+    {
+      "sequence": 27,
+      "task_id": "pytest-dev__pytest-10081",
+      "repetition": 1,
+      "arm": "no_compaction",
+      "token_optimization_enabled": false,
+      "repo_map_enabled": false,
+      "context_compaction_enabled": false
+    },
+    {
+      "sequence": 28,
+      "task_id": "pytest-dev__pytest-10081",
+      "repetition": 1,
+      "arm": "repo_map_only",
+      "token_optimization_enabled": false,
+      "repo_map_enabled": true,
+      "context_compaction_enabled": false
+    },
+    {
+      "sequence": 29,
+      "task_id": "pytest-dev__pytest-10356",
+      "repetition": 1,
+      "arm": "context_management_only",
+      "token_optimization_enabled": false,
+      "repo_map_enabled": false,
+      "context_compaction_enabled": true
+    },
+    {
+      "sequence": 30,
+      "task_id": "pytest-dev__pytest-10356",
+      "repetition": 1,
+      "arm": "no_compaction",
+      "token_optimization_enabled": false,
+      "repo_map_enabled": false,
+      "context_compaction_enabled": false
+    },
+    {
+      "sequence": 31,
+      "task_id": "pytest-dev__pytest-10356",
+      "repetition": 1,
+      "arm": "repo_map_only",
+      "token_optimization_enabled": false,
+      "repo_map_enabled": true,
+      "context_compaction_enabled": false
+    },
+    {
+      "sequence": 32,
+      "task_id": "pytest-dev__pytest-10356",
+      "repetition": 1,
+      "arm": "action_optimization_bundle",
+      "token_optimization_enabled": true,
+      "repo_map_enabled": false,
+      "context_compaction_enabled": false
+    },
+    {
+      "sequence": 33,
+      "task_id": "sphinx-doc__sphinx-10435",
+      "repetition": 1,
+      "arm": "no_compaction",
+      "token_optimization_enabled": false,
+      "repo_map_enabled": false,
+      "context_compaction_enabled": false
+    },
+    {
+      "sequence": 34,
+      "task_id": "sphinx-doc__sphinx-10435",
+      "repetition": 1,
+      "arm": "repo_map_only",
+      "token_optimization_enabled": false,
+      "repo_map_enabled": true,
+      "context_compaction_enabled": false
+    },
+    {
+      "sequence": 35,
+      "task_id": "sphinx-doc__sphinx-10435",
+      "repetition": 1,
+      "arm": "action_optimization_bundle",
+      "token_optimization_enabled": true,
+      "repo_map_enabled": false,
+      "context_compaction_enabled": false
+    },
+    {
+      "sequence": 36,
+      "task_id": "sphinx-doc__sphinx-10435",
+      "repetition": 1,
+      "arm": "context_management_only",
+      "token_optimization_enabled": false,
+      "repo_map_enabled": false,
+      "context_compaction_enabled": true
+    },
+    {
+      "sequence": 37,
+      "task_id": "sphinx-doc__sphinx-10449",
+      "repetition": 1,
+      "arm": "repo_map_only",
+      "token_optimization_enabled": false,
+      "repo_map_enabled": true,
+      "context_compaction_enabled": false
+    },
+    {
+      "sequence": 38,
+      "task_id": "sphinx-doc__sphinx-10449",
+      "repetition": 1,
+      "arm": "action_optimization_bundle",
+      "token_optimization_enabled": true,
+      "repo_map_enabled": false,
+      "context_compaction_enabled": false
+    },
+    {
+      "sequence": 39,
+      "task_id": "sphinx-doc__sphinx-10449",
+      "repetition": 1,
+      "arm": "context_management_only",
+      "token_optimization_enabled": false,
+      "repo_map_enabled": false,
+      "context_compaction_enabled": true
+    },
+    {
+      "sequence": 40,
+      "task_id": "sphinx-doc__sphinx-10449",
+      "repetition": 1,
+      "arm": "no_compaction",
+      "token_optimization_enabled": false,
+      "repo_map_enabled": false,
+      "context_compaction_enabled": false
+    },
+    {
+      "sequence": 41,
+      "task_id": "psf__requests-1142",
+      "repetition": 2,
+      "arm": "repo_map_only",
+      "token_optimization_enabled": false,
+      "repo_map_enabled": true,
+      "context_compaction_enabled": false
+    },
+    {
+      "sequence": 42,
+      "task_id": "psf__requests-1142",
+      "repetition": 2,
+      "arm": "action_optimization_bundle",
+      "token_optimization_enabled": true,
+      "repo_map_enabled": false,
+      "context_compaction_enabled": false
+    },
+    {
+      "sequence": 43,
+      "task_id": "psf__requests-1142",
+      "repetition": 2,
+      "arm": "context_management_only",
+      "token_optimization_enabled": false,
+      "repo_map_enabled": false,
+      "context_compaction_enabled": true
+    },
+    {
+      "sequence": 44,
+      "task_id": "psf__requests-1142",
+      "repetition": 2,
+      "arm": "no_compaction",
+      "token_optimization_enabled": false,
+      "repo_map_enabled": false,
+      "context_compaction_enabled": false
+    },
+    {
+      "sequence": 45,
+      "task_id": "psf__requests-1766",
+      "repetition": 2,
+      "arm": "action_optimization_bundle",
+      "token_optimization_enabled": true,
+      "repo_map_enabled": false,
+      "context_compaction_enabled": false
+    },
+    {
+      "sequence": 46,
+      "task_id": "psf__requests-1766",
+      "repetition": 2,
+      "arm": "context_management_only",
+      "token_optimization_enabled": false,
+      "repo_map_enabled": false,
+      "context_compaction_enabled": true
+    },
+    {
+      "sequence": 47,
+      "task_id": "psf__requests-1766",
+      "repetition": 2,
+      "arm": "no_compaction",
+      "token_optimization_enabled": false,
+      "repo_map_enabled": false,
+      "context_compaction_enabled": false
+    },
+    {
+      "sequence": 48,
+      "task_id": "psf__requests-1766",
+      "repetition": 2,
+      "arm": "repo_map_only",
+      "token_optimization_enabled": false,
+      "repo_map_enabled": true,
+      "context_compaction_enabled": false
+    },
+    {
+      "sequence": 49,
+      "task_id": "pylint-dev__pylint-4551",
+      "repetition": 2,
+      "arm": "context_management_only",
+      "token_optimization_enabled": false,
+      "repo_map_enabled": false,
+      "context_compaction_enabled": true
+    },
+    {
+      "sequence": 50,
+      "task_id": "pylint-dev__pylint-4551",
+      "repetition": 2,
+      "arm": "no_compaction",
+      "token_optimization_enabled": false,
+      "repo_map_enabled": false,
+      "context_compaction_enabled": false
+    },
+    {
+      "sequence": 51,
+      "task_id": "pylint-dev__pylint-4551",
+      "repetition": 2,
+      "arm": "repo_map_only",
+      "token_optimization_enabled": false,
+      "repo_map_enabled": true,
+      "context_compaction_enabled": false
+    },
+    {
+      "sequence": 52,
+      "task_id": "pylint-dev__pylint-4551",
+      "repetition": 2,
+      "arm": "action_optimization_bundle",
+      "token_optimization_enabled": true,
+      "repo_map_enabled": false,
+      "context_compaction_enabled": false
+    },
+    {
+      "sequence": 53,
+      "task_id": "pylint-dev__pylint-4604",
+      "repetition": 2,
+      "arm": "no_compaction",
+      "token_optimization_enabled": false,
+      "repo_map_enabled": false,
+      "context_compaction_enabled": false
+    },
+    {
+      "sequence": 54,
+      "task_id": "pylint-dev__pylint-4604",
+      "repetition": 2,
+      "arm": "repo_map_only",
+      "token_optimization_enabled": false,
+      "repo_map_enabled": true,
+      "context_compaction_enabled": false
+    },
+    {
+      "sequence": 55,
+      "task_id": "pylint-dev__pylint-4604",
+      "repetition": 2,
+      "arm": "action_optimization_bundle",
+      "token_optimization_enabled": true,
+      "repo_map_enabled": false,
+      "context_compaction_enabled": false
+    },
+    {
+      "sequence": 56,
+      "task_id": "pylint-dev__pylint-4604",
+      "repetition": 2,
+      "arm": "context_management_only",
+      "token_optimization_enabled": false,
+      "repo_map_enabled": false,
+      "context_compaction_enabled": true
+    },
+    {
+      "sequence": 57,
+      "task_id": "pylint-dev__pylint-4661",
+      "repetition": 2,
+      "arm": "repo_map_only",
+      "token_optimization_enabled": false,
+      "repo_map_enabled": true,
+      "context_compaction_enabled": false
+    },
+    {
+      "sequence": 58,
+      "task_id": "pylint-dev__pylint-4661",
+      "repetition": 2,
+      "arm": "action_optimization_bundle",
+      "token_optimization_enabled": true,
+      "repo_map_enabled": false,
+      "context_compaction_enabled": false
+    },
+    {
+      "sequence": 59,
+      "task_id": "pylint-dev__pylint-4661",
+      "repetition": 2,
+      "arm": "context_management_only",
+      "token_optimization_enabled": false,
+      "repo_map_enabled": false,
+      "context_compaction_enabled": true
+    },
+    {
+      "sequence": 60,
+      "task_id": "pylint-dev__pylint-4661",
+      "repetition": 2,
+      "arm": "no_compaction",
+      "token_optimization_enabled": false,
+      "repo_map_enabled": false,
+      "context_compaction_enabled": false
+    },
+    {
+      "sequence": 61,
+      "task_id": "pytest-dev__pytest-10051",
+      "repetition": 2,
+      "arm": "action_optimization_bundle",
+      "token_optimization_enabled": true,
+      "repo_map_enabled": false,
+      "context_compaction_enabled": false
+    },
+    {
+      "sequence": 62,
+      "task_id": "pytest-dev__pytest-10051",
+      "repetition": 2,
+      "arm": "context_management_only",
+      "token_optimization_enabled": false,
+      "repo_map_enabled": false,
+      "context_compaction_enabled": true
+    },
+    {
+      "sequence": 63,
+      "task_id": "pytest-dev__pytest-10051",
+      "repetition": 2,
+      "arm": "no_compaction",
+      "token_optimization_enabled": false,
+      "repo_map_enabled": false,
+      "context_compaction_enabled": false
+    },
+    {
+      "sequence": 64,
+      "task_id": "pytest-dev__pytest-10051",
+      "repetition": 2,
+      "arm": "repo_map_only",
+      "token_optimization_enabled": false,
+      "repo_map_enabled": true,
+      "context_compaction_enabled": false
+    },
+    {
+      "sequence": 65,
+      "task_id": "pytest-dev__pytest-10081",
+      "repetition": 2,
+      "arm": "context_management_only",
+      "token_optimization_enabled": false,
+      "repo_map_enabled": false,
+      "context_compaction_enabled": true
+    },
+    {
+      "sequence": 66,
+      "task_id": "pytest-dev__pytest-10081",
+      "repetition": 2,
+      "arm": "no_compaction",
+      "token_optimization_enabled": false,
+      "repo_map_enabled": false,
+      "context_compaction_enabled": false
+    },
+    {
+      "sequence": 67,
+      "task_id": "pytest-dev__pytest-10081",
+      "repetition": 2,
+      "arm": "repo_map_only",
+      "token_optimization_enabled": false,
+      "repo_map_enabled": true,
+      "context_compaction_enabled": false
+    },
+    {
+      "sequence": 68,
+      "task_id": "pytest-dev__pytest-10081",
+      "repetition": 2,
+      "arm": "action_optimization_bundle",
+      "token_optimization_enabled": true,
+      "repo_map_enabled": false,
+      "context_compaction_enabled": false
+    },
+    {
+      "sequence": 69,
+      "task_id": "pytest-dev__pytest-10356",
+      "repetition": 2,
+      "arm": "no_compaction",
+      "token_optimization_enabled": false,
+      "repo_map_enabled": false,
+      "context_compaction_enabled": false
+    },
+    {
+      "sequence": 70,
+      "task_id": "pytest-dev__pytest-10356",
+      "repetition": 2,
+      "arm": "repo_map_only",
+      "token_optimization_enabled": false,
+      "repo_map_enabled": true,
+      "context_compaction_enabled": false
+    },
+    {
+      "sequence": 71,
+      "task_id": "pytest-dev__pytest-10356",
+      "repetition": 2,
+      "arm": "action_optimization_bundle",
+      "token_optimization_enabled": true,
+      "repo_map_enabled": false,
+      "context_compaction_enabled": false
+    },
+    {
+      "sequence": 72,
+      "task_id": "pytest-dev__pytest-10356",
+      "repetition": 2,
+      "arm": "context_management_only",
+      "token_optimization_enabled": false,
+      "repo_map_enabled": false,
+      "context_compaction_enabled": true
+    },
+    {
+      "sequence": 73,
+      "task_id": "sphinx-doc__sphinx-10435",
+      "repetition": 2,
+      "arm": "repo_map_only",
+      "token_optimization_enabled": false,
+      "repo_map_enabled": true,
+      "context_compaction_enabled": false
+    },
+    {
+      "sequence": 74,
+      "task_id": "sphinx-doc__sphinx-10435",
+      "repetition": 2,
+      "arm": "action_optimization_bundle",
+      "token_optimization_enabled": true,
+      "repo_map_enabled": false,
+      "context_compaction_enabled": false
+    },
+    {
+      "sequence": 75,
+      "task_id": "sphinx-doc__sphinx-10435",
+      "repetition": 2,
+      "arm": "context_management_only",
+      "token_optimization_enabled": false,
+      "repo_map_enabled": false,
+      "context_compaction_enabled": true
+    },
+    {
+      "sequence": 76,
+      "task_id": "sphinx-doc__sphinx-10435",
+      "repetition": 2,
+      "arm": "no_compaction",
+      "token_optimization_enabled": false,
+      "repo_map_enabled": false,
+      "context_compaction_enabled": false
+    },
+    {
+      "sequence": 77,
+      "task_id": "sphinx-doc__sphinx-10449",
+      "repetition": 2,
+      "arm": "action_optimization_bundle",
+      "token_optimization_enabled": true,
+      "repo_map_enabled": false,
+      "context_compaction_enabled": false
+    },
+    {
+      "sequence": 78,
+      "task_id": "sphinx-doc__sphinx-10449",
+      "repetition": 2,
+      "arm": "context_management_only",
+      "token_optimization_enabled": false,
+      "repo_map_enabled": false,
+      "context_compaction_enabled": true
+    },
+    {
+      "sequence": 79,
+      "task_id": "sphinx-doc__sphinx-10449",
+      "repetition": 2,
+      "arm": "no_compaction",
+      "token_optimization_enabled": false,
+      "repo_map_enabled": false,
+      "context_compaction_enabled": false
+    },
+    {
+      "sequence": 80,
+      "task_id": "sphinx-doc__sphinx-10449",
+      "repetition": 2,
+      "arm": "repo_map_only",
+      "token_optimization_enabled": false,
+      "repo_map_enabled": true,
+      "context_compaction_enabled": false
+    },
+    {
+      "sequence": 81,
+      "task_id": "psf__requests-1142",
+      "repetition": 3,
+      "arm": "action_optimization_bundle",
+      "token_optimization_enabled": true,
+      "repo_map_enabled": false,
+      "context_compaction_enabled": false
+    },
+    {
+      "sequence": 82,
+      "task_id": "psf__requests-1142",
+      "repetition": 3,
+      "arm": "context_management_only",
+      "token_optimization_enabled": false,
+      "repo_map_enabled": false,
+      "context_compaction_enabled": true
+    },
+    {
+      "sequence": 83,
+      "task_id": "psf__requests-1142",
+      "repetition": 3,
+      "arm": "no_compaction",
+      "token_optimization_enabled": false,
+      "repo_map_enabled": false,
+      "context_compaction_enabled": false
+    },
+    {
+      "sequence": 84,
+      "task_id": "psf__requests-1142",
+      "repetition": 3,
+      "arm": "repo_map_only",
+      "token_optimization_enabled": false,
+      "repo_map_enabled": true,
+      "context_compaction_enabled": false
+    },
+    {
+      "sequence": 85,
+      "task_id": "psf__requests-1766",
+      "repetition": 3,
+      "arm": "context_management_only",
+      "token_optimization_enabled": false,
+      "repo_map_enabled": false,
+      "context_compaction_enabled": true
+    },
+    {
+      "sequence": 86,
+      "task_id": "psf__requests-1766",
+      "repetition": 3,
+      "arm": "no_compaction",
+      "token_optimization_enabled": false,
+      "repo_map_enabled": false,
+      "context_compaction_enabled": false
+    },
+    {
+      "sequence": 87,
+      "task_id": "psf__requests-1766",
+      "repetition": 3,
+      "arm": "repo_map_only",
+      "token_optimization_enabled": false,
+      "repo_map_enabled": true,
+      "context_compaction_enabled": false
+    },
+    {
+      "sequence": 88,
+      "task_id": "psf__requests-1766",
+      "repetition": 3,
+      "arm": "action_optimization_bundle",
+      "token_optimization_enabled": true,
+      "repo_map_enabled": false,
+      "context_compaction_enabled": false
+    },
+    {
+      "sequence": 89,
+      "task_id": "pylint-dev__pylint-4551",
+      "repetition": 3,
+      "arm": "no_compaction",
+      "token_optimization_enabled": false,
+      "repo_map_enabled": false,
+      "context_compaction_enabled": false
+    },
+    {
+      "sequence": 90,
+      "task_id": "pylint-dev__pylint-4551",
+      "repetition": 3,
+      "arm": "repo_map_only",
+      "token_optimization_enabled": false,
+      "repo_map_enabled": true,
+      "context_compaction_enabled": false
+    },
+    {
+      "sequence": 91,
+      "task_id": "pylint-dev__pylint-4551",
+      "repetition": 3,
+      "arm": "action_optimization_bundle",
+      "token_optimization_enabled": true,
+      "repo_map_enabled": false,
+      "context_compaction_enabled": false
+    },
+    {
+      "sequence": 92,
+      "task_id": "pylint-dev__pylint-4551",
+      "repetition": 3,
+      "arm": "context_management_only",
+      "token_optimization_enabled": false,
+      "repo_map_enabled": false,
+      "context_compaction_enabled": true
+    },
+    {
+      "sequence": 93,
+      "task_id": "pylint-dev__pylint-4604",
+      "repetition": 3,
+      "arm": "repo_map_only",
+      "token_optimization_enabled": false,
+      "repo_map_enabled": true,
+      "context_compaction_enabled": false
+    },
+    {
+      "sequence": 94,
+      "task_id": "pylint-dev__pylint-4604",
+      "repetition": 3,
+      "arm": "action_optimization_bundle",
+      "token_optimization_enabled": true,
+      "repo_map_enabled": false,
+      "context_compaction_enabled": false
+    },
+    {
+      "sequence": 95,
+      "task_id": "pylint-dev__pylint-4604",
+      "repetition": 3,
+      "arm": "context_management_only",
+      "token_optimization_enabled": false,
+      "repo_map_enabled": false,
+      "context_compaction_enabled": true
+    },
+    {
+      "sequence": 96,
+      "task_id": "pylint-dev__pylint-4604",
+      "repetition": 3,
+      "arm": "no_compaction",
+      "token_optimization_enabled": false,
+      "repo_map_enabled": false,
+      "context_compaction_enabled": false
+    },
+    {
+      "sequence": 97,
+      "task_id": "pylint-dev__pylint-4661",
+      "repetition": 3,
+      "arm": "action_optimization_bundle",
+      "token_optimization_enabled": true,
+      "repo_map_enabled": false,
+      "context_compaction_enabled": false
+    },
+    {
+      "sequence": 98,
+      "task_id": "pylint-dev__pylint-4661",
+      "repetition": 3,
+      "arm": "context_management_only",
+      "token_optimization_enabled": false,
+      "repo_map_enabled": false,
+      "context_compaction_enabled": true
+    },
+    {
+      "sequence": 99,
+      "task_id": "pylint-dev__pylint-4661",
+      "repetition": 3,
+      "arm": "no_compaction",
+      "token_optimization_enabled": false,
+      "repo_map_enabled": false,
+      "context_compaction_enabled": false
+    },
+    {
+      "sequence": 100,
+      "task_id": "pylint-dev__pylint-4661",
+      "repetition": 3,
+      "arm": "repo_map_only",
+      "token_optimization_enabled": false,
+      "repo_map_enabled": true,
+      "context_compaction_enabled": false
+    },
+    {
+      "sequence": 101,
+      "task_id": "pytest-dev__pytest-10051",
+      "repetition": 3,
+      "arm": "context_management_only",
+      "token_optimization_enabled": false,
+      "repo_map_enabled": false,
+      "context_compaction_enabled": true
+    },
+    {
+      "sequence": 102,
+      "task_id": "pytest-dev__pytest-10051",
+      "repetition": 3,
+      "arm": "no_compaction",
+      "token_optimization_enabled": false,
+      "repo_map_enabled": false,
+      "context_compaction_enabled": false
+    },
+    {
+      "sequence": 103,
+      "task_id": "pytest-dev__pytest-10051",
+      "repetition": 3,
+      "arm": "repo_map_only",
+      "token_optimization_enabled": false,
+      "repo_map_enabled": true,
+      "context_compaction_enabled": false
+    },
+    {
+      "sequence": 104,
+      "task_id": "pytest-dev__pytest-10051",
+      "repetition": 3,
+      "arm": "action_optimization_bundle",
+      "token_optimization_enabled": true,
+      "repo_map_enabled": false,
+      "context_compaction_enabled": false
+    },
+    {
+      "sequence": 105,
+      "task_id": "pytest-dev__pytest-10081",
+      "repetition": 3,
+      "arm": "no_compaction",
+      "token_optimization_enabled": false,
+      "repo_map_enabled": false,
+      "context_compaction_enabled": false
+    },
+    {
+      "sequence": 106,
+      "task_id": "pytest-dev__pytest-10081",
+      "repetition": 3,
+      "arm": "repo_map_only",
+      "token_optimization_enabled": false,
+      "repo_map_enabled": true,
+      "context_compaction_enabled": false
+    },
+    {
+      "sequence": 107,
+      "task_id": "pytest-dev__pytest-10081",
+      "repetition": 3,
+      "arm": "action_optimization_bundle",
+      "token_optimization_enabled": true,
+      "repo_map_enabled": false,
+      "context_compaction_enabled": false
+    },
+    {
+      "sequence": 108,
+      "task_id": "pytest-dev__pytest-10081",
+      "repetition": 3,
+      "arm": "context_management_only",
+      "token_optimization_enabled": false,
+      "repo_map_enabled": false,
+      "context_compaction_enabled": true
+    },
+    {
+      "sequence": 109,
+      "task_id": "pytest-dev__pytest-10356",
+      "repetition": 3,
+      "arm": "repo_map_only",
+      "token_optimization_enabled": false,
+      "repo_map_enabled": true,
+      "context_compaction_enabled": false
+    },
+    {
+      "sequence": 110,
+      "task_id": "pytest-dev__pytest-10356",
+      "repetition": 3,
+      "arm": "action_optimization_bundle",
+      "token_optimization_enabled": true,
+      "repo_map_enabled": false,
+      "context_compaction_enabled": false
+    },
+    {
+      "sequence": 111,
+      "task_id": "pytest-dev__pytest-10356",
+      "repetition": 3,
+      "arm": "context_management_only",
+      "token_optimization_enabled": false,
+      "repo_map_enabled": false,
+      "context_compaction_enabled": true
+    },
+    {
+      "sequence": 112,
+      "task_id": "pytest-dev__pytest-10356",
+      "repetition": 3,
+      "arm": "no_compaction",
+      "token_optimization_enabled": false,
+      "repo_map_enabled": false,
+      "context_compaction_enabled": false
+    },
+    {
+      "sequence": 113,
+      "task_id": "sphinx-doc__sphinx-10435",
+      "repetition": 3,
+      "arm": "action_optimization_bundle",
+      "token_optimization_enabled": true,
+      "repo_map_enabled": false,
+      "context_compaction_enabled": false
+    },
+    {
+      "sequence": 114,
+      "task_id": "sphinx-doc__sphinx-10435",
+      "repetition": 3,
+      "arm": "context_management_only",
+      "token_optimization_enabled": false,
+      "repo_map_enabled": false,
+      "context_compaction_enabled": true
+    },
+    {
+      "sequence": 115,
+      "task_id": "sphinx-doc__sphinx-10435",
+      "repetition": 3,
+      "arm": "no_compaction",
+      "token_optimization_enabled": false,
+      "repo_map_enabled": false,
+      "context_compaction_enabled": false
+    },
+    {
+      "sequence": 116,
+      "task_id": "sphinx-doc__sphinx-10435",
+      "repetition": 3,
+      "arm": "repo_map_only",
+      "token_optimization_enabled": false,
+      "repo_map_enabled": true,
+      "context_compaction_enabled": false
+    },
+    {
+      "sequence": 117,
+      "task_id": "sphinx-doc__sphinx-10449",
+      "repetition": 3,
+      "arm": "context_management_only",
+      "token_optimization_enabled": false,
+      "repo_map_enabled": false,
+      "context_compaction_enabled": true
+    },
+    {
+      "sequence": 118,
+      "task_id": "sphinx-doc__sphinx-10449",
+      "repetition": 3,
+      "arm": "no_compaction",
+      "token_optimization_enabled": false,
+      "repo_map_enabled": false,
+      "context_compaction_enabled": false
+    },
+    {
+      "sequence": 119,
+      "task_id": "sphinx-doc__sphinx-10449",
+      "repetition": 3,
+      "arm": "repo_map_only",
+      "token_optimization_enabled": false,
+      "repo_map_enabled": true,
+      "context_compaction_enabled": false
+    },
+    {
+      "sequence": 120,
+      "task_id": "sphinx-doc__sphinx-10449",
+      "repetition": 3,
+      "arm": "action_optimization_bundle",
+      "token_optimization_enabled": true,
+      "repo_map_enabled": false,
+      "context_compaction_enabled": false
+    }
+  ],
+  "scoring_contract_version": "p2-scoring-v1",
+  "scoring_instruction_sha256": "ae11b4db431d9c61f4efd24f9d19a552674ad704538ad3c8794f20ecb1019f55",
+  "effective_agent_configurations": {
+    "no_compaction": {
+      "system_prompt": "你是 TraceFix，一个负责修复 Python 仓库问题的 Coding Agent。\n请先理解问题，再使用 search_code 和 read_file 定位相关实现，不要猜测文件内容。\n使用 apply_patch 提交尽量小且聚焦根因的补丁；除非任务明确要求，否则不要修改、删除或跳过测试。\napply_patch 接受标准 Git unified diff，也接受 *** Begin Patch / *** Update File 更新块。\n修改后应使用 run_tests 运行最相关的测试，并使用 get_git_diff 检查最终改动。\n如果补丁失败，请根据结构化错误重新读取文件或更换受支持的格式，不要重复提交相同补丁。\n测试通过且 get_git_diff 返回非空改动后，应立即停止调用工具并给出最终说明。\n只有确认实现和测试结果后，才返回不包含工具调用的最终说明；说明应概括修改和测试结果。\n本次 P2 独立验收禁止修改、新增、删除或重命名测试、conftest、pytest 配置及 setup.cfg；只修改产品源码或必要的非测试文档。可运行现有测试，但不要提交测试改动。",
+      "max_steps": 24,
+      "max_input_tokens": 350000,
+      "max_output_tokens": 20000,
+      "wall_time_seconds": 900,
+      "max_test_runs": 6,
+      "max_exploration_steps": 4,
+      "max_search_calls": 4,
+      "max_file_reads_before_patch": 8,
+      "repo_map_reads_before_patch": 2,
+      "token_optimization_enabled": false,
+      "presentation": {
+        "enabled": true,
+        "max_search_matches": 6,
+        "max_read_chars": 4000,
+        "max_test_output_chars": 4000,
+        "max_diff_chars": 5000,
+        "max_generic_chars": 2000
+      },
+      "record_request_views": true,
+      "context": {
+        "enabled": false,
+        "context_window_tokens": 1000000,
+        "compaction_trigger_tokens": 32000,
+        "retain_ratio": 0.375,
+        "tool_result_threshold_chars": 8192,
+        "tool_result_head_chars": 4096,
+        "tool_result_tail_chars": 1024
+      },
+      "repo_map": {
+        "enabled": false,
+        "max_file_bytes": 256000,
+        "max_indexed_files": 5000,
+        "max_candidate_files": 12,
+        "max_symbols_per_file": 8,
+        "max_chars": 12000,
+        "graph_seed_files": 6,
+        "max_graph_neighbors": 8
+      }
+    },
+    "repo_map_only": {
+      "system_prompt": "你是 TraceFix，一个负责修复 Python 仓库问题的 Coding Agent。\n请先理解问题，再使用 search_code 和 read_file 定位相关实现，不要猜测文件内容。\n使用 apply_patch 提交尽量小且聚焦根因的补丁；除非任务明确要求，否则不要修改、删除或跳过测试。\napply_patch 接受标准 Git unified diff，也接受 *** Begin Patch / *** Update File 更新块。\n修改后应使用 run_tests 运行最相关的测试，并使用 get_git_diff 检查最终改动。\n如果补丁失败，请根据结构化错误重新读取文件或更换受支持的格式，不要重复提交相同补丁。\n测试通过且 get_git_diff 返回非空改动后，应立即停止调用工具并给出最终说明。\n只有确认实现和测试结果后，才返回不包含工具调用的最终说明；说明应概括修改和测试结果。\n本次 P2 独立验收禁止修改、新增、删除或重命名测试、conftest、pytest 配置及 setup.cfg；只修改产品源码或必要的非测试文档。可运行现有测试，但不要提交测试改动。",
+      "max_steps": 24,
+      "max_input_tokens": 350000,
+      "max_output_tokens": 20000,
+      "wall_time_seconds": 900,
+      "max_test_runs": 6,
+      "max_exploration_steps": 4,
+      "max_search_calls": 4,
+      "max_file_reads_before_patch": 8,
+      "repo_map_reads_before_patch": 2,
+      "token_optimization_enabled": false,
+      "presentation": {
+        "enabled": true,
+        "max_search_matches": 6,
+        "max_read_chars": 4000,
+        "max_test_output_chars": 4000,
+        "max_diff_chars": 5000,
+        "max_generic_chars": 2000
+      },
+      "record_request_views": true,
+      "context": {
+        "enabled": false,
+        "context_window_tokens": 1000000,
+        "compaction_trigger_tokens": 32000,
+        "retain_ratio": 0.375,
+        "tool_result_threshold_chars": 8192,
+        "tool_result_head_chars": 4096,
+        "tool_result_tail_chars": 1024
+      },
+      "repo_map": {
+        "enabled": true,
+        "max_file_bytes": 256000,
+        "max_indexed_files": 5000,
+        "max_candidate_files": 12,
+        "max_symbols_per_file": 8,
+        "max_chars": 12000,
+        "graph_seed_files": 6,
+        "max_graph_neighbors": 8
+      }
+    },
+    "action_optimization_bundle": {
+      "system_prompt": "你是 TraceFix，一个负责修复 Python 仓库问题的 Coding Agent。\n请先理解问题，再使用 search_code 和 read_file 定位相关实现，不要猜测文件内容。\n使用 apply_patch 提交尽量小且聚焦根因的补丁；除非任务明确要求，否则不要修改、删除或跳过测试。\napply_patch 接受标准 Git unified diff，也接受 *** Begin Patch / *** Update File 更新块。\n修改后应使用 run_tests 运行最相关的测试，并使用 get_git_diff 检查最终改动。\n如果补丁失败，请根据结构化错误重新读取文件或更换受支持的格式，不要重复提交相同补丁。\n测试通过且 get_git_diff 返回非空改动后，应立即停止调用工具并给出最终说明。\n只有确认实现和测试结果后，才返回不包含工具调用的最终说明；说明应概括修改和测试结果。\n本次 P2 独立验收禁止修改、新增、删除或重命名测试、conftest、pytest 配置及 setup.cfg；只修改产品源码或必要的非测试文档。可运行现有测试，但不要提交测试改动。",
+      "max_steps": 24,
+      "max_input_tokens": 350000,
+      "max_output_tokens": 20000,
+      "wall_time_seconds": 900,
+      "max_test_runs": 6,
+      "max_exploration_steps": 4,
+      "max_search_calls": 4,
+      "max_file_reads_before_patch": 8,
+      "repo_map_reads_before_patch": 2,
+      "token_optimization_enabled": true,
+      "presentation": {
+        "enabled": true,
+        "max_search_matches": 6,
+        "max_read_chars": 4000,
+        "max_test_output_chars": 4000,
+        "max_diff_chars": 5000,
+        "max_generic_chars": 2000
+      },
+      "record_request_views": true,
+      "context": {
+        "enabled": false,
+        "context_window_tokens": 1000000,
+        "compaction_trigger_tokens": 32000,
+        "retain_ratio": 0.375,
+        "tool_result_threshold_chars": 8192,
+        "tool_result_head_chars": 4096,
+        "tool_result_tail_chars": 1024
+      },
+      "repo_map": {
+        "enabled": false,
+        "max_file_bytes": 256000,
+        "max_indexed_files": 5000,
+        "max_candidate_files": 12,
+        "max_symbols_per_file": 8,
+        "max_chars": 12000,
+        "graph_seed_files": 6,
+        "max_graph_neighbors": 8
+      }
+    },
+    "context_management_only": {
+      "system_prompt": "你是 TraceFix，一个负责修复 Python 仓库问题的 Coding Agent。\n请先理解问题，再使用 search_code 和 read_file 定位相关实现，不要猜测文件内容。\n使用 apply_patch 提交尽量小且聚焦根因的补丁；除非任务明确要求，否则不要修改、删除或跳过测试。\napply_patch 接受标准 Git unified diff，也接受 *** Begin Patch / *** Update File 更新块。\n修改后应使用 run_tests 运行最相关的测试，并使用 get_git_diff 检查最终改动。\n如果补丁失败，请根据结构化错误重新读取文件或更换受支持的格式，不要重复提交相同补丁。\n测试通过且 get_git_diff 返回非空改动后，应立即停止调用工具并给出最终说明。\n只有确认实现和测试结果后，才返回不包含工具调用的最终说明；说明应概括修改和测试结果。\n本次 P2 独立验收禁止修改、新增、删除或重命名测试、conftest、pytest 配置及 setup.cfg；只修改产品源码或必要的非测试文档。可运行现有测试，但不要提交测试改动。",
+      "max_steps": 24,
+      "max_input_tokens": 350000,
+      "max_output_tokens": 20000,
+      "wall_time_seconds": 900,
+      "max_test_runs": 6,
+      "max_exploration_steps": 4,
+      "max_search_calls": 4,
+      "max_file_reads_before_patch": 8,
+      "repo_map_reads_before_patch": 2,
+      "token_optimization_enabled": false,
+      "presentation": {
+        "enabled": true,
+        "max_search_matches": 6,
+        "max_read_chars": 4000,
+        "max_test_output_chars": 4000,
+        "max_diff_chars": 5000,
+        "max_generic_chars": 2000
+      },
+      "record_request_views": true,
+      "context": {
+        "enabled": true,
+        "context_window_tokens": 1000000,
+        "compaction_trigger_tokens": 32000,
+        "retain_ratio": 0.375,
+        "tool_result_threshold_chars": 8192,
+        "tool_result_head_chars": 4096,
+        "tool_result_tail_chars": 1024
+      },
+      "repo_map": {
+        "enabled": false,
+        "max_file_bytes": 256000,
+        "max_indexed_files": 5000,
+        "max_candidate_files": 12,
+        "max_symbols_per_file": 8,
+        "max_chars": 12000,
+        "graph_seed_files": 6,
+        "max_graph_neighbors": 8
+      }
+    }
+  },
+  "raw_protocol_sha256": "142b05251f9e2f791d247c506eb59635592da3b6268f83bb92b27310ac65119b"
+}

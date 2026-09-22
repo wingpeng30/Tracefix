@@ -322,8 +322,10 @@ def build_parser() -> argparse.ArgumentParser:
         default=Path("runs/p1-revalidation-20260917/behavior-validation/behavior-validation.json"),
     )
     p2_parser.add_argument("--output-dir", type=Path, default=Path("runs"))
+    p2_parser.add_argument("--design", choices=("whole_system", "ablation"), default="whole_system")
     p2_run = subparsers.add_parser("p2-run", help="执行或恢复 P2 零费用工程演练")
     p2_run.add_argument("--mode", choices=("simulation", "formal"), default="simulation")
+    p2_run.add_argument("--design", choices=("whole_system", "ablation"), default="whole_system")
     p2_run.add_argument("--experiment-dir", type=Path, required=True)
     p2_run.add_argument("--tasks", type=Path, default=Path("benchmarks/real_candidates"))
     p2_run.add_argument("--recipes", type=Path, default=Path("benchmarks/real_recipes"))
@@ -367,6 +369,7 @@ def build_parser() -> argparse.ArgumentParser:
         default=Path("runs/p1-revalidation-20260917/behavior-validation/behavior-validation.json"),
     )
     p2_check.add_argument("--output-dir", type=Path, default=Path("runs"))
+    p2_check.add_argument("--design", choices=("whole_system", "ablation"), default="whole_system")
     p2_summary = subparsers.add_parser("p2-summarize", help="汇总已保存的 P2 试次，不执行 Agent")
     p2_summary.add_argument("--experiment-dir", type=Path, required=True)
     p2_diagnostic = subparsers.add_parser("p2-diagnose", help="只读诊断已有 P2 轨迹")
@@ -820,6 +823,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "p2-dry-run":
             path = write_p2_dry_run(
                 P2ProtocolConfig(
+                    design=args.design,
                     tasks_dir=args.tasks,
                     recipes_dir=args.recipes,
                     source_root=args.source_root,
@@ -862,6 +866,7 @@ def main(argv: list[str] | None = None) -> int:
                     campaign_ledger_path=args.campaign_ledger,
                 )
             config = P2ProtocolConfig(
+                design=args.design,
                 tasks_dir=args.tasks,
                 recipes_dir=args.recipes,
                 source_root=args.source_root,
@@ -879,6 +884,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "p2-check":
             path = write_p2_check(
                 P2ProtocolConfig(
+                    design=args.design,
                     tasks_dir=args.tasks,
                     recipes_dir=args.recipes,
                     source_root=args.source_root,
