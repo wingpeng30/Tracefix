@@ -611,7 +611,7 @@ def _run_qualified_pytest(
         if recipe and recipe.selector_overrides
         else task.fail_to_pass
     )
-    command = _pytest_command(test_python, checkout, expected, evidence_root)
+    command = _pytest_command(test_python, checkout, expected, evidence_root, recipe)
     environment = _validation_environment(checkout, task.test_pythonpath_paths)
     if recipe and recipe.source_import_probe:
         environment["TRACEFIX_SOURCE_IMPORT_PROBE"] = recipe.source_import_probe
@@ -714,15 +714,28 @@ def _run_qualified_pytest(
 
 
 def _pytest_command(
-    test_python: Path, checkout: Path, selectors: tuple[str, ...], evidence_root: Path
+    test_python: Path,
+    checkout: Path,
+    selectors: tuple[str, ...],
+    evidence_root: Path,
+    recipe: EnvironmentRecipe | None = None,
 ) -> tuple[str, ...]:
     """构造不可被 Shell 重解释的 pytest 参数列表。"""
     # ``PYTEST_ADDOPTS`` 已在子进程环境中移除；不要用 ``-o addopts=`` 覆盖
     # 仓库自己的配置，因为历史 pytest 需要其中声明的 ``-p pytester`` 等插件。
-    config = next(
-        (checkout / name for name in ("pytest.ini", "pyproject.toml", "tox.ini", "setup.cfg") if (checkout / name).is_file()),
-        None,
-    )
+    # pytest learned TOML configuration later than INI configuration.  Prefer the
+    # repository's INI files so historical pytest releases never parse TOML as INI.
+    config = checkout / recipe.pytest_config if recipe and recipe.pytest_config else None
+    if config is not None and not config.is_file():
+        raise BenchmarkError(
+            "recipe pytest configuration is missing",
+            context={"path": str(config)},
+        )
+    if config is None:
+        config = next(
+            (checkout / name for name in ("pytest.ini", "tox.ini", "setup.cfg", "pyproject.toml") if (checkout / name).is_file()),
+            None,
+        )
     if config is None:
         config = evidence_root / "empty-pytest.ini"
         config.write_text("[pytest]\n", encoding="utf-8")
@@ -924,7 +937,7 @@ def pytest_sessionfinish(session, exitstatus):
     import sys
     _records["exitstatus"] = exitstatus
     _records["completed"] = True
-    root = str(session.config.rootpath)
+    root = str(getattr(session.config, "rootpath", session.config.rootdir))
     probe = os.environ.get("TRACEFIX_SOURCE_IMPORT_PROBE")
     for name, module in tuple(sys.modules.items()):
         path = getattr(module, "__file__", None)
@@ -1157,9 +1170,13 @@ def _pytest_evidence(result: ToolResult, checkout: Path) -> PytestExecutionEvide
         status = "network_error"
     elif timed_out:
         status = "timeout"
-    elif result.error == "pytest collection failed" or "error collecting" in lowered or "collected 0 items" in lowered:
+    elif result.error == "pytest collection failed":
         status = "collection_error"
-    elif "modulenotfounderror" in lowered or "no module named" in lowered or "importerror" in lowered:
+    elif execution_data is None and (
+        "modulenotfounderror" in lowered
+        or "no module named" in lowered
+        or "importerror" in lowered
+    ):
         status = "dependency_error"
     elif result.error == "official test selectors were not fully collected":
         status = "selector_mismatch"

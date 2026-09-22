@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "candidate_pool": "benchmarks/holdout_candidates/candidate-pool.json",
+  "candidate_pool_revision": "78f471bf655a3137b2e8a75af1501690ec009ec3",
+  "holdout_freeze": {
+    "path": "benchmarks/experiments/v0.8.9-holdout/holdout-freeze.json",
+    "sha256": "513c1a249ee97d3ba22c8f069529d0596fc268de59b933740ef1b52bb8d2e28b"
+  },
+  "mechanism_set": {
+    "path": "benchmarks/experiments/v0.8.9-holdout/long-context-mechanism.json",
+    "sha256": "d3790e95010542715196fec43c8a238bd4d8cde94c29160e5f07ddedefafc787"
+  },
+  "recipe_directory": "benchmarks/holdout_recipes",
+  "local_raw_evidence": [
+    "runs/holdout-final-freeze-20260922",
+    "runs/holdout-behavior-compatible-requests-local-20260922",
+    "runs/holdout-behavior-compatible-pylint-v2-20260922",
+    "runs/holdout-behavior-compatible-pytest6197-v4-20260922",
+    "runs/holdout-behavior-compatible-pytest7324-20260922",
+    "runs/holdout-behavior-compatible-sphinx-v2-20260922",
+    "runs/holdout-behavior-compatible-sphinx-replacements-20260922",
+    "runs/holdout-behavior-compatible-sphinx8120-v2-20260922",
+    "runs/long-context-mechanism-retention-final-20260922"
+  ],
+  "recipe_lock": {
+    "path": "benchmarks/experiments/v0.8.9-holdout/recipe-lock.json",
+    "sha256": "1b351eb1ee217fb0dc7027e683ed40b0e22b3aa57b0e81c82a5d09257d03358a"
+  },
+  "final_verification": "runs/holdout-final-verification-20260922"
+}

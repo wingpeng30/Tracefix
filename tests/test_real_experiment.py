@@ -53,6 +53,7 @@ from tracefix.real_experiment import (
     _eligibility_failures,
     _git,
     _matches_expected_collection_failure,
+    _pytest_command,
     _pytest_evidence,
     _task_python,
     analyze_real_trajectory,
@@ -94,6 +95,27 @@ new file mode 100644
 def test_real_experiment_default_input_budget_is_350k() -> None:
     """程序化真实实验与 CLI 的 350k 默认值必须一致。"""
     assert RealExperimentConfig().agent_config.max_input_tokens == 350_000
+
+
+def test_pytest_command_honors_frozen_historical_config(tmp_path: Path) -> None:
+    """历史 pytest 配方可明确选择 TOML，不能被另一份 INI 配置悄悄替换。"""
+    checkout = tmp_path / "checkout"
+    evidence = checkout / ".tracefix-validation"
+    evidence.mkdir(parents=True)
+    (checkout / "tox.ini").write_text("[pytest]\n", encoding="utf-8")
+    (checkout / "pyproject.toml").write_text("[tool.pytest.ini_options]\n", encoding="utf-8")
+    recipe = EnvironmentRecipe(task_id="org__repo-1", pytest_config="pyproject.toml")
+
+    command = _pytest_command(
+        Path(sys.executable), checkout, ("tests/test_x.py",), evidence, recipe
+    )
+
+    assert command[command.index("-c") + 1] == str(checkout / "pyproject.toml")
+
+
+def test_recipe_rejects_unsafe_pytest_config() -> None:
+    with pytest.raises(ValueError, match="pytest_config"):
+        EnvironmentRecipe(task_id="org__repo-1", pytest_config="../pytest.ini")
 
 
 def test_pytest_evidence_marks_xfail_as_non_qualifying_pass(tmp_path: Path) -> None:
@@ -1685,9 +1707,7 @@ def test_p2_summary_and_diagnostic_share_evidence_classification(tmp_path, monke
     assert diagnostic["trials"][0]["verification_reason"] == "evidence_invalid"
 
 
-def test_p2_audit_reads_valid_trajectory_and_freezes_followup_design(
-    tmp_path, monkeypatch
-) -> None:
+def test_p2_audit_reads_valid_trajectory_and_freezes_followup_design(tmp_path, monkeypatch) -> None:
     task, _ = _fixture(tmp_path)
     monkeypatch.setattr("tracefix.p2_protocol.P1_QUALIFIED_TASK_IDS", (task.id,))
     monkeypatch.setattr("tracefix.p2_protocol.COLLECTION_FAILURE_TASK_IDS", ())
@@ -1709,15 +1729,11 @@ def test_p2_audit_reads_valid_trajectory_and_freezes_followup_design(
         {"event_type": "context_prepared", "payload": {"estimated_tokens_before": 33000}},
         {
             "event_type": "tool_called",
-            "payload": {
-                "call": {"name": "read_file", "arguments": {"path": "pkg/a.py"}}
-            },
+            "payload": {"call": {"name": "read_file", "arguments": {"path": "pkg/a.py"}}},
         },
         {
             "event_type": "tool_called",
-            "payload": {
-                "call": {"name": "read_file", "arguments": {"path": "pkg/a.py"}}
-            },
+            "payload": {"call": {"name": "read_file", "arguments": {"path": "pkg/a.py"}}},
         },
         {"event_type": "tool_returned", "payload": {"result": {"success": False}}},
         {
@@ -1741,9 +1757,7 @@ def test_p2_audit_reads_valid_trajectory_and_freezes_followup_design(
         json.dumps({"eligible": False, "reason": "pytest failed"}), encoding="utf-8"
     )
     patch = root / "patch.diff"
-    patch.write_text(
-        'diff --git "a/pkg/file name.py" "b/pkg/file name.py"\n', encoding="utf-8"
-    )
+    patch.write_text('diff --git "a/pkg/file name.py" "b/pkg/file name.py"\n', encoding="utf-8")
     stops = (
         ("p2_trial_budget_exhausted", ""),
         ("benchmark_error", "configured per-request input bound"),

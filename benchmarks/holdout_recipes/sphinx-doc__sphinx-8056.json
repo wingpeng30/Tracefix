@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "task_id": "sphinx-doc__sphinx-8056",
+  "python_versions": [
+    "3.9"
+  ],
+  "extra_dependencies": [
+    "pytest==7.4.4",
+    "setuptools==68.2.2",
+    "Pygments==2.11.2",
+    "Jinja2==3.0.3",
+    "docutils==0.16",
+    "roman==3.3",
+    "sphinxcontrib-applehelp==1.0.4",
+    "sphinxcontrib-devhelp==1.0.2",
+    "sphinxcontrib-htmlhelp==2.0.1",
+    "sphinxcontrib-qthelp==1.0.3",
+    "sphinxcontrib-serializinghtml==1.1.5"
+  ],
+  "build_commands": [],
+  "selector_overrides": [],
+  "supported_platforms": [
+    "windows"
+  ],
+  "source_import_probe": "sphinx"
+}

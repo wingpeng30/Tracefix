@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "task_id": "psf__requests-1921",
+  "python_versions": [
+    "3.9"
+  ],
+  "extra_dependencies": [
+    "pytest==7.4.4",
+    "setuptools==68.2.2"
+  ],
+  "build_commands": [],
+  "selector_overrides": [],
+  "supported_platforms": [
+    "windows"
+  ],
+  "source_import_probe": "requests"
+}

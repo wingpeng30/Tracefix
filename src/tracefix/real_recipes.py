@@ -44,6 +44,7 @@ class EnvironmentRecipe(BaseModel):
     expected_base_failure: ExpectedBaseFailure | None = None
     supported_platforms: tuple[str, ...] = ()
     source_import_probe: str | None = None
+    pytest_config: str | None = None
 
     @model_validator(mode="after")
     def validate_recipe(self) -> EnvironmentRecipe:
@@ -54,6 +55,10 @@ class EnvironmentRecipe(BaseModel):
                 raise ValueError("build commands cannot be empty")
             if command[0] != "{python}":
                 raise ValueError("build commands must start with {python}")
+        if self.pytest_config is not None and self.pytest_config not in {
+            "pytest.ini", "pyproject.toml", "tox.ini", "setup.cfg"
+        }:
+            raise ValueError("pytest_config must name a supported repository config")
         return self
 
     @property

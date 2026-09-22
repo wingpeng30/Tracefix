@@ -45,3 +45,8 @@ base/gold 验收；当前只有 4 道普通资格，16 道缺口主要来自历�
 不能宣称 20 题留出集完成。两道合成长上下文机制任务的确定性回放均超过 32k 并成功折叠，继续与
 真实留出集效果估计分开。详见
 [`experiments/v0.8.8-holdout-freeze.md`](experiments/v0.8.8-holdout-freeze.md)。
+
+2026-09-22 完成兼容配方重验与严格冻结：20 道普通资格留出任务已按固定顺序冻结，四个仓库各 5 道；
+首轮 4/20 仅保留为历史记录。两道长上下文机制任务同时通过压缩触发、关键事实保留和 fixture 行为验证。
+下一阶段可先在 10 道开发集上执行预先设计的单项消融，配置冻结后再一次性评测留出集；不得用留出集
+结果调参。详见 [`experiments/v0.8.9-holdout-final-freeze.md`](experiments/v0.8.9-holdout-final-freeze.md)。

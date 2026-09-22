@@ -61,6 +61,8 @@
   统一证据统计、评分契约核对、既有轨迹机制分析及消融与留出集冻结方案。
 - [`experiments/v0.8.8-holdout-freeze.md`](experiments/v0.8.8-holdout-freeze.md)：
   不可变候选顺序、首轮留出资格缺口及独立长上下文机制集合。
+- [`experiments/v0.8.9-holdout-final-freeze.md`](experiments/v0.8.9-holdout-final-freeze.md)：
+  20 道普通资格留出任务的兼容重验、严格证据冻结及长上下文关键信息保留验证。
 - [`experiments/v0.8.4-real-environment-validation.md`](experiments/v0.8.4-real-environment-validation.md)：
   12 道真实候选严格重验的 10/12 行为资格结果与边界。
 - [`../benchmarks/experiments/v0.8.4-real-environment-validation.json`](../benchmarks/experiments/v0.8.4-real-environment-validation.json)：
