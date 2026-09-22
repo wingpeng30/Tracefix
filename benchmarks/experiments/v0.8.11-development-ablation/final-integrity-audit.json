@@ -1,0 +1,14 @@
+{
+  "kind": "final_formal_evidence_audit",
+  "created_at": "2026-09-22T10:27:57.017161+00:00",
+  "protocol_commit": "a8309eb5a20aab7825c797ee8467eacf8c42c3b0",
+  "protocol_sha256": "6ff8c07017e1c6c7ecf3156a25e6c8bd223985f829a18e37d4a75d4371c870cd",
+  "completed_trial_count": 120,
+  "new_response_count": 2094,
+  "evidence_valid_count": 120,
+  "recovery_added_requests": 0,
+  "ledger_sha256": "070980667c2e13861be77c72158081cee50cabb1db83bbac1db481d701223417",
+  "issues": [],
+  "passed": true,
+  "interpretation": "Integrity and accounting only; no efficacy estimate or configuration selection."
+}

@@ -63,6 +63,8 @@
   不可变候选顺序、首轮留出资格缺口及独立长上下文机制集合。
 - [`experiments/v0.8.9-holdout-final-freeze.md`](experiments/v0.8.9-holdout-final-freeze.md)：
   20 道普通资格留出任务的兼容重验、严格证据冻结及长上下文关键信息保留验证。
+- [`experiments/v0.8.11-development-ablation.md`](experiments/v0.8.11-development-ablation.md)：
+  开发集四组正式 120 项、独立对账及零调用恢复；无组达到预定净收益要求，保留基线与未使用留出集。
 - [`experiments/v0.8.10-ablation-preflight.md`](experiments/v0.8.10-ablation-preflight.md)：
   四组 120 项协议、真实任务与正式入口零费用模拟、恢复、完整依赖锁及共享预算预检。
 - [`experiments/v0.8.4-real-environment-validation.md`](experiments/v0.8.4-real-environment-validation.md)：
