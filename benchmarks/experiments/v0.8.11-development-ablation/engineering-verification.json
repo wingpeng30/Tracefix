@@ -1,0 +1,49 @@
+{
+  "schema_version": 1,
+  "tests_passed": 391,
+  "combined_coverage_percent": 91.00807867931155,
+  "statement_coverage_percent": 93.03407896712206,
+  "branch_coverage_percent": 83.82978723404256,
+  "coverage_totals": {
+    "covered_lines": 6197,
+    "num_statements": 6661,
+    "percent_covered": 91.00807867931155,
+    "percent_covered_display": "91",
+    "missing_lines": 464,
+    "excluded_lines": 0,
+    "percent_statements_covered": 93.03407896712206,
+    "percent_statements_covered_display": "93",
+    "num_branches": 1880,
+    "num_partial_branches": 278,
+    "covered_branches": 1576,
+    "missing_branches": 304,
+    "percent_branches_covered": 83.82978723404256,
+    "percent_branches_covered_display": "84"
+  },
+  "command_exit_codes": {
+    "pytest": 0,
+    "ruff": 0,
+    "compileall": 0
+  },
+  "command_elapsed_seconds": {
+    "pytest": 708.4220000000205,
+    "ruff": 1.375,
+    "compileall": 0.15600000001722947
+  },
+  "snapshot_unchanged": true,
+  "local_evidence_root": "runs/development-ablation-verification-v2-20260922",
+  "evidence_sha256": {
+    "code-hashes.json": "3ddf9e5aa507e01c3f390350f7b4f2fa16e3e0e066628effbc41907a3c251f0d",
+    "commands.json": "6e0a8e9f4af04fb0171b9d58c6d4d87b6fe59212928fdca18b3d04c7e130a036",
+    "compileall.stderr.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "compileall.stdout.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "coverage.json": "57feeac4ebe105da36ae43c989af80e7ddba51b709d9616917ca7225db25f859",
+    "coverage.xml": "52da2d4901cbfe199213f349ff01e364ffd051a0cc64106573a8df035b433f6b",
+    "identity-check.json": "c3e21df4cb7a3ac7d81cb77e87bc91832973ac49541740858407758c8e0a652e",
+    "junit.xml": "adb8c8e461f8066373f18c10abfac04045d868c84a61aee8d706606dda83e5ac",
+    "pytest.stderr.log": "ef47a9d863612a8045c9ec470f160c5617b7d7b8968315b43ed94ad0dd5a65b2",
+    "pytest.stdout.log": "07b70f229b5e9d2b9bd23cb12242a98329e3f030255380ae10d303cd1688783d",
+    "ruff.stderr.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "ruff.stdout.log": "82b3e6a6c090a57601d22943bd23fca9218d1031dbe5a7b754092f9a156b4f18"
+  }
+}

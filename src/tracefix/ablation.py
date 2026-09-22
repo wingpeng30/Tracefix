@@ -48,6 +48,7 @@ def budget_preflight(
 def summarize_ablation(experiment_dir: Path) -> dict:
     from tracefix.p2_protocol import _audit_p2_evidence, _read_trial
 
+    experiment_dir = experiment_dir.expanduser().resolve()
     audit = _audit_p2_evidence(experiment_dir)
     protocol = audit["protocol"]
     if protocol.kind != "p2_four_arm_ablation_protocol":
@@ -61,8 +62,62 @@ def summarize_ablation(experiment_dir: Path) -> dict:
         "verification_duration_seconds",
         "calculated_cost_amount",
     )
+    records = {
+        row["sequence"]: _read_trial(experiment_dir / "trials" / f"{row['sequence']:03d}.json")
+        for row in rows
+    }
+    modes = {record.mode for record in records.values() if record is not None}
+    mode = (
+        next(iter(modes))
+        if len(modes) == 1
+        else ("mixed" if modes else "simulation" if protocol.offline_only else "formal")
+    )
+    ledger = {}
+    ledger_issue = None
+    if mode == "formal":
+        ledger_path = (
+            protocol.formal.campaign_ledger_path
+            if protocol.formal and protocol.formal.campaign_ledger_path
+            else experiment_dir / "cost-ledger.json"
+        )
+        try:
+            ledger = json.loads(ledger_path.expanduser().resolve().read_text(encoding="utf-8"))
+            if not isinstance(ledger, dict):
+                ledger = {}
+                ledger_issue = "invalid_campaign_ledger"
+        except (OSError, ValueError):
+            ledger_issue = "campaign_ledger_unavailable"
+    run_summary_path = experiment_dir / "summary.json"
+    try:
+        run_summary = json.loads(run_summary_path.read_text(encoding="utf-8"))
+        if not isinstance(run_summary, dict):
+            run_summary = {}
+    except (OSError, ValueError):
+        run_summary = {}
+    # A shared ledger can change after this batch. Only its frozen run summary
+    # attributes a stop (and unexecuted tail) to this experiment.
+    campaign_stop_reason = run_summary.get("campaign_stop_reason")
+    next_sequence = run_summary.get("next_sequence")
+    budget_tail = (
+        campaign_stop_reason in {"campaign_budget_exhausted", "cost_cap_would_be_exceeded"}
+        and isinstance(next_sequence, int)
+        and not isinstance(next_sequence, bool)
+        and 1 <= next_sequence <= len(rows)
+    )
     for row in rows:
-        record = _read_trial(experiment_dir / "trials" / f"{row['sequence']:03d}.json")
+        record = records[row["sequence"]]
+        row["unexecuted_reason"] = (
+            "campaign_budget_exhausted"
+            if record is None and budget_tail and row["sequence"] >= next_sequence
+            else "trial_record_missing"
+            if record is None
+            else None
+        )
+        row["expected_unexecuted"] = row["unexecuted_reason"] == "campaign_budget_exhausted"
+        if row["expected_unexecuted"]:
+            row["evidence_issues"] = [
+                issue for issue in row["evidence_issues"] if issue != "trial_record_missing"
+            ]
         row["completed"] = bool(record and record.status == "verification_complete")
         row["independent_passed"] = bool(row["independent_passed"] and row["completed"])
         row["verification_duration_seconds"] = (
@@ -134,10 +189,25 @@ def summarize_ablation(experiment_dir: Path) -> dict:
                 "task_equal_weight_delta": differences,
                 "both_success_pairs": both_success,
             }
+    batch_complete = bool(rows) and all(row["completed"] for row in rows)
+    selection_ready = (
+        mode == "formal"
+        and batch_complete
+        and all(row["evidence_valid"] and not row["infrastructure_error"] for row in rows)
+        and all(row[metric] is not None for row in rows for metric in metrics)
+        and not ledger.get("uncertain_request")
+        and ledger_issue is None
+    )
     return {
         "schema_version": 1,
         "kind": "p2_four_arm_ablation_summary",
         "protocol_sha256": audit["protocol_sha256"],
+        "mode": mode,
+        "batch_complete": batch_complete,
+        "configuration_selection_ready": selection_ready,
+        "campaign_stop_reason": campaign_stop_reason,
+        "campaign_ledger_issue": ledger_issue,
+        "current_campaign_halt_reason": ledger.get("halt_reason"),
         "planned_count": len(rows),
         "completed_count": sum(r["completed"] for r in rows),
         "success_count": sum(r["independent_passed"] for r in rows),
@@ -149,7 +219,12 @@ def summarize_ablation(experiment_dir: Path) -> dict:
             for r in rows
         ),
         "unexecuted_count": sum(r["termination_category"] == "unexecuted" for r in rows),
-        "evidence_issue_count": sum(not r["evidence_valid"] for r in rows),
+        "unexecuted_reasons": dict(
+            Counter(row["unexecuted_reason"] for row in rows if row["unexecuted_reason"])
+        ),
+        "evidence_issue_count": sum(
+            not r["evidence_valid"] and not r["expected_unexecuted"] for r in rows
+        ),
         "infrastructure_count": sum(r["infrastructure_error"] for r in rows),
         "verification_error_count": sum(bool(r.get("verification_indeterminate")) for r in rows),
         "valid_evidence_count": sum(r["evidence_valid"] for r in rows),
@@ -159,8 +234,16 @@ def summarize_ablation(experiment_dir: Path) -> dict:
         "trials": rows,
         "evidence_audit_version": audit["schema_version"],
         "interpretation": (
-            "Simulation verifies engineering only; no repair-effect inference. "
-            "Unusable verification is excluded from repair failures and effect estimates; "
+            (
+                "Simulation verifies engineering only; no repair-effect inference. "
+                if mode == "simulation"
+                else "Formal development results support configuration selection only when all "
+                "planned trials and evidence are complete; "
+                "an incomplete batch cannot select a winner. "
+                if mode == "formal"
+                else "Mixed execution modes cannot select a configuration. "
+            )
+            + "Unusable verification is excluded from repair failures and effect estimates; "
             "its cause may be the patch or the environment. Original verdicts are unchanged."
         ),
     }
@@ -176,7 +259,15 @@ def write_ablation_summary(experiment_dir: Path) -> Path:
         f"证据有效 {summary['valid_evidence_count']} 项，"
         f"独立验收成功 {summary['success_count']} 项。\n"
         "逐题先汇总三次重复，再按任务等权比较。普通资格和收集失败资格分列。\n"
-        "模拟演练仅证明工程流程；未知用量不填零，全部计划位置保留。\n",
+        f"模式：{summary['mode']}；批次完整：{summary['batch_complete']}；"
+        f"可选择配置：{summary['configuration_selection_ready']}。\n"
+        f"批次停止原因：{summary['campaign_stop_reason'] or '无'}。\n"
+        + (
+            "模拟演练仅证明工程流程。"
+            if summary["mode"] == "simulation"
+            else "正式开发结果仅在全部计划及证据完整时用于选择配置。"
+        )
+        + "未知用量不填零，全部计划位置保留。\n",
         encoding="utf-8",
     )
     return path

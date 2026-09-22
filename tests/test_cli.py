@@ -44,7 +44,8 @@ def test_cli_p2_formal_freezes_cny_cache_pricing(tmp_path, monkeypatch, capsys) 
     """正式入口必须把人民币缓存价格和上限原样交给冻结协议。"""
     captured = []
     summary = SimpleNamespace(
-        completed_count=0, trial_count=60, resumed_count=0, summary_path="p2.json"
+        completed_count=0, trial_count=60, planned_count=60, resumed_count=0,
+        campaign_stop_reason=None, summary_path="p2.json"
     )
     monkeypatch.setattr(
         "tracefix.cli.run_p2_formal",

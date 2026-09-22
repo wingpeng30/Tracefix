@@ -1,0 +1,205 @@
+"""Campaign exhaustion is a known stop, distinct from an unknown paid request."""
+
+import hashlib
+import json
+import sys
+from pathlib import Path
+
+import pytest
+
+import tracefix.p2_protocol as p2
+from tracefix.ablation import summarize_ablation
+from tracefix.messages import Message, MessageRole, ToolCall
+from tracefix.models import TokenUsage
+from tracefix.real_recipes import EnvironmentRecipe
+
+
+def _campaign_fixture(tmp_path, monkeypatch):
+    from test_real_experiment import GOLD, _fixture, _p1_qualification_evidence, _run_git
+
+    task, source = _fixture(tmp_path)
+    tasks = tuple(task.model_copy(update={"id": f"synthetic__budget-{i}"}) for i in range(10))
+    sources = tmp_path / "sources"
+    sources.mkdir()
+    for item in tasks:
+        _run_git(tmp_path, "clone", "--quiet", str(source), str(sources / item.id))
+    monkeypatch.setattr(p2, "P1_QUALIFIED_TASK_IDS", tuple(t.id for t in tasks))
+    monkeypatch.setattr(p2, "COLLECTION_FAILURE_TASK_IDS", ())
+    monkeypatch.setattr(p2, "load_real_issue_tasks", lambda *a, **k: tasks)
+    monkeypatch.setattr(
+        p2,
+        "load_environment_recipes",
+        lambda *_: {t.id: EnvironmentRecipe(task_id=t.id) for t in tasks},
+    )
+    monkeypatch.setattr(p2, "resolve_managed_environment_python", lambda *_: Path(sys.executable))
+    monkeypatch.setattr(p2, "_tracked_diff", lambda *_: b"")
+    monkeypatch.setattr("tracefix.runtime.load_environment_file", lambda *_: None)
+    events = {"constructed": 0, "calls": 0}
+
+    class Provider(p2.P2SimulationLLM):
+        def __init__(self, config):
+            super().__init__(config)
+            events["constructed"] += 1
+
+        def count_input_tokens(self, messages, tools=()):
+            return 1000
+
+        def complete(self, messages, tools=()):
+            events["calls"] += 1
+            response = super().complete(messages, tools)
+            return response.model_copy(
+                update={
+                    "message": Message(
+                        role=MessageRole.ASSISTANT,
+                        tool_calls=(
+                            ToolCall(
+                                id="budget-fixture-fix",
+                                name="apply_patch",
+                                arguments={"patch": GOLD},
+                            ),
+                        ),
+                    ),
+                    "usage": TokenUsage(input_tokens=1, output_tokens=1875, total_tokens=1876),
+                }
+            )
+
+    monkeypatch.setattr(p2, "LiteLLMAdapter", Provider)
+    formal = p2.P2FormalRunRequirements(
+        model_name="fixture/offline",
+        provider="synthetic",
+        pricing_source="virtual CNY",
+        total_cost_cap_usd=100,
+        currency="CNY",
+        input_cost_per_million_usd=2,
+        output_cost_per_million_usd=8,
+        input_cache_miss_cost_per_million=2,
+        input_cache_hit_cost_per_million=0.04,
+        output_cost_per_million=8,
+        campaign_ledger_path=tmp_path / "virtual-campaign.json",
+    )
+    pricing_identity = hashlib.sha256(
+        formal.model_dump_json(
+            exclude={
+                "prior_calculated_amount",
+                "prior_unsettled_reservation",
+                "campaign_ledger_path",
+            }
+        ).encode()
+    ).hexdigest()
+    ledger = p2._read_cost_ledger(
+        formal.campaign_ledger_path,
+        formal.cap,
+        formal.provider,
+        formal.model_name,
+        formal.currency,
+        f"campaign:{pricing_identity}",
+        pricing_identity,
+    ).model_copy(update={"spent_usd": 99.96, "calculated_spent_amount": 99.96})
+    p2._write_cost_ledger(formal.campaign_ledger_path, ledger)
+    qualification = _p1_qualification_evidence(tmp_path, tasks, ())
+    for artifact in [qualification, *(tmp_path / "p1-artifacts").rglob("*.json")]:
+        artifact.write_text(
+            artifact.read_text(encoding="utf-8").replace("::test_hidden", "::test_fixed"),
+            encoding="utf-8",
+        )
+    config = p2.P2ProtocolConfig(
+        design="ablation",
+        source_root=sources,
+        formal=formal,
+        p1_evidence_path=qualification,
+    )
+    return config, events
+
+
+def test_existing_campaign_cost_halt_is_zero_request_normal_stop(tmp_path, monkeypatch):
+    config, events = _campaign_fixture(tmp_path, monkeypatch)
+    ledger_path = config.formal.campaign_ledger_path
+    ledger = json.loads(ledger_path.read_text(encoding="utf-8"))
+    ledger["halt_reason"] = "cost_cap_would_be_exceeded"
+    ledger_path.write_text(json.dumps(ledger), encoding="utf-8")
+    before = ledger_path.read_bytes()
+    root = tmp_path / "already-halted"
+    result = p2.run_p2_formal(config, experiment_dir=root)
+    assert result.completed_count == 0
+    assert result.planned_count == 120 and not result.batch_complete
+    assert result.campaign_stop_reason == "campaign_budget_exhausted"
+    assert events == {"constructed": 0, "calls": 0}
+    assert ledger_path.read_bytes() == before
+    summary = summarize_ablation(root)
+    assert summary["planned_count"] == 120 and summary["unexecuted_count"] == 120
+    assert summary["success_count"] == summary["repair_failure_count"] == 0
+
+
+def test_campaign_exhaustion_verifies_saved_patch_and_resume_never_resends(tmp_path, monkeypatch):
+    config, events = _campaign_fixture(tmp_path, monkeypatch)
+    root = tmp_path / "exhausted"
+    result = p2.run_p2_formal(config, experiment_dir=root)
+    assert result.completed_count == 1 and len(result.results) == 1
+    assert result.planned_count == 120 and not result.batch_complete
+    assert result.campaign_stop_reason == "campaign_budget_exhausted"
+    trial = result.results[0]
+    assert trial.status == "verification_complete"
+    assert trial.stop_reason == "campaign_budget_exhausted"
+    assert trial.independent_passed
+    assert Path(trial.agent_patch_path).read_text(encoding="utf-8").strip()
+    assert events == {"constructed": 1, "calls": 1}
+    ledger_path = config.formal.campaign_ledger_path
+    before = ledger_path.read_bytes()
+    ledger = json.loads(before)
+    assert not ledger["uncertain_request"]
+    assert ledger["halt_reason"] == "cost_cap_would_be_exceeded"
+    assert ledger["request_count"] == 1
+    assert ledger["reserved_amount"] == 0
+    assert ledger["calculated_spent_amount"] == pytest.approx(99.975002)
+    resumed = p2.run_p2_formal(config, experiment_dir=root)
+    assert resumed.resumed_count == 1
+    assert events == {"constructed": 1, "calls": 1}
+    assert ledger_path.read_bytes() == before
+    summary = summarize_ablation(root)
+    assert summary["planned_count"] == 120
+    assert summary["completed_count"] == summary["success_count"] == 1
+    assert summary["unexecuted_count"] == 119
+    assert summary["repair_failure_count"] == summary["infrastructure_count"] == 0
+    diagnostic = p2.diagnose_p2_experiment(root)
+    assert diagnostic["evidence_issue_count"] == summary["evidence_issue_count"] == 0
+    assert diagnostic["unexecuted_reasons"] == {"campaign_budget_exhausted": 119}
+
+
+def test_uncertain_request_still_blocks_even_with_cost_halt(tmp_path, monkeypatch):
+    config, events = _campaign_fixture(tmp_path, monkeypatch)
+    ledger_path = config.formal.campaign_ledger_path
+    ledger = json.loads(ledger_path.read_text(encoding="utf-8"))
+    ledger.update(uncertain_request=True, halt_reason="cost_cap_would_be_exceeded")
+    ledger_path.write_text(json.dumps(ledger), encoding="utf-8")
+    before = ledger_path.read_bytes()
+    with pytest.raises(p2.BenchmarkError, match="reconciliation"):
+        p2.run_p2_formal(config, experiment_dir=tmp_path / "uncertain")
+    assert events == {"constructed": 0, "calls": 0}
+    assert ledger_path.read_bytes() == before
+
+
+def test_cost_halt_recovers_interrupted_verification_without_model(tmp_path, monkeypatch):
+    config, events = _campaign_fixture(tmp_path, monkeypatch)
+    verifier = p2.validate_agent_patch_strict
+    interrupted = []
+
+    def fail_once(*args, **kwargs):
+        if not interrupted:
+            interrupted.append(True)
+            raise RuntimeError("synthetic interruption before independent verification")
+        return verifier(*args, **kwargs)
+
+    monkeypatch.setattr(p2, "validate_agent_patch_strict", fail_once)
+    root = tmp_path / "verification-interrupted"
+    with pytest.raises(RuntimeError, match="synthetic interruption"):
+        p2.run_p2_formal(config, experiment_dir=root)
+    saved = json.loads((root / "trials/001.json").read_text(encoding="utf-8"))
+    assert saved["status"] == "agent_completed"
+    assert saved["stop_reason"] == "campaign_budget_exhausted"
+    ledger_path = config.formal.campaign_ledger_path
+    before = ledger_path.read_bytes()
+    recovered = p2.run_p2_formal(config, experiment_dir=root)
+    assert recovered.completed_count == recovered.resumed_count == 1
+    assert recovered.results[0].independent_passed
+    assert events == {"constructed": 1, "calls": 1}
+    assert ledger_path.read_bytes() == before

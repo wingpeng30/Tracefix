@@ -166,8 +166,9 @@ def rehearse(output: Path) -> dict:
         saved.update(spent_usd=1, calculated_spent_amount=1)
         (output / "ledger-before-cap-check.json").write_bytes(before)
         formal.campaign_ledger_path.write_text(json.dumps(saved), encoding="utf-8")
-        with pytest.raises(p2.BenchmarkError, match="stopped before another provider request"):
-            p2.run_p2_formal(config, experiment_dir=output / "same-campaign-cap-check")
+        stopped = p2.run_p2_formal(config, experiment_dir=output / "same-campaign-cap-check")
+        assert stopped.campaign_stop_reason == "campaign_budget_exhausted"
+        assert stopped.planned_count == 120 and not stopped.batch_complete
         assert len(calls) == 240
     final_identity = snapshot()
     (output / "execution-identity-after.json").write_text(

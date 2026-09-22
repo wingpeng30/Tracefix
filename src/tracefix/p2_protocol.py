@@ -25,7 +25,12 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from tracefix.agent import AgentConfig
 from tracefix.agent.base import DEFAULT_SYSTEM_PROMPT
 from tracefix.context import ContextConfig
-from tracefix.exceptions import BenchmarkError, P2TrialBudgetExceeded
+from tracefix.exceptions import BenchmarkError, P2CampaignBudgetExceeded, P2TrialBudgetExceeded
+from tracefix.formal_guards import (
+    formal_config_issue,
+    formal_response_model_issue,
+    formal_response_usage_issue,
+)
 from tracefix.messages import Message, MessageRole, ToolCall
 from tracefix.models import BaseLLM, LLMConfig, LLMResponse, TokenUsage
 from tracefix.models.litellm_adapter import LiteLLMAdapter
@@ -365,6 +370,10 @@ class P2RunSummary(BaseModel):
     results: tuple[P2TrialRecord, ...]
     engineering_simulation_only: bool
     summary_path: str
+    planned_count: int = 0
+    campaign_stop_reason: str | None = None
+    next_sequence: int | None = None
+    batch_complete: bool = False
 
 
 class P2CostLedgerRecord(BaseModel):
@@ -506,7 +515,11 @@ class P2BudgetedLLM(BaseLLM):
             )
         ):
             raise BenchmarkError("P2 formal pricing must be finite and positive")
-        self._delegate = LiteLLMAdapter(config.model_copy(update={"max_retries": 0}))
+        config = config.model_copy(update={"max_retries": 0})
+        config_issue = formal_config_issue(config, formal.provider)
+        if config_issue:
+            raise BenchmarkError(config_issue)
+        self._delegate = LiteLLMAdapter(config)
         self._ledger_path = ledger_path
         self._formal = formal
         self._input_upper_bound = input_upper_bound
@@ -575,7 +588,7 @@ class P2BudgetedLLM(BaseLLM):
                 self._ledger_path,
                 ledger.model_copy(update={"halt_reason": "cost_cap_would_be_exceeded"}),
             )
-            raise BenchmarkError("P2 total cost cap would be exceeded")
+            raise P2CampaignBudgetExceeded("P2 total cost cap would be exceeded")
         request = P2CostRequestRecord(
             request_id=request_id,
             status="reserved",
@@ -603,7 +616,8 @@ class P2BudgetedLLM(BaseLLM):
             self._ledger_path, request_id, response
         )
         usage = response.usage
-        usage_valid = not (
+        usage_issue = formal_response_usage_issue(self.config, self._formal.provider, response)
+        usage_valid = not usage_issue and not (
             usage.input_tokens <= 0
             or usage.output_tokens < 0
             or usage.total_tokens != usage.input_tokens + usage.output_tokens
@@ -628,7 +642,9 @@ class P2BudgetedLLM(BaseLLM):
                     }
                 ),
             )
-            raise BenchmarkError("P2 provider response usage is missing or inconsistent")
+            raise BenchmarkError(
+                usage_issue or "P2 provider response usage is missing or inconsistent"
+            )
         actual = estimated_request_reservation(
             self._formal,
             input_tokens=usage.input_tokens,
@@ -694,7 +710,12 @@ class P2BudgetedLLM(BaseLLM):
                 "requests": (*ledger.requests[:-1], settled),
             }
         )
+        model_issue = formal_response_model_issue(self.config, self._formal.provider, response)
+        if model_issue:
+            ledger = ledger.model_copy(update={"halt_reason": "response_model_identity_mismatch"})
         _write_cost_ledger(self._ledger_path, ledger)
+        if model_issue:
+            raise BenchmarkError(model_issue)
         self._trial_input_used += usage.input_tokens
         self._trial_output_used += usage.output_tokens
         # TokenUsage is explicitly USD-denominated.  CNY stays in the P2
@@ -723,6 +744,7 @@ def _write_response_evidence(
         "finish_reason": response.finish_reason,
         "usage": response.usage.model_dump(mode="json"),
         "provider_usage": response.raw_response.get("usage"),
+        "provider_model": response.raw_response.get("model"),
         "raw_response_sha256": hashlib.sha256(
             json.dumps(response.raw_response, sort_keys=True, ensure_ascii=False).encode("utf-8")
         ).hexdigest(),
@@ -943,6 +965,8 @@ def _patch_declared_paths(path: Path) -> tuple[str, ...]:
 
 
 def _termination_category(stop_reason: str | None, message: str) -> str:
+    if stop_reason == "campaign_budget_exhausted":
+        return "campaign_budget_exhausted"
     if stop_reason == "p2_trial_budget_exhausted" or any(
         fragment in message
         for fragment in ("trial input budget is exhausted", "trial token budget is exhausted")
@@ -1666,7 +1690,7 @@ def diagnose_p2_experiment(experiment_dir: Path) -> dict[str, object]:
         if isinstance(peak, int):
             arm_totals[arm]["max_context_tokens"] = max(arm_totals[arm]["max_context_tokens"], peak)
         arm_totals[arm]["repo_map_present"] += int(bool(row.get("repo_map_present")))
-    return {
+    diagnostic = {
         "kind": "p2_existing_evidence_diagnostic",
         "schema_version": "2",
         "generated_at": datetime.now(UTC).isoformat(),
@@ -1691,6 +1715,17 @@ def diagnose_p2_experiment(experiment_dir: Path) -> dict[str, object]:
         },
         "trials": audited_rows,
     }
+    if protocol.kind == "p2_four_arm_ablation_protocol":
+        from tracefix.ablation import summarize_ablation
+
+        summary = summarize_ablation(root)
+        diagnostic.update(
+            evidence_issue_count=summary["evidence_issue_count"],
+            unexecuted_reasons=summary["unexecuted_reasons"],
+            campaign_stop_reason=summary["campaign_stop_reason"],
+            trials=summary["trials"],
+        )
+    return diagnostic
 
 
 def write_p2_diagnostic(experiment_dir: Path, *, output_dir: Path | None = None) -> Path:
@@ -2249,6 +2284,8 @@ def _run_p2_locked(
     else:
         protocol_path.write_text(protocol.model_dump_json(indent=2), encoding="utf-8")
     results: list[P2TrialRecord] = []
+    campaign_stopped = False
+    next_sequence = None
     tasks = {
         item.id: item
         for item in load_real_issue_tasks(config.tasks_dir, task_ids=protocol.qualified_task_ids)
@@ -2290,8 +2327,11 @@ def _run_p2_locked(
             formal.prior_calculated_amount,
             formal.prior_unsettled_reservation,
         )
-        if initial_ledger.uncertain_request or initial_ledger.halt_reason:
+        if initial_ledger.uncertain_request or initial_ledger.halt_reason not in {
+            None, "cost_cap_would_be_exceeded"
+        }:
             raise BenchmarkError("P2 campaign requires reconciliation before resume")
+        campaign_stopped = initial_ledger.halt_reason == "cost_cap_would_be_exceeded"
 
         def formal_factory(llm_config: LLMConfig) -> BaseLLM:
             return P2BudgetedLLM(
@@ -2332,6 +2372,22 @@ def _run_p2_locked(
             _verify_saved_artifacts(existing)
             agent_record = existing.model_copy(update={"resumed": True})
         else:
+            if campaign_stopped:
+                if next_sequence is None:
+                    next_sequence = plan.sequence
+                continue
+            if mode == "formal" and config.design == "ablation" and plan.sequence % 4 == 1:
+                block_check = check_p2_inputs(config)
+                checked_protocol = block_check.protocol.model_copy(
+                    update={"generated_at": protocol.generated_at}
+                )
+                if checked_protocol != protocol:
+                    raise BenchmarkError("P2 block input identity drift")
+                block_dir = root / "block-checks"
+                block_dir.mkdir(exist_ok=True)
+                (block_dir / f"{plan.sequence:03d}-{uuid4().hex}.json").write_text(
+                    block_check.model_dump_json(indent=2), encoding="utf-8"
+                )
             attempt_id = f"p2-{plan.sequence:03d}-{uuid4().hex}"
             write_trial_record(
                 path,
@@ -2431,10 +2487,16 @@ def _run_p2_locked(
                     config.formal.prior_calculated_amount,
                     config.formal.prior_unsettled_reservation,
                 )
-                if ledger.uncertain_request or ledger.halt_reason:
-                    stopped = agent_record.model_copy(update={"status": "request_uncertain"})
+                if ledger.uncertain_request or ledger.halt_reason not in {
+                    None, "cost_cap_would_be_exceeded"
+                }:
+                    stopped = agent_record.model_copy(
+                        update={"status": "request_uncertain" if ledger.uncertain_request
+                                else "response_invalid"}
+                    )
                     write_trial_record(path, stopped)
                     raise BenchmarkError("P2 formal run stopped before another provider request")
+                campaign_stopped = ledger.halt_reason == "cost_cap_would_be_exceeded"
         if not agent_record.agent_patch_path:
             record = agent_record.model_copy(update={"status": "infrastructure_error"})
             write_trial_record(path, record)
@@ -2485,6 +2547,11 @@ def _run_p2_locked(
         results=tuple(results),
         engineering_simulation_only=mode == "simulation",
         summary_path=str(summary_path),
+        planned_count=len(protocol.schedule),
+        campaign_stop_reason="campaign_budget_exhausted" if campaign_stopped else None,
+        next_sequence=next_sequence,
+        batch_complete=len(results) == len(protocol.schedule)
+        and all(item.status == "verification_complete" for item in results),
     )
     temporary = summary_path.with_suffix(".tmp")
     temporary.write_text(summary.model_dump_json(indent=2), encoding="utf-8")

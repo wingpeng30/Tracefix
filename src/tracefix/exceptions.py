@@ -247,3 +247,9 @@ class P2TrialBudgetExceeded(AgentLimitExceeded, BenchmarkError):
     """P2 单项预算在供应商调用前耗尽；这是正常终止而非基础设施故障。"""
 
     code = "p2_trial_budget_exhausted"
+
+
+class P2CampaignBudgetExceeded(AgentLimitExceeded, BenchmarkError):
+    """共享费用上限不足；停止调用，但仍验收已保存补丁。"""
+
+    code = "campaign_budget_exhausted"

@@ -548,3 +548,12 @@ SWE-bench Verified 固定在 `78f471bf655a3137b2e8a75af1501690ec009ec3`，69 道
 [`experiments/v0.8.10-ablation-preflight.md`](experiments/v0.8.10-ablation-preflight.md)。
 余额 ¥70.70445880 小于开发集固定 Token 预算的 ¥103.20 保守费用上界；下一阶段先解决阶段预算，
 再付费运行消融，不默认追加原 ¥100 上限，不提前评测留出集。模拟结果不构成模块收益证据。
+
+### 2026-09-22 开发集正式消融前的费用停止修复（V0.8.11）
+
+总费用耗尽现以 `campaign_budget_exhausted` 正常终止，先验收已有补丁，再停止排程；已保存结果可
+无调用恢复，真正未知请求仍阻断。报告保留全部计划位置并分开预算未执行与证据损坏。增加官方端点、
+原始模型身份与完整缓存用量检查，并在每四组开始前复核冻结输入。优化算法、提示和评分规则未改变。
+最终全量 391 passed、综合覆盖率 91.00807867931155%，Ruff/compileall 均通过；旧 CLI 模拟对象
+缺字段导致的首轮失败保留。用户选择原 ¥100 总上限内运行固定 120 项，未完成时不选择配置。
+详见 [`experiments/v0.8.11-development-ablation.md`](experiments/v0.8.11-development-ablation.md)。

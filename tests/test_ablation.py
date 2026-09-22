@@ -202,8 +202,9 @@ def test_formal_ablation_mock_provider_runs_agent_verification_ledger_and_resume
     assert len(provider_calls) == 24
     ledger.update(uncertain_request=False, spent_usd=1, calculated_spent_amount=1)
     formal.campaign_ledger_path.write_text(json.dumps(ledger), encoding="utf-8")
-    with pytest.raises(p2.BenchmarkError, match="stopped before another provider request"):
-        p2.run_p2_formal(config, experiment_dir=tmp_path / "new-experiment-same-campaign")
+    stopped = p2.run_p2_formal(config, experiment_dir=tmp_path / "new-experiment-same-campaign")
+    assert stopped.campaign_stop_reason == "campaign_budget_exhausted"
+    assert stopped.planned_count == 12 and not stopped.batch_complete
     assert len(provider_calls) == 24
 
 
@@ -217,7 +218,12 @@ def test_cli_routes_ablation_design(tmp_path, monkeypatch, command):
     if command in {"simulation", "formal"}:
         target = f"run_p2_{command}"
         result = SimpleNamespace(
-            completed_count=0, trial_count=120, resumed_count=0, summary_path="fixture.json"
+            completed_count=0,
+            trial_count=120,
+            planned_count=120,
+            campaign_stop_reason=None,
+            resumed_count=0,
+            summary_path="fixture.json",
         )
         argv = ["p2-run", "--mode", command, "--experiment-dir", str(tmp_path)]
         if command == "formal":

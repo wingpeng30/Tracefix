@@ -1,0 +1,11 @@
+{
+  "url": "https://api-docs.deepseek.com/zh-cn/quick_start/pricing/",
+  "retrieved_at": "2026-09-22T08:00:39.324288+00:00",
+  "sha256": "2e02c7203e9b250fa27f54ea3bed0792fb1749508c14fd5b10f9eb1bdacc691a",
+  "peak_input_cache_miss_per_million": "2",
+  "peak_input_cache_hit_per_million": "0.04",
+  "peak_output_per_million": "8",
+  "currency": "CNY",
+  "local_html": "runs/ablation-development-price-20260922/pricing.html",
+  "same_as_previous_snapshot": true
+}

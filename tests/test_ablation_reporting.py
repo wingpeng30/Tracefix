@@ -95,6 +95,9 @@ def test_complete_four_arm_reports_and_entry_points(reporting_experiment):
     root = reporting_experiment
     summary = summarize_ablation(root)
     assert summary["planned_count"] == summary["valid_evidence_count"] == 120
+    assert summary["mode"] == "simulation"
+    assert summary["batch_complete"] is True
+    assert summary["configuration_selection_ready"] is False
     assert summary == json.loads(write_p2_summary(root).read_text(encoding="utf-8"))
     with pytest.raises(BenchmarkError, match="require summarize_ablation"):
         summarize_p2_experiment(root)
@@ -264,3 +267,77 @@ def test_incomplete_audit_cannot_be_scored(status):
         )
         == "incomplete_verification_audit"
     )
+
+
+def _make_formal_reporting_fixture(root):
+    ledger_path = root / "shared-campaign.json"
+    ledger_path.write_text(json.dumps({"halt_reason": None, "uncertain_request": False}))
+    protocol_path = root / "protocol.json"
+    protocol = json.loads(protocol_path.read_text(encoding="utf-8"))
+    protocol.update(
+        offline_only=False,
+        formal={
+            "model_name": "fixture/model",
+            "provider": "fixture",
+            "pricing_source": "fixture",
+            "total_cost_cap_usd": 100,
+            "input_cost_per_million_usd": 1,
+            "output_cost_per_million_usd": 1,
+            "campaign_ledger_path": str(ledger_path),
+        },
+    )
+    protocol_path.write_text(json.dumps(protocol), encoding="utf-8")
+    for path in (root / "trials").glob("*.json"):
+        record = json.loads(path.read_text(encoding="utf-8"))
+        record["mode"] = "formal"
+        path.write_text(json.dumps(record), encoding="utf-8")
+    return ledger_path
+
+
+def test_formal_complete_report_can_select_configuration(reporting_experiment):
+    root = reporting_experiment
+    _make_formal_reporting_fixture(root)
+    summary = summarize_ablation(root)
+    assert summary["mode"] == "formal"
+    assert summary["batch_complete"] and summary["configuration_selection_ready"]
+    write_p2_summary(root)
+    assert "模拟演练仅" not in (root / "p2-summary.md").read_text(encoding="utf-8")
+    assert "Simulation verifies" not in summary["interpretation"]
+
+
+@pytest.mark.parametrize("stop_reason", ["campaign_budget_exhausted", "cost_cap_would_be_exceeded"])
+def test_frozen_budget_stop_preserves_plan_without_false_corruption(
+    reporting_experiment, stop_reason
+):
+    root = reporting_experiment
+    _make_formal_reporting_fixture(root)
+    for sequence in (1, *range(9, 121)):
+        (root / "trials" / f"{sequence:03d}.json").unlink()
+    (root / "summary.json").write_text(
+        json.dumps(
+            {
+                "campaign_stop_reason": stop_reason,
+                "next_sequence": 9,
+            }
+        ),
+        encoding="utf-8",
+    )
+    summary = summarize_ablation(root)
+    assert summary["planned_count"] == len(summary["trials"]) == 120
+    assert summary["unexecuted_count"] == 113
+    assert summary["evidence_issue_count"] == 1  # Earlier missing record remains corruption.
+    assert summary["trials"][0]["unexecuted_reason"] == "trial_record_missing"
+    assert summary["trials"][8]["unexecuted_reason"] == "campaign_budget_exhausted"
+    assert not summary["batch_complete"] and not summary["configuration_selection_ready"]
+    assert summary["task_results"][0]["arms"]["no_compaction"]["success_rate"] is None
+
+
+def test_later_ledger_halt_does_not_rewrite_legacy_batch_stop(reporting_experiment):
+    root = reporting_experiment
+    ledger = _make_formal_reporting_fixture(root)
+    (root / "trials" / "120.json").unlink()
+    ledger.write_text(json.dumps({"halt_reason": "cost_cap_would_be_exceeded"}), encoding="utf-8")
+    summary = summarize_ablation(root)
+    assert summary["campaign_stop_reason"] is None
+    assert summary["evidence_issue_count"] == 1
+    assert summary["trials"][-1]["unexecuted_reason"] == "trial_record_missing"
