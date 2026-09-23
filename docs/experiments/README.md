@@ -119,3 +119,12 @@ T 输入 -2.73%、Agent 用时 -6.14%，但成功率 -3.33pp，因此尚未达�
 - 本轮保守计算 ¥51.073224，共享累计 ¥80.3687652/100；不是供应商实际账单，未新增预算。
 - 最终代码全量 391 passed，综合覆盖率 91.00807867931155%，Ruff/compileall 通过。下一步优先离线
   检查配对失败和上下文阶段，不直接从小样本开发结果宣称泛化或非劣。
+
+## V0.8.12：开发集离线详细诊断
+
+- 报告：[`v0.8.12-offline-detailed-ablation-diagnostic.md`](v0.8.12-offline-detailed-ablation-diagnostic.md)。
+- 脱敏机器结果：[`../../benchmarks/experiments/v0.8.11-development-ablation/detailed-diagnostic-20260923-final-v4/detailed-diagnostic.json`](../../benchmarks/experiments/v0.8.11-development-ablation/detailed-diagnostic-20260923-final-v4/detailed-diagnostic.json)。
+- 配对索引：[`../../benchmarks/experiments/v0.8.11-development-ablation/detailed-diagnostic-20260923-final-v4/paired-cases.json`](../../benchmarks/experiments/v0.8.11-development-ablation/detailed-diagnostic-20260923-final-v4/paired-cases.json)。
+- 120/120 试次、2,094 响应、120 轨迹和 480 试次工件哈希通过复核；普通集 24 对为 5 退步、3 反向、16 同结果。
+- 未证明可复现实现缺陷；不改算法。下一开发集仅验证工具输出呈现的单变量假设，20 题留出集未使用。
+- 全量 401 passed；综合覆盖率 90.22915340547422%（语句 92.5399889685604%、分支 82.52069917203312%），Ruff/compileall 通过。原始日志、JUnit 与 coverage JSON/XML 留在本机 `runs/detailed-ablation-verification-20260923/`。

@@ -15,6 +15,7 @@ from pydantic import ValidationError
 from tracefix.agent import AgentConfig, AgentStatus
 from tracefix.benchmark import BenchmarkConfig, BenchmarkRunner
 from tracefix.context import ContextConfig
+from tracefix.detailed_ablation import write_detailed_ablation_diagnostic
 from tracefix.exceptions import BenchmarkError, TraceFixError
 from tracefix.holdout import freeze_holdout, freeze_long_context_mechanism
 from tracefix.p2_protocol import (
@@ -375,16 +376,16 @@ def build_parser() -> argparse.ArgumentParser:
     p2_diagnostic = subparsers.add_parser("p2-diagnose", help="只读诊断已有 P2 轨迹")
     p2_diagnostic.add_argument("--experiment-dir", type=Path, required=True)
     p2_diagnostic.add_argument("--output-dir", type=Path)
-    p2_followup = subparsers.add_parser(
-        "p2-plan-followup", help="只读生成 P2 消融与留出集方案"
+    p2_diagnostic.add_argument(
+        "--detailed-ablation", action="store_true", help="生成冻结四组消融的脱敏配对诊断"
     )
+    p2_diagnostic.add_argument("--ledger", type=Path)
+    p2_diagnostic.add_argument("--campaign-before", type=Path)
+    p2_diagnostic.add_argument("--trace-hash-lock", type=Path)
+    p2_followup = subparsers.add_parser("p2-plan-followup", help="只读生成 P2 消融与留出集方案")
     p2_followup.add_argument("--experiment-dir", type=Path, required=True)
-    p2_followup.add_argument(
-        "--candidates", type=Path, default=Path("benchmarks/real_candidates")
-    )
-    p2_followup.add_argument(
-        "--output-dir", type=Path, default=Path("benchmarks/experiments")
-    )
+    p2_followup.add_argument("--candidates", type=Path, default=Path("benchmarks/real_candidates"))
+    p2_followup.add_argument("--output-dir", type=Path, default=Path("benchmarks/experiments"))
     p2_reconcile = subparsers.add_parser("p2-reconcile", help="只读核对 P2 账本与响应证据")
     p2_reconcile.add_argument("--experiment-dir", type=Path, required=True)
     p2_reconcile.add_argument("--bill", type=Path)
@@ -905,6 +906,28 @@ def main(argv: list[str] | None = None) -> int:
             return 0
 
         if args.command == "p2-diagnose":
+            if args.detailed_ablation:
+                missing = [
+                    name
+                    for name, value in (
+                        ("--output-dir", args.output_dir),
+                        ("--ledger", args.ledger),
+                        ("--campaign-before", args.campaign_before),
+                        ("--trace-hash-lock", args.trace_hash_lock),
+                    )
+                    if value is None
+                ]
+                if missing:
+                    parser.error("--detailed-ablation requires " + ", ".join(missing))
+                outputs = write_detailed_ablation_diagnostic(
+                    args.experiment_dir,
+                    output_dir=args.output_dir,
+                    ledger_path=args.ledger,
+                    campaign_before_path=args.campaign_before,
+                    trace_hash_lock_path=args.trace_hash_lock,
+                )
+                print("P2 脱敏详细诊断: " + ", ".join(str(path) for path in outputs))
+                return 0
             path = write_p2_diagnostic(args.experiment_dir, output_dir=args.output_dir)
             print(f"P2 诊断: {path}")
             return 0
