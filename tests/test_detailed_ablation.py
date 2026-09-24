@@ -11,6 +11,8 @@ import pytest
 from tracefix.cli import main
 from tracefix.detailed_ablation import (
     _cycle_difference,
+    _cycle_line,
+    _finite_nonnegative,
     _normalize_tool_path,
     _task_equal_metrics,
     _tool_facts,
@@ -202,8 +204,11 @@ def test_context_events_classify_tool_pruning_and_history_folding(
     [
         ({}, {}, "tool_results_pruned"),
         ({"tool_results_pruned": 2}, {"tool_results_pruned": 1}, None),
-        ({"messages_compacted": 1, "batches_compacted": 0, "compacted": False},
-         {"messages_compacted": 1}, None),
+        (
+            {"messages_compacted": 1, "batches_compacted": 0, "compacted": False},
+            {"messages_compacted": 1},
+            None,
+        ),
     ],
 )
 def test_context_event_rejects_missing_conflicting_and_invalid_fold_counters(
@@ -283,6 +288,38 @@ def test_workspace_paths_are_normalized_without_host_root() -> None:
     assert _normalize_tool_path("D:/work/task/src/a.py", "D:/work/task") == "repo/src/a.py"
     assert _normalize_tool_path("src/a.py", "D:/work/task") == "repo/src/a.py"
     assert _normalize_tool_path("C:/outside/a.py", "D:/work/task").startswith("external/")
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        (0, 0.0),
+        (2.5, 2.5),
+        (True, None),
+        (-1, None),
+        (float("nan"), None),
+        ("4", None),
+    ],
+)
+def test_metric_numbers_reject_booleans_negative_and_nonfinite_values(value, expected) -> None:
+    assert _finite_nonnegative(value) == expected
+
+
+@pytest.mark.parametrize(
+    ("cycle", "stage", "expected"),
+    [
+        ({"request_view_line": 4}, "request_view_sha256", 4),
+        ({"context": {"line": 5}}, "context", 5),
+        ({"line": 6}, "context", 6),
+        ({"assistant_decision": {"line": 7}}, "assistant_decision", 7),
+        ({"tools": [{"line": 8}]}, "tool_results", 8),
+        ({"tools": [{"line": 9}]}, "presentations", 9),
+        ({"line": 10}, "presentations", 10),
+        ({"line": 11}, "other", 11),
+    ],
+)
+def test_cycle_line_selects_observed_event_or_safe_fallback(cycle, stage, expected) -> None:
+    assert _cycle_line(cycle, stage) == expected
 
 
 def test_task_equal_metrics_averages_repetitions_before_task_weighting() -> None:

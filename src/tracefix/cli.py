@@ -325,14 +325,14 @@ def build_parser() -> argparse.ArgumentParser:
     p2_parser.add_argument("--output-dir", type=Path, default=Path("runs"))
     p2_parser.add_argument(
         "--design",
-        choices=("whole_system", "ablation", "presentation_only"),
+        choices=("whole_system", "ablation", "presentation_only", "validation_closure"),
         default="whole_system",
     )
     p2_run = subparsers.add_parser("p2-run", help="执行或恢复 P2 零费用工程演练")
     p2_run.add_argument("--mode", choices=("simulation", "formal"), default="simulation")
     p2_run.add_argument(
         "--design",
-        choices=("whole_system", "ablation", "presentation_only"),
+        choices=("whole_system", "ablation", "presentation_only", "validation_closure"),
         default="whole_system",
     )
     p2_run.add_argument("--experiment-dir", type=Path, required=True)
@@ -382,7 +382,7 @@ def build_parser() -> argparse.ArgumentParser:
     p2_check.add_argument("--output-dir", type=Path, default=Path("runs"))
     p2_check.add_argument(
         "--design",
-        choices=("whole_system", "ablation", "presentation_only"),
+        choices=("whole_system", "ablation", "presentation_only", "validation_closure"),
         default="whole_system",
     )
     p2_summary = subparsers.add_parser("p2-summarize", help="汇总已保存的 P2 试次，不执行 Agent")

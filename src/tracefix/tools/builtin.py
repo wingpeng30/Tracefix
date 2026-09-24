@@ -3,14 +3,17 @@
 from __future__ import annotations
 
 import difflib
+import json
 import os
 import re
 import shlex
 import subprocess
 import sys
 import time
+import xml.etree.ElementTree as element_tree
 from pathlib import Path
 from typing import ClassVar
+from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
@@ -35,6 +38,29 @@ _SKIPPED_DIRECTORIES = frozenset(
 )
 _SHELL_CONTROL_PATTERN = re.compile(r"[|&;<>`\r\n]")
 _SENSITIVE_ENV_MARKERS = ("API_KEY", "ACCESS_TOKEN", "PASSWORD", "SECRET", "CREDENTIAL")
+
+_AGENT_PYTEST_AUDIT_PLUGIN = """
+import json
+import os
+
+_records = {"format_version": 1, "run_id": os.environ.get("TRACEFIX_AGENT_AUDIT_ID"),
+            "collected_node_ids": [], "reports": [], "completed": False}
+
+def pytest_collection_modifyitems(session, config, items):
+    _records["collected_node_ids"] = [item.nodeid for item in items]
+
+def pytest_runtest_logreport(report):
+    _records["reports"].append({"nodeid": report.nodeid, "when": report.when,
+                                "outcome": report.outcome})
+
+def pytest_sessionfinish(session, exitstatus):
+    _records["exitstatus"] = exitstatus
+    _records["completed"] = True
+    path = os.environ.get("TRACEFIX_AGENT_AUDIT_PATH")
+    if path:
+        with open(path, "w", encoding="utf-8") as stream:
+            json.dump(_records, stream)
+"""
 
 
 def _truncate_text(value: str, limit: int) -> tuple[str, bool]:
@@ -68,9 +94,7 @@ def _sanitized_subprocess_env() -> dict[str, str]:
 def _is_blocked_secret_file(name: str) -> bool:
     """阻止真实 dotenv 文件，同时允许公开的 .env.example 模板。"""
     normalized = name.casefold()
-    return normalized == ".env" or (
-        normalized.startswith(".env.") and normalized != ".env.example"
-    )
+    return normalized == ".env" or (normalized.startswith(".env.") and normalized != ".env.example")
 
 
 def _resolve_workspace(workspace: str | Path) -> Path:
@@ -677,6 +701,7 @@ class RunTestsTool(_WorkspaceTool):
         default_timeout_seconds: float = 120,
         python_executable: str | Path | None = None,
         pythonpath_entries: tuple[Path, ...] = (),
+        pytest_config: str | None = None,
     ) -> None:
         super().__init__(workspace, max_output_chars=max_output_chars)
         if default_timeout_seconds <= 0:
@@ -693,6 +718,7 @@ class RunTestsTool(_WorkspaceTool):
         )
         if any(not entry.is_dir() for entry in self.pythonpath_entries):
             raise ValueError("test PYTHONPATH entries must be existing directories")
+        self.pytest_config = pytest_config
 
     def execute(self, call: ToolCall) -> ToolResult:
         """执行 pytest，并把失败和超时作为模型可以继续处理的结果返回。"""
@@ -704,23 +730,23 @@ class RunTestsTool(_WorkspaceTool):
 
         try:
             environment = _sanitized_subprocess_env()
-            # 源码布局项目（如 pytest 的 src/）必须优先导入 Agent 修改后的工作区，
-            # 不能误用测试虚拟环境中为准备依赖而安装的旧 editable package。
-            import_roots = [str(self.workspace)]
+            test_tmp = self.workspace / ".tracefix-test-tmp"
+            test_tmp.mkdir(parents=True, exist_ok=True)
+            # 污染性的 pytest 参数和自动插件注入不会从 TraceFix 父进程继承。
+            environment.pop("PYTEST_ADDOPTS", None)
+            environment.pop("PYTEST_PLUGINS", None)
+            environment["PYTEST_DISABLE_PLUGIN_AUTOLOAD"] = "1"
+            # 被测 checkout 的源码必须优先于用于提供测试依赖的额外路径。
+            import_roots: list[str] = []
             if (self.workspace / "src").is_dir():
-                import_roots.insert(0, str(self.workspace / "src"))
-            import_roots[0:0] = [str(path) for path in self.pythonpath_entries]
-            inherited_pythonpath = environment.get("PYTHONPATH")
-            if inherited_pythonpath:
-                # 继承值可能本身包含多个目录，必须作为原始字符串拼接，不能把
-                # 整串内容错误地解释成单个 Path。
-                import_roots.append(inherited_pythonpath)
+                import_roots.append(str(self.workspace / "src"))
+            import_roots.append(str(self.workspace))
+            import_roots.extend(str(path) for path in self.pythonpath_entries)
+            # 不继承父级 PYTHONPATH：其内容可能把其他 checkout 或插件注入测试进程。
             environment["PYTHONPATH"] = os.pathsep.join(import_roots)
             # 临时目录必须位于仓库内：部分项目的嵌套 pytest 会沿父目录寻找
             # pyproject，放到仓库外可能误读 TraceFix 自身配置。通过仅修改本克隆
             # 的 .git/info/exclude 隐藏副产物，不改变受测源码或共享 .gitignore。
-            test_tmp = self.workspace / ".tracefix-test-tmp"
-            test_tmp.mkdir(parents=True, exist_ok=True)
             exclude = self.workspace / ".git" / "info" / "exclude"
             if exclude.is_file():
                 current = exclude.read_text(encoding="utf-8", errors="replace")
@@ -732,6 +758,26 @@ class RunTestsTool(_WorkspaceTool):
                         stream.write(f"{marker}\n")
             environment["TMP"] = str(test_tmp)
             environment["TEMP"] = str(test_tmp)
+            config_path = self._pytest_config_path(test_tmp)
+            audit_id = uuid4().hex
+            audit_path = test_tmp / f"agent-audit-{audit_id}.json"
+            junit_path = test_tmp / f"agent-junit-{audit_id}.xml"
+            plugin_path = test_tmp / "tracefix_agent_audit.py"
+            plugin_path.write_text(_AGENT_PYTEST_AUDIT_PLUGIN, encoding="utf-8")
+            environment["PYTHONPATH"] = os.pathsep.join([str(test_tmp), *import_roots])
+            environment["TRACEFIX_AGENT_AUDIT_ID"] = audit_id
+            environment["TRACEFIX_AGENT_AUDIT_PATH"] = str(audit_path)
+            command.extend(
+                [
+                    f"--rootdir={self.workspace}",
+                    f"--confcutdir={self.workspace}",
+                    "-c",
+                    str(config_path),
+                    "-p",
+                    "tracefix_agent_audit",
+                    f"--junitxml={junit_path}",
+                ]
+            )
             completed = subprocess.run(
                 command,
                 cwd=self.workspace,
@@ -746,7 +792,45 @@ class RunTestsTool(_WorkspaceTool):
             )
             stdout, stdout_truncated = _truncate_text(completed.stdout, self.max_output_chars)
             stderr, stderr_truncated = _truncate_text(completed.stderr, self.max_output_chars)
-            passed = completed.returncode == 0
+            audit, audit_issue = self._read_agent_audit(audit_path, audit_id, completed.returncode)
+            test_stats, junit_issue = self._read_junit(junit_path)
+            phase_issue = self._validate_agent_phases(audit, test_stats)
+            if completed.returncode is None:
+                test_status = "timed_out"
+            elif (
+                any(
+                    token in f"{stdout}\n{stderr}".casefold()
+                    for token in (
+                        "modulenotfounderror",
+                        "no module named",
+                        "importerror",
+                        "cannot import name",
+                    )
+                )
+                and not audit
+            ):
+                test_status = "environment_error"
+            elif audit_issue or junit_issue or phase_issue or not audit:
+                test_status = "invalid_test_run"
+            elif (
+                test_stats["tests"] > 0
+                and test_stats["passed"] == 0
+                and test_stats["failures"] == 0
+                and test_stats["errors"] == 0
+            ):
+                test_status = "invalid_test_run"
+            elif completed.returncode != 0:
+                test_status = "test_failure"
+            elif (
+                test_stats["tests"] == 0
+                or test_stats["passed"] == 0
+                or test_stats["failures"]
+                or test_stats["errors"]
+            ):
+                test_status = "invalid_test_run"
+            else:
+                test_status = "passed"
+            passed = test_status == "passed"
             return ToolResult(
                 call_id=call.id,
                 tool_name=self.spec.name,
@@ -757,8 +841,22 @@ class RunTestsTool(_WorkspaceTool):
                     "stdout": stdout,
                     "stderr": stderr,
                     "timed_out": False,
+                    "test_status": test_status,
+                    "test_counts": test_stats,
+                    "audit_path": str(audit_path),
+                    "junit_path": str(junit_path),
+                    "audit": audit,
+                    "diagnostic": audit_issue or junit_issue or phase_issue,
                 },
-                error=None if passed else f"tests failed with exit code {completed.returncode}",
+                error=(
+                    None
+                    if passed
+                    else (
+                        f"pytest did not provide valid passing test evidence ({test_status})"
+                        if completed.returncode == 0
+                        else f"tests failed with exit code {completed.returncode}"
+                    )
+                ),
                 metadata={"truncated": stdout_truncated or stderr_truncated},
                 duration_ms=(time.monotonic() - started) * 1000,
             )
@@ -815,6 +913,38 @@ class RunTestsTool(_WorkspaceTool):
                 "only pytest or python -m pytest commands are allowed",
                 context={"command": command},
             )
+        controlled_options = {
+            "-c",
+            "--confcutdir",
+            "--rootdir",
+            "-p",
+            "-o",
+            "--override-ini",
+        }
+        remaining = parts[1:]
+        index = 0
+        while index < len(remaining):
+            item = remaining[index]
+            # 允许仓库配方显式关闭唯一会写缓存的内置插件；其它插件开关均拒绝。
+            if item == "-p" and remaining[index : index + 2] == ["-p", "no:cacheprovider"]:
+                index += 2
+                continue
+            if (
+                item in controlled_options
+                or item.startswith(
+                    (
+                        "--confcutdir=",
+                        "--rootdir=",
+                        "--override-ini=",
+                        "--junitxml=",
+                    )
+                )
+                or item.startswith("--junitxml")
+            ):
+                raise ToolValidationError(
+                    "pytest configuration and evidence options are managed by TraceFix"
+                )
+            index += 1
         # 裸 pytest 入口不会在所有平台都把 cwd 加入 sys.path；统一到当前解释器。
         selected_python = python_executable or sys.executable
         if direct_pytest:
@@ -822,6 +952,104 @@ class RunTestsTool(_WorkspaceTool):
         # 即使模型写了 python/python3/py，也统一替换为任务配置的解释器，确保
         # 同一实验组不会因 PATH 差异悄悄切换测试环境。
         return [selected_python, *parts[1:]]
+
+    def _pytest_config_path(self, temporary: Path) -> Path:
+        """Resolve an explicit checkout config, or make a private empty config."""
+        workspace = self.workspace.resolve()
+        if self.pytest_config is not None:
+            config = (workspace / self.pytest_config).resolve()
+            if not config.is_file() or config.parent != workspace:
+                raise ToolValidationError("configured pytest file is missing from the checkout")
+            return config
+        config = next(
+            (
+                self.workspace / name
+                for name in ("pytest.ini", "tox.ini", "setup.cfg", "pyproject.toml")
+                if (self.workspace / name).is_file()
+            ),
+            None,
+        )
+        if config is not None:
+            resolved = config.resolve()
+            if resolved.parent != workspace:
+                raise ToolValidationError("pytest configuration escapes the checkout root")
+            return resolved
+        empty = temporary / "empty-pytest.ini"
+        empty.write_text("[pytest]\n", encoding="utf-8")
+        return empty
+
+    @staticmethod
+    def _read_agent_audit(path: Path, audit_id: str, returncode: int) -> tuple[dict, str | None]:
+        try:
+            audit = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return {}, "pytest audit is missing or malformed"
+        if (
+            not isinstance(audit, dict)
+            or audit.get("format_version") != 1
+            or audit.get("run_id") != audit_id
+            or audit.get("completed") is not True
+            or audit.get("exitstatus") != returncode
+            or not isinstance(audit.get("collected_node_ids"), list)
+            or not isinstance(audit.get("reports"), list)
+        ):
+            return {}, "pytest audit identity or completion is invalid"
+        return audit, None
+
+    @staticmethod
+    def _read_junit(path: Path) -> tuple[dict[str, int], str | None]:
+        stats = {"tests": 0, "passed": 0, "failures": 0, "errors": 0, "skipped": 0}
+        try:
+            root = element_tree.parse(path).getroot()
+        except (OSError, element_tree.ParseError):
+            return stats, "pytest JUnit report is missing or malformed"
+        for case in root.iter("testcase"):
+            stats["tests"] += 1
+            children = list(case)
+            if any(child.tag in {"failure", "error"} for child in children):
+                stats[
+                    "failures" if any(child.tag == "failure" for child in children) else "errors"
+                ] += 1
+            elif any(child.tag == "skipped" for child in children):
+                stats["skipped"] += 1
+            else:
+                stats["passed"] += 1
+        return stats, None
+
+    @staticmethod
+    def _validate_agent_phases(audit: dict, junit: dict[str, int]) -> str | None:
+        collected = audit.get("collected_node_ids", [])
+        reports = audit.get("reports", [])
+        if not collected or len(set(collected)) != len(collected):
+            return "pytest audit has no tests or duplicate node IDs"
+        seen: set[tuple[str, str]] = set()
+        phased: dict[str, set[str]] = {}
+        for report in reports:
+            if not isinstance(report, dict):
+                return "pytest audit has a malformed phase report"
+            node, phase, outcome = report.get("nodeid"), report.get("when"), report.get("outcome")
+            if (
+                node not in collected
+                or phase not in {"setup", "call", "teardown"}
+                or outcome not in {"passed", "failed", "skipped"}
+            ):
+                return "pytest audit has an invalid node or phase"
+            if (node, phase) in seen:
+                return "pytest audit contains a duplicate test phase"
+            seen.add((node, phase))
+            phased.setdefault(node, set()).add(phase)
+        if not phased or any("setup" not in phases for phases in phased.values()):
+            return "pytest audit lacks setup phase evidence"
+        # A zero process exit code is not enough: a normal pass requires the
+        # pytest plugin to have observed all lifecycle phases for every item.
+        # Failed/aborted runs may legitimately stop before later phases; they
+        # are classified as failures by the caller, never as passing evidence.
+        if junit.get("failures", 0) == 0 and junit.get("errors", 0) == 0:
+            expected = {"setup", "call", "teardown"}
+            incomplete = [node for node in collected if phased.get(node) != expected]
+            if incomplete:
+                return "pytest audit lacks complete setup/call/teardown evidence"
+        return None
 
 
 class _GetGitDiffArgs(BaseModel):
@@ -937,6 +1165,7 @@ def create_default_tool_registry(
     test_timeout_seconds: float = 120,
     test_python_executable: str | Path | None = None,
     test_pythonpath_entries: tuple[Path, ...] = (),
+    pytest_config: str | None = None,
 ) -> ToolRegistry:
     """为一个已有初始提交的 Git 仓库创建五工具注册表。"""
     root = _resolve_workspace(workspace)
@@ -951,6 +1180,7 @@ def create_default_tool_registry(
                 default_timeout_seconds=test_timeout_seconds,
                 python_executable=test_python_executable,
                 pythonpath_entries=test_pythonpath_entries,
+                pytest_config=pytest_config,
             ),
             GetGitDiffTool(root, max_output_chars=max_output_chars),
         ]

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import os
 import subprocess
 import sys
@@ -9,7 +11,7 @@ import time
 from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, model_validator
@@ -36,6 +38,7 @@ from tracefix.provenance import (
     collect_run_provenance,
     inspect_test_environment,
 )
+from tracefix.real_recipes import EnvironmentRecipe
 from tracefix.repository import RepoMap, RepositoryIndexer
 from tracefix.tools import GetGitDiffTool, create_default_tool_registry
 from tracefix.tracing import JSONLTraceSink, TraceEvent, TraceEventType
@@ -85,6 +88,7 @@ class RunConfig(BaseModel):
     per_request_output_tokens: int = Field(default=4_096, ge=1)
     test_python_executable: Path | None = None
     test_pythonpath_entries: tuple[Path, ...] = ()
+    environment_recipe: EnvironmentRecipe | None = None
     agent_config: AgentConfig = Field(default_factory=AgentConfig)
 
     @model_validator(mode="after")
@@ -112,6 +116,7 @@ class RunResult(BaseModel):
     model_name: str
     status: AgentStatus
     stop_reason: str | None = None
+    agent_validation_status: Literal["unverified", "verified"] = "unverified"
     final_output: str | None = None
     step_count: int = Field(default=0, ge=0)
     input_tokens: int = Field(default=0, ge=0)
@@ -141,6 +146,7 @@ class RunResult(BaseModel):
     repo_map: RepoMap | None = None
     repo_map_path: str | None = None
     provenance: RunProvenance
+    workspace_preparation: dict[str, JsonValue] = Field(default_factory=dict)
     error: dict[str, JsonValue] | None = None
 
     @model_validator(mode="after")
@@ -178,6 +184,7 @@ class TraceFixRunner:
         source_repo = str(config.repo.expanduser().resolve())
         source_commit: str | None = None
         workspace: Path | None = None
+        workspace_preparation: dict[str, JsonValue] = {}
         state = AgentState(
             status=AgentStatus.FAILED,
             task=config.task,
@@ -232,6 +239,20 @@ class TraceFixRunner:
             source, source_commit = self._validate_source_repository(config.repo)
             source_repo = str(source)
             workspace = self._clone_repository(source, workspace_path)
+            workspace_preparation = self._prepare_workspace(config, workspace, run_dir)
+            if workspace_preparation.get("success") is not True:
+                raise WorkspaceError(
+                    "agent workspace preparation failed",
+                    context={"workspace_preparation": workspace_preparation},
+                )
+            sink.write(
+                TraceEvent(
+                    event_type=TraceEventType.WORKSPACE_PREPARED,
+                    task_id=run_id,
+                    step=0,
+                    payload=workspace_preparation,
+                )
+            )
 
             if config.agent_config.repo_map.enabled:
                 # 索引失败不应被静默吞掉：它会导致模型少看到本应稳定提供的定位信息。
@@ -264,6 +285,11 @@ class TraceFixRunner:
                 test_timeout_seconds=min(120.0, float(config.agent_config.wall_time_seconds)),
                 test_python_executable=config.test_python_executable,
                 test_pythonpath_entries=config.test_pythonpath_entries,
+                pytest_config=(
+                    config.environment_recipe.pytest_config
+                    if config.environment_recipe is not None
+                    else None
+                ),
             )
             agent = MinimalAgent(
                 llm,
@@ -319,6 +345,7 @@ class TraceFixRunner:
             model_name=config.model_name,
             status=state.status,
             stop_reason=state.stop_reason,
+            agent_validation_status=state.validation_status,
             final_output=state.final_output,
             step_count=state.step_count,
             input_tokens=state.input_tokens,
@@ -348,6 +375,7 @@ class TraceFixRunner:
             repo_map=repository_map,
             repo_map_path=str(repo_map_path) if repository_map is not None else None,
             provenance=provenance,
+            workspace_preparation=workspace_preparation,
             error=error,
         )
         result_path.write_text(result.model_dump_json(indent=2), encoding="utf-8")
@@ -380,6 +408,154 @@ class TraceFixRunner:
         return {
             "api_base": api_base,
             "extra_body": {"thinking": {"type": "disabled"}},
+        }
+
+    @staticmethod
+    def _prepare_workspace(
+        config: RunConfig, workspace: Path, run_dir: Path
+    ) -> dict[str, JsonValue]:
+        """Apply only the frozen task build recipe and prove its source import."""
+        recipe = config.environment_recipe
+        python = str((config.test_python_executable or Path(sys.executable)).resolve())
+        build_root = workspace / ".tracefix-build-tmp"
+        build_root.mkdir(parents=True, exist_ok=True)
+        exclude = workspace / ".git" / "info" / "exclude"
+        if exclude.is_file():
+            current = exclude.read_text(encoding="utf-8", errors="replace")
+            for entry in (".tracefix-build-tmp/", ".tracefix-test-tmp/"):
+                if entry not in current.splitlines():
+                    with exclude.open("a", encoding="utf-8") as stream:
+                        if current and not current.endswith("\n"):
+                            stream.write("\n")
+                        stream.write(f"{entry}\n")
+                    current += f"{entry}\n"
+        environment = dict(os.environ)
+        for name in tuple(environment):
+            normalized = name.upper()
+            if any(
+                marker in normalized
+                for marker in ("API_KEY", "ACCESS_TOKEN", "PASSWORD", "SECRET", "CREDENTIAL")
+            ):
+                environment.pop(name, None)
+        environment["TMP"] = str(build_root)
+        environment["TEMP"] = str(build_root)
+        environment["PIP_CACHE_DIR"] = str(build_root / "pip-cache")
+        environment["PIP_NO_CACHE_DIR"] = "1"
+        environment.pop("PYTEST_ADDOPTS", None)
+        environment.pop("PYTEST_PLUGINS", None)
+        environment["PYTEST_DISABLE_PLUGIN_AUTOLOAD"] = "1"
+        import_roots = [str(workspace / "src"), str(workspace)]
+        import_roots.extend(str(path.resolve()) for path in config.test_pythonpath_entries)
+        environment["PYTHONPATH"] = os.pathsep.join(import_roots)
+
+        steps: list[dict[str, JsonValue]] = []
+        for index, template in enumerate(recipe.build_commands if recipe else ()):
+            command = [python if value == "{python}" else value for value in template]
+            started = time.monotonic()
+            try:
+                completed = subprocess.run(
+                    command,
+                    cwd=workspace,
+                    env=environment,
+                    capture_output=True,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    timeout=300,
+                    check=False,
+                    shell=False,
+                )
+                returncode = completed.returncode
+                stdout, stderr = completed.stdout, completed.stderr
+            except (OSError, subprocess.SubprocessError) as exc:
+                returncode = None
+                stdout, stderr = "", str(exc)
+            stdout_path = run_dir / f"workspace-build-{index:02d}.stdout.txt"
+            stderr_path = run_dir / f"workspace-build-{index:02d}.stderr.txt"
+            stdout_path.write_text(stdout, encoding="utf-8")
+            stderr_path.write_text(stderr, encoding="utf-8")
+            steps.append(
+                {
+                    "command": command,
+                    "returncode": returncode,
+                    "duration_seconds": max(0.0, time.monotonic() - started),
+                    "stdout_path": str(stdout_path),
+                    "stderr_path": str(stderr_path),
+                    "stdout_sha256": hashlib.sha256(stdout.encode("utf-8")).hexdigest(),
+                    "stderr_sha256": hashlib.sha256(stderr.encode("utf-8")).hexdigest(),
+                }
+            )
+            if returncode != 0:
+                return {
+                    "success": False,
+                    "recipe_fingerprint": recipe.fingerprint if recipe else None,
+                    "build_steps": steps,
+                    "source_import_probe": None,
+                    "failure": "recipe build command failed",
+                }
+
+        probe: dict[str, JsonValue] | None = None
+        if recipe is not None and recipe.source_import_probe:
+            probe_name = recipe.source_import_probe
+            roots = [str(workspace / "src"), str(workspace)]
+            roots.extend(str(path.resolve()) for path in config.test_pythonpath_entries)
+            probe_environment = dict(environment)
+            probe_environment["PYTHONPATH"] = os.pathsep.join(roots)
+            probe_environment["TRACEFIX_IMPORT_PROBE"] = probe_name
+            script = (
+                "import importlib, json, os, sys; "
+                "name=os.environ['TRACEFIX_IMPORT_PROBE']; "
+                "importlib.import_module(name); "
+                "print(json.dumps({n:getattr(m,'__file__',None) for n,m in sys.modules.items() "
+                "if n==name or n.startswith(name+'.')}))"
+            )
+            try:
+                completed = subprocess.run(
+                    [python, "-c", script],
+                    cwd=workspace,
+                    env=probe_environment,
+                    capture_output=True,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    timeout=60,
+                    check=False,
+                    shell=False,
+                )
+                probe_lines = completed.stdout.strip().splitlines()
+                imported = (
+                    json.loads(probe_lines[-1]) if completed.returncode == 0 and probe_lines else {}
+                )
+                workspace_resolved = workspace.resolve()
+                paths = [
+                    Path(path).resolve() for path in imported.values() if isinstance(path, str)
+                ]
+                valid = bool(paths) and all(
+                    path.is_relative_to(workspace_resolved) for path in paths
+                )
+                probe = {
+                    "module": probe_name,
+                    "returncode": completed.returncode,
+                    "paths": {str(key): value for key, value in imported.items()},
+                    "valid": valid,
+                    "stderr": completed.stderr[-4000:],
+                }
+            except (OSError, subprocess.SubprocessError, json.JSONDecodeError, ValueError) as exc:
+                probe = {"module": probe_name, "valid": False, "error": str(exc)}
+            if probe.get("valid") is not True:
+                return {
+                    "success": False,
+                    "recipe_fingerprint": recipe.fingerprint,
+                    "build_steps": steps,
+                    "source_import_probe": probe,
+                    "failure": "source import probe did not resolve to the agent checkout",
+                }
+
+        return {
+            "success": True,
+            "recipe_fingerprint": recipe.fingerprint if recipe else None,
+            "build_steps": steps,
+            "source_import_probe": probe,
         }
 
     @classmethod

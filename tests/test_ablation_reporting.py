@@ -8,6 +8,7 @@ from tracefix.ablation import summarize_ablation
 from tracefix.exceptions import BenchmarkError
 from tracefix.p2_protocol import (
     P2ProtocolRecord,
+    P2QualificationRecord,
     P2TrialRecord,
     _schedule,
     _verification_failure_kind,
@@ -108,6 +109,154 @@ def test_complete_four_arm_reports_and_entry_points(reporting_experiment):
         for arm, values in task["arms"].items():
             assert values["success_rate"] == values["planned_success_lower_bound"] == 1
             assert diagnosed[arm]["trial_count"] == diagnosed[arm]["success_count"] == 3
+
+
+def test_validation_closure_summary_applies_preregistered_success_gate(tmp_path):
+    ids = tuple(f"ordinary-{index}" for index in range(8))
+    plans = _schedule(ids, "validation_closure")
+    qualifications = {
+        task_id: P2QualificationRecord(
+            task_id=task_id,
+            qualification_type="ordinary_assertion_failure",
+            base_commit="fixture",
+            dependency_fingerprint="deps",
+            expected_node_ids=(f"tests/{task_id}.py::test_case",),
+        )
+        for task_id in ids
+    }
+    protocol = P2ProtocolRecord(
+        kind="p2_validation_closure_protocol",
+        generated_at=datetime.now(UTC),
+        code_commit="fixture",
+        offline_only=True,
+        formal_ready=False,
+        formal_missing=(),
+        qualified_task_ids=ids,
+        primary_task_ids=ids,
+        collection_failure_task_ids=(),
+        task_hashes={},
+        recipe_hashes={},
+        p1_qualifications=qualifications,
+        budgets={},
+        arm_configurations={"no_compaction": {}, "validation_closure": {}},
+        schedule=plans,
+    )
+    (tmp_path / "protocol.json").write_text(protocol.model_dump_json(), encoding="utf-8")
+    trial_dir = tmp_path / "trials"
+    trial_dir.mkdir()
+    artifacts = {}
+    for name, payload in (
+        ("run.json", {"agent_config": {}, "context_metrics": {}}),
+        (
+            "verification.json",
+            {
+                "eligible": True,
+                "evidence": {
+                    "status": "passed",
+                    "junit_available": True,
+                    "audit_available": True,
+                    "collection_audit_available": True,
+                    "execution_audit_available": True,
+                    "source_import_audit_valid": True,
+                },
+            },
+        ),
+    ):
+        path = tmp_path / name
+        path.write_text(json.dumps(payload), encoding="utf-8")
+        artifacts[name] = (str(path), hashlib.sha256(path.read_bytes()).hexdigest())
+    patch_path = tmp_path / "patch.diff"
+    patch_path.write_text("diff --git a/module.py b/module.py\n", encoding="utf-8")
+    patch_identity = (str(patch_path), hashlib.sha256(patch_path.read_bytes()).hexdigest())
+    failed_verification_path = tmp_path / "verification-failed.json"
+    failed_verification_path.write_text(
+        json.dumps(
+            {
+                "eligible": False,
+                "reason": "tests_failed",
+                "evidence": {
+                    "status": "assertion_failed",
+                    "junit_available": True,
+                    "audit_available": True,
+                    "collection_audit_available": True,
+                    "execution_audit_available": True,
+                    "source_import_audit_valid": True,
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    failed_verification_identity = (
+        str(failed_verification_path),
+        hashlib.sha256(failed_verification_path.read_bytes()).hexdigest(),
+    )
+    for plan in plans:
+        task_index = ids.index(plan.task_id)
+        if plan.arm.value == "no_compaction":
+            passed = task_index < 4
+        else:
+            passed = task_index < 5 or (task_index == 5 and plan.repetition == 1)
+        verification_identity = (
+            artifacts["verification.json"] if passed else failed_verification_identity
+        )
+        record = P2TrialRecord(
+            sequence=plan.sequence,
+            task_id=plan.task_id,
+            arm=plan.arm,
+            repetition=plan.repetition,
+            mode="formal",
+            status="verification_complete",
+            stop_reason="agent_completed",
+            independent_passed=passed,
+            input_tokens=100,
+            output_tokens=10,
+            agent_duration_seconds=2,
+            calculated_cost_amount=0,
+            cost_currency="CNY",
+            run_result_path=artifacts["run.json"][0],
+            run_result_sha256=artifacts["run.json"][1],
+            verification_path=verification_identity[0],
+            verification_sha256=verification_identity[1],
+            agent_patch_path=patch_identity[0],
+            agent_patch_sha256=patch_identity[1],
+        )
+        (trial_dir / f"{plan.sequence:03d}.json").write_text(
+            record.model_dump_json(), encoding="utf-8"
+        )
+
+    summary = summarize_p2_experiment(tmp_path)
+    assert summary.planned_count == summary.completed_count == 48
+    assert summary.evidence_valid_count == 48
+    assert summary.infrastructure_error_count == 0
+    assert summary.primary_control_success_count == 12
+    assert summary.primary_treatment_success_count == 16
+    assert summary.validation_closure_net_success_gain == 4
+    assert summary.validation_closure_tasks_with_gain == 2
+    assert summary.validation_closure_adoptable is True
+    assert all(task.planned_count == 6 for task in summary.task_summaries)
+    report_path = write_p2_summary(tmp_path)
+    assert "符合门槛：True" in report_path.with_suffix(".md").read_text(encoding="utf-8")
+
+    changed_plan = next(
+        plan
+        for plan in plans
+        if plan.arm.value == "validation_closure"
+        and plan.task_id == ids[5]
+        and plan.repetition == 1
+    )
+    changed_path = trial_dir / f"{changed_plan.sequence:03d}.json"
+    changed_record = P2TrialRecord.model_validate_json(changed_path.read_text(encoding="utf-8"))
+    changed_record = changed_record.model_copy(
+        update={
+            "independent_passed": False,
+            "verification_path": failed_verification_identity[0],
+            "verification_sha256": failed_verification_identity[1],
+        }
+    )
+    changed_path.write_text(changed_record.model_dump_json(), encoding="utf-8")
+    below_threshold = summarize_p2_experiment(tmp_path)
+    assert below_threshold.primary_treatment_success_count == 15
+    assert below_threshold.validation_closure_adoptable is False
 
 
 @pytest.mark.parametrize("status", ["report_missing", "execution_error"])

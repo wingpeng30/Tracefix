@@ -21,6 +21,7 @@ class TraceEventType(StrEnum):
     MODEL_REQUESTED = "model_requested"
     RUN_PROVENANCE = "run_provenance"
     REPOSITORY_INDEXED = "repository_indexed"
+    WORKSPACE_PREPARED = "workspace_prepared"
     REPO_MAP_ADDED = "repo_map_added"
     MODEL_RESPONDED = "model_responded"
     TOOL_CALLED = "tool_called"

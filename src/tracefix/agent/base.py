@@ -5,6 +5,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from datetime import datetime
 from enum import StrEnum
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -65,6 +66,7 @@ class AgentConfig(BaseModel):
     tool_result_presentation_enabled: bool | None = None
     action_guidance_enabled: bool | None = None
     read_cache_enabled: bool | None = None
+    require_tested_completion: bool = False
     presentation: ToolPresentationConfig = Field(default_factory=ToolPresentationConfig)
     record_request_views: bool = False
     context: ContextConfig = Field(default_factory=ContextConfig)
@@ -93,6 +95,7 @@ class AgentState(BaseModel):
     finished_at: datetime | None = None
     stop_reason: str | None = None
     final_output: str | None = None
+    validation_status: Literal["unverified", "verified"] = "unverified"
     context_metrics: ContextMetrics = Field(default_factory=ContextMetrics)
     presentation_metrics: ToolPresentationMetrics = Field(default_factory=ToolPresentationMetrics)
     model_request_seconds: float = Field(default=0.0, ge=0)

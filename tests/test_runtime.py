@@ -1,6 +1,7 @@
 import json
 import os
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -21,6 +22,7 @@ from tracefix import (
     TraceFixRunner,
     WorkspaceError,
 )
+from tracefix.real_recipes import EnvironmentRecipe
 
 
 def _git(repo: Path, *arguments: str) -> subprocess.CompletedProcess[str]:
@@ -103,9 +105,7 @@ def test_runner_clones_runs_agent_writes_artifacts_and_converts_cost(tmp_path, m
     scripted = [
         _response(
             None,
-            tool_calls=(
-                ToolCall(id="patch-1", name="apply_patch", arguments={"patch": patch}),
-            ),
+            tool_calls=(ToolCall(id="patch-1", name="apply_patch", arguments={"patch": patch}),),
         ),
         _response("修复完成", input_tokens=20, output_tokens=4, cost_usd=0.02),
     ]
@@ -126,6 +126,7 @@ def test_runner_clones_runs_agent_writes_artifacts_and_converts_cost(tmp_path, m
     )
 
     assert result.status is AgentStatus.COMPLETED
+    assert result.agent_validation_status == "unverified"
     assert result.source_commit == _git(repo, "rev-parse", "HEAD").stdout.strip()
     assert result.workspace is not None
     workspace = Path(result.workspace)
@@ -158,17 +159,98 @@ def test_runner_clones_runs_agent_writes_artifacts_and_converts_cost(tmp_path, m
     assert "pydantic" in stored["provenance"]["dependency_versions"]
     event_types = [json.loads(line)["event_type"] for line in trace_text.splitlines()]
     assert event_types[0] == "run_provenance"
-    assert event_types[1] == "repository_indexed"
+    assert event_types[1] == "workspace_prepared"
+    assert event_types[2] == "repository_indexed"
     assert "repo_map_added" in event_types
     assert event_types[-1] == "task_finished"
+
+
+def test_runner_builds_agent_checkout_and_verifies_source_import_before_model(
+    tmp_path, monkeypatch
+) -> None:
+    repo = _make_repo(tmp_path)
+    (repo / "src" / "sample_pkg").mkdir(parents=True)
+    (repo / "src" / "sample_pkg" / "__init__.py").write_text("VALUE = 1\n", encoding="utf-8")
+    _git(repo, "add", "--all")
+    _git(repo, "config", "user.name", "Tests")
+    _git(repo, "config", "user.email", "tests@example.invalid")
+    _git(repo, "commit", "--quiet", "-m", "add package")
+    observed = []
+
+    def factory(config):
+        class InspectingLLM(ScriptedLLM):
+            def complete(self, messages, tools=()):
+                workspace = Path(observed[0])
+                assert (workspace / "src" / "sample_pkg" / "generated.py").is_file()
+                return _response("done")
+
+        return InspectingLLM(config, [])
+
+    recipe = EnvironmentRecipe(
+        task_id="org__sample-1",
+        build_commands=(
+            (
+                "{python}",
+                "-c",
+                "open('src/sample_pkg/generated.py','w').write('VALUE=2')",
+            ),
+        ),
+        source_import_probe="sample_pkg.generated",
+    )
+
+    class ObservedRunner(TraceFixRunner):
+        def _prepare_workspace(self, config, workspace, run_dir):
+            observed.append(str(workspace))
+            return super()._prepare_workspace(config, workspace, run_dir)
+
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-build-fixture")
+    result = ObservedRunner(factory).run(
+        RunConfig(
+            repo=repo,
+            task="inspect generated module",
+            output_dir=tmp_path / "runs",
+            env_file=None,
+            test_python_executable=Path(sys.executable),
+            environment_recipe=recipe,
+        )
+    )
+
+    assert result.status is AgentStatus.COMPLETED
+    assert result.workspace_preparation["success"] is True
+    assert result.workspace_preparation["build_steps"][0]["returncode"] == 0
+    assert result.workspace_preparation["source_import_probe"]["valid"] is True
+    assert (repo / "src" / "sample_pkg" / "generated.py").exists() is False
+
+
+def test_runner_does_not_construct_model_when_agent_source_probe_fails(
+    tmp_path, monkeypatch
+) -> None:
+    repo = _make_repo(tmp_path)
+    calls = []
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-probe-fixture")
+    result = TraceFixRunner(
+        lambda config: calls.append(config) or ScriptedLLM(config, [_response("no")])
+    ).run(
+        RunConfig(
+            repo=repo,
+            task="probe failure",
+            output_dir=tmp_path / "runs",
+            env_file=None,
+            environment_recipe=EnvironmentRecipe(
+                task_id="org__sample-1", source_import_probe="module_that_does_not_exist"
+            ),
+        )
+    )
+
+    assert result.status is AgentStatus.FAILED
+    assert result.workspace_preparation["success"] is False
+    assert calls == []
 
 
 def test_runner_marks_unknown_cost_incomplete(tmp_path, monkeypatch) -> None:
     repo = _make_repo(tmp_path)
     monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-test-unknown-cost")
-    runner = TraceFixRunner(
-        lambda config: ScriptedLLM(config, [_response("done", cost_usd=None)])
-    )
+    runner = TraceFixRunner(lambda config: ScriptedLLM(config, [_response("done", cost_usd=None)]))
 
     result = runner.run(
         RunConfig(repo=repo, task="inspect", output_dir=tmp_path / "runs", env_file=None)

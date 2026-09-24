@@ -29,6 +29,7 @@ class ExperimentArm(StrEnum):
     ACTION_ONLY = "action_optimization_bundle"
     CONTEXT_ONLY = "context_management_only"
     PRESENTATION_ONLY = "tool_presentation_only"
+    VALIDATION_CLOSURE = "validation_closure"
 
 
 class TrajectoryMetrics(BaseModel):
@@ -125,10 +126,7 @@ class PairedExperimentRunner:
             task_ids=config.benchmark.task_ids,
             limit=config.benchmark.limit,
         )
-        experiment_id = (
-            f"paired-{datetime.now(UTC).strftime('%Y%m%dT%H%M%SZ')}-"
-            f"{uuid4().hex[:8]}"
-        )
+        experiment_id = f"paired-{datetime.now(UTC).strftime('%Y%m%dT%H%M%SZ')}-{uuid4().hex[:8]}"
         experiment_dir = config.benchmark.output_dir.resolve() / experiment_id
         artifacts_dir = experiment_dir / "artifacts"
         summary_path = experiment_dir / "paired-summary.json"
@@ -164,9 +162,7 @@ class PairedExperimentRunner:
                             arm=arm,
                             task_id=task.id,
                             result=result,
-                            trajectory_metrics=analyze_trajectory(
-                                Path(result.run.trace_path)
-                            ),
+                            trajectory_metrics=analyze_trajectory(Path(result.run.trace_path)),
                         )
                     )
                     summary = self._build_summary(
@@ -177,15 +173,11 @@ class PairedExperimentRunner:
                         tuple(task.id for task in tasks),
                         summary_path,
                     )
-                    summary_path.write_text(
-                        summary.model_dump_json(indent=2), encoding="utf-8"
-                    )
+                    summary_path.write_text(summary.model_dump_json(indent=2), encoding="utf-8")
         return summary
 
     @staticmethod
-    def _agent_config(
-        config: PairedExperimentConfig, arm: ExperimentArm
-    ) -> AgentConfig:
+    def _agent_config(config: PairedExperimentConfig, arm: ExperimentArm) -> AgentConfig:
         """复制全部预算，仅覆盖上下文策略并强制记录脱敏请求视图。"""
         original = config.benchmark.agent_config
         context = ContextConfig.model_validate(
@@ -195,9 +187,7 @@ class PairedExperimentRunner:
                 "compaction_trigger_tokens": config.trigger_tokens,
             }
         )
-        return original.model_copy(
-            update={"context": context, "record_request_views": True}
-        )
+        return original.model_copy(update={"context": context, "record_request_views": True})
 
     @classmethod
     def _build_summary(
@@ -216,9 +206,7 @@ class PairedExperimentRunner:
             and trial.trajectory_metrics.compaction_count > 0
         }
         attempted_treatment_tasks = {
-            trial.task_id
-            for trial in trials
-            if trial.arm is ExperimentArm.TREATMENT
+            trial.task_id for trial in trials if trial.arm is ExperimentArm.TREATMENT
         }
         return PairedExperimentSummary(
             experiment_id=experiment_id,
@@ -259,32 +247,25 @@ class PairedExperimentRunner:
             output_tokens=sum(trial.result.run.output_tokens for trial in selected),
             cost_usd=usd,
             cost_cny_estimate=(
-                round(usd * config.benchmark.usd_cny_rate, 8)
-                if cost_complete
-                else None
+                round(usd * config.benchmark.usd_cny_rate, 8) if cost_complete else None
             ),
             tool_calls=sum(trial.trajectory_metrics.tool_calls for trial in selected),
             duplicate_tool_calls=sum(
                 trial.trajectory_metrics.duplicate_tool_calls for trial in selected
             ),
             file_rereads=sum(trial.trajectory_metrics.file_rereads for trial in selected),
-            failed_tool_calls=sum(
-                trial.trajectory_metrics.failed_tool_calls for trial in selected
-            ),
+            failed_tool_calls=sum(trial.trajectory_metrics.failed_tool_calls for trial in selected),
             compaction_triggered_trials=sum(
                 trial.trajectory_metrics.compaction_count > 0 for trial in selected
             ),
             tool_result_pruning_events=sum(
-                trial.trajectory_metrics.tool_result_pruning_events
-                for trial in selected
+                trial.trajectory_metrics.tool_result_pruning_events for trial in selected
             ),
             post_compaction_failed_tool_calls=sum(
-                trial.trajectory_metrics.post_compaction_failed_tool_calls
-                for trial in selected
+                trial.trajectory_metrics.post_compaction_failed_tool_calls for trial in selected
             ),
             unresolved_after_compaction_count=sum(
-                not trial.result.resolved
-                and trial.trajectory_metrics.compaction_count > 0
+                not trial.result.resolved and trial.trajectory_metrics.compaction_count > 0
                 for trial in selected
             ),
         )

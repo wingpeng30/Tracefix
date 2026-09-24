@@ -301,8 +301,7 @@ def test_action_guidance_override_is_independent_of_presentation_and_read_cache(
     agent.run("action hint only")
 
     assert any(
-        message.metadata.get("kind") == "token_budget_guidance"
-        for message in llm.requests[1][0]
+        message.metadata.get("kind") == "token_budget_guidance" for message in llm.requests[1][0]
     )
 
 
@@ -331,8 +330,7 @@ def test_exploration_soft_limit_adds_action_guidance() -> None:
     assert state.status is AgentStatus.COMPLETED
     assert state.search_calls == 2
     assert any(
-        message.metadata.get("kind") == "exploration_budget"
-        for message in llm.requests[1][0]
+        message.metadata.get("kind") == "exploration_budget" for message in llm.requests[1][0]
     )
 
 
@@ -444,9 +442,7 @@ def test_unknown_tool_becomes_feedback_and_agent_can_recover() -> None:
 
 def test_step_limit_interrupts_after_allowed_request() -> None:
     tool = RecordingTool()
-    llm = ScriptedLLM(
-        [response(calls=(ToolCall(id="call-1", name="search_code"),))]
-    )
+    llm = ScriptedLLM([response(calls=(ToolCall(id="call-1", name="search_code"),))])
     agent = MinimalAgent(
         llm,
         ToolRegistry([tool]),
@@ -603,9 +599,7 @@ def test_mismatched_and_crashing_tools_become_failed_results() -> None:
             response(content="收到失败反馈"),
         ]
     )
-    registry = ToolRegistry(
-        [MismatchedTool(name="bad_metadata"), CrashingTool(name="crashing")]
-    )
+    registry = ToolRegistry([MismatchedTool(name="bad_metadata"), CrashingTool(name="crashing")])
     agent = MinimalAgent(llm, registry)
 
     state = agent.run("工具错误")
@@ -634,12 +628,8 @@ def test_duplicate_failed_patch_is_not_executed_twice_and_prompts_recovery() -> 
     arguments = {"patch": "invalid but identical"}
     llm = ScriptedLLM(
         [
-            response(
-                calls=(ToolCall(id="patch-1", name="apply_patch", arguments=arguments),)
-            ),
-            response(
-                calls=(ToolCall(id="patch-2", name="apply_patch", arguments=arguments),)
-            ),
+            response(calls=(ToolCall(id="patch-1", name="apply_patch", arguments=arguments),)),
+            response(calls=(ToolCall(id="patch-2", name="apply_patch", arguments=arguments),)),
             response(content="改用其他方案"),
         ]
     )
@@ -748,12 +738,80 @@ def test_output_token_overrun_interrupts_immediately() -> None:
     assert state.output_tokens == 3
 
 
+def test_validation_closure_prompts_once_before_unverified_final() -> None:
+    llm = ScriptedLLM(
+        [
+            response(content="已修复"),
+            response(content="仍无测试输出，结束"),
+        ]
+    )
+    agent = MinimalAgent(
+        llm,
+        config=AgentConfig(require_tested_completion=True),
+    )
+
+    state = agent.run("修复并验证")
+
+    assert state.status is AgentStatus.COMPLETED
+    assert state.stop_reason == "agent_completed_unverified"
+    assert state.validation_status == "unverified"
+    assert len(llm.requests) == 2
+    assert any(
+        message.metadata.get("kind") == "validation_required" for message in llm.requests[1][0]
+    )
+
+
+def test_validation_closure_finishes_when_tests_and_nonempty_diff_are_valid() -> None:
+    @dataclass
+    class ResultTool(BaseTool):
+        name: str
+        output: dict
+
+        @property
+        def spec(self) -> ToolSpec:
+            return ToolSpec(name=self.name, description="fixture tool")
+
+        def execute(self, call: ToolCall) -> ToolResult:
+            return ToolResult(
+                call_id=call.id,
+                tool_name=self.name,
+                success=True,
+                output=self.output,
+            )
+
+    registry = ToolRegistry(
+        [
+            ResultTool("run_tests", {"test_status": "passed"}),
+            ResultTool("get_git_diff", {"diff": "diff --git a/a.py b/a.py\n+a = 1\n"}),
+        ]
+    )
+    llm = ScriptedLLM(
+        [
+            response(content="我已检查"),
+            response(
+                calls=(
+                    ToolCall(id="verified-tests", name="run_tests"),
+                    ToolCall(id="verified-diff", name="get_git_diff"),
+                )
+            ),
+            response(content="已验证"),
+        ]
+    )
+    state = MinimalAgent(
+        llm,
+        registry,
+        AgentConfig(require_tested_completion=True),
+    ).run("修复并验证")
+
+    assert state.validation_status == "verified"
+    assert state.stop_reason == "agent_completed"
+    assert state.test_runs == 1
+
+
 def test_format_error_usage_is_preserved() -> None:
     error = LLMResponseFormatError(
         "bad response",
-        context={
-            "usage": {"input_tokens": 7, "output_tokens": 3, "cost_usd": 0.25}
-        },
+        context={"usage": {"input_tokens": 7, "output_tokens": 3, "cost_usd": 0.25}},
     )
     agent = MinimalAgent(ScriptedLLM([error]))
     with pytest.raises(LLMResponseFormatError):

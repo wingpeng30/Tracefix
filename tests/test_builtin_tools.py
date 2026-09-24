@@ -157,9 +157,7 @@ def test_tool_argument_validation_and_name_mismatch(git_workspace: Path) -> None
     with pytest.raises(ToolValidationError):
         tool.execute(ToolCall(id="wrong", name="read_file", arguments={"query": "x"}))
     with pytest.raises(ToolValidationError):
-        tool.execute(
-            ToolCall(id="extra", name="search_code", arguments={"query": "x", "extra": 1})
-        )
+        tool.execute(ToolCall(id="extra", name="search_code", arguments={"query": "x", "extra": 1}))
 
 
 def test_read_file_adds_line_numbers_and_limits_range(git_workspace: Path) -> None:
@@ -250,17 +248,13 @@ def test_apply_patch_checks_then_modifies_file(git_workspace: Path) -> None:
 +    return a + b
 """
     tool = ApplyPatchTool(git_workspace)
-    result = tool.execute(
-        ToolCall(id="patch-1", name="apply_patch", arguments={"patch": patch})
-    )
+    result = tool.execute(ToolCall(id="patch-1", name="apply_patch", arguments={"patch": patch}))
 
     assert result.success is True
     assert result.output["changed_files"] == ["sample.py"]
     assert "return a + b" in (git_workspace / "sample.py").read_text(encoding="utf-8")
 
-    second = tool.execute(
-        ToolCall(id="patch-2", name="apply_patch", arguments={"patch": patch})
-    )
+    second = tool.execute(ToolCall(id="patch-2", name="apply_patch", arguments={"patch": patch}))
     assert second.success is False
     assert second.error == "patch validation failed"
 
@@ -394,22 +388,111 @@ def test_run_tests_reports_failure_and_success(git_workspace: Path) -> None:
     )
     assert passed.success is True
     assert passed.output["returncode"] == 0
+    assert passed.output["test_status"] == "passed"
+    assert passed.output["test_counts"]["passed"] >= 1
+    assert passed.output["audit"]["completed"] is True
+
+
+@pytest.mark.parametrize(
+    ("test_source", "command"),
+    [
+        ("def test_ok():\n    assert True\n", "pytest --version tests/test_invalid_run.py"),
+        ("def test_ok():\n    assert True\n", "pytest --collect-only -q tests/test_invalid_run.py"),
+        (
+            "import pytest\n\ndef test_skip():\n    pytest.skip('fixture')\n",
+            "pytest -q tests/test_invalid_run.py",
+        ),
+    ],
+)
+def test_run_tests_does_not_treat_empty_or_skipped_runs_as_verified(
+    git_workspace: Path, test_source: str, command: str
+) -> None:
+    (git_workspace / "tests" / "test_invalid_run.py").write_text(test_source, encoding="utf-8")
+    result = RunTestsTool(git_workspace).execute(
+        ToolCall(id="invalid-run", name="run_tests", arguments={"command": command})
+    )
+    assert result.success is False
+    assert result.output["test_status"] == "invalid_test_run", result.output
+
+
+def test_passing_junit_requires_complete_pytest_phase_audit() -> None:
+    from tracefix.tools.builtin import RunTestsTool
+
+    audit = {
+        "collected_node_ids": ["tests/test_ok.py::test_case"],
+        "reports": [
+            {"nodeid": "tests/test_ok.py::test_case", "when": "setup", "outcome": "passed"},
+            {"nodeid": "tests/test_ok.py::test_case", "when": "call", "outcome": "passed"},
+        ],
+    }
+    passed_junit = {"tests": 1, "passed": 1, "failures": 0, "errors": 0, "skipped": 0}
+    assert "complete setup/call/teardown" in RunTestsTool._validate_agent_phases(
+        audit, passed_junit
+    )
+    audit["reports"].append(
+        {"nodeid": "tests/test_ok.py::test_case", "when": "teardown", "outcome": "passed"}
+    )
+    assert RunTestsTool._validate_agent_phases(audit, passed_junit) is None
+    setup_failure = {
+        "collected_node_ids": ["tests/test_ok.py::test_case"],
+        "reports": [
+            {"nodeid": "tests/test_ok.py::test_case", "when": "setup", "outcome": "passed"}
+        ],
+    }
+    failed_junit = {"tests": 1, "passed": 0, "failures": 1, "errors": 0, "skipped": 0}
+    assert RunTestsTool._validate_agent_phases(setup_failure, failed_junit) is None
+
+
+def test_run_tests_clears_parent_pytest_injection_and_limits_import_roots(
+    git_workspace: Path, monkeypatch
+) -> None:
+    (git_workspace / "test_environment.py").write_text(
+        "import os\n\ndef test_environment_isolated():\n"
+        "    assert os.getenv('PYTEST_ADDOPTS') is None\n"
+        "    assert os.getenv('PYTEST_PLUGINS') is None\n"
+        "    assert os.getenv('PYTEST_DISABLE_PLUGIN_AUTOLOAD') == '1'\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("PYTEST_ADDOPTS", "--collect-only")
+    monkeypatch.setenv("PYTEST_PLUGINS", "poisoned_parent_plugin")
+    result = RunTestsTool(git_workspace).execute(
+        ToolCall(
+            id="isolated-pytest",
+            name="run_tests",
+            arguments={"command": "pytest -q test_environment.py"},
+        )
+    )
+    assert result.success is True
+    assert result.output["test_counts"]["passed"] == 1
 
 
 @pytest.mark.parametrize("command", ["pytest -q; echo unsafe", "python -c pass"])
-def test_run_tests_rejects_shell_and_non_pytest_commands(
-    git_workspace: Path, command: str
-) -> None:
+def test_run_tests_rejects_shell_and_non_pytest_commands(git_workspace: Path, command: str) -> None:
     with pytest.raises(ToolValidationError):
         RunTestsTool(git_workspace).execute(
             ToolCall(id="tests-unsafe", name="run_tests", arguments={"command": command})
         )
 
 
-@pytest.mark.parametrize("command", ["", 'pytest "unterminated'])
-def test_run_tests_rejects_empty_or_malformed_commands(
+@pytest.mark.parametrize(
+    "command",
+    [
+        "pytest -p injected_plugin tests",
+        "pytest -o addopts=--collect-only tests",
+        "pytest --override-ini=addopts= tests",
+    ],
+)
+def test_run_tests_rejects_command_level_pytest_plugin_or_config_injection(
     git_workspace: Path, command: str
 ) -> None:
+    with pytest.raises(ToolValidationError, match="configuration and evidence options"):
+        RunTestsTool(git_workspace).execute(
+            ToolCall(id="pytest-injection", name="run_tests", arguments={"command": command})
+        )
+
+
+@pytest.mark.parametrize("command", ["", 'pytest "unterminated'])
+def test_run_tests_rejects_empty_or_malformed_commands(git_workspace: Path, command: str) -> None:
     with pytest.raises(ToolValidationError):
         RunTestsTool(git_workspace).execute(
             ToolCall(id="tests-invalid", name="run_tests", arguments={"command": command})

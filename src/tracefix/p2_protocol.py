@@ -220,7 +220,9 @@ class P2ProtocolConfig(BaseModel):
     test_env_root: Path = Path("runs/p1-revalidation-20260917/environments")
     output_dir: Path = Path("runs")
     repetitions: int = Field(default=3, ge=3, le=3)
-    design: Literal["whole_system", "ablation", "presentation_only"] = "whole_system"
+    design: Literal["whole_system", "ablation", "presentation_only", "validation_closure"] = (
+        "whole_system"
+    )
     context_trigger_tokens: int = Field(default=32_000, ge=1)
     max_input_tokens: int = Field(default=350_000, ge=1)
     max_output_tokens: int = Field(default=20_000, ge=1)
@@ -249,6 +251,7 @@ class P2TrialPlan(BaseModel):
     tool_result_presentation_enabled: bool | None = None
     action_guidance_enabled: bool | None = None
     read_cache_enabled: bool | None = None
+    validation_closure_enabled: bool = False
 
 
 class P2ProtocolRecord(BaseModel):
@@ -298,6 +301,7 @@ class P2TrialRecord(BaseModel):
     calculated_cost_amount: float | None = None
     cost_currency: str | None = None
     stop_reason: str | None = None
+    agent_validation_status: Literal["unverified", "verified"] | None = None
     independent_passed: bool | None = None
     resumed: bool = False
     run_result_path: str | None = None
@@ -517,7 +521,7 @@ class P2ExperimentSummary(BaseModel):
     calculated_cost_amount: float | None = None
     cost_currency: str | None = None
     task_summaries: tuple[P2TaskSummary, ...]
-    schema_version: str = "3"
+    schema_version: str = "4"
     evidence_valid_count: int = 0
     evidence_issue_count: int = 0
     termination_categories: dict[str, int] = Field(default_factory=dict)
@@ -530,6 +534,9 @@ class P2ExperimentSummary(BaseModel):
     primary_treatment_success_rate: float | None = None
     primary_input_token_delta_task_equal_mean: float | None = None
     primary_agent_seconds_delta_task_equal_mean: float | None = None
+    validation_closure_net_success_gain: int | None = None
+    validation_closure_tasks_with_gain: int | None = None
+    validation_closure_adoptable: bool | None = None
 
 
 class P2BudgetedLLM(BaseLLM):
@@ -1173,9 +1180,8 @@ def _verification_failure_kind(task_id: str, payload: dict[str, object]) -> str 
     if not isinstance(evidence, dict):
         if payload.get("eligible") is False and (
             payload.get("patch_applied") is False
-            or payload.get("reason") in {
-                "empty_agent_patch", "agent_modified_test_or_pytest_configuration"
-            }
+            or payload.get("reason")
+            in {"empty_agent_patch", "agent_modified_test_or_pytest_configuration"}
         ):
             return None  # Explicit rejection before pytest runs.
         return "missing_verification_evidence"
@@ -1187,10 +1193,14 @@ def _verification_failure_kind(task_id: str, payload: dict[str, object]) -> str 
 
         reviewed = {
             "pylint-dev__pylint-4551": (
-                "tests/unittest_pyreverse_writer.py", "pylint.pyreverse.utils", "get_annotation"
+                "tests/unittest_pyreverse_writer.py",
+                "pylint.pyreverse.utils",
+                "get_annotation",
             ),
             "pylint-dev__pylint-4604": (
-                "tests/checkers/unittest_variables.py", "pylint.constants", "IS_PYPY"
+                "tests/checkers/unittest_variables.py",
+                "pylint.constants",
+                "IS_PYPY",
             ),
         }.get(task_id)
         records = evidence.get("collection_error_records")
@@ -1212,8 +1222,16 @@ def _verification_failure_kind(task_id: str, payload: dict[str, object]) -> str 
             return None
         return "unreviewed_collection_error"
     if status in {
-        "report_missing", "execution_error", "permission_error", "network_error", "timeout",
-        "dependency_error", "build_error", "source_import_error", "selector_mismatch", "no_tests",
+        "report_missing",
+        "execution_error",
+        "permission_error",
+        "network_error",
+        "timeout",
+        "dependency_error",
+        "build_error",
+        "source_import_error",
+        "selector_mismatch",
+        "no_tests",
     }:
         return str(status)
     if isinstance(evidence.get("error_count"), int) and evidence["error_count"] > 0:
@@ -1225,9 +1243,13 @@ def _verification_failure_kind(task_id: str, payload: dict[str, object]) -> str 
     if evidence.get("source_import_audit_valid") is False:
         return "source_import_error"
     if status in {"passed", "assertion_failed"} and not all(
-        evidence.get(flag) is True for flag in (
-            "junit_available", "audit_available", "collection_audit_available",
-            "execution_audit_available", "source_import_audit_valid",
+        evidence.get(flag) is True
+        for flag in (
+            "junit_available",
+            "audit_available",
+            "collection_audit_available",
+            "execution_audit_available",
+            "source_import_audit_valid",
         )
     ):
         return "incomplete_verification_audit"
@@ -1402,8 +1424,11 @@ def summarize_p2_experiment(experiment_dir: Path) -> P2ExperimentSummary:
     treatment_arm = (
         ExperimentArm.PRESENTATION_ONLY.value
         if protocol.kind == "p2_presentation_only_protocol"
+        else ExperimentArm.VALIDATION_CLOSURE.value
+        if protocol.kind == "p2_validation_closure_protocol"
         else ExperimentArm.TREATMENT.value
     )
+    scheduled_task_ids = {plan.task_id for plan in protocol.schedule}
     for task_id in protocol.qualified_task_ids:
         task_rows = [row for row in rows if row["task_id"] == task_id]
         by_arm = {
@@ -1422,7 +1447,8 @@ def summarize_p2_experiment(experiment_dir: Path) -> P2ExperimentSummary:
             values = [item["agent_duration_seconds"] for item in items]
             return (
                 sum(float(value) for value in values)
-                if len(items) == 3 and all(value is not None for value in values)
+                if len(items) == 3
+                and all(value is not None for value in values)
                 and all(item["evidence_valid"] for item in items)
                 else None
             )
@@ -1442,18 +1468,16 @@ def summarize_p2_experiment(experiment_dir: Path) -> P2ExperimentSummary:
             P2TaskSummary(
                 task_id=task_id,
                 qualification_type=protocol.p1_qualifications[task_id].qualification_type,
-                planned_count=6,
+                planned_count=6 if task_id in scheduled_task_ids else 0,
                 completed_count=len(task_rows),
                 repair_success_count=sum(bool(row["independent_passed"]) for row in task_rows),
                 control_success_count=sum(
-                    bool(row["independent_passed"])
-                    and bool(row["evidence_valid"])
+                    bool(row["independent_passed"]) and bool(row["evidence_valid"])
                     for row in task_rows
                     if row["arm"] == control_arm
                 ),
                 treatment_success_count=sum(
-                    bool(row["independent_passed"])
-                    and bool(row["evidence_valid"])
+                    bool(row["independent_passed"]) and bool(row["evidence_valid"])
                     for row in task_rows
                     if row["arm"] == treatment_arm
                 ),
@@ -1521,6 +1545,22 @@ def summarize_p2_experiment(experiment_dir: Path) -> P2ExperimentSummary:
 
     input_delta_mean = _task_equal_mean("input_token_delta_treatment_minus_control")
     duration_delta_mean = _task_equal_mean("duration_delta_treatment_minus_control")
+    closure_task_gains = [
+        item
+        for item in task_summaries
+        if item.task_id in protocol.primary_task_ids
+        and item.treatment_success_count > item.control_success_count
+    ]
+    closure_net_gain = primary_treatment_successes - primary_control_successes
+    closure_adoptable = (
+        protocol.kind == "p2_validation_closure_protocol"
+        and len(complete_records) == len(protocol.schedule) == 48
+        and len(valid) == len(protocol.schedule)
+        and terminations["infrastructure_error"] == 0
+        and primary_treatment_successes >= 16
+        and closure_net_gain >= 4
+        and len(closure_task_gains) >= 2
+    )
     return P2ExperimentSummary(
         protocol_sha256=str(audit["protocol_sha256"]),
         mode=(complete_records[0].mode if complete_records else "unknown"),
@@ -1528,8 +1568,10 @@ def summarize_p2_experiment(experiment_dir: Path) -> P2ExperimentSummary:
         completed_count=len(complete_records),
         repair_success_count=len(successes),
         repair_failure_count=sum(
-            row["evidence_valid"] and not row["infrastructure_error"]
-            and not row["independent_passed"] for row in rows
+            row["evidence_valid"]
+            and not row["infrastructure_error"]
+            and not row["independent_passed"]
+            for row in rows
         ),
         infrastructure_error_count=terminations["infrastructure_error"],
         unexecuted_count=terminations["unexecuted"],
@@ -1576,6 +1618,15 @@ def summarize_p2_experiment(experiment_dir: Path) -> P2ExperimentSummary:
         primary_treatment_success_rate=(primary_treatment_successes / primary_denominator),
         primary_input_token_delta_task_equal_mean=input_delta_mean,
         primary_agent_seconds_delta_task_equal_mean=duration_delta_mean,
+        validation_closure_net_success_gain=(
+            closure_net_gain if protocol.kind == "p2_validation_closure_protocol" else None
+        ),
+        validation_closure_tasks_with_gain=(
+            len(closure_task_gains) if protocol.kind == "p2_validation_closure_protocol" else None
+        ),
+        validation_closure_adoptable=(
+            closure_adoptable if protocol.kind == "p2_validation_closure_protocol" else None
+        ),
     )
 
 
@@ -1629,6 +1680,27 @@ def write_p2_summary(experiment_dir: Path) -> Path:
                     f"{special_denominator}，"
                     f"T {special_treatment_successes}/"
                     f"{special_denominator}。"
+                ),
+            ]
+        )
+    elif protocol.get("kind") == "p2_validation_closure_protocol":
+        primary_denominator = len(protocol.get("primary_task_ids", ())) * 3
+        lines.extend(
+            [
+                "",
+                (
+                    "普通题固定分母成功率："
+                    f"C {summary.primary_control_success_count}/{primary_denominator} "
+                    f"({summary.primary_control_success_rate:.1%})，T "
+                    f"{summary.primary_treatment_success_count}/{primary_denominator} "
+                    f"({summary.primary_treatment_success_rate:.1%})。"
+                ),
+                (
+                    "验证闭环预注册门槛：T 至少 16/24、较同期 C 净增至少 4 次、"
+                    "至少 2 道题有净增、证据完整且无基础设施事故；"
+                    f"本批净增 {summary.validation_closure_net_success_gain} 次，"
+                    f"净增任务 {summary.validation_closure_tasks_with_gain} 道，"
+                    f"符合门槛：{summary.validation_closure_adoptable}。"
                 ),
             ]
         )
@@ -2118,6 +2190,35 @@ def _task_hashes(tasks: tuple[RealIssueTask, ...]) -> dict[str, dict[str, str]]:
 
 
 def _schedule(task_ids: tuple[str, ...], design: str = "whole_system") -> tuple[P2TrialPlan, ...]:
+    if design == "validation_closure":
+        primary_ids = tuple(task for task in task_ids if task not in COLLECTION_FAILURE_TASK_IDS)
+        plans: list[P2TrialPlan] = []
+        for repetition, arms in enumerate(
+            (
+                (ExperimentArm.CONTROL, ExperimentArm.VALIDATION_CLOSURE),
+                (ExperimentArm.VALIDATION_CLOSURE, ExperimentArm.CONTROL),
+                (ExperimentArm.CONTROL, ExperimentArm.VALIDATION_CLOSURE),
+            ),
+            start=1,
+        ):
+            for task_id in primary_ids:
+                for arm in arms:
+                    plans.append(
+                        P2TrialPlan(
+                            sequence=len(plans) + 1,
+                            task_id=task_id,
+                            repetition=repetition,
+                            arm=arm,
+                            token_optimization_enabled=False,
+                            repo_map_enabled=False,
+                            context_compaction_enabled=False,
+                            tool_result_presentation_enabled=False,
+                            action_guidance_enabled=False,
+                            read_cache_enabled=False,
+                            validation_closure_enabled=arm is ExperimentArm.VALIDATION_CLOSURE,
+                        )
+                    )
+        return tuple(plans)
     if design == "ablation":
         arms = (
             ExperimentArm.CONTROL,
@@ -2211,6 +2312,7 @@ def _agent_configuration(config: P2ProtocolConfig, plan: P2TrialPlan) -> AgentCo
         tool_result_presentation_enabled=plan.tool_result_presentation_enabled,
         action_guidance_enabled=plan.action_guidance_enabled,
         read_cache_enabled=plan.read_cache_enabled,
+        require_tested_completion=plan.validation_closure_enabled,
         context=ContextConfig(
             enabled=plan.context_compaction_enabled,
             compaction_trigger_tokens=config.context_trigger_tokens,
@@ -2223,7 +2325,7 @@ def _agent_configuration(config: P2ProtocolConfig, plan: P2TrialPlan) -> AgentCo
 def build_p2_protocol(
     config: P2ProtocolConfig, *, repository_root: Path = Path(".")
 ) -> P2ProtocolRecord:
-    """验证 P1 入选集，冻结输入，并构造唯一的 60 次试验顺序。"""
+    """验证 P1 入选集，冻结输入，并构造设计对应的固定试验顺序。"""
     tasks = load_real_issue_tasks(config.tasks_dir, task_ids=P1_QUALIFIED_TASK_IDS)
     ids = tuple(task.id for task in tasks)
     if ids != tuple(sorted(P1_QUALIFIED_TASK_IDS)):
@@ -2255,7 +2357,11 @@ def build_p2_protocol(
             else (
                 "p2_presentation_only_protocol"
                 if config.design == "presentation_only"
-                else "p2_whole_system_ct_protocol"
+                else (
+                    "p2_validation_closure_protocol"
+                    if config.design == "validation_closure"
+                    else "p2_whole_system_ct_protocol"
+                )
             )
         ),
         generated_at=datetime.now(UTC),
@@ -2301,11 +2407,12 @@ def build_p2_protocol(
                     ),
                     "repo_map_enabled": plan.repo_map_enabled,
                     "context_compaction_enabled": plan.context_compaction_enabled,
+                    "validation_closure_enabled": plan.validation_closure_enabled,
                     "context_trigger_tokens": config.context_trigger_tokens,
                 }
                 for plan in schedule
             }
-            if config.design in {"ablation", "presentation_only"}
+            if config.design in {"ablation", "presentation_only", "validation_closure"}
             else {
                 "control": {
                     "token_optimization_enabled": False,
@@ -2314,6 +2421,7 @@ def build_p2_protocol(
                     "read_cache_enabled": False,
                     "repo_map_enabled": False,
                     "context_compaction_enabled": False,
+                    "validation_closure_enabled": False,
                     "context_trigger_tokens": config.context_trigger_tokens,
                 },
                 "treatment": {
@@ -2323,6 +2431,7 @@ def build_p2_protocol(
                     "read_cache_enabled": True,
                     "repo_map_enabled": True,
                     "context_compaction_enabled": True,
+                    "validation_closure_enabled": False,
                     "context_trigger_tokens": config.context_trigger_tokens,
                 },
             }
@@ -2357,14 +2466,33 @@ def build_p2_protocol(
                 ),
             }
             if config.design == "presentation_only"
-            else {}
+            else (
+                {
+                    "schema_version": 1,
+                    "primary_task_ids": [
+                        item for item in ids if item not in COLLECTION_FAILURE_TASK_IDS
+                    ],
+                    "special_task_ids_reported_separately": list(COLLECTION_FAILURE_TASK_IDS),
+                    "fixed_denominator": 24,
+                    "success_threshold": 16,
+                    "minimum_net_paired_success_gain": 4,
+                    "minimum_tasks_with_success_gain": 2,
+                    "unresolved_infrastructure_incidents": 0,
+                    "task_weighting": (
+                        "average_three_repetitions_within_task_then_equal_weight_tasks"
+                    ),
+                    "holdout_policy": "keep the 20 frozen holdout tasks unevaluated",
+                }
+                if config.design == "validation_closure"
+                else {}
+            )
         ),
         effective_agent_configurations=(
             {
                 plan.arm.value: _agent_configuration(config, plan).model_dump(mode="json")
                 for plan in schedule
             }
-            if config.design in {"ablation", "presentation_only"}
+            if config.design in {"ablation", "presentation_only", "validation_closure"}
             else {}
         ),
         formal=config.formal,
@@ -2475,7 +2603,11 @@ def run_p2_experiment(
         raise BenchmarkError("unknown P2 execution mode", context={"mode": mode})
     if mode == "formal" and config.formal is None:
         raise BenchmarkError("formal P2 run requires complete commercial parameters")
-    if mode == "formal" and config.design in {"ablation", "presentation_only"}:
+    if mode == "formal" and config.design in {
+        "ablation",
+        "presentation_only",
+        "validation_closure",
+    }:
         campaign = config.formal.campaign_ledger_path
         if campaign is None or not campaign.is_file():
             raise BenchmarkError("formal ablation requires the existing shared campaign ledger")
@@ -2554,11 +2686,14 @@ def _run_p2_locked(
             formal.prior_unsettled_reservation,
         )
         if initial_ledger.uncertain_request or initial_ledger.halt_reason not in {
-            None, "cost_cap_would_be_exceeded", "stage_cost_cap_would_be_exceeded"
+            None,
+            "cost_cap_would_be_exceeded",
+            "stage_cost_cap_would_be_exceeded",
         }:
             raise BenchmarkError("P2 campaign requires reconciliation before resume")
         campaign_stopped = initial_ledger.halt_reason in {
-            "cost_cap_would_be_exceeded", "stage_cost_cap_would_be_exceeded"
+            "cost_cap_would_be_exceeded",
+            "stage_cost_cap_would_be_exceeded",
         }
         campaign_stop_reason = initial_ledger.halt_reason
 
@@ -2608,7 +2743,7 @@ def _run_p2_locked(
             check_interval = 4 if config.design == "ablation" else 2
             if (
                 mode == "formal"
-                and config.design in {"ablation", "presentation_only"}
+                and config.design in {"ablation", "presentation_only", "validation_closure"}
                 and plan.sequence % check_interval == 1
             ):
                 block_check = check_p2_inputs(config)
@@ -2667,6 +2802,7 @@ def _run_p2_locked(
                         config.test_env_root, task.id
                     ),
                     test_pythonpath_entries=task.test_pythonpath_paths,
+                    environment_recipe=recipes[task.id],
                     agent_config=agent_config,
                 )
             )
@@ -2702,6 +2838,7 @@ def _run_p2_locked(
                 ),
                 cost_currency=formal.currency if mode == "formal" else None,
                 stop_reason=result.stop_reason,
+                agent_validation_status=result.agent_validation_status,
                 run_result_path=result.result_path,
                 agent_patch_path=result.diff_path,
                 agent_duration_seconds=result.duration_seconds,
@@ -2722,16 +2859,22 @@ def _run_p2_locked(
                     config.formal.prior_unsettled_reservation,
                 )
                 if ledger.uncertain_request or ledger.halt_reason not in {
-                    None, "cost_cap_would_be_exceeded", "stage_cost_cap_would_be_exceeded"
+                    None,
+                    "cost_cap_would_be_exceeded",
+                    "stage_cost_cap_would_be_exceeded",
                 }:
                     stopped = agent_record.model_copy(
-                        update={"status": "request_uncertain" if ledger.uncertain_request
-                                else "response_invalid"}
+                        update={
+                            "status": "request_uncertain"
+                            if ledger.uncertain_request
+                            else "response_invalid"
+                        }
                     )
                     write_trial_record(path, stopped)
                     raise BenchmarkError("P2 formal run stopped before another provider request")
                 campaign_stopped = ledger.halt_reason in {
-                    "cost_cap_would_be_exceeded", "stage_cost_cap_would_be_exceeded"
+                    "cost_cap_would_be_exceeded",
+                    "stage_cost_cap_would_be_exceeded",
                 }
                 campaign_stop_reason = ledger.halt_reason
         if not agent_record.agent_patch_path:

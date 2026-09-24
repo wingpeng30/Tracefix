@@ -49,6 +49,7 @@ class MinimalAgent(BaseAgent):
         self._tests_passed = False
         self._diff_nonempty = False
         self._finish_reminder_sent = False
+        self._unverified_finish_reminder_sent = False
         self._successful_tool_cache: dict[str, ToolResult] = {}
         self._repo_map_candidate_reads: set[str] = set()
         self._exploration_reminder_sent = False
@@ -107,7 +108,10 @@ class MinimalAgent(BaseAgent):
             while self.state.status is AgentStatus.RUNNING:
                 self.step()
         except AgentCompleted as exc:
-            self._finish(AgentStatus.COMPLETED, exc.code)
+            reason = exc.code
+            if self.config.require_tested_completion and self.state.validation_status != "verified":
+                reason = "agent_completed_unverified"
+            self._finish(AgentStatus.COMPLETED, reason)
         except AgentLimitExceeded as exc:
             self._emit_error(exc)
             self._finish(AgentStatus.INTERRUPTED, exc.code)
@@ -234,6 +238,24 @@ class MinimalAgent(BaseAgent):
             raise budget_error
 
         if not response.message.tool_calls:
+            if (
+                self.config.require_tested_completion
+                and self.state.validation_status != "verified"
+                and not self._unverified_finish_reminder_sent
+            ):
+                self._append_message(
+                    Message(
+                        role=MessageRole.USER,
+                        content=(
+                            "系统验证提示：当前补丁尚无与之对应的有效测试通过记录，或尚未确认非空改动。"
+                            "请检查 Diff，并运行实际测试；若预算不允许或测试与需求冲突，"
+                            "请说明具体情况。"
+                        ),
+                        metadata={"kind": "validation_required"},
+                    )
+                )
+                self._unverified_finish_reminder_sent = True
+                return
             self.state.final_output = response.message.content or ""
             self._set_phase(AgentPhase.FINISH, "assistant_final")
             raise AgentCompleted(
@@ -503,6 +525,7 @@ class MinimalAgent(BaseAgent):
                 # 文件再次改变后，旧的测试和 Diff 结论都已经过期。
                 self._tests_passed = False
                 self._diff_nonempty = False
+                self.state.validation_status = "unverified"
                 self._finish_reminder_sent = False
                 self._last_patch_failure_reason = None
             else:
@@ -518,8 +541,10 @@ class MinimalAgent(BaseAgent):
             self._tests_passed = result.success
             if result.success:
                 if self._diff_nonempty:
+                    self.state.validation_status = "verified"
                     self._set_phase(AgentPhase.FINISH, "tests_and_diff_ready")
             else:
+                self.state.validation_status = "unverified"
                 self._set_phase(AgentPhase.PATCH, "tests_failed")
             return
 
@@ -527,7 +552,10 @@ class MinimalAgent(BaseAgent):
             output = result.output if isinstance(result.output, dict) else {}
             self._diff_nonempty = bool(str(output.get("diff", "")).strip())
             if self._tests_passed and self._diff_nonempty:
+                self.state.validation_status = "verified"
                 self._set_phase(AgentPhase.FINISH, "tests_and_diff_ready")
+            else:
+                self.state.validation_status = "unverified"
 
     def _set_phase(self, phase: AgentPhase, reason: str) -> None:
         """仅在阶段实际变化时更新状态并留下可审计事件。"""

@@ -6,7 +6,13 @@ from pathlib import Path
 import pytest
 
 from tracefix.ablation import budget_preflight
-from tracefix.p2_protocol import P2ProtocolConfig, _agent_configuration, _schedule
+from tracefix.p2_protocol import (
+    COLLECTION_FAILURE_TASK_IDS,
+    P1_QUALIFIED_TASK_IDS,
+    P2ProtocolConfig,
+    _agent_configuration,
+    _schedule,
+)
 
 
 def test_four_arm_schedule_and_effective_configuration():
@@ -49,9 +55,7 @@ def test_presentation_only_schedule_has_one_isolated_feature() -> None:
             )
             assert actual == expected
     configs = {
-        plan.arm.value: _agent_configuration(
-            P2ProtocolConfig(design="presentation_only"), plan
-        )
+        plan.arm.value: _agent_configuration(P2ProtocolConfig(design="presentation_only"), plan)
         for plan in plans
     }
     baseline, treatment = configs["no_compaction"], configs["tool_presentation_only"]
@@ -63,6 +67,44 @@ def test_presentation_only_schedule_has_one_isolated_feature() -> None:
     assert baseline.read_cache_enabled is treatment.read_cache_enabled is False
     assert baseline.repo_map.enabled is treatment.repo_map.enabled is False
     assert baseline.context.enabled is treatment.context.enabled is False
+
+
+def test_validation_closure_schedule_uses_eight_ordinary_tasks_and_one_flag() -> None:
+    plans = _schedule(P1_QUALIFIED_TASK_IDS, "validation_closure")
+    assert len(plans) == 48
+    assert {plan.task_id for plan in plans} == set(P1_QUALIFIED_TASK_IDS) - set(
+        COLLECTION_FAILURE_TASK_IDS
+    )
+    expected_orders = (
+        ("no_compaction", "validation_closure"),
+        ("validation_closure", "no_compaction"),
+        ("no_compaction", "validation_closure"),
+    )
+    for repetition, expected in enumerate(expected_orders, start=1):
+        for task_id in P1_QUALIFIED_TASK_IDS:
+            if task_id in COLLECTION_FAILURE_TASK_IDS:
+                continue
+            actual = tuple(
+                plan.arm.value
+                for plan in plans
+                if plan.repetition == repetition and plan.task_id == task_id
+            )
+            assert actual == expected
+    configurations = {
+        plan.arm.value: _agent_configuration(P2ProtocolConfig(design="validation_closure"), plan)
+        for plan in plans
+    }
+    control = configurations["no_compaction"]
+    treatment = configurations["validation_closure"]
+    for config in (control, treatment):
+        assert config.token_optimization_enabled is False
+        assert config.tool_result_presentation_enabled is False
+        assert config.action_guidance_enabled is False
+        assert config.read_cache_enabled is False
+        assert config.repo_map.enabled is False
+        assert config.context.enabled is False
+    assert control.require_tested_completion is False
+    assert treatment.require_tested_completion is True
 
 
 def test_campaign_budget_does_not_reset_for_new_experiment():
