@@ -173,6 +173,139 @@ def test_duplicate_successful_read_uses_compact_cache_and_prompts_patch() -> Non
     assert TraceEventType.AGENT_PHASE_CHANGED in [event.event_type for event in sink.events]
 
 
+def test_split_optimization_flags_enable_presentation_without_guidance_or_cache() -> None:
+    class LongReadTool(BaseTool):
+        def __init__(self) -> None:
+            self.calls = []
+
+        @property
+        def name(self):
+            return "read_file"
+
+        @property
+        def spec(self):
+            return ToolSpec(name=self.name, description="read fixture")
+
+        def execute(self, call):
+            self.calls.append(call)
+            return ToolResult(
+                call_id=call.id,
+                tool_name=self.name,
+                success=True,
+                output={
+                    "path": "src/pkg/engine.py",
+                    "content": (
+                        "NODE:tests/test_engine.py::test_expected\n"
+                        + "context " * 150
+                        + "ASSERT: expected 2 got 1 ERROR: AssertionError"
+                    ),
+                },
+            )
+
+    tool = LongReadTool()
+    arguments = {"path": "src/pkg/engine.py", "start_line": 1, "end_line": 100}
+    llm = ScriptedLLM(
+        [
+            response(calls=(ToolCall(id="read-1", name="read_file", arguments=arguments),)),
+            response(calls=(ToolCall(id="read-2", name="read_file", arguments=arguments),)),
+            response(content="done"),
+        ]
+    )
+    config = AgentConfig(
+        token_optimization_enabled=False,
+        tool_result_presentation_enabled=True,
+        action_guidance_enabled=False,
+        read_cache_enabled=False,
+        max_exploration_steps=1,
+        presentation={"max_read_chars": 300},
+    )
+    agent = MinimalAgent(llm, ToolRegistry([tool]), config)
+
+    state = agent.run("preserve fixture evidence")
+
+    assert state.status is AgentStatus.COMPLETED
+    assert len(tool.calls) == 2
+    assert state.cached_tool_calls == 0
+    requests = [message for message in llm.requests[2][0] if message.role is MessageRole.TOOL]
+    assert len(requests) == 2
+    for message in requests:
+        visible = json.loads(message.content or "")
+        content = visible["output"]["content"]
+        assert visible["output"]["path"] == "src/pkg/engine.py"
+        assert "NODE:tests/test_engine.py::test_expected" in content
+        assert "ASSERT: expected 2 got 1 ERROR: AssertionError" in content
+        assert "TraceFix 已裁剪" in content
+    assert not any(
+        message.metadata.get("kind") in {"exploration_budget", "token_budget_guidance"}
+        for message in llm.requests[1][0]
+    )
+
+
+def test_read_cache_override_is_independent_of_legacy_master_switch() -> None:
+    tool = RecordingTool(name="read_file")
+    arguments = {"path": "src/parser.py", "start_line": 1, "end_line": 80}
+    llm = ScriptedLLM(
+        [
+            response(calls=(ToolCall(id="read-1", name="read_file", arguments=arguments),)),
+            response(calls=(ToolCall(id="read-2", name="read_file", arguments=arguments),)),
+            response(content="done"),
+        ]
+    )
+    agent = MinimalAgent(
+        llm,
+        ToolRegistry([tool]),
+        AgentConfig(
+            token_optimization_enabled=False,
+            tool_result_presentation_enabled=False,
+            action_guidance_enabled=False,
+            read_cache_enabled=True,
+        ),
+    )
+
+    state = agent.run("repeat read")
+
+    assert len(tool.calls) == 1
+    assert state.cached_tool_calls == 1
+
+
+def test_action_guidance_override_is_independent_of_presentation_and_read_cache() -> None:
+    tool = RecordingTool(name="read_file")
+    llm = ScriptedLLM(
+        [
+            response(
+                content="reading",
+                calls=(
+                    ToolCall(
+                        id="read-1",
+                        name="read_file",
+                        arguments={"path": "src/a.py", "start_line": 1, "end_line": 2},
+                    ),
+                ),
+                input_tokens=50,
+            ),
+            response(content="done"),
+        ]
+    )
+    agent = MinimalAgent(
+        llm,
+        ToolRegistry([tool]),
+        AgentConfig(
+            token_optimization_enabled=False,
+            tool_result_presentation_enabled=False,
+            action_guidance_enabled=True,
+            read_cache_enabled=False,
+            max_input_tokens=100,
+        ),
+    )
+
+    agent.run("action hint only")
+
+    assert any(
+        message.metadata.get("kind") == "token_budget_guidance"
+        for message in llm.requests[1][0]
+    )
+
+
 def test_exploration_soft_limit_adds_action_guidance() -> None:
     """达到搜索软上限只推动收敛，不破坏消息配对或强行终止任务。"""
     tool = RecordingTool()

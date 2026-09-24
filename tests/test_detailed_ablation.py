@@ -148,6 +148,9 @@ def test_tool_facts_checks_request_cycle_and_never_returns_raw_contents() -> Non
     assert "D:/repo" not in json.dumps(facts)
     assert facts["model_cycles"][0]["request_view_line"] == 6
     assert facts["model_cycles"][0]["repo_map_in_request"] is False
+    event = facts["model_cycles"][0]["context"]["history_compaction_events"][0]
+    assert event["tool_pruning"] is True
+    assert event["history_fold"] is False
     assert (
         facts["model_cycles"][0]["context"]["history_compaction_events"][0][
             "estimated_tokens_saved"
@@ -160,6 +163,69 @@ def test_tool_facts_checks_request_cycle_and_never_returns_raw_contents() -> Non
             [event for event in _minimal_trace() if event["event_type"] != "model_request_view"],
             "D:/repo",
         )
+
+
+@pytest.mark.parametrize(
+    ("tool_pruned", "messages", "batches", "folded", "pruning", "fold"),
+    [
+        (2, 0, 0, False, True, False),
+        (0, 4, 1, True, False, True),
+        (2, 4, 1, True, True, True),
+    ],
+)
+def test_context_events_classify_tool_pruning_and_history_folding(
+    tool_pruned, messages, batches, folded, pruning, fold
+) -> None:
+    trace = _minimal_trace()
+    prepared = next(event for event in trace if event["event_type"] == "context_prepared")
+    prepared["payload"].update(
+        tool_results_pruned=tool_pruned,
+        messages_compacted=messages,
+        batches_compacted=batches,
+        compacted=folded,
+    )
+    compacted = next(event for event in trace if event["event_type"] == "context_compacted")
+    compacted["payload"].update(
+        tool_results_pruned=tool_pruned,
+        messages_compacted=messages,
+        batches_compacted=batches,
+    )
+    event = _tool_facts(trace, "D:/repo")["model_cycles"][0]["context"][
+        "history_compaction_events"
+    ][0]
+    assert event["tool_pruning"] is pruning
+    assert event["history_fold"] is fold
+
+
+@pytest.mark.parametrize(
+    ("prepared_updates", "event_updates", "remove_event_key"),
+    [
+        ({}, {}, "tool_results_pruned"),
+        ({"tool_results_pruned": 2}, {"tool_results_pruned": 1}, None),
+        ({"messages_compacted": 1, "batches_compacted": 0, "compacted": False},
+         {"messages_compacted": 1}, None),
+    ],
+)
+def test_context_event_rejects_missing_conflicting_and_invalid_fold_counters(
+    prepared_updates, event_updates, remove_event_key
+) -> None:
+    trace = _minimal_trace()
+    prepared = next(event for event in trace if event["event_type"] == "context_prepared")
+    prepared["payload"].update(prepared_updates)
+    compacted = next(event for event in trace if event["event_type"] == "context_compacted")
+    compacted["payload"].update(event_updates)
+    if remove_event_key:
+        compacted["payload"].pop(remove_event_key)
+    with pytest.raises(BenchmarkError, match="context (event|fold marker)"):
+        _tool_facts(trace, "D:/repo")
+
+
+def test_prepared_context_rejects_missing_counters_instead_of_counting_zero() -> None:
+    trace = _minimal_trace()
+    prepared = next(event for event in trace if event["event_type"] == "context_prepared")
+    prepared["payload"].pop("messages_compacted")
+    with pytest.raises(BenchmarkError, match="prepared context"):
+        _tool_facts(trace, "D:/repo")
 
 
 def test_budget_blocked_request_tail_is_explicit_and_otherwise_rejected() -> None:

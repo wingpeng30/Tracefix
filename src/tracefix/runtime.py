@@ -419,13 +419,34 @@ class TraceFixRunner:
 
     @classmethod
     def _clone_repository(cls, source: Path, destination: Path) -> Path:
-        """从已验证 HEAD 建立无硬链接的本地克隆，并保留完整 Git 元数据。"""
+        """从已验证 HEAD 建立隔离源码副本，并保留完整 Git 元数据。"""
         destination.parent.mkdir(parents=True, exist_ok=True)
-        cls._run_git(
-            ["clone", "--quiet", "--no-hardlinks", str(source), str(destination)],
-            cwd=destination.parent,
-            purpose="clone isolated workspace",
-        )
+        try:
+            cls._run_git(
+                ["clone", "--quiet", "--no-hardlinks", str(source), str(destination)],
+                cwd=destination.parent,
+                purpose="clone isolated workspace",
+            )
+        except WorkspaceError as clone_error:
+            # Git for Windows may start MSYS sh.exe for a local file clone;
+            # restricted Windows workers can deny its signal-pipe setup. A
+            # detached worktree gives the run its own files and index while
+            # retaining the verified HEAD, without invoking upload-pack.
+            try:
+                cls._run_git(
+                    ["worktree", "add", "--detach", str(destination), "HEAD"],
+                    cwd=source,
+                    purpose="create isolated workspace worktree",
+                )
+            except WorkspaceError as worktree_error:
+                raise WorkspaceError(
+                    "cannot create isolated workspace by clone or worktree",
+                    context={
+                        "cwd": str(destination.parent),
+                        "clone_error": clone_error.context,
+                        "worktree_error": worktree_error.context,
+                    },
+                ) from worktree_error
         return destination.resolve()
 
     @staticmethod

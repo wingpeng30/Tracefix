@@ -31,6 +31,41 @@ def test_four_arm_schedule_and_effective_configuration():
         assert value == baseline, name
 
 
+def test_presentation_only_schedule_has_one_isolated_feature() -> None:
+    ids = tuple(f"task-{i}" for i in range(10))
+    plans = _schedule(ids, "presentation_only")
+    assert len(plans) == 60 and plans == _schedule(ids, "presentation_only")
+    assert {n for n in Counter((p.task_id, p.arm) for p in plans).values()} == {3}
+    expected_orders = (
+        ("no_compaction", "tool_presentation_only"),
+        ("tool_presentation_only", "no_compaction"),
+        ("no_compaction", "tool_presentation_only"),
+    )
+    for repetition, expected in enumerate(expected_orders, start=1):
+        for task_id in ids:
+            actual = tuple(
+                plan.arm.value
+                for plan in plans
+                if plan.repetition == repetition and plan.task_id == task_id
+            )
+            assert actual == expected
+    configs = {
+        plan.arm.value: _agent_configuration(
+            P2ProtocolConfig(design="presentation_only"), plan
+        )
+        for plan in plans
+    }
+    baseline, treatment = configs["no_compaction"], configs["tool_presentation_only"]
+    assert not baseline.token_optimization_enabled
+    assert not treatment.token_optimization_enabled
+    assert baseline.tool_result_presentation_enabled is False
+    assert treatment.tool_result_presentation_enabled is True
+    assert baseline.action_guidance_enabled is treatment.action_guidance_enabled is False
+    assert baseline.read_cache_enabled is treatment.read_cache_enabled is False
+    assert baseline.repo_map.enabled is treatment.repo_map.enabled is False
+    assert baseline.context.enabled is treatment.context.enabled is False
+
+
 def test_campaign_budget_does_not_reset_for_new_experiment():
     report = budget_preflight(
         cap="100", spent="29.29554120", reserved="0", input_price="2", output_price="8"
@@ -127,13 +162,8 @@ def test_formal_ablation_mock_provider_runs_agent_verification_ledger_and_resume
     )
     p2._write_cost_ledger(formal.campaign_ledger_path, initial_ledger)
     qualification_path = _p1_qualification_evidence(tmp_path, (task,), ())
-    # The shared legacy helper names a placeholder test; this real fixture's
-    # actual collected node is test_fixed. Freeze that node in every artifact.
-    for artifact in [qualification_path, *(tmp_path / "p1-artifacts").rglob("*.json")]:
-        artifact.write_text(
-            artifact.read_text(encoding="utf-8").replace("::test_hidden", "::test_fixed"),
-            encoding="utf-8",
-        )
+    # Keep the full node ID produced by the hidden fixture unchanged in P1
+    # qualification evidence and its structured audit artifacts.
     config = P2ProtocolConfig(
         design="ablation",
         source_root=sources,
@@ -157,7 +187,11 @@ def test_formal_ablation_mock_provider_runs_agent_verification_ledger_and_resume
     completed = p2.run_p2_formal(config, experiment_dir=root)
     assert completed.completed_count == 12
     assert len(provider_calls) == 24
-    assert all(r.independent_passed for r in completed.results)
+    assert all(r.independent_passed for r in completed.results), [
+        (r.sequence, r.task_id, r.arm.value, r.status, r.stop_reason, r.verification_path)
+        for r in completed.results
+        if not r.independent_passed
+    ]
     ledger_before_resume = formal.campaign_ledger_path.read_bytes()
     expected_request_cost = (2 + 8) / 1_000_000
     assert completed.calculated_cost_amount == pytest.approx(24 * expected_request_cost)

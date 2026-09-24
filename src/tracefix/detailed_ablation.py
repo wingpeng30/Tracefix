@@ -91,6 +91,19 @@ def _tool_facts(
     for index, event in enumerate(events):
         kind, payload = event["event_type"], event["payload"]
         if kind == "context_prepared":
+            counters = {
+                key: _nonnegative_int(payload.get(key))
+                for key in ("tool_results_pruned", "messages_compacted", "batches_compacted")
+            }
+            if any(value is None for value in counters.values()) or not isinstance(
+                payload.get("compacted"), bool
+            ):
+                raise BenchmarkError("detailed P2 prepared context has missing or invalid counters")
+            has_history_fold = bool(counters["messages_compacted"] or counters["batches_compacted"])
+            if payload["compacted"] is not has_history_fold:
+                raise BenchmarkError(
+                    "detailed P2 prepared context fold marker conflicts with counters"
+                )
             contexts.append(
                 {
                     "line": event_lines[event["id"]],
@@ -100,12 +113,8 @@ def _tool_facts(
                     "estimated_tokens_after": _nonnegative_int(
                         payload.get("estimated_tokens_after")
                     ),
-                    "tool_results_pruned": _nonnegative_int(payload.get("tool_results_pruned")),
-                    "messages_compacted": _nonnegative_int(payload.get("messages_compacted")),
-                    "batches_compacted": _nonnegative_int(payload.get("batches_compacted")),
-                    "compacted": payload.get("compacted")
-                    if isinstance(payload.get("compacted"), bool)
-                    else None,
+                    **counters,
+                    "compacted": payload["compacted"],
                     "history_compaction_events": [],
                 }
             )
@@ -237,18 +246,44 @@ def _tool_facts(
                 raise BenchmarkError(
                     "detailed P2 history-compaction event lacks a prepared context"
                 )
+            prepared = contexts[-1]
+            counters = {
+                key: _nonnegative_int(payload.get(key))
+                for key in ("tool_results_pruned", "messages_compacted", "batches_compacted")
+            }
+            if any(value is None for value in counters.values()):
+                raise BenchmarkError("detailed P2 context event has missing or invalid counters")
+            if any(prepared.get(key) != value for key, value in counters.items()):
+                raise BenchmarkError("detailed P2 context event conflicts with prepared context")
+            compacted = prepared.get("compacted")
+            has_history_fold = bool(counters["messages_compacted"] or counters["batches_compacted"])
+            if compacted is not has_history_fold:
+                raise BenchmarkError("detailed P2 context fold marker conflicts with its counters")
+            has_tool_pruning = bool(counters["tool_results_pruned"])
+            if not has_history_fold and not has_tool_pruning:
+                raise BenchmarkError("detailed P2 context event records no compaction operation")
+            if prepared["history_compaction_events"]:
+                raise BenchmarkError("detailed P2 prepared context has duplicate compaction events")
             contexts[-1]["history_compaction_events"].append(
                 {
                     "line": event_lines[event["id"]],
                     "estimated_tokens_saved": _nonnegative_int(
                         payload.get("estimated_tokens_saved")
                     ),
-                    "tool_results_pruned": _nonnegative_int(payload.get("tool_results_pruned")),
-                    "messages_compacted": _nonnegative_int(payload.get("messages_compacted")),
-                    "batches_compacted": _nonnegative_int(payload.get("batches_compacted")),
+                    **counters,
+                    "tool_pruning": has_tool_pruning,
+                    "history_fold": has_history_fold,
                 }
             )
 
+    for context in contexts:
+        has_operation = bool(
+            context["tool_results_pruned"]
+            or context["messages_compacted"]
+            or context["batches_compacted"]
+        )
+        if has_operation != bool(context["history_compaction_events"]):
+            raise BenchmarkError("detailed P2 context counters and events differ")
     if set(presented) != set(returned) or not called_ids.issubset(returned):
         raise BenchmarkError("detailed P2 tool result and presentation identities differ")
     orphan_returns = set(returned) - called_ids
@@ -984,13 +1019,24 @@ def _analyze(
                 "context_tool_pruned_results_sum": sum(
                     item["tool_results_pruned"] or 0 for item in mechanism["contexts"]
                 ),
-                "history_fold_event_count": sum(
+                "context_compaction_event_count": sum(
                     len(cycle.get("context_events", [])) for cycle in mechanism["model_cycles"]
+                ),
+                "context_tool_pruning_event_count": sum(
+                    event["tool_pruning"]
+                    for cycle in mechanism["model_cycles"]
+                    for event in cycle.get("context_events", [])
+                ),
+                "history_fold_event_count": sum(
+                    event["history_fold"]
+                    for cycle in mechanism["model_cycles"]
+                    for event in cycle.get("context_events", [])
                 ),
                 "history_fold_tool_results_pruned_sum": sum(
                     event["tool_results_pruned"] or 0
                     for cycle in mechanism["model_cycles"]
                     for event in cycle.get("context_events", [])
+                    if event["history_fold"]
                 ),
                 "unique_tool_result_count": len(mechanism["per_tool_result"]),
                 "repeated_request_tool_view_count": sum(
@@ -1172,6 +1218,8 @@ def _analyze(
         "context_before_peak_estimated_tokens",
         "context_after_peak_estimated_tokens",
         "context_tool_pruned_results_sum",
+        "context_compaction_event_count",
+        "context_tool_pruning_event_count",
         "history_fold_event_count",
         "history_fold_tool_results_pruned_sum",
         "unique_tool_result_count",
@@ -1251,6 +1299,8 @@ def _analyze(
             "presentation_visible_chars": sum_known("presentation_visible_chars"),
             "context_prepared_events": sum_known("context_prepared_events"),
             "context_tool_pruned_operations": sum_known("context_tool_pruned_results_sum"),
+            "context_compaction_events": sum_known("context_compaction_event_count"),
+            "context_tool_pruning_events": sum_known("context_tool_pruning_event_count"),
             "context_history_fold_events": sum_known("history_fold_event_count"),
             "context_history_fold_pruned_operations": sum_known(
                 "history_fold_tool_results_pruned_sum"
@@ -1312,7 +1362,7 @@ def _analyze(
     if changed_inputs or _sha(ledger_path.read_bytes()) != final_ledger_sha:
         raise BenchmarkError("frozen P2 evidence or campaign changed before report creation")
     report = {
-        "schema_version": 1,
+        "schema_version": 2,
         "kind": "p2_detailed_ablation_offline_diagnostic",
         "generated_at": datetime.now(UTC).isoformat(),
         "execution_commit": protocol.get("code_commit"),
@@ -1510,9 +1560,10 @@ def write_detailed_ablation_diagnostic(
             "",
             (
                 "| 组别 | 请求 | Repo Map 入请求 | 候选读取 | 重复工具视图 | 缓存命中调用 | "
-                "失败工具调用 | 输出缩短/变长 | 上下文裁剪 | 历史折叠 | 最大裁剪前/后估算峰值 |"
+                "失败工具调用 | 输出缩短/变长 | 裁剪操作 | 裁剪事件 | 历史折叠 | "
+                "最大裁剪前/后估算峰值 |"
             ),
-            "| --- | ---: | ---: | ---: | ---: | ---: | ---: | --- | ---: | ---: | ---: |",
+            "| --- | ---: | ---: | ---: | ---: | ---: | ---: | --- | ---: | ---: | ---: | ---: |",
         ]
     )
     for arm, values in report["mechanism_totals"].items():
@@ -1523,6 +1574,7 @@ def write_detailed_ablation_diagnostic(
             f"{values['presentation_shortened_results']}/"
             f"{values['presentation_lengthened_results']} | "
             f"{values['context_tool_pruned_operations']} | "
+            f"{values['context_tool_pruning_events']} | "
             f"{values['context_history_fold_events']} | "
             f"{values['max_preparation_peak_before_estimate']}/"
             f"{values['max_preparation_peak_after_estimate']} |"
@@ -1554,4 +1606,18 @@ def write_detailed_ablation_diagnostic(
         ["", "## 限制", ""] + [f"- {item}" for item in report["interpretation_limits"]] + [""]
     )
     markdown_path.write_text("\n".join(lines), encoding="utf-8")
+    index = {
+        "schema_version": 1,
+        "kind": "p2_detailed_diagnostic_evidence_index",
+        "report_schema_version": report["schema_version"],
+        "protocol_sha256": report["protocol_sha256"],
+        "input_artifact_sha256": report["input_artifact_sha256"],
+        "outputs": {
+            path.name: hashlib.sha256(path.read_bytes()).hexdigest()
+            for path in (json_path, markdown_path, pairs_path)
+        },
+    }
+    (output / "evidence-index.json").write_text(
+        json.dumps(index, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+    )
     return json_path, markdown_path, pairs_path

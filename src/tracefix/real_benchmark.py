@@ -272,16 +272,57 @@ class RealIssueTask(BaseModel):
             )
         target.parent.mkdir(parents=True, exist_ok=True)
         # --no-hardlinks 让本地 URL 测试和真实 GitHub 克隆都获得独立对象存储。
-        self._run_git(
-            ["clone", "--quiet", "--no-hardlinks", "--no-checkout", self.repo_url, str(target)],
-            cwd=target.parent,
-            timeout=300,
-        )
-        self._run_git(
-            ["checkout", "--quiet", "--detach", self.base_commit],
-            cwd=target,
-            timeout=120,
-        )
+        try:
+            self._run_git(
+                [
+                    "clone",
+                    "--quiet",
+                    "--no-hardlinks",
+                    "--no-checkout",
+                    self.repo_url,
+                    str(target),
+                ],
+                cwd=target.parent,
+                timeout=300,
+            )
+        except BenchmarkError as clone_error:
+            local_source = Path(self.repo_url).expanduser().resolve()
+            if not local_source.is_dir():
+                raise
+            if target.exists():
+                try:
+                    if any(target.iterdir()):
+                        raise BenchmarkError(
+                            "failed local clone left a nonempty checkout destination",
+                            context={"task_id": self.id, "path": str(target)},
+                        )
+                    target.rmdir()
+                except OSError as exc:
+                    raise BenchmarkError(
+                        "failed local clone left an unusable checkout destination",
+                        context={"task_id": self.id, "path": str(target)},
+                    ) from exc
+            try:
+                self._run_git(
+                    ["worktree", "add", "--detach", str(target), self.base_commit],
+                    cwd=local_source,
+                    timeout=120,
+                )
+            except BenchmarkError as worktree_error:
+                raise BenchmarkError(
+                    "cannot prepare local checkout by clone or worktree",
+                    context={
+                        "task_id": self.id,
+                        "clone_error": clone_error.context,
+                        "worktree_error": worktree_error.context,
+                    },
+                ) from worktree_error
+        else:
+            self._run_git(
+                ["checkout", "--quiet", "--detach", self.base_commit],
+                cwd=target,
+                timeout=120,
+            )
         head = self._run_git(["rev-parse", "HEAD"], cwd=target).strip()
         if head != self.base_commit:
             raise BenchmarkError(

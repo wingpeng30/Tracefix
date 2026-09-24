@@ -192,7 +192,7 @@ class P2ProtocolConfig(BaseModel):
     test_env_root: Path = Path("runs/p1-revalidation-20260917/environments")
     output_dir: Path = Path("runs")
     repetitions: int = Field(default=3, ge=3, le=3)
-    design: Literal["whole_system", "ablation"] = "whole_system"
+    design: Literal["whole_system", "ablation", "presentation_only"] = "whole_system"
     context_trigger_tokens: int = Field(default=32_000, ge=1)
     max_input_tokens: int = Field(default=350_000, ge=1)
     max_output_tokens: int = Field(default=20_000, ge=1)
@@ -218,6 +218,9 @@ class P2TrialPlan(BaseModel):
     token_optimization_enabled: bool
     repo_map_enabled: bool
     context_compaction_enabled: bool
+    tool_result_presentation_enabled: bool | None = None
+    action_guidance_enabled: bool | None = None
+    read_cache_enabled: bool | None = None
 
 
 class P2ProtocolRecord(BaseModel):
@@ -243,6 +246,7 @@ class P2ProtocolRecord(BaseModel):
     arm_configurations: dict[str, dict[str, bool | int]]
     schedule: tuple[P2TrialPlan, ...]
     formal: P2FormalRunRequirements | None = None
+    analysis_plan: dict[str, object] = Field(default_factory=dict)
     scoring_contract_version: str | None = None
     scoring_instruction_sha256: str | None = None
     effective_agent_configurations: dict[str, dict] = Field(default_factory=dict)
@@ -454,6 +458,8 @@ class P2TaskSummary(BaseModel):
     repair_failure_count: int
     infrastructure_error_count: int
     unexecuted_count: int
+    control_success_count: int = 0
+    treatment_success_count: int = 0
     control_input_tokens: int | None = None
     treatment_input_tokens: int | None = None
     input_token_delta_treatment_minus_control: int | None = None
@@ -483,11 +489,19 @@ class P2ExperimentSummary(BaseModel):
     calculated_cost_amount: float | None = None
     cost_currency: str | None = None
     task_summaries: tuple[P2TaskSummary, ...]
-    schema_version: str = "2"
+    schema_version: str = "3"
     evidence_valid_count: int = 0
     evidence_issue_count: int = 0
     termination_categories: dict[str, int] = Field(default_factory=dict)
     verification_reasons: dict[str, int] = Field(default_factory=dict)
+    control_success_count: int = 0
+    treatment_success_count: int = 0
+    primary_control_success_count: int = 0
+    primary_treatment_success_count: int = 0
+    primary_control_success_rate: float | None = None
+    primary_treatment_success_rate: float | None = None
+    primary_input_token_delta_task_equal_mean: float | None = None
+    primary_agent_seconds_delta_task_equal_mean: float | None = None
 
 
 class P2BudgetedLLM(BaseLLM):
@@ -1352,11 +1366,17 @@ def summarize_p2_experiment(experiment_dir: Path) -> P2ExperimentSummary:
     terminations = Counter(str(row["termination_category"]) for row in rows)
     reasons = Counter(str(row["verification_reason"]) for row in rows)
     task_summaries: list[P2TaskSummary] = []
+    control_arm = ExperimentArm.CONTROL.value
+    treatment_arm = (
+        ExperimentArm.PRESENTATION_ONLY.value
+        if protocol.kind == "p2_presentation_only_protocol"
+        else ExperimentArm.TREATMENT.value
+    )
     for task_id in protocol.qualified_task_ids:
         task_rows = [row for row in rows if row["task_id"] == task_id]
         by_arm = {
             arm.value: [row for row in task_rows if row["arm"] == arm.value]
-            for arm in (ExperimentArm.CONTROL, ExperimentArm.TREATMENT)
+            for arm in (ExperimentArm(control_arm), ExperimentArm(treatment_arm))
         }
 
         def _known_total(items: list[dict[str, object]], field: str) -> int | None:
@@ -1375,8 +1395,8 @@ def summarize_p2_experiment(experiment_dir: Path) -> P2ExperimentSummary:
                 else None
             )
 
-        control = by_arm[ExperimentArm.CONTROL.value]
-        treatment = by_arm[ExperimentArm.TREATMENT.value]
+        control = by_arm[control_arm]
+        treatment = by_arm[treatment_arm]
         control_tokens = _known_total(control, "input_tokens")
         treatment_tokens = _known_total(treatment, "input_tokens")
         control_duration = _known_duration(control)
@@ -1393,6 +1413,18 @@ def summarize_p2_experiment(experiment_dir: Path) -> P2ExperimentSummary:
                 planned_count=6,
                 completed_count=len(task_rows),
                 repair_success_count=sum(bool(row["independent_passed"]) for row in task_rows),
+                control_success_count=sum(
+                    bool(row["independent_passed"])
+                    and bool(row["evidence_valid"])
+                    for row in task_rows
+                    if row["arm"] == control_arm
+                ),
+                treatment_success_count=sum(
+                    bool(row["independent_passed"])
+                    and bool(row["evidence_valid"])
+                    for row in task_rows
+                    if row["arm"] == treatment_arm
+                ),
                 repair_failure_count=sum(
                     row["termination_category"] != "unexecuted"
                     and row["evidence_valid"]
@@ -1430,6 +1462,33 @@ def summarize_p2_experiment(experiment_dir: Path) -> P2ExperimentSummary:
     complete_records = [record for record in records if record is not None]
     currencies = {record.cost_currency for record in complete_records if record.cost_currency}
     all_present = len(complete_records) == len(protocol.schedule) and len(valid) == len(rows)
+    primary_denominator = len(protocol.primary_task_ids) * 3
+    primary_rows = [row for row in rows if row["task_id"] in protocol.primary_task_ids]
+    primary_control_successes = sum(
+        bool(row["independent_passed"])
+        and bool(row["evidence_valid"])
+        and row["arm"] == control_arm
+        for row in primary_rows
+    )
+    primary_treatment_successes = sum(
+        bool(row["independent_passed"])
+        and bool(row["evidence_valid"])
+        and row["arm"] == treatment_arm
+        for row in primary_rows
+    )
+
+    def _task_equal_mean(field: str) -> float | None:
+        values = [
+            getattr(item, field)
+            for item in task_summaries
+            if item.task_id in protocol.primary_task_ids
+        ]
+        if len(values) != len(protocol.primary_task_ids) or any(value is None for value in values):
+            return None
+        return sum(float(value) for value in values) / len(values)
+
+    input_delta_mean = _task_equal_mean("input_token_delta_treatment_minus_control")
+    duration_delta_mean = _task_equal_mean("duration_delta_treatment_minus_control")
     return P2ExperimentSummary(
         protocol_sha256=str(audit["protocol_sha256"]),
         mode=(complete_records[0].mode if complete_records else "unknown"),
@@ -1467,6 +1526,24 @@ def summarize_p2_experiment(experiment_dir: Path) -> P2ExperimentSummary:
         evidence_issue_count=len(rows) - len(valid),
         termination_categories=dict(sorted(terminations.items())),
         verification_reasons=dict(sorted(reasons.items())),
+        control_success_count=sum(
+            bool(row["independent_passed"])
+            and bool(row["evidence_valid"])
+            and row["arm"] == control_arm
+            for row in rows
+        ),
+        treatment_success_count=sum(
+            bool(row["independent_passed"])
+            and bool(row["evidence_valid"])
+            and row["arm"] == treatment_arm
+            for row in rows
+        ),
+        primary_control_success_count=primary_control_successes,
+        primary_treatment_success_count=primary_treatment_successes,
+        primary_control_success_rate=(primary_control_successes / primary_denominator),
+        primary_treatment_success_rate=(primary_treatment_successes / primary_denominator),
+        primary_input_token_delta_task_equal_mean=input_delta_mean,
+        primary_agent_seconds_delta_task_equal_mean=duration_delta_mean,
     )
 
 
@@ -1482,15 +1559,49 @@ def write_p2_summary(experiment_dir: Path) -> Path:
     path = root / "p2-summary.json"
     path.write_text(summary.model_dump_json(indent=2), encoding="utf-8")
     report = root / "p2-summary.md"
-    report.write_text(
-        "# P2 实验汇总\n\n"
+    lines = [
+        "# P2 实验汇总",
+        "",
         f"计划 {summary.planned_count} 次，完成 {summary.completed_count} 次；"
         f"独立验收成功 {summary.repair_success_count} 次，失败 {summary.repair_failure_count} 次，"
         f"基础设施错误 {summary.infrastructure_error_count} 次，"
-        f"未执行 {summary.unexecuted_count} 次。\n\n"
-        "模拟结果仅验证工程流程，不构成 Agent 修复能力结论。\n",
-        encoding="utf-8",
-    )
+        f"未执行 {summary.unexecuted_count} 次。",
+    ]
+    if protocol.get("kind") == "p2_presentation_only_protocol":
+        primary_denominator = len(protocol.get("primary_task_ids", ())) * 3
+        special_denominator = len(protocol.get("collection_failure_task_ids", ())) * 3
+        special_control_successes = (
+            summary.control_success_count - summary.primary_control_success_count
+        )
+        special_treatment_successes = (
+            summary.treatment_success_count - summary.primary_treatment_success_count
+        )
+        lines.extend(
+            [
+                "",
+                (
+                    "普通题固定分母成功率："
+                    f"C {summary.primary_control_success_count}/{primary_denominator} "
+                    f"({summary.primary_control_success_rate:.1%})，T "
+                    f"{summary.primary_treatment_success_count}/{primary_denominator} "
+                    f"({summary.primary_treatment_success_rate:.1%})。"
+                ),
+                (
+                    "普通题任务等权 T−C 输入 Token 差："
+                    f"{summary.primary_input_token_delta_task_equal_mean}；Agent 秒差："
+                    f"{summary.primary_agent_seconds_delta_task_equal_mean}。"
+                ),
+                (
+                    "收集失败资格题成功数单列："
+                    f"C {special_control_successes}/"
+                    f"{special_denominator}，"
+                    f"T {special_treatment_successes}/"
+                    f"{special_denominator}。"
+                ),
+            ]
+        )
+    lines.extend(["", "模拟结果仅验证工程流程，不构成 Agent 修复能力结论。", ""])
+    report.write_text("\n".join(lines), encoding="utf-8")
     return path
 
 
@@ -1999,6 +2110,37 @@ def _schedule(task_ids: tuple[str, ...], design: str = "whole_system") -> tuple[
                         )
                     )
         return tuple(plans)
+    if design == "presentation_only":
+        plans = []
+        for repetition, arms in enumerate(
+            (
+                (ExperimentArm.CONTROL, ExperimentArm.TREATMENT),
+                (ExperimentArm.TREATMENT, ExperimentArm.CONTROL),
+                (ExperimentArm.CONTROL, ExperimentArm.TREATMENT),
+            ),
+            start=1,
+        ):
+            for task_id in task_ids:
+                for arm in arms:
+                    treatment = arm is ExperimentArm.TREATMENT
+                    recorded_arm = (
+                        ExperimentArm.PRESENTATION_ONLY if treatment else ExperimentArm.CONTROL
+                    )
+                    plans.append(
+                        P2TrialPlan(
+                            sequence=len(plans) + 1,
+                            task_id=task_id,
+                            repetition=repetition,
+                            arm=recorded_arm,
+                            token_optimization_enabled=False,
+                            repo_map_enabled=False,
+                            context_compaction_enabled=False,
+                            tool_result_presentation_enabled=treatment,
+                            action_guidance_enabled=False,
+                            read_cache_enabled=False,
+                        )
+                    )
+        return tuple(plans)
     plans: list[P2TrialPlan] = []
     for repetition, arms in enumerate(
         (
@@ -2034,6 +2176,9 @@ def _agent_configuration(config: P2ProtocolConfig, plan: P2TrialPlan) -> AgentCo
         wall_time_seconds=config.wall_time_seconds,
         max_test_runs=config.max_test_runs,
         token_optimization_enabled=plan.token_optimization_enabled,
+        tool_result_presentation_enabled=plan.tool_result_presentation_enabled,
+        action_guidance_enabled=plan.action_guidance_enabled,
+        read_cache_enabled=plan.read_cache_enabled,
         context=ContextConfig(
             enabled=plan.context_compaction_enabled,
             compaction_trigger_tokens=config.context_trigger_tokens,
@@ -2075,7 +2220,11 @@ def build_p2_protocol(
         kind=(
             "p2_four_arm_ablation_protocol"
             if config.design == "ablation"
-            else "p2_whole_system_ct_protocol"
+            else (
+                "p2_presentation_only_protocol"
+                if config.design == "presentation_only"
+                else "p2_whole_system_ct_protocol"
+            )
         ),
         generated_at=datetime.now(UTC),
         code_commit=_git_commit(repository_root),
@@ -2103,22 +2252,43 @@ def build_p2_protocol(
             {
                 plan.arm.value: {
                     "token_optimization_enabled": plan.token_optimization_enabled,
+                    "tool_result_presentation_enabled": (
+                        plan.token_optimization_enabled
+                        if plan.tool_result_presentation_enabled is None
+                        else plan.tool_result_presentation_enabled
+                    ),
+                    "action_guidance_enabled": (
+                        plan.token_optimization_enabled
+                        if plan.action_guidance_enabled is None
+                        else plan.action_guidance_enabled
+                    ),
+                    "read_cache_enabled": (
+                        plan.token_optimization_enabled
+                        if plan.read_cache_enabled is None
+                        else plan.read_cache_enabled
+                    ),
                     "repo_map_enabled": plan.repo_map_enabled,
                     "context_compaction_enabled": plan.context_compaction_enabled,
                     "context_trigger_tokens": config.context_trigger_tokens,
                 }
                 for plan in schedule
             }
-            if config.design == "ablation"
+            if config.design in {"ablation", "presentation_only"}
             else {
                 "control": {
                     "token_optimization_enabled": False,
+                    "tool_result_presentation_enabled": False,
+                    "action_guidance_enabled": False,
+                    "read_cache_enabled": False,
                     "repo_map_enabled": False,
                     "context_compaction_enabled": False,
                     "context_trigger_tokens": config.context_trigger_tokens,
                 },
                 "treatment": {
                     "token_optimization_enabled": True,
+                    "tool_result_presentation_enabled": True,
+                    "action_guidance_enabled": True,
+                    "read_cache_enabled": True,
                     "repo_map_enabled": True,
                     "context_compaction_enabled": True,
                     "context_trigger_tokens": config.context_trigger_tokens,
@@ -2126,12 +2296,43 @@ def build_p2_protocol(
             }
         ),
         schedule=schedule,
+        analysis_plan=(
+            {
+                "schema_version": 1,
+                "primary_task_ids": [
+                    item for item in ids if item not in COLLECTION_FAILURE_TASK_IDS
+                ],
+                "special_task_ids_reported_separately": list(COLLECTION_FAILURE_TASK_IDS),
+                "fixed_denominator": True,
+                "task_weighting": "average_three_repetitions_within_task_then_equal_weight_tasks",
+                "adoption_rule": {
+                    "all_60_positions_have_valid_evidence": True,
+                    "unresolved_infrastructure_incidents": 0,
+                    "ordinary_success_rate_not_below_concurrent_control": True,
+                    "provider_input_tokens_lower_than_concurrent_control": True,
+                    "agent_elapsed_time_lower_than_concurrent_control": True,
+                    "fixture_marker_retention_passed": True,
+                },
+                "fixture_markers": [
+                    "source_path",
+                    "assertion_text",
+                    "exception_type",
+                    "complete_test_node_id",
+                ],
+                "holdout_policy": (
+                    "do not evaluate the frozen 20-task holdout unless a distinct configuration "
+                    "passes every adoption condition and is frozen"
+                ),
+            }
+            if config.design == "presentation_only"
+            else {}
+        ),
         effective_agent_configurations=(
             {
                 plan.arm.value: _agent_configuration(config, plan).model_dump(mode="json")
                 for plan in schedule
             }
-            if config.design == "ablation"
+            if config.design in {"ablation", "presentation_only"}
             else {}
         ),
         formal=config.formal,
@@ -2242,7 +2443,7 @@ def run_p2_experiment(
         raise BenchmarkError("unknown P2 execution mode", context={"mode": mode})
     if mode == "formal" and config.formal is None:
         raise BenchmarkError("formal P2 run requires complete commercial parameters")
-    if mode == "formal" and config.design == "ablation":
+    if mode == "formal" and config.design in {"ablation", "presentation_only"}:
         campaign = config.formal.campaign_ledger_path
         if campaign is None or not campaign.is_file():
             raise BenchmarkError("formal ablation requires the existing shared campaign ledger")
@@ -2376,7 +2577,12 @@ def _run_p2_locked(
                 if next_sequence is None:
                     next_sequence = plan.sequence
                 continue
-            if mode == "formal" and config.design == "ablation" and plan.sequence % 4 == 1:
+            check_interval = 4 if config.design == "ablation" else 2
+            if (
+                mode == "formal"
+                and config.design in {"ablation", "presentation_only"}
+                and plan.sequence % check_interval == 1
+            ):
                 block_check = check_p2_inputs(config)
                 checked_protocol = block_check.protocol.model_copy(
                     update={"generated_at": protocol.generated_at}

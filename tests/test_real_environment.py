@@ -102,7 +102,14 @@ def test_preparer_creates_and_reuses_isolated_environment(tmp_path, monkeypatch)
 
     def fake_run(command, cwd, timeout, environment=None):
         if command[2:3] == ("venv",):
-            return subprocess.run(command, cwd=cwd, capture_output=True, text=True, check=False)
+            return subprocess.run(
+                command,
+                cwd=cwd,
+                capture_output=True,
+                text=True,
+                check=False,
+                env=environment,
+            )
         return subprocess.CompletedProcess(command, 0, "", "")
 
     monkeypatch.setattr("tracefix.real_environment._run", fake_run)
@@ -136,7 +143,14 @@ def test_recipe_hash_invalidates_reuse_and_storage_ignores_unmanaged_paths(
 
     def fake_run(command, cwd, timeout, environment=None):
         if command[2:3] == ("venv",):
-            return subprocess.run(command, cwd=cwd, capture_output=True, text=True, check=False)
+            return subprocess.run(
+                command,
+                cwd=cwd,
+                capture_output=True,
+                text=True,
+                check=False,
+                env=environment,
+            )
         return subprocess.CompletedProcess(command, 0, "", "")
 
     monkeypatch.setattr("tracefix.real_environment._run", fake_run)
@@ -174,7 +188,14 @@ def test_preparer_runs_recipe_build_in_isolated_copy(tmp_path, monkeypatch) -> N
     def fake_run(command, cwd, timeout, environment=None):
         commands.append(command)
         if command[2:3] == ("venv",):
-            return subprocess.run(command, cwd=cwd, capture_output=True, text=True, check=False)
+            return subprocess.run(
+                command,
+                cwd=cwd,
+                capture_output=True,
+                text=True,
+                check=False,
+                env=environment,
+            )
         return subprocess.CompletedProcess(command, 0, "", "")
 
     monkeypatch.setattr("tracefix.real_environment._run", fake_run)
@@ -199,7 +220,14 @@ def test_preparer_keeps_git_metadata_only_in_build_copy(tmp_path, monkeypatch) -
 
     def fake_run(command, cwd, timeout, environment=None):
         if command[2:3] == ("venv",):
-            return subprocess.run(command, cwd=cwd, capture_output=True, text=True, check=False)
+            return subprocess.run(
+                command,
+                cwd=cwd,
+                capture_output=True,
+                text=True,
+                check=False,
+                env=environment,
+            )
         if command[-1:] == (".",):
             copied_git_metadata.append((cwd / ".git").read_text(encoding="utf-8"))
         return subprocess.CompletedProcess(command, 0, "", "")
@@ -232,7 +260,14 @@ def test_preparer_records_failed_recipe_build_without_installing_project(
 
     def fake_run(command, cwd, timeout, environment=None):
         if command[2:3] == ("venv",):
-            return subprocess.run(command, cwd=cwd, capture_output=True, text=True, check=False)
+            return subprocess.run(
+                command,
+                cwd=cwd,
+                capture_output=True,
+                text=True,
+                check=False,
+                env=environment,
+            )
         if command[-2:] == ("setup.py", "--version"):
             return subprocess.CompletedProcess(command, 1, "", "version failed")
         return subprocess.CompletedProcess(command, 0, "", "")
@@ -300,7 +335,14 @@ def test_preparer_preserves_unregistered_or_unhealthy_environment(tmp_path, monk
 
     def fake_run(command, cwd, timeout, environment=None):
         if command[2:3] == ("venv",):
-            return subprocess.run(command, cwd=cwd, capture_output=True, text=True, check=False)
+            return subprocess.run(
+                command,
+                cwd=cwd,
+                capture_output=True,
+                text=True,
+                check=False,
+                env=environment,
+            )
         return subprocess.CompletedProcess(command, 0, "", "")
 
     monkeypatch.setattr("tracefix.real_environment._run", fake_run)

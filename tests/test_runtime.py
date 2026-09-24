@@ -197,6 +197,30 @@ def test_runner_returns_failed_result_for_dirty_source(tmp_path, monkeypatch) ->
     assert Path(result.diff_path).read_text(encoding="utf-8") == ""
 
 
+def test_workspace_clone_falls_back_to_detached_worktree(tmp_path, monkeypatch) -> None:
+    repo = _make_repo(tmp_path)
+    expected_commit = _git(repo, "rev-parse", "HEAD").stdout.strip()
+    original = TraceFixRunner._run_git
+
+    def clone_blocked(cls, arguments, *, cwd, purpose):
+        if arguments[0] == "clone":
+            raise WorkspaceError(
+                "cannot clone isolated workspace",
+                context={"returncode": 128, "stderr": "MSYS signal pipe denied"},
+            )
+        return original(arguments, cwd=cwd, purpose=purpose)
+
+    monkeypatch.setattr(TraceFixRunner, "_run_git", classmethod(clone_blocked))
+    destination = tmp_path / "runs" / "trial" / "workspace"
+
+    workspace = TraceFixRunner._clone_repository(repo, destination)
+
+    assert workspace == destination.resolve()
+    assert (workspace / "sample.py").read_text(encoding="utf-8") == "VALUE = 1\n"
+    assert _git(workspace, "rev-parse", "HEAD").stdout.strip() == expected_commit
+    assert _git(workspace, "status", "--porcelain").stdout.strip() == ""
+
+
 def test_runner_loads_dotenv_without_overriding_existing_environment(tmp_path, monkeypatch) -> None:
     repo = _make_repo(tmp_path)
     env_file = tmp_path / ".env"

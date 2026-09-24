@@ -61,6 +61,10 @@ class AgentConfig(BaseModel):
     max_file_reads_before_patch: int = Field(default=8, ge=1)
     repo_map_reads_before_patch: int = Field(default=2, ge=1)
     token_optimization_enabled: bool = True
+    # Optional per-feature overrides preserve the legacy master switch when unset.
+    tool_result_presentation_enabled: bool | None = None
+    action_guidance_enabled: bool | None = None
+    read_cache_enabled: bool | None = None
     presentation: ToolPresentationConfig = Field(default_factory=ToolPresentationConfig)
     record_request_views: bool = False
     context: ContextConfig = Field(default_factory=ContextConfig)

@@ -61,7 +61,8 @@ class MinimalAgent(BaseAgent):
         presentation_config = self.config.presentation.model_copy(
             update={
                 "enabled": (
-                    self.config.presentation.enabled and self.config.token_optimization_enabled
+                    self.config.presentation.enabled
+                    and self._feature_enabled(self.config.tool_result_presentation_enabled)
                 )
             }
         )
@@ -281,7 +282,7 @@ class MinimalAgent(BaseAgent):
             self.state.file_read_calls += 1
 
         if (
-            self.config.token_optimization_enabled
+            self._feature_enabled(self.config.action_guidance_enabled)
             and self.state.input_tokens / self.config.max_input_tokens >= 0.85
             and call.name
             in {
@@ -314,7 +315,7 @@ class MinimalAgent(BaseAgent):
         # 搜索和读取是纯读取操作。完全相同的成功调用直接返回紧凑引用，原始结果仍在
         # 完整历史中，避免再次扫描仓库并把同一大段内容重复送入后续上下文。
         if (
-            self.config.token_optimization_enabled
+            self._feature_enabled(self.config.read_cache_enabled)
             and call.name
             in {
                 ReservedToolName.SEARCH_CODE.value,
@@ -402,7 +403,7 @@ class MinimalAgent(BaseAgent):
         self.state.tool_execution_seconds += time.monotonic() - started
         self._record_tool_outcome(call, result, signature)
         if (
-            self.config.token_optimization_enabled
+            self._feature_enabled(self.config.read_cache_enabled)
             and result.success
             and call.name
             in {
@@ -539,10 +540,14 @@ class MinimalAgent(BaseAgent):
             {"from": previous.value, "to": phase.value, "reason": reason},
         )
 
+    def _feature_enabled(self, override: bool | None) -> bool:
+        """Resolve a split optimization flag with backward-compatible fallback."""
+        return self.config.token_optimization_enabled if override is None else override
+
     def _append_exploration_guidance_if_needed(self) -> None:
         """探索达到任一软上限后推动收敛，不直接拒绝模型后续的定向读取。"""
         if (
-            not self.config.token_optimization_enabled
+            not self._feature_enabled(self.config.action_guidance_enabled)
             or self.state.phase is not AgentPhase.EXPLORE
             or self._exploration_reminder_sent
         ):
@@ -573,7 +578,7 @@ class MinimalAgent(BaseAgent):
     def _append_patch_action_guidance_if_needed(self) -> None:
         """读取足够的 Repo Map 候选后要求从定位切换到最小修改。"""
         if (
-            not self.config.token_optimization_enabled
+            not self._feature_enabled(self.config.action_guidance_enabled)
             or self._patch_action_reminder_sent
             or self.state.repo_map_candidate_reads < self.config.repo_map_reads_before_patch
         ):
@@ -601,7 +606,7 @@ class MinimalAgent(BaseAgent):
         pending = [
             threshold for threshold in reached if threshold not in self._budget_guidance_sent
         ]
-        if not self.config.token_optimization_enabled or not pending:
+        if not self._feature_enabled(self.config.action_guidance_enabled) or not pending:
             return
         threshold = max(pending)
         if threshold >= 85:

@@ -1443,8 +1443,7 @@ class RealPrescreenRunner:
         """从干净固定提交重建 Agent 补丁，再注入 Agent 看不到的测试。"""
         if not run.diff_path:
             return None
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        _git(["clone", "--quiet", "--no-hardlinks", str(source), str(destination)], source.parent)
+        _create_behavior_checkout(source, destination)
         patch = Path(run.diff_path)
         if patch.is_file() and patch.stat().st_size:
             try:

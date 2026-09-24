@@ -1,5 +1,6 @@
 import hashlib
 import json
+import shutil
 import subprocess
 import sys
 from datetime import UTC, datetime
@@ -7,9 +8,9 @@ from pathlib import Path
 
 import pytest
 
-from tracefix import AgentConfig, AgentStatus, LLMConfig, RunResult
+from tracefix import AgentConfig, AgentStatus, BaseLLM, LLMConfig, RunResult
 from tracefix.exceptions import AgentLimitExceeded, BenchmarkError, P2TrialBudgetExceeded
-from tracefix.messages import Message, MessageRole
+from tracefix.messages import Message, MessageRole, ToolCall
 from tracefix.models import LLMResponse, TokenUsage
 from tracefix.p2_protocol import (
     P2BudgetedLLM,
@@ -87,7 +88,7 @@ new file mode 100644
 +from pkg.a import VALUE
 +from pkg.b import ENABLED
 +
-+def test_fixed():
++def test_hidden():
 +    assert VALUE == 1 and ENABLED
 """
 
@@ -475,6 +476,15 @@ def test_reviewed_collection_failure_must_match_every_declared_field(tmp_path: P
 
 
 def _run_git(repo: Path, *arguments: str) -> str:
+    # Local fixture clones need no Git upload-pack subprocess. Copying the
+    # isolated fixture repository avoids Windows sandbox failures in sh.exe's
+    # signal-pipe setup while preserving its committed .git identity.
+    if arguments and arguments[0] == "clone" and len(arguments) >= 3:
+        source = Path(arguments[-2])
+        destination = Path(arguments[-1])
+        if source.is_dir():
+            shutil.copytree(source, destination)
+            return ""
     result = subprocess.run(
         ["git", *arguments], cwd=repo, capture_output=True, text=True, check=True
     )
@@ -1453,6 +1463,13 @@ def test_p2_formal_mode_rejects_missing_commercial_parameters(tmp_path) -> None:
 
 
 def test_p2_simulation_completes_and_resumes_all_trials(tmp_path, monkeypatch) -> None:
+    # This test drives 60 state transitions in one process. Keep provenance
+    # collection deterministic and avoid rescanning unrelated untracked
+    # experiment directories for every synthetic trial.
+    monkeypatch.setattr(
+        "tracefix.provenance._read_git_state",
+        lambda _root: ("synthetic-test-commit", True),
+    )
     task, source = _fixture(tmp_path)
     ids = tuple(f"task-{index}" for index in range(10))
     tasks = tuple(task.model_copy(update={"id": task_id}) for task_id in ids)
@@ -1505,6 +1522,159 @@ def test_p2_simulation_completes_and_resumes_all_trials(tmp_path, monkeypatch) -
     protocol_path.write_text(json.dumps(payload), encoding="utf-8")
     with pytest.raises(BenchmarkError, match="identity does not match"):
         run_p2_simulation(config, experiment_dir=root)
+
+
+def test_presentation_only_p2_simulation_runs_agent_verifier_and_resumes_without_calls(
+    tmp_path, monkeypatch
+) -> None:
+    """Synthetic only: tool facts reach the model view, strict tests pass, resume is read-only."""
+    import tracefix.p2_protocol as p2
+
+    # Keep this small formal-path simulation independent of the outer checkout.
+    monkeypatch.setattr(
+        "tracefix.provenance._read_git_state",
+        lambda _root: ("synthetic-test-commit", True),
+    )
+
+    task, source = _fixture(tmp_path)
+    visible_markers = (
+        "# TARGET_PATH:pkg/a.py NODE:tests/test_visible.py::test_visible\n"
+        + "# fixture context " * 450
+        + "\n# ASSERT: expected 2 got 1 EXCEPTION: AssertionError\n"
+    )
+    (source / "pkg" / "markers.txt").write_text(visible_markers, encoding="utf-8")
+    _run_git(source, "add", "--all")
+    _run_git(
+        source,
+        "-c",
+        "user.name=TraceFix Test",
+        "-c",
+        "user.email=test@example.invalid",
+        "commit",
+        "--quiet",
+        "-m",
+        "visible diagnostic fixture",
+    )
+    task = task.model_copy(update={"base_commit": _run_git(source, "rev-parse", "HEAD")})
+    monkeypatch.setattr(p2, "P1_QUALIFIED_TASK_IDS", (task.id,))
+    monkeypatch.setattr(p2, "COLLECTION_FAILURE_TASK_IDS", ())
+    monkeypatch.setattr(p2, "load_real_issue_tasks", lambda *args, **kwargs: (task,))
+    monkeypatch.setattr(
+        p2, "load_environment_recipes", lambda *_: {task.id: EnvironmentRecipe(task_id=task.id)}
+    )
+    monkeypatch.setattr(p2, "_git_commit", lambda *_: "d" * 40)
+    monkeypatch.setattr(p2, "resolve_managed_environment_python", lambda *_: Path(sys.executable))
+    sources = tmp_path / "sources"
+    sources.mkdir()
+    _run_git(tmp_path, "clone", "--quiet", str(source), str(sources / task.id))
+
+    class FixtureModel(BaseLLM):
+        instances = []
+
+        def __init__(self, config):
+            super().__init__(config)
+            self.requests = []
+            self.instances.append(self)
+
+        def complete(self, messages, tools=()):
+            self.requests.append(tuple(messages))
+            call_number = len(self.requests)
+            if call_number == 1:
+                message = Message(
+                    role=MessageRole.ASSISTANT,
+                    tool_calls=(
+                        ToolCall(
+                            id="visible-read",
+                            name="read_file",
+                            arguments={"path": "pkg/markers.txt", "start_line": 1, "end_line": 8},
+                        ),
+                    ),
+                )
+            elif call_number == 2:
+                message = Message(
+                    role=MessageRole.ASSISTANT,
+                    tool_calls=(
+                        ToolCall(
+                            id="fixture-repair",
+                            name="apply_patch",
+                            arguments={"patch": GOLD},
+                        ),
+                    ),
+                )
+            else:
+                message = Message(role=MessageRole.ASSISTANT, content="fixture complete")
+            return LLMResponse(
+                message=message,
+                usage=TokenUsage(input_tokens=10, output_tokens=2, total_tokens=12, cost_usd=0),
+                model_name=self.config.model_name,
+            )
+
+    class ForbiddenSupplier:
+        def __init__(self, *_args, **_kwargs):
+            pytest.fail("simulation attempted to construct a supplier client")
+
+    monkeypatch.setattr(p2, "P2SimulationLLM", FixtureModel)
+    monkeypatch.setattr("tracefix.runtime.LiteLLMAdapter", ForbiddenSupplier)
+    config = P2ProtocolConfig(
+        design="presentation_only",
+        source_root=sources,
+        p1_evidence_path=_p1_qualification_evidence(tmp_path, (task,)),
+    )
+    protocol = build_p2_protocol(config)
+    assert protocol.kind == "p2_presentation_only_protocol"
+    assert len(protocol.schedule) == 6
+    assert protocol.arm_configurations["no_compaction"]["tool_result_presentation_enabled"] is False
+    assert (
+        protocol.arm_configurations["tool_presentation_only"]["tool_result_presentation_enabled"]
+        is True
+    )
+    assert protocol.arm_configurations["tool_presentation_only"]["action_guidance_enabled"] is False
+    assert protocol.arm_configurations["tool_presentation_only"]["read_cache_enabled"] is False
+    assert protocol.analysis_plan["fixed_denominator"] is True
+    monkeypatch.setattr(
+        p2,
+        "check_p2_inputs",
+        lambda *args, **kwargs: type("Check", (), {"protocol": protocol})(),
+    )
+
+    root = tmp_path / "presentation-only-simulation"
+    first = run_p2_simulation(config, experiment_dir=root)
+    assert first.completed_count == 6 and first.resumed_count == 0
+    assert all(record.independent_passed is True for record in first.results)
+    assert len(FixtureModel.instances) == 6
+
+    fixture_views = []
+    for model in FixtureModel.instances:
+        first_request = json.dumps(model.requests[0], default=str, ensure_ascii=False)
+        assert HIDDEN not in first_request
+        assert "VALUE = 1" not in first_request
+        tool_messages = [
+            message for message in model.requests[1] if message.role is MessageRole.TOOL
+        ]
+        assert tool_messages
+        fixture_views.extend(message.content or "" for message in tool_messages)
+    assert all(
+        "pkg/markers.txt" in view and "TARGET_PATH:pkg/a.py" in view for view in fixture_views
+    )
+    assert all("NODE:tests/test_visible.py::test_visible" in view for view in fixture_views)
+    assert all(
+        "ASSERT: expected 2 got 1 EXCEPTION: AssertionError" in view for view in fixture_views
+    )
+    assert sum("TraceFix 已裁剪" in view for view in fixture_views) == 3
+
+    resumed = run_p2_simulation(config, experiment_dir=root)
+    assert resumed.completed_count == 6 and resumed.resumed_count == 6
+    assert len(FixtureModel.instances) == 6
+    summary = summarize_p2_experiment(root)
+    assert summary.control_success_count == 3
+    assert summary.treatment_success_count == 3
+    assert summary.primary_control_success_rate == 1
+    assert summary.primary_treatment_success_rate == 1
+    summary_path = write_p2_summary(root)
+    assert "普通题固定分母成功率：C 3/3 (100.0%)" in (root / "p2-summary.md").read_text(
+        encoding="utf-8"
+    )
+    assert summary_path.is_file()
 
 
 def test_p2_summary_keeps_all_planned_positions_and_separates_failures(

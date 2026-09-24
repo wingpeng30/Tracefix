@@ -28,6 +28,7 @@ class ExperimentArm(StrEnum):
     REPO_MAP_ONLY = "repo_map_only"
     ACTION_ONLY = "action_optimization_bundle"
     CONTEXT_ONLY = "context_management_only"
+    PRESENTATION_ONLY = "tool_presentation_only"
 
 
 class TrajectoryMetrics(BaseModel):
