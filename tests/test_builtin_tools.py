@@ -5,11 +5,19 @@ from pathlib import Path
 import pytest
 
 from tracefix import (
+    AgentConfig,
     ApplyPatchTool,
+    BaseLLM,
     GetGitDiffTool,
+    LLMConfig,
+    LLMResponse,
+    Message,
+    MessageRole,
+    MinimalAgent,
     ReadFileTool,
     RunTestsTool,
     SearchCodeTool,
+    TokenUsage,
     ToolCall,
     ToolExecutionError,
     ToolValidationError,
@@ -518,12 +526,16 @@ def test_passing_junit_requires_complete_pytest_phase_audit() -> None:
 
     audit = {
         "collected_node_ids": ["tests/test_ok.py::test_case"],
+        "selected_node_ids": ["tests/test_ok.py::test_case"],
         "reports": [
             {"nodeid": "tests/test_ok.py::test_case", "when": "setup", "outcome": "passed"},
             {"nodeid": "tests/test_ok.py::test_case", "when": "call", "outcome": "passed"},
         ],
     }
-    passed_junit = {"tests": 1, "passed": 1, "failures": 0, "errors": 0, "skipped": 0}
+    passed_junit = {
+        "tests": 1, "passed": 1, "failures": 0, "errors": 0, "skipped": 0,
+        "node_ids": ["tests/test_ok.py::test_case"],
+    }
     assert "complete setup/call/teardown" in RunTestsTool._validate_agent_phases(
         audit, passed_junit
     )
@@ -533,12 +545,262 @@ def test_passing_junit_requires_complete_pytest_phase_audit() -> None:
     assert RunTestsTool._validate_agent_phases(audit, passed_junit) is None
     setup_failure = {
         "collected_node_ids": ["tests/test_ok.py::test_case"],
+        "selected_node_ids": ["tests/test_ok.py::test_case"],
         "reports": [
             {"nodeid": "tests/test_ok.py::test_case", "when": "setup", "outcome": "passed"}
         ],
     }
     failed_junit = {"tests": 1, "passed": 0, "failures": 1, "errors": 0, "skipped": 0}
     assert RunTestsTool._validate_agent_phases(setup_failure, failed_junit) is None
+
+
+@pytest.mark.parametrize(
+    "selector",
+    [
+        "-k target",
+        "--deselect=tests/test_selection.py::test_other",
+    ],
+)
+def test_run_tests_accepts_only_executed_items_after_pytest_deselection(
+    git_workspace: Path, selector: str
+) -> None:
+    (git_workspace / "tests" / "test_selection.py").write_text(
+        "def test_target():\n    assert True\n\n"
+        "def test_other():\n    assert False\n",
+        encoding="utf-8",
+    )
+    tool = RunTestsTool(git_workspace)
+    result = tool.execute(
+        ToolCall(
+            id="selected-test",
+            name="run_tests",
+            arguments={"command": f"pytest -q {selector} tests/test_selection.py"},
+        )
+    )
+    assert result.success is True, result.output
+    assert result.output["test_counts"]["tests"] == 1
+    assert result.output["audit"]["collected_node_ids"] == [
+        "tests/test_selection.py::test_target",
+        "tests/test_selection.py::test_other",
+    ]
+    assert result.output["audit"]["selected_node_ids"] == [
+        "tests/test_selection.py::test_target"
+    ]
+    empty = tool.execute(
+        ToolCall(
+            id="deselected-all",
+            name="run_tests",
+            arguments={"command": "pytest -q -k absent tests/test_selection.py"},
+        )
+    )
+    assert empty.success is False
+    assert empty.output["test_status"] == "invalid_test_run"
+
+
+def test_selected_pytest_audit_rejects_extra_or_missing_evidence() -> None:
+    from tracefix.tools.builtin import RunTestsTool
+
+    selected = "tests/test_selection.py::test_target"
+    deselected = "tests/test_selection.py::test_other"
+    reports = [
+        {"nodeid": selected, "when": phase, "outcome": "passed"}
+        for phase in ("setup", "call", "teardown")
+    ]
+    audit = {
+        "collected_node_ids": [selected, deselected],
+        "selected_node_ids": [selected],
+        "reports": reports,
+    }
+    junit = {
+        "tests": 1, "passed": 1, "failures": 0, "errors": 0, "skipped": 0,
+        "node_ids": [selected],
+    }
+    assert RunTestsTool._validate_agent_phases(audit, junit) is None
+    assert "JUnit count" in RunTestsTool._validate_agent_phases(
+        audit, {**junit, "tests": 2}
+    )
+    assert "node identities" in RunTestsTool._validate_agent_phases(
+        audit, {**junit, "node_ids": [deselected]}
+    )
+    assert "complete setup/call/teardown" in RunTestsTool._validate_agent_phases(
+        {**audit, "reports": reports[:2]}, junit
+    )
+    assert "duplicate test phase" in RunTestsTool._validate_agent_phases(
+        {**audit, "reports": [*reports, reports[0]]}, junit
+    )
+    assert "invalid node" in RunTestsTool._validate_agent_phases(
+        {
+            **audit,
+            "reports": [*reports, {"nodeid": deselected, "when": "setup", "outcome": "passed"}],
+        },
+        junit,
+    )
+    assert "absent from collection" in RunTestsTool._validate_agent_phases(
+        {**audit, "selected_node_ids": ["other.py::test_unknown"]}, junit
+    )
+
+
+def test_agent_junit_requires_embedded_node_identity(tmp_path: Path) -> None:
+    from tracefix.tools.builtin import RunTestsTool
+
+    junit_path = tmp_path / "junit.xml"
+    junit_path.write_text(
+        '<testsuite><testcase classname="tests.test_case" name="test_one" />'
+        "</testsuite>",
+        encoding="utf-8",
+    )
+    _, issue = RunTestsTool._read_junit(junit_path)
+    assert issue == "pytest JUnit test identity is missing or duplicated"
+
+
+def test_simulated_agent_keeps_valid_evidence_after_no_effect_patch(
+    git_workspace: Path,
+) -> None:
+    test_file = git_workspace / "tests" / "test_sample.py"
+    test_file.write_text(
+        test_file.read_text(encoding="utf-8")
+        + "\n\ndef test_unselected():\n    assert False\n",
+        encoding="utf-8",
+    )
+    run_git(git_workspace, "add", "tests/test_sample.py")
+    run_git(git_workspace, "commit", "-qm", "add an unselected failing test")
+    (git_workspace / ".git" / "info" / "exclude").write_text(
+        "__pycache__/\n*.pyc\n", encoding="utf-8"
+    )
+    class ScriptedModel(BaseLLM):
+        def __init__(self) -> None:
+            super().__init__(LLMConfig(model_name="scripted"))
+            self.responses = iter(
+                [
+                    make_response(
+                        ToolCall(id="repair", name="apply_patch", arguments={"patch": repair})
+                    ),
+                    make_response(
+                        ToolCall(
+                            id="test",
+                            name="run_tests",
+                            arguments={"command": "pytest -q -k add tests/test_sample.py"},
+                        ),
+                        ToolCall(id="diff", name="get_git_diff"),
+                    ),
+                    make_response(
+                        ToolCall(id="no-effect", name="apply_patch", arguments={"patch": no_effect})
+                    ),
+                    make_response(content="完成"),
+                ]
+            )
+
+        def complete(self, messages, tools=()):
+            return next(self.responses)
+
+    def make_response(*calls: ToolCall, content: str | None = None) -> LLMResponse:
+        return LLMResponse(
+            message=Message(role=MessageRole.ASSISTANT, content=content, tool_calls=calls),
+            usage=TokenUsage(input_tokens=1, output_tokens=1, total_tokens=2, cost_usd=0),
+            model_name="scripted",
+            finish_reason="tool_calls" if calls else "stop",
+        )
+
+    repair = """diff --git a/sample.py b/sample.py
+--- a/sample.py
++++ b/sample.py
+@@ -1,2 +1,2 @@
+ def add(a, b):
+-    return a - b  # BUG
++    return a + b
+"""
+    no_effect = """diff --git a/sample.py b/sample.py
+--- a/sample.py
++++ b/sample.py
+@@ -1,2 +1,2 @@
+ def add(a, b):
+-    return a + b
++    return a + b
+"""
+    agent = MinimalAgent(
+        ScriptedModel(),
+        create_default_tool_registry(git_workspace),
+        AgentConfig(require_tested_completion=True),
+    )
+    state = agent.run("修复 add 并运行测试")
+    assert state.validation_status == "verified"
+    assert state.stop_reason == "agent_completed"
+    assert state.test_runs == 1
+    assert "return a + b" in (git_workspace / "sample.py").read_text(encoding="utf-8")
+    assert any(
+        message.metadata.get("kind") == "no_effect_patch"
+        for message in agent.history.snapshot()
+    )
+
+
+@pytest.mark.parametrize("undo_repair", [False, True])
+def test_simulated_agent_invalidates_tests_after_real_change_and_exports_final_diff(
+    git_workspace: Path, undo_repair: bool
+) -> None:
+    (git_workspace / ".git" / "info" / "exclude").write_text(
+        "__pycache__/\n*.pyc\n", encoding="utf-8"
+    )
+    def make_response(*calls: ToolCall, content: str | None = None) -> LLMResponse:
+        return LLMResponse(
+            message=Message(role=MessageRole.ASSISTANT, content=content, tool_calls=calls),
+            usage=TokenUsage(input_tokens=1, output_tokens=1, total_tokens=2, cost_usd=0),
+            model_name="scripted",
+            finish_reason="tool_calls" if calls else "stop",
+        )
+
+    class ScriptedModel(BaseLLM):
+        def __init__(self, responses: list[LLMResponse]) -> None:
+            super().__init__(LLMConfig(model_name="scripted"))
+            self.responses = iter(responses)
+
+        def complete(self, messages, tools=()):
+            return next(self.responses)
+
+    repair = """diff --git a/sample.py b/sample.py
+--- a/sample.py
++++ b/sample.py
+@@ -1,2 +1,2 @@
+ def add(a, b):
+-    return a - b  # BUG
++    return a + b
+"""
+    final_value = "a - b  # BUG" if undo_repair else "a * b"
+    last_patch = f"""diff --git a/sample.py b/sample.py
+--- a/sample.py
++++ b/sample.py
+@@ -1,2 +1,2 @@
+ def add(a, b):
+-    return a + b
++    return {final_value}
+"""
+    model = ScriptedModel(
+        [
+            make_response(ToolCall(id="repair", name="apply_patch", arguments={"patch": repair})),
+            make_response(
+                ToolCall(id="test", name="run_tests", arguments={"command": "pytest -q"}),
+                ToolCall(id="diff-before", name="get_git_diff"),
+            ),
+            make_response(
+                ToolCall(id="last-change", name="apply_patch", arguments={"patch": last_patch})
+            ),
+            make_response(ToolCall(id="diff-after", name="get_git_diff")),
+            make_response(content="结束"),
+            make_response(content="仍结束"),
+        ]
+    )
+    agent = MinimalAgent(
+        model,
+        create_default_tool_registry(git_workspace),
+        AgentConfig(require_tested_completion=True),
+    )
+    state = agent.run("修复并验证")
+    assert state.validation_status == "unverified"
+    assert state.stop_reason == "agent_completed_unverified"
+    assert state.test_runs == 1
+    final_diff = GetGitDiffTool(git_workspace).execute(
+        ToolCall(id="independent-diff", name="get_git_diff")
+    )
+    assert bool(final_diff.output["diff"].strip()) is not undo_repair
 
 
 def test_run_tests_clears_parent_pytest_injection_and_limits_import_roots(

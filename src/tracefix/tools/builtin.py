@@ -13,7 +13,7 @@ import sys
 import time
 import xml.etree.ElementTree as element_tree
 from pathlib import Path
-from typing import ClassVar
+from typing import Any, ClassVar
 from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
@@ -44,11 +44,18 @@ _AGENT_PYTEST_AUDIT_PLUGIN = """
 import json
 import os
 
-_records = {"format_version": 1, "run_id": os.environ.get("TRACEFIX_AGENT_AUDIT_ID"),
-            "collected_node_ids": [], "reports": [], "completed": False}
+_records = {"format_version": 2, "run_id": os.environ.get("TRACEFIX_AGENT_AUDIT_ID"),
+            "collected_node_ids": [], "selected_node_ids": [],
+            "reports": [], "completed": False}
 
 def pytest_collection_modifyitems(session, config, items):
     _records["collected_node_ids"] = [item.nodeid for item in items]
+
+def pytest_collection_finish(session):
+    # This runs after -k and plugin deselection have updated session.items.
+    _records["selected_node_ids"] = [item.nodeid for item in session.items]
+    for item in session.items:
+        item.user_properties.append(("tracefix_nodeid", item.nodeid))
 
 def pytest_runtest_logreport(report):
     _records["reports"].append({"nodeid": report.nodeid, "when": report.when,
@@ -1041,25 +1048,37 @@ class RunTestsTool(_WorkspaceTool):
             return {}, "pytest audit is missing or malformed"
         if (
             not isinstance(audit, dict)
-            or audit.get("format_version") != 1
+            or audit.get("format_version") != 2
             or audit.get("run_id") != audit_id
             or audit.get("completed") is not True
             or audit.get("exitstatus") != returncode
             or not isinstance(audit.get("collected_node_ids"), list)
+            or not isinstance(audit.get("selected_node_ids"), list)
             or not isinstance(audit.get("reports"), list)
         ):
             return {}, "pytest audit identity or completion is invalid"
         return audit, None
 
     @staticmethod
-    def _read_junit(path: Path) -> tuple[dict[str, int], str | None]:
-        stats = {"tests": 0, "passed": 0, "failures": 0, "errors": 0, "skipped": 0}
+    def _read_junit(path: Path) -> tuple[dict[str, Any], str | None]:
+        stats: dict[str, Any] = {
+            "tests": 0, "passed": 0, "failures": 0, "errors": 0, "skipped": 0,
+            "node_ids": [],
+        }
         try:
             root = element_tree.parse(path).getroot()
         except (OSError, element_tree.ParseError):
             return stats, "pytest JUnit report is missing or malformed"
         for case in root.iter("testcase"):
             stats["tests"] += 1
+            node_ids = [
+                property_node.get("value")
+                for property_node in case.findall("./properties/property")
+                if property_node.get("name") == "tracefix_nodeid"
+            ]
+            if len(node_ids) != 1 or not isinstance(node_ids[0], str):
+                return stats, "pytest JUnit test identity is missing or duplicated"
+            stats["node_ids"].append(node_ids[0])
             children = list(case)
             if any(child.tag in {"failure", "error"} for child in children):
                 stats[
@@ -1072,11 +1091,16 @@ class RunTestsTool(_WorkspaceTool):
         return stats, None
 
     @staticmethod
-    def _validate_agent_phases(audit: dict, junit: dict[str, int]) -> str | None:
+    def _validate_agent_phases(audit: dict, junit: dict[str, Any]) -> str | None:
         collected = audit.get("collected_node_ids", [])
+        selected = audit.get("selected_node_ids", [])
         reports = audit.get("reports", [])
         if not collected or len(set(collected)) != len(collected):
             return "pytest audit has no tests or duplicate node IDs"
+        if not selected or len(set(selected)) != len(selected):
+            return "pytest audit has no selected tests or duplicate selected node IDs"
+        if not set(selected).issubset(collected):
+            return "pytest audit selected tests are absent from collection"
         seen: set[tuple[str, str]] = set()
         phased: dict[str, set[str]] = {}
         for report in reports:
@@ -1084,7 +1108,7 @@ class RunTestsTool(_WorkspaceTool):
                 return "pytest audit has a malformed phase report"
             node, phase, outcome = report.get("nodeid"), report.get("when"), report.get("outcome")
             if (
-                node not in collected
+                node not in selected
                 or phase not in {"setup", "call", "teardown"}
                 or outcome not in {"passed", "failed", "skipped"}
             ):
@@ -1100,8 +1124,16 @@ class RunTestsTool(_WorkspaceTool):
         # Failed/aborted runs may legitimately stop before later phases; they
         # are classified as failures by the caller, never as passing evidence.
         if junit.get("failures", 0) == 0 and junit.get("errors", 0) == 0:
+            if junit.get("tests") != len(selected):
+                return "pytest audit selected tests differ from JUnit count"
+            reported_nodes = junit.get("node_ids", [])
+            if (
+                len(reported_nodes) != len(set(reported_nodes))
+                or set(reported_nodes) != set(selected)
+            ):
+                return "pytest audit selected tests differ from JUnit node identities"
             expected = {"setup", "call", "teardown"}
-            incomplete = [node for node in collected if phased.get(node) != expected]
+            incomplete = [node for node in selected if phased.get(node) != expected]
             if incomplete:
                 return "pytest audit lacks complete setup/call/teardown evidence"
         return None

@@ -68,6 +68,12 @@
   更正工具裁剪/历史折叠统计，冻结 60 位置输出呈现单变量协议、合成零费用预检和预算停止决策。
 - [`experiments/v0.8.14-presentation-only-paid-development.md`](experiments/v0.8.14-presentation-only-paid-development.md)：
   完成 C/T 60 项正式开发集比较，记录 58/60 有效证据、费用对账、恢复结果及未通过采纳门槛的原因。
+- [`experiments/v0.8.15-validation-closure-results.md`](experiments/v0.8.15-validation-closure-results.md)：
+  48 项验证闭环正式比较、独立验收成功率、费用与未采纳结论。
+- [`experiments/v0.8.16-validation-feedback-diagnostic.md`](experiments/v0.8.16-validation-feedback-diagnostic.md)：
+  48 项既有轨迹的空补丁与验证反馈离线诊断。
+- [`experiments/v0.8.17-selection-feedback-correction.md`](experiments/v0.8.17-selection-feedback-correction.md)：
+  去选测试审计修正、17 次历史反馈更正和下一轮 48 项比较预算草案。
 - [`experiments/v0.8.10-ablation-preflight.md`](experiments/v0.8.10-ablation-preflight.md)：
   四组 120 项协议、真实任务与正式入口零费用模拟、恢复、完整依赖锁及共享预算预检。
 - [`experiments/v0.8.4-real-environment-validation.md`](experiments/v0.8.4-real-environment-validation.md)：

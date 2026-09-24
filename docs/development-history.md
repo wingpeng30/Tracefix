@@ -637,3 +637,13 @@ T 相较 C 多用输入 300,066 Token、输出 2,701 Token、Agent 时间 167.44
 在 `a7b9dea` 之后增加只读 `p2-diagnose --validation-feedback` 和独立分析模块；校验 48 项原工件，记录全部状态、18 个重点试次和 C/T 配对索引。原执行代码为 `d3a9a9e940d316822b6ff19e93384448474bfe69`。Agent 已验证 6/48，17 次通过的 Agent 测试调用因去选测试仍在收集集合而被误报无效，此问题留待后续单独修复。运行代码本轮仅修补丁无效果却报告成功：应用后比较文件和 Git 状态，无变化返回 `no_effect`。新增 fixture 先失败再修复，覆盖正常修改、新增、删除、重命名及撤回。历史评分和旧轨迹不改。pytest-10081 的 T 三次空补丁各有不同形成链路，详见 [`experiments/v0.8.16-validation-feedback-diagnostic.md`](experiments/v0.8.16-validation-feedback-diagnostic.md)。本轮未调用供应商或运行留出集。全量检查和覆盖率以本条后续验证记录为准。
 
 最终验证：定向 78 passed；全量 449 passed、0 failed、600.95 秒。pytest 单独覆盖率 85.93%，因 90% 门槛正确退出 1；同一最终代码的两个真实只读诊断入口合并后综合覆盖率 90.02418964683116%，语句 92.29501964263085%，分支 82.6923076923077%，独立门槛退出 0。Ruff 与 129/129 项目 Python compileall 均退出 0。日志、JUnit、覆盖率 JSON/XML 及各退出码在 `runs/validation-feedback-final-v3-20260925/`；中断的旧尝试单独保留，不拼接为最终通过证据。
+
+### 29. 2026-09-25 Agent pytest 去选审计修正
+
+从 `a998918` 出发，在独立 Git/pytest fixture 先复现 `-k` 去选后执行测试通过却被旧审计判作 `invalid_test_run`。将 Agent 审计升级为格式 2，同时记录完整收集和最终执行 node ID；阶段与 JUnit 按最终执行集合核对，保留空集合、skip、重复或额外报告及残缺阶段拒绝。`-k` 与 `--deselect` 回归均通过。
+
+零费用模拟 Agent 使用真实补丁、测试和 Diff 工具：有效测试后无效果补丁保留已验证状态，真实修改使旧证据失效，撤回修改导出空源码 Diff；已有正式入口预算停止 fixture 验证保存的补丁仍经独立验收并且恢复不重发。离线重新检查冻结的 48 项轨迹和哈希后，17 次调用分布在 13 个试次，单次反馈应由无效改为通过。历史独立验收结果、原始账本、轨迹不回写。逐次脱敏更正见 [`experiments/v0.8.17-selection-feedback-correction.md`](experiments/v0.8.17-selection-feedback-correction.md)。
+
+下一轮 48 项开发集同期 C/T 比较的任务、三次重复、顺序、共同工具与审计、主指标和采纳门槛已在机器草案中固定。共享计算余额 ¥23.12462080，低于历史价格计算的 ¥41.28 完整上界；阶段 ¥42 还差 ¥18.87537920。正式价格和账本将在实际启动前复核；本轮没有付费请求或留出集评测。
+
+最终代码验证：定向 90 passed；全量 456 passed、0 failed，pytest 单独综合覆盖 86.021817%（语句 88.716003%、分支 77.343113%），因既有 90% 阈值退出 1。合并两个本轮只读离线诊断入口后，综合覆盖 90.105223%（语句 92.346616%、分支 82.885086%），门槛退出 0。Ruff 退出 0、129/129 个受跟踪 Python 文件 compileall 退出 0。完整日志、JUnit、覆盖率 JSON/XML、耗时、60 秒 faulthandler 设置和各命令真实退出码在 `runs/selection-feedback-final-v2-20260925/`；定向日志在 `runs/selection-feedback-targeted-final-20260925/`。限制是 pytest 单独覆盖不足 90%，工程门槛依照此前既定的合并统计范围达标。
