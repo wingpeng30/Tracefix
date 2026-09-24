@@ -1,6 +1,5 @@
 """Campaign exhaustion is a known stop, distinct from an unknown paid request."""
 
-import hashlib
 import json
 import sys
 from pathlib import Path
@@ -77,15 +76,7 @@ def _campaign_fixture(tmp_path, monkeypatch):
         output_cost_per_million=8,
         campaign_ledger_path=tmp_path / "virtual-campaign.json",
     )
-    pricing_identity = hashlib.sha256(
-        formal.model_dump_json(
-            exclude={
-                "prior_calculated_amount",
-                "prior_unsettled_reservation",
-                "campaign_ledger_path",
-            }
-        ).encode()
-    ).hexdigest()
+    pricing_identity = p2.p2_pricing_identity(formal)
     ledger = p2._read_cost_ledger(
         formal.campaign_ledger_path,
         formal.cap,
@@ -172,6 +163,38 @@ def test_uncertain_request_still_blocks_even_with_cost_halt(tmp_path, monkeypatc
         p2.run_p2_formal(config, experiment_dir=tmp_path / "uncertain")
     assert events == {"constructed": 0, "calls": 0}
     assert ledger_path.read_bytes() == before
+
+
+def test_stage_cap_blocks_supplier_request_without_changing_shared_cap(tmp_path, monkeypatch):
+    config, events = _campaign_fixture(tmp_path, monkeypatch)
+    ledger_path = config.formal.campaign_ledger_path
+    ledger = json.loads(ledger_path.read_text(encoding="utf-8"))
+    formal = config.formal.model_copy(
+        update={
+            "total_cost_cap_usd": 150,
+            "stage_cost_cap_amount": 0.000001,
+            "stage_budget_baseline_amount": 99.96,
+        }
+    )
+    identity = p2.p2_pricing_identity(formal)
+    ledger.update(
+        cap_usd=150,
+        cap_amount=150,
+        pricing_identity=identity,
+        protocol_identity=f"campaign:{identity}",
+    )
+    ledger_path.write_text(json.dumps(ledger), encoding="utf-8")
+    config = config.model_copy(update={"formal": formal})
+
+    result = p2.run_p2_formal(config, experiment_dir=tmp_path / "stage-capped")
+
+    saved = json.loads(ledger_path.read_text(encoding="utf-8"))
+    assert saved["cap_amount"] == 150
+    assert saved["calculated_spent_amount"] == 99.96
+    assert saved["request_count"] == 0
+    assert saved["halt_reason"] == "stage_cost_cap_would_be_exceeded"
+    assert result.campaign_stop_reason == "stage_budget_exhausted"
+    assert events["calls"] == 0
 
 
 def test_cost_halt_recovers_interrupted_verification_without_model(tmp_path, monkeypatch):

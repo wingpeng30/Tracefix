@@ -354,6 +354,8 @@ def build_parser() -> argparse.ArgumentParser:
     p2_run.add_argument("--pricing-source")
     p2_run.add_argument("--total-cost-cap-usd", type=float)
     p2_run.add_argument("--total-cost-cap-cny", type=float)
+    p2_run.add_argument("--stage-cost-cap-cny", type=float)
+    p2_run.add_argument("--stage-budget-baseline-cny", type=float)
     p2_run.add_argument("--input-cost-per-million-usd", type=float)
     p2_run.add_argument("--output-cost-per-million-usd", type=float)
     p2_run.add_argument("--currency", choices=("USD", "CNY"), default="USD")
@@ -874,6 +876,8 @@ def main(argv: list[str] | None = None) -> int:
                     input_cache_hit_cost_per_million=args.input_cache_hit_cost_per_million,
                     input_cache_miss_cost_per_million=args.input_cache_miss_cost_per_million,
                     output_cost_per_million=args.output_cost_per_million,
+                    stage_cost_cap_amount=args.stage_cost_cap_cny,
+                    stage_budget_baseline_amount=args.stage_budget_baseline_cny,
                     prior_calculated_amount=args.prior_calculated_amount,
                     prior_unsettled_reservation=args.prior_unsettled_reservation,
                     campaign_ledger_path=args.campaign_ledger,

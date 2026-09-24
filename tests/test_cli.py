@@ -71,7 +71,11 @@ def test_cli_p2_formal_freezes_cny_cache_pricing(tmp_path, monkeypatch, capsys) 
                 "--currency",
                 "CNY",
                 "--total-cost-cap-cny",
-                "100",
+                "150",
+                "--stage-cost-cap-cny",
+                "55",
+                "--stage-budget-baseline-cny",
+                "80.36876520000017",
                 "--input-cache-hit-cost-per-million",
                 "0.04",
                 "--input-cache-miss-cost-per-million",
@@ -85,7 +89,9 @@ def test_cli_p2_formal_freezes_cny_cache_pricing(tmp_path, monkeypatch, capsys) 
     config, root = captured[0]
     assert root == tmp_path / "formal"
     assert config.formal.currency == "CNY"
-    assert config.formal.total_cost_cap_usd == 100
+    assert config.formal.total_cost_cap_usd == 150
+    assert config.formal.stage_cost_cap_amount == 55
+    assert config.formal.stage_budget_baseline_amount == 80.36876520000017
     assert config.formal.conservative_input_price == 2
     assert "P2 正式实验: 0/60" in capsys.readouterr().out
 

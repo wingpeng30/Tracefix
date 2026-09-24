@@ -99,7 +99,13 @@ def summarize_ablation(experiment_dir: Path) -> dict:
     campaign_stop_reason = run_summary.get("campaign_stop_reason")
     next_sequence = run_summary.get("next_sequence")
     budget_tail = (
-        campaign_stop_reason in {"campaign_budget_exhausted", "cost_cap_would_be_exceeded"}
+        campaign_stop_reason
+        in {
+            "campaign_budget_exhausted",
+            "cost_cap_would_be_exceeded",
+            "stage_budget_exhausted",
+            "stage_cost_cap_would_be_exceeded",
+        }
         and isinstance(next_sequence, int)
         and not isinstance(next_sequence, bool)
         and 1 <= next_sequence <= len(rows)

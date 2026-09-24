@@ -253,3 +253,9 @@ class P2CampaignBudgetExceeded(AgentLimitExceeded, BenchmarkError):
     """共享费用上限不足；停止调用，但仍验收已保存补丁。"""
 
     code = "campaign_budget_exhausted"
+
+
+class P2StageBudgetExceeded(P2CampaignBudgetExceeded):
+    """P2 本轮费用阶段上限不足；保留共享总账本并停止本阶段后续请求。"""
+
+    code = "stage_budget_exhausted"

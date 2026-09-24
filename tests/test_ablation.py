@@ -1,4 +1,3 @@
-import hashlib
 import json
 import sys
 from collections import Counter
@@ -142,15 +141,7 @@ def test_formal_ablation_mock_provider_runs_agent_verification_ledger_and_resume
         output_cost_per_million_usd=8,
         campaign_ledger_path=tmp_path / "virtual-campaign.json",
     )
-    pricing_identity = hashlib.sha256(
-        formal.model_dump_json(
-            exclude={
-                "prior_calculated_amount",
-                "prior_unsettled_reservation",
-                "campaign_ledger_path",
-            }
-        ).encode()
-    ).hexdigest()
+    pricing_identity = p2.p2_pricing_identity(formal)
     initial_ledger = p2._read_cost_ledger(
         formal.campaign_ledger_path,
         formal.cap,

@@ -25,7 +25,12 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from tracefix.agent import AgentConfig
 from tracefix.agent.base import DEFAULT_SYSTEM_PROMPT
 from tracefix.context import ContextConfig
-from tracefix.exceptions import BenchmarkError, P2CampaignBudgetExceeded, P2TrialBudgetExceeded
+from tracefix.exceptions import (
+    BenchmarkError,
+    P2CampaignBudgetExceeded,
+    P2StageBudgetExceeded,
+    P2TrialBudgetExceeded,
+)
 from tracefix.formal_guards import (
     formal_config_issue,
     formal_response_model_issue,
@@ -130,6 +135,8 @@ class P2FormalRunRequirements(BaseModel):
     input_cache_miss_cost_per_million: float | None = Field(default=None, gt=0)
     output_cost_per_million: float | None = Field(default=None, gt=0)
     peak_pricing: bool = True
+    stage_cost_cap_amount: float | None = Field(default=None, gt=0)
+    stage_budget_baseline_amount: float | None = Field(default=None, ge=0)
     prior_calculated_amount: float = Field(default=0, ge=0)
     prior_unsettled_reservation: float = Field(default=0, ge=0)
     campaign_ledger_path: Path | None = None
@@ -153,6 +160,11 @@ class P2FormalRunRequirements(BaseModel):
         )
         if not all(math.isfinite(value) and value > 0 for value in numeric_prices):
             raise ValueError("P2 formal prices must be finite and positive")
+        for value in (self.stage_cost_cap_amount, self.stage_budget_baseline_amount):
+            if value is not None and not math.isfinite(value):
+                raise ValueError("P2 stage budget values must be finite")
+        if (self.stage_cost_cap_amount is None) != (self.stage_budget_baseline_amount is None):
+            raise ValueError("P2 stage cap and shared-ledger baseline must be provided together")
         if self.currency == "CNY":
             if None in (
                 self.input_cache_hit_cost_per_million,
@@ -179,6 +191,22 @@ class P2FormalRunRequirements(BaseModel):
     @property
     def effective_output_price(self) -> float:
         return self.output_cost_per_million or self.output_cost_per_million_usd
+
+
+def p2_pricing_identity(formal: P2FormalRunRequirements) -> str:
+    """Bind provider, model and prices while allowing authorized budget changes."""
+    return hashlib.sha256(
+        formal.model_dump_json(
+            exclude={
+                "total_cost_cap_usd",
+                "stage_cost_cap_amount",
+                "stage_budget_baseline_amount",
+                "prior_calculated_amount",
+                "prior_unsettled_reservation",
+                "campaign_ledger_path",
+            }
+        ).encode()
+    ).hexdigest()
 
 
 class P2ProtocolConfig(BaseModel):
@@ -546,15 +574,7 @@ class P2BudgetedLLM(BaseLLM):
         self._request_number = 0
 
     def _pricing_identity(self) -> str:
-        return hashlib.sha256(
-            self._formal.model_dump_json(
-                exclude={
-                    "prior_calculated_amount",
-                    "prior_unsettled_reservation",
-                    "campaign_ledger_path",
-                }
-            ).encode()
-        ).hexdigest()
+        return p2_pricing_identity(self._formal)
 
     def complete(self, messages: Sequence[Message], tools: Sequence[ToolSpec] = ()) -> LLMResponse:
         ledger = _read_cost_ledger(
@@ -603,6 +623,18 @@ class P2BudgetedLLM(BaseLLM):
                 ledger.model_copy(update={"halt_reason": "cost_cap_would_be_exceeded"}),
             )
             raise P2CampaignBudgetExceeded("P2 total cost cap would be exceeded")
+        if self._formal.stage_cost_cap_amount is not None:
+            baseline = self._formal.stage_budget_baseline_amount
+            assert baseline is not None
+            stage_spend = ledger.calculated_spent_amount + ledger.reserved_amount - baseline
+            if stage_spend < -1e-7:
+                raise BenchmarkError("P2 stage budget baseline exceeds the shared ledger")
+            if stage_spend + reservation > self._formal.stage_cost_cap_amount:
+                _write_cost_ledger(
+                    self._ledger_path,
+                    ledger.model_copy(update={"halt_reason": "stage_cost_cap_would_be_exceeded"}),
+                )
+                raise P2StageBudgetExceeded("P2 stage cost cap would be exceeded")
         request = P2CostRequestRecord(
             request_id=request_id,
             status="reserved",
@@ -2486,6 +2518,7 @@ def _run_p2_locked(
         protocol_path.write_text(protocol.model_dump_json(indent=2), encoding="utf-8")
     results: list[P2TrialRecord] = []
     campaign_stopped = False
+    campaign_stop_reason: str | None = None
     next_sequence = None
     tasks = {
         item.id: item
@@ -2503,15 +2536,7 @@ def _run_p2_locked(
         )
         request_prefix = ["unassigned"]
         protocol_identity = _sha256(protocol_path)
-        pricing_identity = hashlib.sha256(
-            formal.model_dump_json(
-                exclude={
-                    "prior_calculated_amount",
-                    "prior_unsettled_reservation",
-                    "campaign_ledger_path",
-                }
-            ).encode()
-        ).hexdigest()
+        pricing_identity = p2_pricing_identity(formal)
         if formal.campaign_ledger_path is not None:
             # A campaign ledger intentionally spans the synthetic probe and
             # the final experiment directory.  Pricing and provider identity,
@@ -2529,10 +2554,13 @@ def _run_p2_locked(
             formal.prior_unsettled_reservation,
         )
         if initial_ledger.uncertain_request or initial_ledger.halt_reason not in {
-            None, "cost_cap_would_be_exceeded"
+            None, "cost_cap_would_be_exceeded", "stage_cost_cap_would_be_exceeded"
         }:
             raise BenchmarkError("P2 campaign requires reconciliation before resume")
-        campaign_stopped = initial_ledger.halt_reason == "cost_cap_would_be_exceeded"
+        campaign_stopped = initial_ledger.halt_reason in {
+            "cost_cap_would_be_exceeded", "stage_cost_cap_would_be_exceeded"
+        }
+        campaign_stop_reason = initial_ledger.halt_reason
 
         def formal_factory(llm_config: LLMConfig) -> BaseLLM:
             return P2BudgetedLLM(
@@ -2694,7 +2722,7 @@ def _run_p2_locked(
                     config.formal.prior_unsettled_reservation,
                 )
                 if ledger.uncertain_request or ledger.halt_reason not in {
-                    None, "cost_cap_would_be_exceeded"
+                    None, "cost_cap_would_be_exceeded", "stage_cost_cap_would_be_exceeded"
                 }:
                     stopped = agent_record.model_copy(
                         update={"status": "request_uncertain" if ledger.uncertain_request
@@ -2702,7 +2730,10 @@ def _run_p2_locked(
                     )
                     write_trial_record(path, stopped)
                     raise BenchmarkError("P2 formal run stopped before another provider request")
-                campaign_stopped = ledger.halt_reason == "cost_cap_would_be_exceeded"
+                campaign_stopped = ledger.halt_reason in {
+                    "cost_cap_would_be_exceeded", "stage_cost_cap_would_be_exceeded"
+                }
+                campaign_stop_reason = ledger.halt_reason
         if not agent_record.agent_patch_path:
             record = agent_record.model_copy(update={"status": "infrastructure_error"})
             write_trial_record(path, record)
@@ -2754,7 +2785,13 @@ def _run_p2_locked(
         engineering_simulation_only=mode == "simulation",
         summary_path=str(summary_path),
         planned_count=len(protocol.schedule),
-        campaign_stop_reason="campaign_budget_exhausted" if campaign_stopped else None,
+        campaign_stop_reason=(
+            "stage_budget_exhausted"
+            if campaign_stop_reason == "stage_cost_cap_would_be_exceeded"
+            else "campaign_budget_exhausted"
+            if campaign_stopped
+            else None
+        ),
         next_sequence=next_sequence,
         batch_complete=len(results) == len(protocol.schedule)
         and all(item.status == "verification_complete" for item in results),
