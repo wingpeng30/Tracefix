@@ -1704,7 +1704,16 @@ def write_p2_summary(experiment_dir: Path) -> Path:
                 ),
             ]
         )
-    lines.extend(["", "模拟结果仅验证工程流程，不构成 Agent 修复能力结论。", ""])
+    if summary.mode == "formal":
+        lines.extend(
+            [
+                "",
+                "正式模型结果描述本批固定开发题上的观察，不保证统计显著性或留出集泛化。",
+                "",
+            ]
+        )
+    else:
+        lines.extend(["", "模拟结果仅验证工程流程，不构成 Agent 修复能力结论。", ""])
     report.write_text("\n".join(lines), encoding="utf-8")
     return path
 

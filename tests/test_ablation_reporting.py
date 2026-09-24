@@ -235,7 +235,10 @@ def test_validation_closure_summary_applies_preregistered_success_gate(tmp_path)
     assert summary.validation_closure_adoptable is True
     assert all(task.planned_count == 6 for task in summary.task_summaries)
     report_path = write_p2_summary(tmp_path)
-    assert "符合门槛：True" in report_path.with_suffix(".md").read_text(encoding="utf-8")
+    report = report_path.with_suffix(".md").read_text(encoding="utf-8")
+    assert "符合门槛：True" in report
+    assert "正式模型结果描述本批固定开发题上的观察" in report
+    assert "模拟结果仅验证工程流程" not in report
 
     changed_plan = next(
         plan
