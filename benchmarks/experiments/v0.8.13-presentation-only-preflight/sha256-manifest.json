@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "files": {
+    "budget-decision.json": "3f532cde47258217b7c4fb931a5471c9f52e3f16a8a6707f6a9d82110359ed8c",
+    "corrected-detailed-diagnostic.json": "89d47bc31ed0c66fec0903e1bbf55ef2c7eecb0eea38b4c38d8f3c122609d341",
+    "corrected-detailed-diagnostic.md": "03e365fef4d72519741fd2f6a4ab86d8c3365ebd5b6fe60daab2c73040a0ead7",
+    "corrected-evidence-index.json": "ee4d904952f74d866dd1ae6d0d1c277bf6473f4556b69eff3526faf2febb33da",
+    "corrected-paired-cases.json": "5a0889bdaf12b16ecd02cb790c578b34204725ad7c7752b14579c1b60aacfb4c",
+    "presentation-only-protocol.json": "284101e512962935c653d48033970d3283faf36338214ac65c195baafa005fe9",
+    "simulation-preflight.json": "5f68978294c20c465082c85f154c27c6e6271daf4cb4ddd6f7c902e1d602e8d6"
+  }
+}

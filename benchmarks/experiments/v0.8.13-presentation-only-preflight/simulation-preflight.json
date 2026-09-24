@@ -1,0 +1,57 @@
+{
+  "schema_version": 1,
+  "kind": "p2_presentation_only_zero_cost_preflight",
+  "code_commit": "8954d77860aa17dfdc579c40ed14f50ef7fb2021",
+  "result": "passed",
+  "scope": {
+    "fixture_task_count": 1,
+    "fixture_repetitions_per_arm": 3,
+    "executed_positions": 6,
+    "full_protocol_positions_generated": 60,
+    "full_60_agent_cycles_executed": false
+  },
+  "synthetic_pipeline": {
+    "completed": 6,
+    "repair_acceptances": 6,
+    "repair_rejections": 0,
+    "infrastructure_errors": 0,
+    "unexecuted": 0,
+    "control_successes": 3,
+    "treatment_successes": 3,
+    "fixture_reported_input_tokens": 180,
+    "fixture_reported_output_tokens": 36,
+    "fixture_reported_cost_usd": 0.0,
+    "real_supplier_clients": 0,
+    "real_supplier_requests": 0,
+    "resume_reused_positions": 6,
+    "resume_added_fixture_model_instances": 0
+  },
+  "information_retention": {
+    "source_path": true,
+    "assertion_text": true,
+    "exception_type": true,
+    "complete_test_node_id": true,
+    "long_output_pruning_observed_in_three_treatment_trials": true,
+    "repeat_read_cache_behavior_test": "tests/test_minimal_agent.py::test_read_cache_override_is_independent_of_legacy_master_switch",
+    "budget_termination_test": "tests/test_campaign_budget_stop.py::test_campaign_exhaustion_verifies_saved_patch_and_resume_never_resends"
+  },
+  "test_case": {
+    "name": "test_presentation_only_p2_simulation_runs_agent_verifier_and_resumes_without_calls",
+    "time_seconds": 26.305,
+    "result": "passed"
+  },
+  "local_evidence": {
+    "experiment_relative_path": "runs/presentation-only-simulation-evidence-20260924/experiment",
+    "p2_summary_sha256": "3b2e54c89a26d747afb6e7e4daa73abd1d7195f1ac2f2f592a8e6b79e6de8062",
+    "protocol_sha256": "0a54ab8a813bf7450538982708d7968bd2f676b644256b39cb5289dbd92a8399",
+    "trial_record_sha256": {
+      "001.json": "56d035786d4ba655cc31ef08ffe8f05aa27e1404d0e5d130965df4bacff7ce93",
+      "002.json": "47ee5fb58d6f9d787ef92de33a5d62d43adcf83f95d9471de17eef4e63635299",
+      "003.json": "5b63d7c419d908a739a2896fb5d6f6271813894ff777bd085374b741de4eb56f",
+      "004.json": "ae912b527dbd1b1c94e16ec1ca8c898fa0317d8cc4c1f5e64d12729a1608f568",
+      "005.json": "4019957281eba0338f8d45b047f3450dc00dc0ffd9e3a85c3926a4d9742e4861",
+      "006.json": "b36e176705f7fc86a380d5483b47f61a4daedf03e4d6f7dff848cfe3da5de92f"
+    }
+  },
+  "interpretation": "Synthetic tool-loop and independent-acceptance engineering evidence only; not a model repair-success result, and the 60-position real-task campaign was not executed."
+}

@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "kind": "p2_presentation_only_budget_decision",
+  "currency": "CNY",
+  "shared_cap": 100.0,
+  "calculated_spend_at_freeze": 80.3687652,
+  "unsettled_reservation": 0.0,
+  "remaining_conservative_balance": 19.6312348,
+  "ledger_sha256": "070980667c2e13861be77c72158081cee50cabb1db83bbac1db481d701223417",
+  "ledger_requests": 3188,
+  "price_basis_cny_per_million_tokens": {
+    "input_uncached_peak": 2.0,
+    "output_peak": 8.0
+  },
+  "per_trial_budget": {
+    "input_tokens": 350000,
+    "output_tokens": 20000
+  },
+  "planned_positions": 60,
+  "conservative_full_batch_upper_bound": 51.6,
+  "shortfall_to_full_batch": 31.9687652,
+  "decision": "defer_paid_run",
+  "reason": "The frozen shared ledger balance does not cover the full 60-position conservative upper bound; do not start a partial batch or reset the cap with a new directory.",
+  "provider_requests_in_this_task": 0,
+  "supplier_actual_bill_claimed": false
+}
