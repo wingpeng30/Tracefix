@@ -1,0 +1,22 @@
+{
+  "kind": "p2_validation_feedback_diagnostic",
+  "schema_version": 1,
+  "execution_commit": "d3a9a9e940d316822b6ff19e93384448474bfe69",
+  "protocol_sha256": "4269fd18e9ab71e8e3990eb911e54130cfc3c9b40f00f1b6307182dab140502a",
+  "positions": 48,
+  "valid_evidence_positions": 48,
+  "agent_verified": 6,
+  "selection_only_false_reject_candidates": 17,
+  "validation_categories": {
+    "verified": 6,
+    "no_valid_test_pass": 27,
+    "missing_current_diff_confirmation": 1,
+    "no_patch_attempt": 3,
+    "empty_final_patch": 3,
+    "later_test_failure": 8
+  },
+  "focus_case_count": 18,
+  "full_local_report_sha256": "e1fde29487d48c1da84321c5ac6edb008721d6d436987b1c69a3e08018267b0a",
+  "historical_scores_unchanged": true,
+  "paid_requests_this_diagnostic": 0
+}

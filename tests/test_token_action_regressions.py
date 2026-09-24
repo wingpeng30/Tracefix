@@ -42,7 +42,7 @@ class _NoEffectPatchTool(BaseTool):
             call_id=call.id,
             tool_name=call.name,
             success=False,
-            error="patch does not change the target file",
+            error="no_effect",
         )
 
 

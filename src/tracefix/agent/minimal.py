@@ -677,7 +677,8 @@ class MinimalAgent(BaseAgent):
         if self._no_effect_patch_reminder_sent or not self._last_patch_failure_reason:
             return
         reason = self._last_patch_failure_reason.casefold()
-        if "does not change" not in reason and "already applied" not in reason:
+        no_effect_reasons = ("does not change", "already applied", "no_effect")
+        if not any(token in reason for token in no_effect_reasons):
             return
         self._append_message(
             Message(

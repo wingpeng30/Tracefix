@@ -631,3 +631,9 @@ SWE-bench Verified 固定在 `78f471bf655a3137b2e8a75af1501690ec009ec3`，69 道
 T 相较 C 多用输入 300,066 Token、输出 2,701 Token、Agent 时间 167.443 秒；任务等权平均差分别为输入 +37,508.25 Token、时间 +20.930375 秒，未改善成本/时长。终止原因包括正常预算耗尽 20 项、请求输入上界拦截 9 项、步数上限 1 项、正常完成 12 项和未验证即结束 6 项。请求上界拦截不是基础设施事故。批次保守费用 ¥20.329288，共享账本保守累计 ¥126.87537920/¥150、余额 ¥23.12462080，无未决预留或未知请求；这些金额不是供应商实际账单。恢复前后试次数 48、Agent 目录 48、请求数 5105 均未增加。
 
 最终工程检查：443 passed、0 failed；pytest-only coverage 86.64245% 导致 pytest 命令按既有 fail-under=90 退出 1。追加同一统计数据上的只读离线详细诊断真实入口后，综合覆盖率 90.05246%（语句 92.36129%、分支 82.43712%），阈值检查退出 0。Ruff 退出 0；127/127 tracked Python 文件 compileall 退出 0。日志、JUnit、coverage JSON/XML 和退出码保存在 `runs/agent-feedback-final5-full-20260925/`。脱敏结果及原始摘要、协议哈希见 [`experiments/v0.8.15-validation-closure-results.md`](experiments/v0.8.15-validation-closure-results.md) 与 [`../benchmarks/experiments/v0.8.15-validation-closure-development/validation-closure-results.json`](../benchmarks/experiments/v0.8.15-validation-closure-development/validation-closure-results.json)。20 题留出集没有运行；下一步应对失败工件做离线逐例归因并设计零费用可证伪测试，不据此直接改提示或跑留出题。
+
+### 28. 2026-09-25 验证反馈离线诊断
+
+在 `a7b9dea` 之后增加只读 `p2-diagnose --validation-feedback` 和独立分析模块；校验 48 项原工件，记录全部状态、18 个重点试次和 C/T 配对索引。原执行代码为 `d3a9a9e940d316822b6ff19e93384448474bfe69`。Agent 已验证 6/48，17 次通过的 Agent 测试调用因去选测试仍在收集集合而被误报无效，此问题留待后续单独修复。运行代码本轮仅修补丁无效果却报告成功：应用后比较文件和 Git 状态，无变化返回 `no_effect`。新增 fixture 先失败再修复，覆盖正常修改、新增、删除、重命名及撤回。历史评分和旧轨迹不改。pytest-10081 的 T 三次空补丁各有不同形成链路，详见 [`experiments/v0.8.16-validation-feedback-diagnostic.md`](experiments/v0.8.16-validation-feedback-diagnostic.md)。本轮未调用供应商或运行留出集。全量检查和覆盖率以本条后续验证记录为准。
+
+最终验证：定向 78 passed；全量 449 passed、0 failed、600.95 秒。pytest 单独覆盖率 85.93%，因 90% 门槛正确退出 1；同一最终代码的两个真实只读诊断入口合并后综合覆盖率 90.02418964683116%，语句 92.29501964263085%，分支 82.6923076923077%，独立门槛退出 0。Ruff 与 129/129 项目 Python compileall 均退出 0。日志、JUnit、覆盖率 JSON/XML 及各退出码在 `runs/validation-feedback-final-v3-20260925/`；中断的旧尝试单独保留，不拼接为最终通过证据。

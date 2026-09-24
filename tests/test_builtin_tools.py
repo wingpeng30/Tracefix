@@ -259,6 +259,104 @@ def test_apply_patch_checks_then_modifies_file(git_workspace: Path) -> None:
     assert second.error == "patch validation failed"
 
 
+@pytest.mark.parametrize("format_name", ["unified", "begin"])
+def test_apply_patch_rejects_successful_no_effect_change(
+    git_workspace: Path, format_name: str
+) -> None:
+    unified = """diff --git a/sample.py b/sample.py
+--- a/sample.py
++++ b/sample.py
+@@ -1,2 +1,2 @@
+ def add(a, b):
+-    return a - b  # BUG
++    return a - b  # BUG
+"""
+    begin = """*** Begin Patch
+*** Update File: sample.py
+@@
+-    return a - b  # BUG
++    return a - b  # BUG
+*** End Patch"""
+    before = (git_workspace / "sample.py").read_bytes()
+    result = ApplyPatchTool(git_workspace).execute(
+        ToolCall(
+            id="no-effect",
+            name="apply_patch",
+            arguments={"patch": unified if format_name == "unified" else begin},
+        )
+    )
+    assert result.success is False
+    assert result.error == "no_effect"
+    assert result.output["changed_files"] == []
+    assert (git_workspace / "sample.py").read_bytes() == before
+
+
+def test_apply_patch_reports_actual_new_delete_and_undo_paths(git_workspace: Path) -> None:
+    tool = ApplyPatchTool(git_workspace)
+    add = """diff --git a/new.txt b/new.txt
+new file mode 100644
+--- /dev/null
++++ b/new.txt
+@@ -0,0 +1 @@
++hello
+"""
+    added = tool.execute(ToolCall(id="add", name="apply_patch", arguments={"patch": add}))
+    assert added.success is True
+    assert added.output["changed_files"] == ["new.txt"]
+    assert (git_workspace / "new.txt").read_text(encoding="utf-8") == "hello\n"
+
+    delete = """diff --git a/new.txt b/new.txt
+deleted file mode 100644
+--- a/new.txt
++++ /dev/null
+@@ -1 +0,0 @@
+-hello
+"""
+    deleted = tool.execute(ToolCall(id="delete", name="apply_patch", arguments={"patch": delete}))
+    assert deleted.success is True
+    assert deleted.output["changed_files"] == ["new.txt"]
+    assert not (git_workspace / "new.txt").exists()
+
+    change = """diff --git a/sample.py b/sample.py
+--- a/sample.py
++++ b/sample.py
+@@ -1,2 +1,2 @@
+ def add(a, b):
+-    return a - b  # BUG
++    return a + b
+"""
+    undo = """diff --git a/sample.py b/sample.py
+--- a/sample.py
++++ b/sample.py
+@@ -1,2 +1,2 @@
+ def add(a, b):
+-    return a + b
++    return a - b  # BUG
+"""
+    assert tool.execute(
+        ToolCall(id="change", name="apply_patch", arguments={"patch": change})
+    ).success
+    restored = tool.execute(ToolCall(id="undo", name="apply_patch", arguments={"patch": undo}))
+    assert restored.success is True
+    assert restored.output["changed_files"] == ["sample.py"]
+    assert "return a - b" in (git_workspace / "sample.py").read_text(encoding="utf-8")
+
+
+def test_apply_patch_reports_both_sides_of_rename(git_workspace: Path) -> None:
+    patch = """diff --git a/sample.py b/renamed.py
+similarity index 100%
+rename from sample.py
+rename to renamed.py
+"""
+    result = ApplyPatchTool(git_workspace).execute(
+        ToolCall(id="rename", name="apply_patch", arguments={"patch": patch})
+    )
+    assert result.success is True
+    assert result.output["changed_files"] == ["renamed.py", "sample.py"]
+    assert not (git_workspace / "sample.py").exists()
+    assert (git_workspace / "renamed.py").exists()
+
+
 def test_apply_patch_accepts_begin_patch_update_format(git_workspace: Path) -> None:
     """回归真实轨迹中 DeepSeek 生成的无行号 Begin Patch 格式。"""
     patch = """*** Begin Patch

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import difflib
+import hashlib
 import json
 import os
 import re
@@ -416,8 +417,20 @@ class ApplyPatchTool(_WorkspaceTool):
         assert isinstance(args, _ApplyPatchArgs)
         # 先把模型常见的 Begin Patch 格式转换为标准 diff。转换只操作内存，
         # 路径或上下文不合法时不会提前写文件。
-        patch = self._normalize_patch(args.patch)
-        changed_files = self._validate_patch_paths(patch)
+        try:
+            patch = self._normalize_patch(args.patch)
+        except ToolValidationError as exc:
+            if exc.message != "patch does not change the target file":
+                raise
+            return ToolResult(
+                call_id=call.id,
+                tool_name=self.spec.name,
+                success=False,
+                output={"changed_files": []},
+                error="no_effect",
+                duration_ms=(time.monotonic() - started) * 1000,
+            )
+        declared_files = self._validate_patch_paths(patch)
 
         checked = self._run_git_apply(patch, check=True)
         if checked.returncode != 0:
@@ -432,6 +445,7 @@ class ApplyPatchTool(_WorkspaceTool):
                 duration_ms=(time.monotonic() - started) * 1000,
             )
 
+        before_files, before_git = self._patch_state(declared_files)
         applied = self._run_git_apply(patch, check=False)
         if applied.returncode != 0:
             stdout, _ = _truncate_text(applied.stdout, self.max_output_chars)
@@ -442,6 +456,21 @@ class ApplyPatchTool(_WorkspaceTool):
                 success=False,
                 output={"stdout": stdout, "stderr": stderr},
                 error="git apply failed after validation",
+                duration_ms=(time.monotonic() - started) * 1000,
+            )
+        after_files, after_git = self._patch_state(declared_files)
+        changed_files = sorted(
+            name for name in declared_files if before_files[name] != after_files[name]
+        )
+        if before_git != after_git and not changed_files:
+            changed_files = declared_files
+        if not changed_files:
+            return ToolResult(
+                call_id=call.id,
+                tool_name=self.spec.name,
+                success=False,
+                output={"changed_files": [], "stdout": applied.stdout, "stderr": applied.stderr},
+                error="no_effect",
                 duration_ms=(time.monotonic() - started) * 1000,
             )
         return ToolResult(
@@ -455,6 +484,32 @@ class ApplyPatchTool(_WorkspaceTool):
             },
             duration_ms=(time.monotonic() - started) * 1000,
         )
+
+    def _patch_state(self, names: list[str]) -> tuple[dict[str, tuple | None], bytes]:
+        """Compare actual file identity and scoped Git state, not diff declarations."""
+        files: dict[str, tuple | None] = {}
+        for name in names:
+            path = _resolve_path(self.workspace, name)
+            if path.is_file():
+                digest = hashlib.sha256(path.read_bytes()).hexdigest()
+                files[name] = ("file", path.stat().st_mode, digest)
+            elif path.exists():
+                files[name] = ("other", path.stat().st_mode)
+            else:
+                files[name] = None
+        try:
+            status = subprocess.run(
+                ["git", "status", "--porcelain=v1", "-z", "--untracked-files=all", "--", *names],
+                cwd=self.workspace,
+                capture_output=True,
+                timeout=30,
+                check=False,
+            )
+        except (OSError, subprocess.SubprocessError) as exc:
+            raise ToolExecutionError(f"cannot inspect patch Git state: {exc}") from exc
+        if status.returncode != 0:
+            raise ToolExecutionError("cannot inspect patch Git state")
+        return files, status.stdout
 
     def _normalize_patch(self, patch: str) -> str:
         """把受支持的模型补丁规范化为可交给 Git 的 unified diff。"""

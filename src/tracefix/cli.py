@@ -60,6 +60,7 @@ from tracefix.runtime import (
     TraceFixRunner,
     load_environment_file,
 )
+from tracefix.validation_feedback import write_validation_feedback_diagnostic
 
 
 def _env_number(name: str, converter: type[int] | type[float]) -> int | float | None:
@@ -392,6 +393,9 @@ def build_parser() -> argparse.ArgumentParser:
     p2_diagnostic.add_argument("--output-dir", type=Path)
     p2_diagnostic.add_argument(
         "--detailed-ablation", action="store_true", help="生成冻结四组消融的脱敏配对诊断"
+    )
+    p2_diagnostic.add_argument(
+        "--validation-feedback", action="store_true", help="离线核对验证闭环的测试与补丁反馈"
     )
     p2_diagnostic.add_argument("--ledger", type=Path)
     p2_diagnostic.add_argument("--campaign-before", type=Path)
@@ -922,6 +926,17 @@ def main(argv: list[str] | None = None) -> int:
             return 0
 
         if args.command == "p2-diagnose":
+            if args.validation_feedback:
+                if args.detailed_ablation or args.output_dir is None:
+                    parser.error(
+                        "--validation-feedback requires --output-dir "
+                        "and excludes --detailed-ablation"
+                    )
+                outputs = write_validation_feedback_diagnostic(
+                    args.experiment_dir, output_dir=args.output_dir
+                )
+                print("P2 验证反馈诊断: " + ", ".join(str(path) for path in outputs))
+                return 0
             if args.detailed_ablation:
                 missing = [
                     name
