@@ -1,0 +1,137 @@
+{
+  "schema_version": 1,
+  "kind": "formal_development_comparison_result",
+  "execution_commit": "d3a9a9e940d316822b6ff19e93384448474bfe69",
+  "reporting_fix_commit": "7c9be64",
+  "protocol": {
+    "positions": 48,
+    "tasks": 8,
+    "repetitions_per_arm_per_task": 3,
+    "control_arm": "no_compaction",
+    "treatment_arm": "validation_closure",
+    "schedule": "C/T, T/C, C/T",
+    "special_collection_failure_tasks": 2,
+    "holdout_evaluated": false
+  },
+  "evidence": {
+    "valid_positions": 48,
+    "evidence_issues": 0,
+    "completed": 48,
+    "unexecuted": 0,
+    "infrastructure_errors": 0,
+    "recovery_reuse": {
+      "trials_before_after": [48, 48],
+      "agent_runs_before_after": [48, 48],
+      "provider_requests_before_after": [5105, 5105]
+    }
+  },
+  "primary_result": {
+    "denominator": 24,
+    "control_successes": 15,
+    "control_success_rate": 0.625,
+    "treatment_successes": 12,
+    "treatment_success_rate": 0.5,
+    "treatment_minus_control_successes": -3,
+    "treatment_minus_control_percentage_points": -12.5,
+    "pre_registered_treatment_goal_successes": 16,
+    "pre_registered_net_gain": 4,
+    "tasks_with_gain": 1,
+    "adopt_treatment": false,
+    "interpretation": "Exploratory fixed-development-set comparison; no statistical-significance or holdout-generalization claim."
+  },
+  "task_successes": [
+    {"task_id":"psf__requests-1142","control":3,"treatment":3},
+    {"task_id":"psf__requests-1766","control":3,"treatment":3},
+    {"task_id":"pylint-dev__pylint-4661","control":0,"treatment":0},
+    {"task_id":"pytest-dev__pytest-10051","control":1,"treatment":2},
+    {"task_id":"pytest-dev__pytest-10081","control":3,"treatment":0},
+    {"task_id":"pytest-dev__pytest-10356","control":1,"treatment":0},
+    {"task_id":"sphinx-doc__sphinx-10435","control":1,"treatment":1},
+    {"task_id":"sphinx-doc__sphinx-10449","control":3,"treatment":3}
+  ],
+  "failures": {
+    "empty_agent_patch": 6,
+    "independent_pytest_execution_failed": 15,
+    "infrastructure_errors": 0,
+    "observed_examples": [
+      {"task_id":"pylint-dev__pylint-4661","observation":"All six attempts failed target assertion test_pylint_home: configured PYLINT_HOME path differed from the path expected by the target test."},
+      {"task_id":"pytest-dev__pytest-10051","observation":"Three failed attempts disagreed with expected setup-stage log selection in test_clear_for_call_stage."},
+      {"task_id":"pytest-dev__pytest-10356","observation":"Five failed attempts failed target assertion test_mark_mro."},
+      {"task_id":"pytest-dev__pytest-10081","observation":"All three treatment failures were empty patches."},
+      {"task_id":"sphinx-doc__sphinx-10435","observation":"Three empty patches and one target assertion failure in test_latex_code_role."}
+    ]
+  },
+  "termination": {
+    "agent_completed": 12,
+    "agent_completed_unverified": 6,
+    "trial_budget_exhausted_normally": 20,
+    "per_request_input_bound_stop": 9,
+    "step_limit_exceeded": 1
+  },
+  "resources": {
+    "control_input_tokens": 4663787,
+    "treatment_input_tokens": 4963853,
+    "input_token_delta_treatment_minus_control": 300066,
+    "control_output_tokens": 65775,
+    "treatment_output_tokens": 68476,
+    "output_token_delta_treatment_minus_control": 2701,
+    "control_agent_seconds": 1147.013,
+    "treatment_agent_seconds": 1314.456,
+    "agent_seconds_delta_treatment_minus_control": 167.443,
+    "task_equal_mean_input_token_delta": 37508.25,
+    "task_equal_mean_agent_seconds_delta": 20.930375
+  },
+  "cost": {
+    "currency": "CNY",
+    "batch_calculated_cost": 20.329288,
+    "shared_cap": 150.0,
+    "shared_calculated_spend_after_batch": 126.8753792,
+    "shared_calculated_remaining": 23.1246208,
+    "unsettled_reservation": 0.0,
+    "unknown_request": false,
+    "vendor_invoice_verified": false,
+    "note": "Conservative price-based accounting, not a claim of actual vendor charge."
+  },
+  "model": {
+    "provider": "DeepSeek official direct",
+    "configured_name": "deepseek/deepseek-flash",
+    "response_model_name": "deepseek-flash",
+    "response_identity_count": 5105,
+    "thinking": "disabled",
+    "temperature": 0,
+    "automatic_retries": 0,
+    "limitation": "The provider alias does not guarantee an immutable backend version."
+  },
+  "engineering_validation": {
+    "pytest_passed": 443,
+    "pytest_failed": 0,
+    "pytest_seconds": 754.97,
+    "pytest_only_composite_coverage_percent": 86.64245,
+    "pytest_command_exit_code": 1,
+    "combined_coverage_percent": 90.05246,
+    "statement_coverage_percent": 92.36129,
+    "branch_coverage_percent": 82.43712,
+    "coverage_threshold_exit_code": 0,
+    "ruff_exit_code": 0,
+    "compileall_tracked_python_files": "127/127",
+    "compileall_exit_code": 0
+  },
+  "hashes": {
+    "p2_summary_sha256": "105db9a0ca638465621741bec54cee2d1d8124abe91e502b5cea9f21505d5f70",
+    "protocol_sha256": "4269fd18e9ab71e8e3990eb911e54130cfc3c9b40f00f1b6307182dab140502a",
+    "recovery_before_sha256": "521ffb898776cf1f730a3105169fded38f48af053a6c56e69d2554404590a1d3",
+    "recovery_after_sha256": "9dd98d84f6b0c4f7b3250cc8b6a39af61f73cf064935f8382ff733d33e22ca34",
+    "price_evidence_sha256": "c4f9b93e358ea7cf10c500ce44826f49e94056aa97e9bfc3759e413cacce6405",
+    "provider_ledger_sha256": "2cc5e343fc8727ec09bc6be329f5aa831564d862e63ad3ae66f3ffa674bfbe3d",
+    "formal_run_log_sha256": "ea4aca87591070541ec04c2e320a1b5c633c728a9c0aaac151d11d50c8362d72",
+    "formal_run_exit_code_file_sha256": "13bf7b3039c63bf5a50491fa3cfcd8eb4e699d1ba1436315aefcbe5711530354",
+    "formal_summary_markdown_sha256": "02ff5429511667d8d341b338a1023897326d39704a1c2e1a041dcad7b358ef98",
+    "pytest_log_sha256": "d574922e7f631a21ef24ab1d7f32d8a6a84e4746ba501814a29f70024603954e",
+    "junit_sha256": "9cdc93455f99466838213a26c14b664471777c6c0990aee0b12df507dd3fb97e5",
+    "combined_coverage_json_sha256": "bc4bc1bc527e2c93140c52fb00ff3751471f068dc30f806471119c0c8ec5c63c",
+    "combined_coverage_xml_sha256": "34af33a82d58552b100be2b1b476b53ca478d0a7f439a4df4b127577f73048c2",
+    "ruff_log_sha256": "a4443afdcfb6d7363adb285762515ccf7cf50473b1a05c20c1a50f6bed4d26b0",
+    "compileall_log_sha256": "6d057d77edca11ada45e882b7abfc1926f972aad76823e06af7c65405dbad2c5"
+  },
+  "evidence_location": "Local raw evidence: runs/validation-closure-paid-development-20260924-v1/; final engineering evidence: runs/agent-feedback-final5-full-20260925/."
+}

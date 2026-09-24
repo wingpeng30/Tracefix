@@ -619,3 +619,15 @@ SWE-bench Verified 固定在 `78f471bf655a3137b2e8a75af1501690ec009ec3`，69 道
 需继续完成干净执行版本提交和正式 `p2-check`，确认 10 题源代码、P1 资格、配方及环境均匹配后，才启动 48 项 C/T 同期实验。任何预检失败都应修复后重新核价和预检，不发送模型请求。报告、逐次结果和本机日志/覆盖率文件位置见 [`experiments/v0.8.15-validation-closure-preflight.md`](experiments/v0.8.15-validation-closure-preflight.md)。
 
 执行验证更正：最终代码实际全量 pytest 为 443 passed、0 failed（754.97 秒）；pytest-only 覆盖率 86.64245% 因 fail-under=90 退出 1。按既定 Coverage.py 统计方案，在同一份全量测试数据上追加只读 V0.8.11 详细诊断的真实执行路径后，综合覆盖率 90.05246%，语句 92.36129%，分支 82.43712%，`coverage report --fail-under=90` 退出 0。Ruff 退出 0，Git 跟踪 Python 文件 127/127 compileall 成功。完整日志与工件保存于 `runs/agent-feedback-final4-full-20260924/`。提交前 `p2-check --design validation_closure` 检查通过，但显示工作区有跟踪改动；正式调用前须对提交后的干净版本重新执行。预检查与密钥配置只验证存在性，没有创建供应商客户端或发送请求。
+
+### 2026-09-25 V0.8.15 正式开发集验证闭环比较完成
+
+在干净执行提交 `d3a9a9e940d316822b6ff19e93384448474bfe69` 上重新通过 `p2-check` 后，按冻结协议完成 48 项正式运行：8 道普通开发题，C/T 各 24 次，三轮 C/T、T/C、C/T。DeepSeek 官方直连配置 `deepseek/deepseek-flash`，5105 次响应均报告 `deepseek-flash`；别名不保证不可变后端。模型关闭思考、temperature 0、自动重试 0。原始工件和账本留在本机 `runs/validation-closure-paid-development-20260924-v1/`。已修复汇总报告的正式/模拟标注，报告修复提交为 `7c9be64`，不影响执行代码或分数。
+
+48/48 位置的工件证据有效，独立验收成功 27、失败 21，基础设施事故 0、未执行 0。主要指标 C 15/24（62.5%），T 12/24（50%），T−C −3 次；仅 pytest-10051 一题净增，其余任务净持平或下降。预注册要求 T≥16/24、净增≥4 且至少两题有净增，均未满足，故不采纳闭环配置，保留全关 C 基线。比较属于小样本探索性结果，不代表统计显著性，也不支持留出泛化结论。
+
+21 次失败由 6 次空补丁和 15 次目标 pytest 失败构成。具体目标失败包括：Pylint-4661 的六次 `test_pylint_home` 路径断言失败；Pytest-10051 三次 `test_clear_for_call_stage` 阶段日志断言失败；Pytest-10356 五次 `test_mark_mro` 断言失败；Sphinx-10435 有一次 `test_latex_code_role` 断言失败。Pytest-10081 的三次 T 失败是空补丁。该结果表明补丁未符合目标断言或未产出补丁；不足以归结为单一模型/工程根因。
+
+T 相较 C 多用输入 300,066 Token、输出 2,701 Token、Agent 时间 167.443 秒；任务等权平均差分别为输入 +37,508.25 Token、时间 +20.930375 秒，未改善成本/时长。终止原因包括正常预算耗尽 20 项、请求输入上界拦截 9 项、步数上限 1 项、正常完成 12 项和未验证即结束 6 项。请求上界拦截不是基础设施事故。批次保守费用 ¥20.329288，共享账本保守累计 ¥126.87537920/¥150、余额 ¥23.12462080，无未决预留或未知请求；这些金额不是供应商实际账单。恢复前后试次数 48、Agent 目录 48、请求数 5105 均未增加。
+
+最终工程检查：443 passed、0 failed；pytest-only coverage 86.64245% 导致 pytest 命令按既有 fail-under=90 退出 1。追加同一统计数据上的只读离线详细诊断真实入口后，综合覆盖率 90.05246%（语句 92.36129%、分支 82.43712%），阈值检查退出 0。Ruff 退出 0；127/127 tracked Python 文件 compileall 退出 0。日志、JUnit、coverage JSON/XML 和退出码保存在 `runs/agent-feedback-final5-full-20260925/`。脱敏结果及原始摘要、协议哈希见 [`experiments/v0.8.15-validation-closure-results.md`](experiments/v0.8.15-validation-closure-results.md) 与 [`../benchmarks/experiments/v0.8.15-validation-closure-development/validation-closure-results.json`](../benchmarks/experiments/v0.8.15-validation-closure-development/validation-closure-results.json)。20 题留出集没有运行；下一步应对失败工件做离线逐例归因并设计零费用可证伪测试，不据此直接改提示或跑留出题。
