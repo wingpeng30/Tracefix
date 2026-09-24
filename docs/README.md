@@ -6,7 +6,7 @@
 ## 新任务交接入口
 
 - [`handoffs/2026-09-17-v084.md`](handoffs/2026-09-17-v084.md)：当前版本、优先级任务、
-  必读代码、原始证据位置和可复制启动提示。最新状态见文末第 25 节：V0.8.13 诊断已更正、输出呈现单变量协议已冻结并完成合成零费用预检；完整付费批次因共享余额不足而推迟。
+  必读代码、原始证据位置和可复制启动提示。最新状态见文末第 26 节：V0.8.14 60 项开发集输出呈现比较已完成，T 未满足预注册采纳条件，留出集未运行。
 
 ## 项目历程
 
@@ -66,6 +66,8 @@
   开发集四组正式 120 项、独立对账及零调用恢复；无组达到预定净收益要求，保留基线与未使用留出集。
 - [`experiments/v0.8.13-presentation-only-preflight.md`](experiments/v0.8.13-presentation-only-preflight.md)：
   更正工具裁剪/历史折叠统计，冻结 60 位置输出呈现单变量协议、合成零费用预检和预算停止决策。
+- [`experiments/v0.8.14-presentation-only-paid-development.md`](experiments/v0.8.14-presentation-only-paid-development.md)：
+  完成 C/T 60 项正式开发集比较，记录 58/60 有效证据、费用对账、恢复结果及未通过采纳门槛的原因。
 - [`experiments/v0.8.10-ablation-preflight.md`](experiments/v0.8.10-ablation-preflight.md)：
   四组 120 项协议、真实任务与正式入口零费用模拟、恢复、完整依赖锁及共享预算预检。
 - [`experiments/v0.8.4-real-environment-validation.md`](experiments/v0.8.4-real-environment-validation.md)：

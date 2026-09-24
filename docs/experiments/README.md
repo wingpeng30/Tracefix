@@ -137,3 +137,11 @@ T 输入 -2.73%、Agent 用时 -6.14%，但成功率 -3.33pp，因此尚未达�
 - 单变量 C/T 配置冻结于提交 `8954d77860aa17dfdc579c40ed14f50ef7fb2021`；仅工具输出呈现开关不同，未执行付费批次。
 - 合成 fixture Agent/独立验收 6/6 通过并完成无调用恢复；这仅是工程证据。20 题留出评测未运行。
 - 共享余额 ¥19.63123480，完整 60 位置的保守上界 ¥51.60；预算不足，继续暂停付费运行。
+
+## V0.8.14：工具输出呈现单变量开发集正式比较
+
+- 报告：[`v0.8.14-presentation-only-paid-development.md`](v0.8.14-presentation-only-paid-development.md)。
+- 脱敏 60 项汇总、逐位置指标及工件哈希：[`report.json`](../../benchmarks/experiments/v0.8.14-presentation-only-paid-development/report.json) 与 [`sha256-manifest.json`](../../benchmarks/experiments/v0.8.14-presentation-only-paid-development/sha256-manifest.json)。
+- 用户授权将共享累计上限提高至 ¥150、本阶段上限设为 ¥55；同一账本下完成 60/60 个试次记录，阶段保守计算 ¥26.177326，共享累计 ¥106.54609120。以上金额不是供应商账单。
+- 8 道普通题 C/T 均 12/24；T 输入 Token −10.51%，Agent 时间 +18.83%。2 道特殊资格任务两组均 0/6。证据审计仅 58/60 有效，2 项复验仍不完整；不采纳 T，保留基线。
+- 同目录恢复复用 60/60；留出集未运行。全量工程门槛引用运行前执行代码 `e5ab04b` 的验证证据；本轮未改运行代码。
