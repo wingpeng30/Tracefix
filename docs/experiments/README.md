@@ -177,3 +177,10 @@ T 输入 -2.73%、Agent 用时 -6.14%，但成功率 -3.33pp，因此尚未达�
 - 六位置模拟供应商端到端和完成态恢复通过；Requests-1766 本地服务配置及 pytest-10051 断言阶段错误分类已修正。本轮无付费请求。
 - 脱敏机器协议、执行身份、逐题依赖摘要及验证结果在 [`v0.8.21-no-effect-recovery-execution/`](../../benchmarks/experiments/v0.8.21-no-effect-recovery-execution/)。
 - 全量 pytest 461 passed，Ruff/compileall 退出 0。精确综合覆盖率 89.634203%，Coverage.py 按 `fail-under=90` 的整数显示为 90 并退出 0；未取整值不足 90，报告保留此限制。
+
+## V0.8.22：重复 no_effect 恢复门槛同期比较
+
+- 完整报告：[48 项正式比较与限制](v0.8.22-no-effect-recovery-48-campaign-results.md)。
+- 脱敏逐位置 JSON：[机器结果](v0.8.22-no-effect-recovery-48-results.json)。
+- 48 项全完成，C/T 独立成功均 6/24；20 个证据问题和一项操作中断事故导致结论证据不完整，未达到预注册采纳条件。
+- 本机原始工件：`runs/no-effect-recovery-paid-development-20260926-v1/experiment/`；最终诊断：`runs/no-effect-recovery-paid-development-20260926-v1/final-diagnostic/`。原始请求、补丁和账本不纳入版本库。

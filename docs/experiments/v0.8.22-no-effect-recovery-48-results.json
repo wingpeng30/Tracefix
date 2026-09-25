@@ -1,0 +1,1649 @@
+{
+  "schema_version": 1,
+  "kind": "sanitized_p2_formal_results",
+  "generated_from": {
+    "execution_commit": "b435368398d641e54613cc91bb701487eeafbddd",
+    "protocol_sha256": "a98782c1dd266ed8658513332fd718b15dabe6bbd3bf186385e59b394fae0a15",
+    "experiment_evidence_root": "runs/no-effect-recovery-paid-development-20260926-v1/experiment",
+    "summary_sha256": "eaf7aaf4ed757aa14472d9e3732a8f6adc3e6c6a502fbf2a70c79abdd5d6efc2",
+    "strict_summary_sha256": "92fa9c4b2b2d9796c968dac2360db1dc7d654a3480d30bbe47c8e7754f7c4134",
+    "diagnostic_sha256": "baa173fdc9beab3b065a577acd62b0e34c451c062bfc4404353b9d677703f275"
+  },
+  "schedule": {
+    "planned": 48,
+    "completed": 48,
+    "arms": {
+      "no_compaction": 24,
+      "no_effect_recovery": 24
+    },
+    "repetitions_per_task_arm": 3
+  },
+  "outcomes": {
+    "independent_acceptance_successes": 12,
+    "repair_failures": 15,
+    "infrastructure_errors": 1,
+    "evidence_issues": 20,
+    "unexecuted": 0,
+    "ordinary_primary": {
+      "control_successes": 6,
+      "control_denominator": 24,
+      "treatment_successes": 6,
+      "treatment_denominator": 24,
+      "net_gain": 0,
+      "adoptable": false
+    }
+  },
+  "evidence": {
+    "valid_positions": 28,
+    "issue_positions": 20,
+    "termination_categories": {
+      "agent_completed": 7,
+      "infrastructure_error": 1,
+      "normal_trial_budget_stop": 8,
+      "request_bound_violation": 9,
+      "test_limit_exceeded": 3,
+      "verification_indeterminate": 20
+    },
+    "verification_reasons": {
+      "agent_modified_test_or_pytest_configuration": 2,
+      "empty_agent_patch": 4,
+      "evidence_invalid": 20,
+      "passed": 12,
+      "pytest execution failed": 10
+    }
+  },
+  "usage": {
+    "input_tokens": 9221647,
+    "output_tokens": 127851,
+    "calculated_cost_amount": 19.466102000000053,
+    "currency": "CNY",
+    "provider_actual_cost": "unknown for post-invoice requests"
+  },
+  "recovery": {
+    "exit_code": 0,
+    "completed_positions_reused": 48,
+    "new_supplier_requests": 0,
+    "ledger_request_count_before": 6603,
+    "ledger_request_count_after": 6603,
+    "ledger_sha256_before": "b811cd09abb6996bf9e0edf97f68c64fe3b63806ab73d80e9f311f0318e6a3ab",
+    "ledger_sha256_after": "b811cd09abb6996bf9e0edf97f68c64fe3b63806ab73d80e9f311f0318e6a3ab"
+  },
+  "positions": [
+    {
+      "sequence": 1,
+      "task_id": "psf__requests-1142",
+      "arm": "no_compaction",
+      "repetition": 1,
+      "status": "verification_complete",
+      "independent_passed": true,
+      "agent_validation_status": "verified",
+      "termination": "agent_completed",
+      "evidence_valid": true,
+      "evidence_issues": [],
+      "input_tokens": 102193,
+      "output_tokens": 1902,
+      "calculated_cost_amount": 0.21960199999998053,
+      "currency": "CNY",
+      "agent_seconds": 34.42199999999866,
+      "verification_seconds": 2.9539999999997235,
+      "artifacts": {
+        "run_result": {
+          "path": "agent-runs/20260925T165328Z-e6d0fa7c/result.json",
+          "sha256": "3835d7047f855269b350f6b6373fa6dea1ff1374c4790f0c1bbd440cc157bcd0"
+        },
+        "patch": {
+          "path": "agent-runs/20260925T165328Z-e6d0fa7c/patch.diff",
+          "sha256": "562ab7301d8e10bb35b5d2209ce756541a4c164c76d6aba9225969353ca0c2f2"
+        },
+        "verification": {
+          "path": "verification/001-p2-001-7eae4ca4d1eb4ec484affcada862679b-3e44e92f/result.json",
+          "sha256": "8f3fa40d020b23f5f01f02c4c5c56207004c0afeb2b2f97c4c6f2f5fa7e28541"
+        }
+      }
+    },
+    {
+      "sequence": 2,
+      "task_id": "psf__requests-1142",
+      "arm": "no_effect_recovery",
+      "repetition": 1,
+      "status": "verification_complete",
+      "independent_passed": true,
+      "agent_validation_status": "verified",
+      "termination": "agent_completed",
+      "evidence_valid": true,
+      "evidence_issues": [],
+      "input_tokens": 124797,
+      "output_tokens": 2349,
+      "calculated_cost_amount": 0.2683860000000067,
+      "currency": "CNY",
+      "agent_seconds": 28.688000000000102,
+      "verification_seconds": 2.9840000000003783,
+      "artifacts": {
+        "run_result": {
+          "path": "agent-runs/20260925T165406Z-71e8cc0e/result.json",
+          "sha256": "0889507b8ada179bf9f6622de8ac333233209c85e344b543329ec7918057f370"
+        },
+        "patch": {
+          "path": "agent-runs/20260925T165406Z-71e8cc0e/patch.diff",
+          "sha256": "b6b232ceff301490a2b92c81af212bdefe070e9a7cc3cf4a4bfcf7cfaf862e80"
+        },
+        "verification": {
+          "path": "verification/002-p2-002-7d0280f56ad74c0a95c51c840bb395fc-40355583/result.json",
+          "sha256": "2c0ececae3090c6bf11db39ebd1db832606f57e20389c2ba08e4d22d0a9ffb61"
+        }
+      }
+    },
+    {
+      "sequence": 3,
+      "task_id": "psf__requests-1766",
+      "arm": "no_compaction",
+      "repetition": 1,
+      "status": "verification_complete",
+      "independent_passed": false,
+      "agent_validation_status": "unverified",
+      "termination": "benchmark_error",
+      "evidence_valid": false,
+      "evidence_issues": [
+        "verification_unusable:network_error"
+      ],
+      "input_tokens": 98961,
+      "output_tokens": 831,
+      "calculated_cost_amount": 0.20457000000000392,
+      "currency": "CNY",
+      "agent_seconds": 70.09400000000096,
+      "verification_seconds": 16.063000000000102,
+      "artifacts": {
+        "run_result": {
+          "path": "agent-runs/20260925T165443Z-d0626e6b/result.json",
+          "sha256": "ab3efc9feb523910a20f95a61d8de8cce2d54bac25caf275a989bf6b46a730a8"
+        },
+        "patch": {
+          "path": "agent-runs/20260925T165443Z-d0626e6b/patch.diff",
+          "sha256": "6e23c36be98b70d888008cefdf4148b6b317afa6ef060844fd0f9be7f7cd4a89"
+        },
+        "verification": {
+          "path": "verification/003-p2-003-118ef41768094536b9b09bd28516bfcd-d465cf4d/result.json",
+          "sha256": "eeff2364dcf52c4bf615ac9468b3b676f34429a9528cac339e6dd74fd14a108d"
+        }
+      }
+    },
+    {
+      "sequence": 4,
+      "task_id": "psf__requests-1766",
+      "arm": "no_effect_recovery",
+      "repetition": 1,
+      "status": "verification_complete",
+      "independent_passed": false,
+      "agent_validation_status": "unverified",
+      "termination": "benchmark_error",
+      "evidence_valid": false,
+      "evidence_issues": [
+        "verification_unusable:network_error"
+      ],
+      "input_tokens": 41227,
+      "output_tokens": 692,
+      "calculated_cost_amount": 0.08798999999999779,
+      "currency": "CNY",
+      "agent_seconds": 64.17100000000028,
+      "verification_seconds": 16.07799999999952,
+      "artifacts": {
+        "run_result": {
+          "path": "agent-runs/20260925T165609Z-b35a478a/result.json",
+          "sha256": "fef37eeb67999810794b9533df2e340da9bac5f617bc39f4b5cb89ad4bdf6606"
+        },
+        "patch": {
+          "path": "agent-runs/20260925T165609Z-b35a478a/patch.diff",
+          "sha256": "85c47bbcf134575132e891786e3ff2ee79858f4f17ce07acf9d51e37196b3310"
+        },
+        "verification": {
+          "path": "verification/004-p2-004-2b31e731d3f349a78476db99db5e2a9b-4c570c31/result.json",
+          "sha256": "92b959f8b834ef9038f7493f7faad09015e86be83b0248d8866de12fc4e4b5d7"
+        }
+      }
+    },
+    {
+      "sequence": 5,
+      "task_id": "pylint-dev__pylint-4661",
+      "arm": "no_compaction",
+      "repetition": 1,
+      "status": "verification_complete",
+      "independent_passed": false,
+      "agent_validation_status": "unverified",
+      "termination": "test_limit_exceeded",
+      "evidence_valid": true,
+      "evidence_issues": [],
+      "input_tokens": 109407,
+      "output_tokens": 1910,
+      "calculated_cost_amount": 0.2340939999999918,
+      "currency": "CNY",
+      "agent_seconds": 52.57799999999952,
+      "verification_seconds": 14.531000000000859,
+      "artifacts": {
+        "run_result": {
+          "path": "agent-runs/20260925T165735Z-061a7205/result.json",
+          "sha256": "7757e00403783c52ab14007dd09eb5c58c79ef36985258100e98639dbd5798e2"
+        },
+        "patch": {
+          "path": "agent-runs/20260925T165735Z-061a7205/patch.diff",
+          "sha256": "4c6aa4af36e427c1e2f60364175b2a348084457ad444061d6ffbd414cf311237"
+        },
+        "verification": {
+          "path": "verification/005-p2-005-dd34c803d843405c8125becab6153c8c-3fb411c5/result.json",
+          "sha256": "20d96624bcb549ced041be1281b3625579882c0e1ec6883b123e5cefa95c983c"
+        }
+      }
+    },
+    {
+      "sequence": 6,
+      "task_id": "pylint-dev__pylint-4661",
+      "arm": "no_effect_recovery",
+      "repetition": 1,
+      "status": "verification_complete",
+      "independent_passed": false,
+      "agent_validation_status": "unverified",
+      "termination": "test_limit_exceeded",
+      "evidence_valid": true,
+      "evidence_issues": [],
+      "input_tokens": 230799,
+      "output_tokens": 2165,
+      "calculated_cost_amount": 0.4789180000000144,
+      "currency": "CNY",
+      "agent_seconds": 51.21900000000096,
+      "verification_seconds": 9.42200000000048,
+      "artifacts": {
+        "run_result": {
+          "path": "agent-runs/20260925T165842Z-eed61dd8/result.json",
+          "sha256": "2e6f4e29ee0d66c707be328c60386d48d3895cf4a3e7f8ad93a998bb19877e06"
+        },
+        "patch": {
+          "path": "agent-runs/20260925T165842Z-eed61dd8/patch.diff",
+          "sha256": "5feed2b3151bd4913ab70b1c6f740dd266b3d59daa8b3eb5c31fe6bcdc90b37e"
+        },
+        "verification": {
+          "path": "verification/006-p2-006-586e1328dc214c9d8f68e3c2ce01a6de-da8ebbef/result.json",
+          "sha256": "701d7c47c8f2e9f0348bf9da82a492cd316e9127415bf1f45a431a3f68eaafe6"
+        }
+      }
+    },
+    {
+      "sequence": 7,
+      "task_id": "pytest-dev__pytest-10051",
+      "arm": "no_compaction",
+      "repetition": 1,
+      "status": "verification_complete",
+      "independent_passed": true,
+      "agent_validation_status": "verified",
+      "termination": "agent_completed",
+      "evidence_valid": true,
+      "evidence_issues": [],
+      "input_tokens": 203705,
+      "output_tokens": 2857,
+      "calculated_cost_amount": 0.43026600000000315,
+      "currency": "CNY",
+      "agent_seconds": 42.26599999999962,
+      "verification_seconds": 7.0,
+      "artifacts": {
+        "run_result": {
+          "path": "agent-runs/20260925T165948Z-f44011d8/result.json",
+          "sha256": "30029f97ca2259b6298953110fc9b7077c99e78a4dccc019b41b503fa01de9e8"
+        },
+        "patch": {
+          "path": "agent-runs/20260925T165948Z-f44011d8/patch.diff",
+          "sha256": "717268967485ef83ff6c3aad22357e1fa689da026523309f76286dc6a3306d75"
+        },
+        "verification": {
+          "path": "verification/007-p2-007-574e786a07b24fc29f1a33b01b727498-adc28016/result.json",
+          "sha256": "2a71a5751bdc3eb835627a3602791e576051cd679784bb687d1dfc125edef7fb"
+        }
+      }
+    },
+    {
+      "sequence": 8,
+      "task_id": "pytest-dev__pytest-10051",
+      "arm": "no_effect_recovery",
+      "repetition": 1,
+      "status": "verification_complete",
+      "independent_passed": false,
+      "agent_validation_status": "unverified",
+      "termination": "agent_error",
+      "evidence_valid": true,
+      "evidence_issues": [],
+      "input_tokens": 25336,
+      "output_tokens": 620,
+      "calculated_cost_amount": 0.055632,
+      "currency": "CNY",
+      "agent_seconds": null,
+      "verification_seconds": 7.125,
+      "artifacts": {
+        "run_result": {
+          "path": "agent-runs/20260925T170037Z-b2090809/result.partial.json",
+          "sha256": "d07f24eb9113bfe7adebe0996b1dc836bda7fb58af7c83191b5ebbd7ce8259f1"
+        },
+        "patch": {
+          "path": "agent-runs/20260925T170037Z-b2090809/patch.partial.diff",
+          "sha256": "0c7f24edf5b900db6c9393d46bb30e43eade23ed18bd8465c006650e170377e0"
+        },
+        "verification": {
+          "path": "verification/008-p2-008-668705eefefd409296b3ec5bfa7afab3-e5e825a6/result.json",
+          "sha256": "b772c0db448ec90c149626214b48a30cb93220dea33d1663098f04db06adc73a"
+        }
+      }
+    },
+    {
+      "sequence": 9,
+      "task_id": "pytest-dev__pytest-10081",
+      "arm": "no_compaction",
+      "repetition": 1,
+      "status": "verification_complete",
+      "independent_passed": false,
+      "agent_validation_status": "unverified",
+      "termination": "p2_trial_budget_exhausted",
+      "evidence_valid": true,
+      "evidence_issues": [],
+      "input_tokens": 291258,
+      "output_tokens": 3816,
+      "calculated_cost_amount": 0.6130440000000164,
+      "currency": "CNY",
+      "agent_seconds": 52.25,
+      "verification_seconds": 0.8279999999995198,
+      "artifacts": {
+        "run_result": {
+          "path": "agent-runs/20260925T172233Z-78f8bf68/result.json",
+          "sha256": "74b25ccc340dbc34ca3b9dcbfdcfbabd13bb62828ec31cfe8ce13d145bda8b11"
+        },
+        "patch": {
+          "path": "agent-runs/20260925T172233Z-78f8bf68/patch.diff",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "verification": {
+          "path": "verification/009-p2-009-fe77ebffe72c4dcab799b150640e3279-67b2a9c4/result.json",
+          "sha256": "2469c204552d924d93c14c899655ac106f21617b85332db9820d490152c7ee0f"
+        }
+      }
+    },
+    {
+      "sequence": 10,
+      "task_id": "pytest-dev__pytest-10081",
+      "arm": "no_effect_recovery",
+      "repetition": 1,
+      "status": "verification_complete",
+      "independent_passed": false,
+      "agent_validation_status": "unverified",
+      "termination": "p2_trial_budget_exhausted",
+      "evidence_valid": true,
+      "evidence_issues": [],
+      "input_tokens": 293701,
+      "output_tokens": 3353,
+      "calculated_cost_amount": 0.6142260000000022,
+      "currency": "CNY",
+      "agent_seconds": 39.54700000000048,
+      "verification_seconds": 0.7660000000014406,
+      "artifacts": {
+        "run_result": {
+          "path": "agent-runs/20260925T172327Z-05136375/result.json",
+          "sha256": "3010610ad34188b8eba30cde3c8570fb82c6b7aeab473f4e1367820c02f4e11d"
+        },
+        "patch": {
+          "path": "agent-runs/20260925T172327Z-05136375/patch.diff",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "verification": {
+          "path": "verification/010-p2-010-d7f7abb53ed645908db6c8dccc302012-348274d7/result.json",
+          "sha256": "2469c204552d924d93c14c899655ac106f21617b85332db9820d490152c7ee0f"
+        }
+      }
+    },
+    {
+      "sequence": 11,
+      "task_id": "pytest-dev__pytest-10356",
+      "arm": "no_compaction",
+      "repetition": 1,
+      "status": "verification_complete",
+      "independent_passed": false,
+      "agent_validation_status": "unverified",
+      "termination": "benchmark_error",
+      "evidence_valid": true,
+      "evidence_issues": [],
+      "input_tokens": 242289,
+      "output_tokens": 3644,
+      "calculated_cost_amount": 0.5137300000000025,
+      "currency": "CNY",
+      "agent_seconds": 39.09399999999914,
+      "verification_seconds": 7.656000000000859,
+      "artifacts": {
+        "run_result": {
+          "path": "agent-runs/20260925T172413Z-84fdce28/result.json",
+          "sha256": "a3d72266f7af307b51026682d25d21b231d594a3cf47b5c7a2c173d1bf0f1491"
+        },
+        "patch": {
+          "path": "agent-runs/20260925T172413Z-84fdce28/patch.diff",
+          "sha256": "d928b00b11cfc7e9aab82c2e50b0abfe8ad9275675d305e103b9f13f053ec8a6"
+        },
+        "verification": {
+          "path": "verification/011-p2-011-113b8aa3267647b5a90a2bc874ccbfff-a94c892f/result.json",
+          "sha256": "b9cd7a411b6dafe16b6c038edeeaea8959fe97947ca1185358c03332e92285b4"
+        }
+      }
+    },
+    {
+      "sequence": 12,
+      "task_id": "pytest-dev__pytest-10356",
+      "arm": "no_effect_recovery",
+      "repetition": 1,
+      "status": "verification_complete",
+      "independent_passed": true,
+      "agent_validation_status": "unverified",
+      "termination": "p2_trial_budget_exhausted",
+      "evidence_valid": true,
+      "evidence_issues": [],
+      "input_tokens": 287171,
+      "output_tokens": 4313,
+      "calculated_cost_amount": 0.6088459999999785,
+      "currency": "CNY",
+      "agent_seconds": 43.59399999999914,
+      "verification_seconds": 6.265999999999622,
+      "artifacts": {
+        "run_result": {
+          "path": "agent-runs/20260925T172500Z-3946f2a2/result.json",
+          "sha256": "a0e676b4187835b1f657025c94fee1c5ce7d0991824cbbec3f13854c76a7868c"
+        },
+        "patch": {
+          "path": "agent-runs/20260925T172500Z-3946f2a2/patch.diff",
+          "sha256": "cbe0f0d45b72f2fdfae577c6ddb5dc8773dca6ba35d0c67894959f84f929f5a5"
+        },
+        "verification": {
+          "path": "verification/012-p2-012-4b5681b1bc17450f83e992b563137b9b-f22d5d02/result.json",
+          "sha256": "111ff044c36771130f6ed9cfa575ea32132a3dfdff3a9761379db301739f4545"
+        }
+      }
+    },
+    {
+      "sequence": 13,
+      "task_id": "sphinx-doc__sphinx-10435",
+      "arm": "no_compaction",
+      "repetition": 1,
+      "status": "verification_complete",
+      "independent_passed": false,
+      "agent_validation_status": "unverified",
+      "termination": "p2_trial_budget_exhausted",
+      "evidence_valid": false,
+      "evidence_issues": [
+        "verification_unusable:report_missing"
+      ],
+      "input_tokens": 264649,
+      "output_tokens": 2836,
+      "calculated_cost_amount": 0.5519859999999852,
+      "currency": "CNY",
+      "agent_seconds": 76.09400000000096,
+      "verification_seconds": 9.71900000000096,
+      "artifacts": {
+        "run_result": {
+          "path": "agent-runs/20260925T172555Z-e50e1f5e/result.json",
+          "sha256": "39795b81c44a1b7a88b7c8008ad0707567fc077727ae9b2a49f5e501e7a85154"
+        },
+        "patch": {
+          "path": "agent-runs/20260925T172555Z-e50e1f5e/patch.diff",
+          "sha256": "ec11ba93005d27a0cd5fb405a93ca296a953257155bc8daedc889c0ef8eb3302"
+        },
+        "verification": {
+          "path": "verification/013-p2-013-06031cc89ad740f6a237f9b3a938582f-cf2b7c27/result.json",
+          "sha256": "5fbec4b1c7132f971990ee49bbf3b92a819128dd93170d840d9413da507052c6"
+        }
+      }
+    },
+    {
+      "sequence": 14,
+      "task_id": "sphinx-doc__sphinx-10435",
+      "arm": "no_effect_recovery",
+      "repetition": 1,
+      "status": "verification_complete",
+      "independent_passed": false,
+      "agent_validation_status": "unverified",
+      "termination": "p2_trial_budget_exhausted",
+      "evidence_valid": false,
+      "evidence_issues": [
+        "verification_unusable:report_missing"
+      ],
+      "input_tokens": 245872,
+      "output_tokens": 7563,
+      "calculated_cost_amount": 0.5522480000000201,
+      "currency": "CNY",
+      "agent_seconds": 78.29699999999866,
+      "verification_seconds": 19.264999999999418,
+      "artifacts": {
+        "run_result": {
+          "path": "agent-runs/20260925T172721Z-71867f88/result.json",
+          "sha256": "81b7449ece1b1b8c59b6b7d291ef05f88c94554e9b3ff0e8df7ed4056728898b"
+        },
+        "patch": {
+          "path": "agent-runs/20260925T172721Z-71867f88/patch.diff",
+          "sha256": "fcf9f6b0a635da60701d52c85f302ab513b92942e4e8cc61e45ad519c1357193"
+        },
+        "verification": {
+          "path": "verification/014-p2-014-6171ed9006574dc99fd43f68d7af4d8e-cd3e7e28/result.json",
+          "sha256": "f76403371a26a10e056e627c1c165f6b448d4c02a2319abcf05bc7fec145afbc"
+        }
+      }
+    },
+    {
+      "sequence": 15,
+      "task_id": "sphinx-doc__sphinx-10449",
+      "arm": "no_compaction",
+      "repetition": 1,
+      "status": "verification_complete",
+      "independent_passed": false,
+      "agent_validation_status": "unverified",
+      "termination": "benchmark_error",
+      "evidence_valid": false,
+      "evidence_issues": [
+        "verification_unusable:report_missing"
+      ],
+      "input_tokens": 257703,
+      "output_tokens": 2247,
+      "calculated_cost_amount": 0.5333820000000031,
+      "currency": "CNY",
+      "agent_seconds": 48.5,
+      "verification_seconds": 17.265000000001237,
+      "artifacts": {
+        "run_result": {
+          "path": "agent-runs/20260925T172904Z-5c6d52b2/result.json",
+          "sha256": "9c96d4f24159edf7c783c3048d55e261cb4039a0f45bb37056825c305bd8776f"
+        },
+        "patch": {
+          "path": "agent-runs/20260925T172904Z-5c6d52b2/patch.diff",
+          "sha256": "df768896baeed956b1634636914c34a65d449f2e685825032fae7de597a3a4cb"
+        },
+        "verification": {
+          "path": "verification/015-p2-015-6a8856e8890447afbaf4f0c33b6626ec-79bddbe3/result.json",
+          "sha256": "461d40952c2a3b9ba484d148b5c9619e77c5de543d968f1892442b9d310b748b"
+        }
+      }
+    },
+    {
+      "sequence": 16,
+      "task_id": "sphinx-doc__sphinx-10449",
+      "arm": "no_effect_recovery",
+      "repetition": 1,
+      "status": "verification_complete",
+      "independent_passed": false,
+      "agent_validation_status": "unverified",
+      "termination": "benchmark_error",
+      "evidence_valid": false,
+      "evidence_issues": [
+        "verification_unusable:report_missing"
+      ],
+      "input_tokens": 197423,
+      "output_tokens": 1837,
+      "calculated_cost_amount": 0.40954200000000185,
+      "currency": "CNY",
+      "agent_seconds": 42.34300000000076,
+      "verification_seconds": 18.375,
+      "artifacts": {
+        "run_result": {
+          "path": "agent-runs/20260925T173011Z-1ee30e0e/result.json",
+          "sha256": "9fdfb5e8166c50e2035c80caee7eb6f174e922575ab26860f21b922fdbe2ada1"
+        },
+        "patch": {
+          "path": "agent-runs/20260925T173011Z-1ee30e0e/patch.diff",
+          "sha256": "461931bec0f1180e7f4bb009491c9a68789ca67ea3dc147b7034f486e34c8c60"
+        },
+        "verification": {
+          "path": "verification/016-p2-016-39daa2dd2424436e8207a27f80bfdeca-620ba3b7/result.json",
+          "sha256": "e79a3ba9028ba61057fb41d977b3a6f8166805ffe5a95546ab6ea3839aa9ab77"
+        }
+      }
+    },
+    {
+      "sequence": 17,
+      "task_id": "psf__requests-1142",
+      "arm": "no_effect_recovery",
+      "repetition": 2,
+      "status": "verification_complete",
+      "independent_passed": true,
+      "agent_validation_status": "verified",
+      "termination": "agent_completed",
+      "evidence_valid": true,
+      "evidence_issues": [],
+      "input_tokens": 100546,
+      "output_tokens": 1854,
+      "calculated_cost_amount": 0.21592400000000112,
+      "currency": "CNY",
+      "agent_seconds": 24.718000000000757,
+      "verification_seconds": 2.985000000000582,
+      "artifacts": {
+        "run_result": {
+          "path": "agent-runs/20260925T173116Z-4158101c/result.json",
+          "sha256": "a150f0ce87cf813c5c610e18193954de04cf934f667ec5191b1aec215448d5e8"
+        },
+        "patch": {
+          "path": "agent-runs/20260925T173116Z-4158101c/patch.diff",
+          "sha256": "8a3db4c171401dd5137b8b49a6c7ffc6c82bc98037d9ccdc4694323e8cd8f3bf"
+        },
+        "verification": {
+          "path": "verification/017-p2-017-f4f6e4bf2e324d80949a764867d41d45-d24adf3e/result.json",
+          "sha256": "6d25deb103cba86aef0b040a382ab681e5be1ce25a260cca53b1c495d533997b"
+        }
+      }
+    },
+    {
+      "sequence": 18,
+      "task_id": "psf__requests-1142",
+      "arm": "no_compaction",
+      "repetition": 2,
+      "status": "verification_complete",
+      "independent_passed": true,
+      "agent_validation_status": "verified",
+      "termination": "agent_completed",
+      "evidence_valid": true,
+      "evidence_issues": [],
+      "input_tokens": 145297,
+      "output_tokens": 2513,
+      "calculated_cost_amount": 0.31069799999998793,
+      "currency": "CNY",
+      "agent_seconds": 31.46899999999914,
+      "verification_seconds": 3.0159999999996217,
+      "artifacts": {
+        "run_result": {
+          "path": "agent-runs/20260925T173145Z-7d3bc6cc/result.json",
+          "sha256": "563093dad1b401cb3a925487b047457e16fd8cae1c1e33f912bdb24a78e777b5"
+        },
+        "patch": {
+          "path": "agent-runs/20260925T173145Z-7d3bc6cc/patch.diff",
+          "sha256": "54704b6cfc4cac5ef09354072a25e72d0a63a9ab016477cc762ed83e9d7f652a"
+        },
+        "verification": {
+          "path": "verification/018-p2-018-f4f59803b14d4311acbc29bf331a9b0c-8cec565b/result.json",
+          "sha256": "de4c16d8194de138efc406f527d13fff61615e797269fd13a6bdb8b5b46db578"
+        }
+      }
+    },
+    {
+      "sequence": 19,
+      "task_id": "psf__requests-1766",
+      "arm": "no_effect_recovery",
+      "repetition": 2,
+      "status": "verification_complete",
+      "independent_passed": false,
+      "agent_validation_status": "unverified",
+      "termination": "benchmark_error",
+      "evidence_valid": false,
+      "evidence_issues": [
+        "verification_unusable:network_error"
+      ],
+      "input_tokens": 44768,
+      "output_tokens": 645,
+      "calculated_cost_amount": 0.09469599999998479,
+      "currency": "CNY",
+      "agent_seconds": 65.98400000000038,
+      "verification_seconds": 16.26600000000144,
+      "artifacts": {
+        "run_result": {
+          "path": "agent-runs/20260925T173224Z-e56c0f02/result.json",
+          "sha256": "c7ca4a93856374ace5eaa87748103275af4a090cd46756bbb57ab8c044a72dff"
+        },
+        "patch": {
+          "path": "agent-runs/20260925T173224Z-e56c0f02/patch.diff",
+          "sha256": "a0ff2f58ef29c7cb56b179459c23ea31d61c41d2c8955b3f340c00ecbd300fee"
+        },
+        "verification": {
+          "path": "verification/019-p2-019-c7824814c32a401b9a074eb4f78cc006-a4309e92/result.json",
+          "sha256": "d5daf1aa8fa53ee516b2fbdbaee6b112237f7b2f08fa435e66e954fab445318e"
+        }
+      }
+    },
+    {
+      "sequence": 20,
+      "task_id": "psf__requests-1766",
+      "arm": "no_compaction",
+      "repetition": 2,
+      "status": "verification_complete",
+      "independent_passed": false,
+      "agent_validation_status": "unverified",
+      "termination": "benchmark_error",
+      "evidence_valid": false,
+      "evidence_issues": [
+        "verification_unusable:network_error"
+      ],
+      "input_tokens": 44593,
+      "output_tokens": 644,
+      "calculated_cost_amount": 0.09433799999999337,
+      "currency": "CNY",
+      "agent_seconds": 66.54600000000028,
+      "verification_seconds": 16.17200000000048,
+      "artifacts": {
+        "run_result": {
+          "path": "agent-runs/20260925T173347Z-9da35826/result.json",
+          "sha256": "4394958e25369cb989b37b40a57eb5350f45734ae4720bef56bee195b5cb314b"
+        },
+        "patch": {
+          "path": "agent-runs/20260925T173347Z-9da35826/patch.diff",
+          "sha256": "35f072fccfbeefe5944df34a1785e21b903614cd1de8a0165e6da0b5810dc232"
+        },
+        "verification": {
+          "path": "verification/020-p2-020-d43a74aa7c8142e688a70d4204b655bb-c810830b/result.json",
+          "sha256": "18c623e7d5402670b8dd9c3aab66142854fa387b2eea310e23814e6e2d374d3a"
+        }
+      }
+    },
+    {
+      "sequence": 21,
+      "task_id": "pylint-dev__pylint-4661",
+      "arm": "no_effect_recovery",
+      "repetition": 2,
+      "status": "verification_complete",
+      "independent_passed": false,
+      "agent_validation_status": "unverified",
+      "termination": "test_limit_exceeded",
+      "evidence_valid": true,
+      "evidence_issues": [],
+      "input_tokens": 222444,
+      "output_tokens": 4170,
+      "calculated_cost_amount": 0.47824799999996515,
+      "currency": "CNY",
+      "agent_seconds": 72.59399999999914,
+      "verification_seconds": 12.484000000000378,
+      "artifacts": {
+        "run_result": {
+          "path": "agent-runs/20260925T173515Z-36a02c2e/result.json",
+          "sha256": "12f6b5e3845df8e67c9809a1ea5b9e9f679e6e6a058eef59d737f7c63164a148"
+        },
+        "patch": {
+          "path": "agent-runs/20260925T173515Z-36a02c2e/patch.diff",
+          "sha256": "6c066096766b927935dff1dea32878ede376c6f36f72ca653cedd2d3483cd974"
+        },
+        "verification": {
+          "path": "verification/021-p2-021-8091def9ab894e688fe54aecb95e8ac6-83c486cd/result.json",
+          "sha256": "21e26adc6bb7aee06ad4d2b8a2f322a1f2b0f2e25529aa2605029ff1ba21b61b"
+        }
+      }
+    },
+    {
+      "sequence": 22,
+      "task_id": "pylint-dev__pylint-4661",
+      "arm": "no_compaction",
+      "repetition": 2,
+      "status": "verification_complete",
+      "independent_passed": false,
+      "agent_validation_status": "unverified",
+      "termination": "p2_trial_budget_exhausted",
+      "evidence_valid": true,
+      "evidence_issues": [],
+      "input_tokens": 283688,
+      "output_tokens": 4860,
+      "calculated_cost_amount": 0.6062560000000161,
+      "currency": "CNY",
+      "agent_seconds": 65.28100000000086,
+      "verification_seconds": 6.109000000000378,
+      "artifacts": {
+        "run_result": {
+          "path": "agent-runs/20260925T173640Z-a11134d2/result.json",
+          "sha256": "7e6599d840687bedb95989a1a197cf1c0d15b5531ea1a77b70822c8b5f6503a0"
+        },
+        "patch": {
+          "path": "agent-runs/20260925T173640Z-a11134d2/patch.diff",
+          "sha256": "85f7105c9de4cb38631f9745075ed6e891b0b312ffd890819a156c429c37069a"
+        },
+        "verification": {
+          "path": "verification/022-p2-022-40a45ded80aa4e81926a4a3304b3b6b6-533e4a69/result.json",
+          "sha256": "92741fa8f772a4d12e049474c1875bcc6f4a32268a0c6529db2cb0aae0244b80"
+        }
+      }
+    },
+    {
+      "sequence": 23,
+      "task_id": "pytest-dev__pytest-10051",
+      "arm": "no_effect_recovery",
+      "repetition": 2,
+      "status": "verification_complete",
+      "independent_passed": true,
+      "agent_validation_status": "unverified",
+      "termination": "benchmark_error",
+      "evidence_valid": true,
+      "evidence_issues": [],
+      "input_tokens": 239110,
+      "output_tokens": 1994,
+      "calculated_cost_amount": 0.49417199999999184,
+      "currency": "CNY",
+      "agent_seconds": 36.85900000000038,
+      "verification_seconds": 6.686999999999898,
+      "artifacts": {
+        "run_result": {
+          "path": "agent-runs/20260925T173757Z-8f360f83/result.json",
+          "sha256": "ee9f64ff39eb4112a4e22beda4dd993376638047823ce5d395f65a47e0f845db"
+        },
+        "patch": {
+          "path": "agent-runs/20260925T173757Z-8f360f83/patch.diff",
+          "sha256": "c2b4038ee10321292c176e14df299a98e77dc385fddc1f1c4dffd5bd7f223c1a"
+        },
+        "verification": {
+          "path": "verification/023-p2-023-df3843d14d8c45da93d314437dcab129-e054d833/result.json",
+          "sha256": "1763cc6f86fe8e27cce0011032338b841e3228faeebb5a17c0ace15a8f34565a"
+        }
+      }
+    },
+    {
+      "sequence": 24,
+      "task_id": "pytest-dev__pytest-10051",
+      "arm": "no_compaction",
+      "repetition": 2,
+      "status": "verification_complete",
+      "independent_passed": true,
+      "agent_validation_status": "unverified",
+      "termination": "benchmark_error",
+      "evidence_valid": true,
+      "evidence_issues": [],
+      "input_tokens": 130318,
+      "output_tokens": 1760,
+      "calculated_cost_amount": 0.2747160000000122,
+      "currency": "CNY",
+      "agent_seconds": 26.936999999999898,
+      "verification_seconds": 6.531999999999243,
+      "artifacts": {
+        "run_result": {
+          "path": "agent-runs/20260925T173841Z-716a9dc6/result.json",
+          "sha256": "c19db6398c3db3c016338980e38ab00a140782f6bee41a4607518e401ec32e90"
+        },
+        "patch": {
+          "path": "agent-runs/20260925T173841Z-716a9dc6/patch.diff",
+          "sha256": "e79c283f82022421ec949ec1f70ecf429d3c5b8f8ad8687e7240b606c2d7edff"
+        },
+        "verification": {
+          "path": "verification/024-p2-024-e3202f316287497592721ac21d4d92e7-8beec625/result.json",
+          "sha256": "48ecb4fe89a405272e97016e4c452cd02239c781fe612006f8fbbeba9c0f52b3"
+        }
+      }
+    },
+    {
+      "sequence": 25,
+      "task_id": "pytest-dev__pytest-10081",
+      "arm": "no_effect_recovery",
+      "repetition": 2,
+      "status": "verification_complete",
+      "independent_passed": false,
+      "agent_validation_status": "unverified",
+      "termination": "p2_trial_budget_exhausted",
+      "evidence_valid": true,
+      "evidence_issues": [],
+      "input_tokens": 291255,
+      "output_tokens": 3177,
+      "calculated_cost_amount": 0.6079259999999778,
+      "currency": "CNY",
+      "agent_seconds": 38.0,
+      "verification_seconds": 0.7810000000008586,
+      "artifacts": {
+        "run_result": {
+          "path": "agent-runs/20260925T173919Z-cd9ffdfa/result.json",
+          "sha256": "a27399e8eafcac539e90211a6627ac55d081329daa8724b52c00fe807de7f439"
+        },
+        "patch": {
+          "path": "agent-runs/20260925T173919Z-cd9ffdfa/patch.diff",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "verification": {
+          "path": "verification/025-p2-025-0ca1a142570d4dd69e89a89e023806db-bde1d402/result.json",
+          "sha256": "2469c204552d924d93c14c899655ac106f21617b85332db9820d490152c7ee0f"
+        }
+      }
+    },
+    {
+      "sequence": 26,
+      "task_id": "pytest-dev__pytest-10081",
+      "arm": "no_compaction",
+      "repetition": 2,
+      "status": "verification_complete",
+      "independent_passed": false,
+      "agent_validation_status": "unverified",
+      "termination": "benchmark_error",
+      "evidence_valid": false,
+      "evidence_issues": [
+        "verification_unusable:permission_error"
+      ],
+      "input_tokens": 215178,
+      "output_tokens": 2513,
+      "calculated_cost_amount": 0.45046000000002095,
+      "currency": "CNY",
+      "agent_seconds": 38.07800000000134,
+      "verification_seconds": 6.84400000000096,
+      "artifacts": {
+        "run_result": {
+          "path": "agent-runs/20260925T173958Z-5fc084d2/result.json",
+          "sha256": "4e1bc546e51cf822a7fa60f868f2bc2c7fb48cba26f3ee4637b3b3c8981f06e1"
+        },
+        "patch": {
+          "path": "agent-runs/20260925T173958Z-5fc084d2/patch.diff",
+          "sha256": "5dfe45ba99efce0b209368eba83b20b2d3ef3f4cab15dabe35f811febe1bc08a"
+        },
+        "verification": {
+          "path": "verification/026-p2-026-6377121cc71a46a1a9325fb66564b0ba-bf5b7ee0/result.json",
+          "sha256": "af5d160deb7f5744030da088529d1ca3acc8ca6936addeae5b67fd02215fe7fe"
+        }
+      }
+    },
+    {
+      "sequence": 27,
+      "task_id": "pytest-dev__pytest-10356",
+      "arm": "no_effect_recovery",
+      "repetition": 2,
+      "status": "verification_complete",
+      "independent_passed": false,
+      "agent_validation_status": "unverified",
+      "termination": "benchmark_error",
+      "evidence_valid": true,
+      "evidence_issues": [],
+      "input_tokens": 179106,
+      "output_tokens": 3263,
+      "calculated_cost_amount": 0.3843159999999983,
+      "currency": "CNY",
+      "agent_seconds": 35.8130000000001,
+      "verification_seconds": 7.016000000001441,
+      "artifacts": {
+        "run_result": {
+          "path": "agent-runs/20260925T174048Z-9e3b68f4/result.json",
+          "sha256": "8c5748b356c72ca98917190bbd048b48fb22c15e33db519047bbc24fe4487a22"
+        },
+        "patch": {
+          "path": "agent-runs/20260925T174048Z-9e3b68f4/patch.diff",
+          "sha256": "f3fa333c2b938806b51be5fb5c54f45a50566be12b4e0608082ffadc2e567feb"
+        },
+        "verification": {
+          "path": "verification/027-p2-027-77f241cb164c419ebc727e0da7251e64-833c94c0/result.json",
+          "sha256": "a65bf1cbbfc555674e9a290659cff90ec9b44f0aa08cba5ca96586cc90b1840a"
+        }
+      }
+    },
+    {
+      "sequence": 28,
+      "task_id": "pytest-dev__pytest-10356",
+      "arm": "no_compaction",
+      "repetition": 2,
+      "status": "verification_complete",
+      "independent_passed": false,
+      "agent_validation_status": "unverified",
+      "termination": "benchmark_error",
+      "evidence_valid": true,
+      "evidence_issues": [],
+      "input_tokens": 139754,
+      "output_tokens": 2756,
+      "calculated_cost_amount": 0.30155599999999083,
+      "currency": "CNY",
+      "agent_seconds": 33.0630000000001,
+      "verification_seconds": 5.186999999999898,
+      "artifacts": {
+        "run_result": {
+          "path": "agent-runs/20260925T174132Z-c0935836/result.json",
+          "sha256": "d5896190f7375653663bb48464b750cd044b09c02947a45ba0d68577958b6a03"
+        },
+        "patch": {
+          "path": "agent-runs/20260925T174132Z-c0935836/patch.diff",
+          "sha256": "a057e44d8bfa5a5245eda5514a630dbc6185a15917275997c69ca3fabfded029"
+        },
+        "verification": {
+          "path": "verification/028-p2-028-8b3c0736e8ad4790b995f76805842c72-65663c7b/result.json",
+          "sha256": "8d66f08bc6d348160030427a56ad6ffd90ab0821131afdf368a7cee5cc4325ef"
+        }
+      }
+    },
+    {
+      "sequence": 29,
+      "task_id": "sphinx-doc__sphinx-10435",
+      "arm": "no_effect_recovery",
+      "repetition": 2,
+      "status": "verification_complete",
+      "independent_passed": false,
+      "agent_validation_status": "unverified",
+      "termination": "p2_trial_budget_exhausted",
+      "evidence_valid": false,
+      "evidence_issues": [
+        "verification_unusable:report_missing"
+      ],
+      "input_tokens": 277520,
+      "output_tokens": 3901,
+      "calculated_cost_amount": 0.5862480000000261,
+      "currency": "CNY",
+      "agent_seconds": 78.59300000000076,
+      "verification_seconds": 18.985000000000582,
+      "artifacts": {
+        "run_result": {
+          "path": "agent-runs/20260925T174215Z-4387f897/result.json",
+          "sha256": "9a787ddf7b385791b1be7be601185f17fa350a48a623802a10c8e20ac9282de1"
+        },
+        "patch": {
+          "path": "agent-runs/20260925T174215Z-4387f897/patch.diff",
+          "sha256": "3f45d3de5987cc23dfdeb670835e11d05149d144015d9c8053cb11b925cb371c"
+        },
+        "verification": {
+          "path": "verification/029-p2-029-878a6d0d7f7c422bbb4a92acb327ea7a-4c613a41/result.json",
+          "sha256": "d08ba0fae0f98d3effa5e26cae7c070dc5bf87c29ea9695793c2fd59833c734a"
+        }
+      }
+    },
+    {
+      "sequence": 30,
+      "task_id": "sphinx-doc__sphinx-10435",
+      "arm": "no_compaction",
+      "repetition": 2,
+      "status": "verification_complete",
+      "independent_passed": false,
+      "agent_validation_status": "unverified",
+      "termination": "benchmark_error",
+      "evidence_valid": false,
+      "evidence_issues": [
+        "verification_unusable:report_missing"
+      ],
+      "input_tokens": 217678,
+      "output_tokens": 3031,
+      "calculated_cost_amount": 0.4596039999999988,
+      "currency": "CNY",
+      "agent_seconds": 57.79700000000048,
+      "verification_seconds": 20.359999999998763,
+      "artifacts": {
+        "run_result": {
+          "path": "agent-runs/20260925T174353Z-9ce64b9f/result.json",
+          "sha256": "207a2c66800f505087793c8eb6c4bce239d3b9e2e2f96ad39ec94fcf53074fee"
+        },
+        "patch": {
+          "path": "agent-runs/20260925T174353Z-9ce64b9f/patch.diff",
+          "sha256": "0ff4e02571d46e3b0e5771799d1142afe4f6b17911201b7e7995cd12ca59f46d"
+        },
+        "verification": {
+          "path": "verification/030-p2-030-d6f0248fae994bcd8a6bdf0545206434-910a7515/result.json",
+          "sha256": "99738948745df4e6dd8d00ea8a4cf6610dbb61a6150a7014db1a9dcea15c4637"
+        }
+      }
+    },
+    {
+      "sequence": 31,
+      "task_id": "sphinx-doc__sphinx-10449",
+      "arm": "no_effect_recovery",
+      "repetition": 2,
+      "status": "verification_complete",
+      "independent_passed": false,
+      "agent_validation_status": "unverified",
+      "termination": "p2_trial_budget_exhausted",
+      "evidence_valid": false,
+      "evidence_issues": [
+        "verification_unusable:report_missing"
+      ],
+      "input_tokens": 236902,
+      "output_tokens": 2005,
+      "calculated_cost_amount": 0.4898439999999624,
+      "currency": "CNY",
+      "agent_seconds": 45.0619999999999,
+      "verification_seconds": 10.5,
+      "artifacts": {
+        "run_result": {
+          "path": "agent-runs/20260925T174516Z-4930f272/result.json",
+          "sha256": "46ff90405d2d0087b089522efc04c0b1679f6ca644e74fddf1f9089eae68965a"
+        },
+        "patch": {
+          "path": "agent-runs/20260925T174516Z-4930f272/patch.diff",
+          "sha256": "6d9ab04ad20d83c6e825cec959f82fe878ad943bfde021c7713fa27a03e806da"
+        },
+        "verification": {
+          "path": "verification/031-p2-031-5237e63a688e49b29826c6e3a46d62f6-a1f5baf5/result.json",
+          "sha256": "21c981333cde98c910d4b89baf44f4431371360de3f8394b8c1ba15d99f16834"
+        }
+      }
+    },
+    {
+      "sequence": 32,
+      "task_id": "sphinx-doc__sphinx-10449",
+      "arm": "no_compaction",
+      "repetition": 2,
+      "status": "verification_complete",
+      "independent_passed": false,
+      "agent_validation_status": "unverified",
+      "termination": "benchmark_error",
+      "evidence_valid": false,
+      "evidence_issues": [
+        "verification_unusable:report_missing"
+      ],
+      "input_tokens": 256493,
+      "output_tokens": 2245,
+      "calculated_cost_amount": 0.5309460000000144,
+      "currency": "CNY",
+      "agent_seconds": 49.71800000000076,
+      "verification_seconds": 17.093000000000757,
+      "artifacts": {
+        "run_result": {
+          "path": "agent-runs/20260925T174612Z-cc7a81be/result.json",
+          "sha256": "ec25eeee9952389b67a3901c67566d36ef030447b1771c29ae68b56835d417d4"
+        },
+        "patch": {
+          "path": "agent-runs/20260925T174612Z-cc7a81be/patch.diff",
+          "sha256": "d497ae49122d801337cae719600631031103533f8f6aa8f7a4cd317a8b31c6af"
+        },
+        "verification": {
+          "path": "verification/032-p2-032-ee09da48bf124fb9b5ea6d1ef218cae8-6566bd2b/result.json",
+          "sha256": "fcb8c0de0a9184da06802411da8f889be717157bf9ae1ffe272e352aced4eb64"
+        }
+      }
+    },
+    {
+      "sequence": 33,
+      "task_id": "psf__requests-1142",
+      "arm": "no_compaction",
+      "repetition": 3,
+      "status": "verification_complete",
+      "independent_passed": true,
+      "agent_validation_status": "verified",
+      "termination": "agent_completed",
+      "evidence_valid": true,
+      "evidence_issues": [],
+      "input_tokens": 139996,
+      "output_tokens": 2575,
+      "calculated_cost_amount": 0.30059199999999464,
+      "currency": "CNY",
+      "agent_seconds": 33.04699999999866,
+      "verification_seconds": 3.0159999999996217,
+      "artifacts": {
+        "run_result": {
+          "path": "agent-runs/20260925T174724Z-d6831196/result.json",
+          "sha256": "64a9bfd4594c2b2f594b0063cf58bedd9cda9aeaf7536cdafca753bd761dea97"
+        },
+        "patch": {
+          "path": "agent-runs/20260925T174724Z-d6831196/patch.diff",
+          "sha256": "6bf8c48dc48a8518834fc3b566ce90562dc947aeb2d8f20aedcbcd4890dd1b1b"
+        },
+        "verification": {
+          "path": "verification/033-p2-033-2c11b6f558f447929fc1f56d052e88fc-6ed514c2/result.json",
+          "sha256": "f512af3f36826b3db65920ab693f3d29111776536cd3402b481cce1bdadfda9d"
+        }
+      }
+    },
+    {
+      "sequence": 34,
+      "task_id": "psf__requests-1142",
+      "arm": "no_effect_recovery",
+      "repetition": 3,
+      "status": "verification_complete",
+      "independent_passed": true,
+      "agent_validation_status": "verified",
+      "termination": "agent_completed",
+      "evidence_valid": true,
+      "evidence_issues": [],
+      "input_tokens": 137602,
+      "output_tokens": 2274,
+      "calculated_cost_amount": 0.2933960000000013,
+      "currency": "CNY",
+      "agent_seconds": 25.90600000000086,
+      "verification_seconds": 3.0159999999996217,
+      "artifacts": {
+        "run_result": {
+          "path": "agent-runs/20260925T174801Z-ab2df33d/result.json",
+          "sha256": "e3b42394985e4c33ee36417d7b13c055a339f8c5445b909d087bde561eb423d2"
+        },
+        "patch": {
+          "path": "agent-runs/20260925T174801Z-ab2df33d/patch.diff",
+          "sha256": "2db378b6598f0051a62ad09c85cfae0c5be3fb61017b7212e028fc5e48e953c0"
+        },
+        "verification": {
+          "path": "verification/034-p2-034-1c7fa9f26ece49c8ab28cc2a01eedc2a-adea3d1b/result.json",
+          "sha256": "1f52b52721302e7e26058b41f7305134c14747694bca7ccb1b53791719d50a30"
+        }
+      }
+    },
+    {
+      "sequence": 35,
+      "task_id": "psf__requests-1766",
+      "arm": "no_compaction",
+      "repetition": 3,
+      "status": "verification_complete",
+      "independent_passed": false,
+      "agent_validation_status": "unverified",
+      "termination": "benchmark_error",
+      "evidence_valid": false,
+      "evidence_issues": [
+        "verification_unusable:network_error"
+      ],
+      "input_tokens": 44717,
+      "output_tokens": 663,
+      "calculated_cost_amount": 0.09473800000002086,
+      "currency": "CNY",
+      "agent_seconds": 66.3119999999999,
+      "verification_seconds": 16.15600000000086,
+      "artifacts": {
+        "run_result": {
+          "path": "agent-runs/20260925T174835Z-2801e0d3/result.json",
+          "sha256": "de1b9259a7b600e62c582c42ee2780a75aa2af7531e3b39f4df473ed5a491f0b"
+        },
+        "patch": {
+          "path": "agent-runs/20260925T174835Z-2801e0d3/patch.diff",
+          "sha256": "2071259e9e85be4d98fe9ec11fdcdee0da9ac37f25657f5e19552f1af97016cb"
+        },
+        "verification": {
+          "path": "verification/035-p2-035-936d4c2b70394e94b141e73e2e1796e8-3f518812/result.json",
+          "sha256": "4a725a33c392457b13eba3362ce1e718408b9e73511e204cc8a8c32be296fdb3"
+        }
+      }
+    },
+    {
+      "sequence": 36,
+      "task_id": "psf__requests-1766",
+      "arm": "no_effect_recovery",
+      "repetition": 3,
+      "status": "verification_complete",
+      "independent_passed": false,
+      "agent_validation_status": "unverified",
+      "termination": "benchmark_error",
+      "evidence_valid": false,
+      "evidence_issues": [
+        "verification_unusable:network_error"
+      ],
+      "input_tokens": 98827,
+      "output_tokens": 813,
+      "calculated_cost_amount": 0.2041579999999783,
+      "currency": "CNY",
+      "agent_seconds": 68.82799999999952,
+      "verification_seconds": 16.203999999999724,
+      "artifacts": {
+        "run_result": {
+          "path": "agent-runs/20260925T174958Z-c9911724/result.json",
+          "sha256": "d0bf8421a71b1ea36a3c0ce45882660b683ce1190a375603609e0a6a152696b6"
+        },
+        "patch": {
+          "path": "agent-runs/20260925T174958Z-c9911724/patch.diff",
+          "sha256": "6f4ef7853cee6cd2ef2196c00c31cb785e37ac20d166b4a211712a56b78c4775"
+        },
+        "verification": {
+          "path": "verification/036-p2-036-22069f1c351e481d887bf3ce4a30e674-d4e119ce/result.json",
+          "sha256": "4a72a61c6df2f5baf8a5804db26017b4a63753886e797a5b64056495dbde2494"
+        }
+      }
+    },
+    {
+      "sequence": 37,
+      "task_id": "pylint-dev__pylint-4661",
+      "arm": "no_compaction",
+      "repetition": 3,
+      "status": "verification_complete",
+      "independent_passed": false,
+      "agent_validation_status": "unverified",
+      "termination": "benchmark_error",
+      "evidence_valid": true,
+      "evidence_issues": [],
+      "input_tokens": 151534,
+      "output_tokens": 1927,
+      "calculated_cost_amount": 0.318483999999998,
+      "currency": "CNY",
+      "agent_seconds": 50.09300000000076,
+      "verification_seconds": 7.139999999999418,
+      "artifacts": {
+        "run_result": {
+          "path": "agent-runs/20260925T175128Z-bd12440a/result.json",
+          "sha256": "0103895c3ac56c702ee0cae543f9a38d8de230e3638eaac0d29f62f88c8cf6ca"
+        },
+        "patch": {
+          "path": "agent-runs/20260925T175128Z-bd12440a/patch.diff",
+          "sha256": "737d73aa5ac9655ecd252da2b2d69de7b34a53e3bd29b5b5dee1fcdd6a3947a1"
+        },
+        "verification": {
+          "path": "verification/037-p2-037-a7e34b0e10f24d4da2cdecb4f3c0c3ee-8cfb5889/result.json",
+          "sha256": "868a623d30a428c2d1e86f17ae763ec998b24c4d69490bb2ccf570800ab63135"
+        }
+      }
+    },
+    {
+      "sequence": 38,
+      "task_id": "pylint-dev__pylint-4661",
+      "arm": "no_effect_recovery",
+      "repetition": 3,
+      "status": "verification_complete",
+      "independent_passed": false,
+      "agent_validation_status": "unverified",
+      "termination": "p2_trial_budget_exhausted",
+      "evidence_valid": true,
+      "evidence_issues": [],
+      "input_tokens": 282434,
+      "output_tokens": 3721,
+      "calculated_cost_amount": 0.5946360000000084,
+      "currency": "CNY",
+      "agent_seconds": 59.86000000000058,
+      "verification_seconds": 8.781000000000859,
+      "artifacts": {
+        "run_result": {
+          "path": "agent-runs/20260925T175226Z-b8479f48/result.json",
+          "sha256": "13c1cbef2840295b120803a208e30cf21523cb995a3ce8b6d4e15e6a15c93ba2"
+        },
+        "patch": {
+          "path": "agent-runs/20260925T175226Z-b8479f48/patch.diff",
+          "sha256": "649cdaf8862c70a5b7c77d0a2a2e264f530872ea23b19c1f7663242e5654884c"
+        },
+        "verification": {
+          "path": "verification/038-p2-038-c159cc83249e426ea49e61216a0d37cc-bc853697/result.json",
+          "sha256": "701d7c47c8f2e9f0348bf9da82a492cd316e9127415bf1f45a431a3f68eaafe6"
+        }
+      }
+    },
+    {
+      "sequence": 39,
+      "task_id": "pytest-dev__pytest-10051",
+      "arm": "no_compaction",
+      "repetition": 3,
+      "status": "verification_complete",
+      "independent_passed": true,
+      "agent_validation_status": "unverified",
+      "termination": "benchmark_error",
+      "evidence_valid": true,
+      "evidence_issues": [],
+      "input_tokens": 159012,
+      "output_tokens": 1939,
+      "calculated_cost_amount": 0.3335360000000236,
+      "currency": "CNY",
+      "agent_seconds": 35.96899999999914,
+      "verification_seconds": 6.82799999999952,
+      "artifacts": {
+        "run_result": {
+          "path": "agent-runs/20260925T175340Z-2c1fea88/result.json",
+          "sha256": "a86d40d8032064187e6fba059863cb816affbcb82e19d37fe17a7430100d8d0d"
+        },
+        "patch": {
+          "path": "agent-runs/20260925T175340Z-2c1fea88/patch.diff",
+          "sha256": "eff1b10ba8b28e7ad0ebefb6d99b21cd9413df38a685bfc43ccb1a348e2967b6"
+        },
+        "verification": {
+          "path": "verification/039-p2-039-6fe2e00cf25c4302966bae710907c2db-09fe4062/result.json",
+          "sha256": "50a1a17857d6c99ca8843c6a68f4cba8baa96c887b5de80929e1ee6a821767c2"
+        }
+      }
+    },
+    {
+      "sequence": 40,
+      "task_id": "pytest-dev__pytest-10051",
+      "arm": "no_effect_recovery",
+      "repetition": 3,
+      "status": "verification_complete",
+      "independent_passed": true,
+      "agent_validation_status": "unverified",
+      "termination": "p2_trial_budget_exhausted",
+      "evidence_valid": true,
+      "evidence_issues": [],
+      "input_tokens": 250272,
+      "output_tokens": 2394,
+      "calculated_cost_amount": 0.5196959999999962,
+      "currency": "CNY",
+      "agent_seconds": 33.26599999999962,
+      "verification_seconds": 6.843999999999141,
+      "artifacts": {
+        "run_result": {
+          "path": "agent-runs/20260925T175423Z-82de8836/result.json",
+          "sha256": "6d7002a9a5fc893f10f046ded737860c0b421ba08a32527b60433ce3b2aaf0b3"
+        },
+        "patch": {
+          "path": "agent-runs/20260925T175423Z-82de8836/patch.diff",
+          "sha256": "fbccd2836ec9d0c108d59f21d698e83917ce9cb6729df6a257a4bc200af45a6a"
+        },
+        "verification": {
+          "path": "verification/040-p2-040-8c7836c69f6842799ab75bc628322a46-de5cedb0/result.json",
+          "sha256": "71eab743b51c972d0a2513f5a5413af28af485f0ff31974382314555eabab65d"
+        }
+      }
+    },
+    {
+      "sequence": 41,
+      "task_id": "pytest-dev__pytest-10081",
+      "arm": "no_compaction",
+      "repetition": 3,
+      "status": "verification_complete",
+      "independent_passed": false,
+      "agent_validation_status": "unverified",
+      "termination": "p2_trial_budget_exhausted",
+      "evidence_valid": false,
+      "evidence_issues": [
+        "verification_unusable:permission_error"
+      ],
+      "input_tokens": 278112,
+      "output_tokens": 2903,
+      "calculated_cost_amount": 0.5794480000000277,
+      "currency": "CNY",
+      "agent_seconds": 37.75,
+      "verification_seconds": 6.968999999999141,
+      "artifacts": {
+        "run_result": {
+          "path": "agent-runs/20260925T175509Z-e53fe6cd/result.json",
+          "sha256": "9eab4148482895cd1c502c780bf2c84b26b574e2bf2294a6cb0a66fabf73b757"
+        },
+        "patch": {
+          "path": "agent-runs/20260925T175509Z-e53fe6cd/patch.diff",
+          "sha256": "fb19a06bc57d52e4af4de53a2b15d9f97e3fd2433b0747929bd37738b21ca02b"
+        },
+        "verification": {
+          "path": "verification/041-p2-041-30b44300e4ff45639da32944f3eda468-7b2d508f/result.json",
+          "sha256": "d10b903722d17552f4194fed2860c325ce790d7f3cc5b9e2f8550238f4bd1c12"
+        }
+      }
+    },
+    {
+      "sequence": 42,
+      "task_id": "pytest-dev__pytest-10081",
+      "arm": "no_effect_recovery",
+      "repetition": 3,
+      "status": "verification_complete",
+      "independent_passed": false,
+      "agent_validation_status": "unverified",
+      "termination": "p2_trial_budget_exhausted",
+      "evidence_valid": true,
+      "evidence_issues": [],
+      "input_tokens": 289500,
+      "output_tokens": 3402,
+      "calculated_cost_amount": 0.6062160000000034,
+      "currency": "CNY",
+      "agent_seconds": 39.9380000000001,
+      "verification_seconds": 0.7659999999996217,
+      "artifacts": {
+        "run_result": {
+          "path": "agent-runs/20260925T175554Z-846add37/result.json",
+          "sha256": "b26b0cd6c9660dee58f1243a7c7520c9f2bc204fe05b02bd62ed63d03567afbf"
+        },
+        "patch": {
+          "path": "agent-runs/20260925T175554Z-846add37/patch.diff",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "verification": {
+          "path": "verification/042-p2-042-8d5aff0dcf184216adf0701f4240526c-27d79435/result.json",
+          "sha256": "2469c204552d924d93c14c899655ac106f21617b85332db9820d490152c7ee0f"
+        }
+      }
+    },
+    {
+      "sequence": 43,
+      "task_id": "pytest-dev__pytest-10356",
+      "arm": "no_compaction",
+      "repetition": 3,
+      "status": "verification_complete",
+      "independent_passed": false,
+      "agent_validation_status": "unverified",
+      "termination": "benchmark_error",
+      "evidence_valid": true,
+      "evidence_issues": [],
+      "input_tokens": 139302,
+      "output_tokens": 2624,
+      "calculated_cost_amount": 0.299595999999994,
+      "currency": "CNY",
+      "agent_seconds": 31.39099999999962,
+      "verification_seconds": 6.984999999998763,
+      "artifacts": {
+        "run_result": {
+          "path": "agent-runs/20260925T175640Z-b5107dfc/result.json",
+          "sha256": "105e3ddb853ce2824cc1cadf40fe321f4e0cac2b13e7de5e5c4b58d71ca9212f"
+        },
+        "patch": {
+          "path": "agent-runs/20260925T175640Z-b5107dfc/patch.diff",
+          "sha256": "497fa5b700e63cba968227ddb6959083670f28a2957befb6c64716eabe84fc1b"
+        },
+        "verification": {
+          "path": "verification/043-p2-043-dc3b28ef504f4b069f7e623db21d007e-aa6b5e28/result.json",
+          "sha256": "55ad4851b9f235a8052969fbe2d1c5b09362eebf4ac39cccf5d3cd461063abd8"
+        }
+      }
+    },
+    {
+      "sequence": 44,
+      "task_id": "pytest-dev__pytest-10356",
+      "arm": "no_effect_recovery",
+      "repetition": 3,
+      "status": "verification_complete",
+      "independent_passed": false,
+      "agent_validation_status": "unverified",
+      "termination": "benchmark_error",
+      "evidence_valid": true,
+      "evidence_issues": [],
+      "input_tokens": 260596,
+      "output_tokens": 4731,
+      "calculated_cost_amount": 0.5590400000000102,
+      "currency": "CNY",
+      "agent_seconds": 45.70299999999952,
+      "verification_seconds": 6.95299999999952,
+      "artifacts": {
+        "run_result": {
+          "path": "agent-runs/20260925T175718Z-d73c6d2d/result.json",
+          "sha256": "5eb3cce2b3b3a181acc672b442bb6eaa677ef289f00bf602b62ec4d04110d08b"
+        },
+        "patch": {
+          "path": "agent-runs/20260925T175718Z-d73c6d2d/patch.diff",
+          "sha256": "0edd6bed58e5722965a338392a597d0f32724e235aec7e665f7fcafdc8150910"
+        },
+        "verification": {
+          "path": "verification/044-p2-044-9186710fb43b4d8f8b2e186a269731cb-e037557a/result.json",
+          "sha256": "9bbb1ea7c0faf6a98ffa3f08f4d598f0e1bcff740fb1968c35b03a16717ed4ab"
+        }
+      }
+    },
+    {
+      "sequence": 45,
+      "task_id": "sphinx-doc__sphinx-10435",
+      "arm": "no_compaction",
+      "repetition": 3,
+      "status": "verification_complete",
+      "independent_passed": false,
+      "agent_validation_status": "unverified",
+      "termination": "p2_trial_budget_exhausted",
+      "evidence_valid": false,
+      "evidence_issues": [
+        "verification_unusable:report_missing"
+      ],
+      "input_tokens": 244758,
+      "output_tokens": 3070,
+      "calculated_cost_amount": 0.5140760000000313,
+      "currency": "CNY",
+      "agent_seconds": 72.10900000000038,
+      "verification_seconds": 9.985000000000582,
+      "artifacts": {
+        "run_result": {
+          "path": "agent-runs/20260925T175816Z-0946f313/result.json",
+          "sha256": "3dd0e520c289888eb979cb559c37fcdda393f84f89096af4a6268ad6a151a858"
+        },
+        "patch": {
+          "path": "agent-runs/20260925T175816Z-0946f313/patch.diff",
+          "sha256": "105854b3e23e965090a33238f5eda1b0199d98b3f2e36ce3610e38300c0fda5b"
+        },
+        "verification": {
+          "path": "verification/045-p2-045-45843b0458a840cc9f13ffe057dccd4c-cea17901/result.json",
+          "sha256": "15d0d6cad67683e581f049ec4b31b4be191a3f9fe083bdbcb44539f02548f676"
+        }
+      }
+    },
+    {
+      "sequence": 46,
+      "task_id": "sphinx-doc__sphinx-10435",
+      "arm": "no_effect_recovery",
+      "repetition": 3,
+      "status": "verification_complete",
+      "independent_passed": false,
+      "agent_validation_status": "unverified",
+      "termination": "p2_trial_budget_exhausted",
+      "evidence_valid": false,
+      "evidence_issues": [
+        "verification_unusable:report_missing"
+      ],
+      "input_tokens": 274821,
+      "output_tokens": 4367,
+      "calculated_cost_amount": 0.5845780000000218,
+      "currency": "CNY",
+      "agent_seconds": 75.92100000000028,
+      "verification_seconds": 19.811999999999898,
+      "artifacts": {
+        "run_result": {
+          "path": "agent-runs/20260925T175939Z-0d801f05/result.json",
+          "sha256": "56189a8bf9956a13d2518679af636204f113b0915cc72737eb16d0e7881d691d"
+        },
+        "patch": {
+          "path": "agent-runs/20260925T175939Z-0d801f05/patch.diff",
+          "sha256": "1a1ae85a6dfe27d138c72ce7333ca24b6c45a210efca1c43bc2ec246b3c5ee42"
+        },
+        "verification": {
+          "path": "verification/046-p2-046-9f456ab0ca334516babb2fa04afabd52-1693793c/result.json",
+          "sha256": "9dc6ee1ec57c6932b30c3f67fd28fc180865699ec95739f47446f6ff7c0b5bb5"
+        }
+      }
+    },
+    {
+      "sequence": 47,
+      "task_id": "sphinx-doc__sphinx-10449",
+      "arm": "no_compaction",
+      "repetition": 3,
+      "status": "verification_complete",
+      "independent_passed": false,
+      "agent_validation_status": "unverified",
+      "termination": "p2_trial_budget_exhausted",
+      "evidence_valid": false,
+      "evidence_issues": [
+        "verification_unusable:report_missing"
+      ],
+      "input_tokens": 231053,
+      "output_tokens": 4268,
+      "calculated_cost_amount": 0.496249999999975,
+      "currency": "CNY",
+      "agent_seconds": 57.125,
+      "verification_seconds": 17.01599999999962,
+      "artifacts": {
+        "run_result": {
+          "path": "agent-runs/20260925T180120Z-1742c38a/result.json",
+          "sha256": "1d04279e15add0e9f2785b07ee01b2de9311968760666518b7f701fa150f0683"
+        },
+        "patch": {
+          "path": "agent-runs/20260925T180120Z-1742c38a/patch.diff",
+          "sha256": "2fd90ccfb78832c048d3ee6c40535b5d37300cf2492f72ec342326187a2e8bfb"
+        },
+        "verification": {
+          "path": "verification/047-p2-047-947e8663cc8f4c3db82580c580bd2e5d-d73cd345/result.json",
+          "sha256": "567c3f099eb2c0f3f1306cfb466caa2fb23881052f2508d1ec79f5b3da55e31d"
+        }
+      }
+    },
+    {
+      "sequence": 48,
+      "task_id": "sphinx-doc__sphinx-10449",
+      "arm": "no_effect_recovery",
+      "repetition": 3,
+      "status": "verification_complete",
+      "independent_passed": false,
+      "agent_validation_status": "unverified",
+      "termination": "benchmark_error",
+      "evidence_valid": false,
+      "evidence_issues": [
+        "verification_unusable:report_missing"
+      ],
+      "input_tokens": 197970,
+      "output_tokens": 1914,
+      "calculated_cost_amount": 0.4112520000000188,
+      "currency": "CNY",
+      "agent_seconds": 42.85900000000038,
+      "verification_seconds": 5.688000000000102,
+      "artifacts": {
+        "run_result": {
+          "path": "agent-runs/20260925T180234Z-76ef2db2/result.json",
+          "sha256": "1018a806c730560e771c5f866261c80ad1b1754d68f10b02b596774523789608"
+        },
+        "patch": {
+          "path": "agent-runs/20260925T180234Z-76ef2db2/patch.diff",
+          "sha256": "80c28d144663cbebfafd6b3e1c36c9f35dda5279372ce60f6ad06ee66e02743a"
+        },
+        "verification": {
+          "path": "verification/048-p2-048-55c9e0ab1ee94e818ab36e0cc56bf52c-b6b12ae3/result.json",
+          "sha256": "d7c9f2e7abd197563320786a5704eb58f7ae2ffccb02169343b1f705489f5275"
+        }
+      }
+    }
+  ]
+}
