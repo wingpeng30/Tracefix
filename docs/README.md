@@ -105,3 +105,5 @@
 代码任务说明进入 `development-history.md` 或单独的 `docs/tasks/` 文档；实验解释进入
 `docs/experiments/`，结构化数据进入 `benchmarks/experiments/`。聊天中的结论不能作为
 唯一留档。
+
+最新开发集比较见 [`experiments/v0.8.18-validation-closure-comparison.md`](experiments/v0.8.18-validation-closure-comparison.md)，其脱敏逐项结果与哈希清单位于 `benchmarks/experiments/v0.8.18-validation-closure-comparison/`。

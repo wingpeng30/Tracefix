@@ -145,3 +145,11 @@ T 输入 -2.73%、Agent 用时 -6.14%，但成功率 -3.33pp，因此尚未达�
 - 用户授权将共享累计上限提高至 ¥150、本阶段上限设为 ¥55；同一账本下完成 60/60 个试次记录，阶段保守计算 ¥26.177326，共享累计 ¥106.54609120。以上金额不是供应商账单。
 - 8 道普通题 C/T 均 12/24；T 输入 Token −10.51%，Agent 时间 +18.83%。2 道特殊资格任务两组均 0/6。证据审计仅 58/60 有效，2 项复验仍不完整；不采纳 T，保留基线。
 - 同目录恢复复用 60/60；留出集未运行。全量工程门槛引用运行前执行代码 `e5ab04b` 的验证证据；本轮未改运行代码。
+
+## V0.8.18：验证闭环修正后的 48 项同期比较
+
+- 报告：[`v0.8.18-validation-closure-comparison.md`](v0.8.18-validation-closure-comparison.md)。
+- 脱敏逐项结果与工件哈希：[`report.json`](../../benchmarks/experiments/v0.8.18-validation-closure-comparison/report.json)、[`evidence-manifest.json`](../../benchmarks/experiments/v0.8.18-validation-closure-comparison/evidence-manifest.json)。
+- 账单 TraceFix 项按日期及费率去重后为 ¥41.74029308；新批阶段计算 ¥18.470972，共享计算累计 ¥60.21126508，均非供应商实际账单。
+- 48/48 完成并通过工件哈希核验；同目录恢复复用 48/48，账本请求数与 Agent 目录数不变。
+- 普通题 C 16/24，T 13/24；T 输入减少约 6.0%、用时减少约 0.4%，但成功率降低，不采纳 T，保留 C。20 道留出题未运行。

@@ -647,3 +647,11 @@ T 相较 C 多用输入 300,066 Token、输出 2,701 Token、Agent 时间 167.44
 下一轮 48 项开发集同期 C/T 比较的任务、三次重复、顺序、共同工具与审计、主指标和采纳门槛已在机器草案中固定。共享计算余额 ¥23.12462080，低于历史价格计算的 ¥41.28 完整上界；阶段 ¥42 还差 ¥18.87537920。正式价格和账本将在实际启动前复核；本轮没有付费请求或留出集评测。
 
 最终代码验证：定向 90 passed；全量 456 passed、0 failed，pytest 单独综合覆盖 86.021817%（语句 88.716003%、分支 77.343113%），因既有 90% 阈值退出 1。合并两个本轮只读离线诊断入口后，综合覆盖 90.105223%（语句 92.346616%、分支 82.885086%），门槛退出 0。Ruff 退出 0、129/129 个受跟踪 Python 文件 compileall 退出 0。完整日志、JUnit、覆盖率 JSON/XML、耗时、60 秒 faulthandler 设置和各命令真实退出码在 `runs/selection-feedback-final-v2-20260925/`；定向日志在 `runs/selection-feedback-targeted-final-20260925/`。限制是 pytest 单独覆盖不足 90%，工程门槛依照此前既定的合并统计范围达标。
+
+### 30. 2026-09-25 验证闭环修正后的 48 项同期比较
+
+正式执行版本 `97f521599f0602e79a50f782c4282001bbab6ed3`；账单更正沿用既有共享账本和 ¥150 总上限，TraceFix 两份账单重叠 ¥0.12438212 去重后历史账单 ¥41.74029308。8 道普通开发题、C/T 各三次共 48 项完成，阶段保守计算 ¥18.470972，共享账本累计 ¥60.21126508；不等于供应商账单。
+
+C 独立验收 16/24，T 13/24；配对为双方成功 12、双方失败 7、C 独赢 4、T 独赢 1。T 仅在 pytest-10051 净增，pytest-10081 净减 2。19 个原始 `benchmark_error` 经结构化事件核对都是调用前单请求输入上界拒绝；不是外部基础设施事故。19 个独立验收失败的原因计数为 pytest 执行失败 13、空补丁 4、测试/pytest 配置修改拒绝 2。Agent 自报验证状态与独立验收分别记录。
+
+恢复运行成功复用 48/48 位置，Agent 运行目录 48、请求计数 5,847、账本计算金额和未决状态均不变。48 项运行结果、补丁、独立验收工件哈希全部复核。T 输入减少约 6.0%、Agent 用时减少约 0.4%，但修复成功数下降；按预注册规则不采纳 T，继续保留 C。20 道留出题没有运行。本轮运行代码未改动，因此复用 `97f5215` 上已记录的 pytest、覆盖率、Ruff 和 compileall 结果，没有重复跑全量工程检查。报告：[`v0.8.18-validation-closure-comparison.md`](experiments/v0.8.18-validation-closure-comparison.md)；机器结果与哈希清单：[`report.json`](../benchmarks/experiments/v0.8.18-validation-closure-comparison/report.json)、[`evidence-manifest.json`](../benchmarks/experiments/v0.8.18-validation-closure-comparison/evidence-manifest.json)。
