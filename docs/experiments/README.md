@@ -169,3 +169,11 @@ T 输入 -2.73%、Agent 用时 -6.14%，但成功率 -3.33pp，因此尚未达�
 - pytest-only 综合覆盖率 86.073278% 未达 90%，追加真实只读诊断入口后综合 90.149626% 通过；语句 92.377358%、分支 82.996769%。Ruff 与 129 个受跟踪 Python 文件 compileall 退出 0。日志及工件保存在本机 `tracefix-noeffect-full-short-20260925/`。
 - 同期比较的 48 位置 C/T 草案及固定采纳规则见 [`next-comparison.json`](../../benchmarks/experiments/v0.8.20-no-effect-recovery-preflight/next-comparison.json)，SHA-256 `7ce63dffc045e97299cfb4d857200d94cb8657d08d07625394175ac1f389de41`。共享余额最近记录 ¥23.12462080，不足以覆盖 ¥41.28 完整上界；新恢复开关尚未接入正式执行器。本轮不付费、不使用 20 题留出集，合成流程不构成修复成功率证据。
 - 指标和本机工件 SHA 清单：[`engineering-verification.json`](../../benchmarks/experiments/v0.8.20-no-effect-recovery-preflight/engineering-verification.json)，SHA-256 `bf84212b2c98f6006ab42f8d8cd3919854762b87fde44980e97bc595fb3f05a8`。
+
+## V0.8.21：重复无效果补丁恢复门槛执行冻结
+
+- 报告：[`v0.8.21-no-effect-recovery-execution.md`](v0.8.21-no-effect-recovery-execution.md)。
+- 正式 P2 设计/CLI 已接入恢复门槛；8 道普通题共 48 项，C/T 唯一差异为重复 `no_effect` 后强制完整重读。2 道收集失败资格题单列。
+- 六位置模拟供应商端到端和完成态恢复通过；Requests-1766 本地服务配置及 pytest-10051 断言阶段错误分类已修正。本轮无付费请求。
+- 脱敏机器协议、执行身份、逐题依赖摘要及验证结果在 [`v0.8.21-no-effect-recovery-execution/`](../../benchmarks/experiments/v0.8.21-no-effect-recovery-execution/)。
+- 全量 pytest 461 passed，Ruff/compileall 退出 0。精确综合覆盖率 89.634203%，Coverage.py 按 `fail-under=90` 的整数显示为 90 并退出 0；未取整值不足 90，报告保留此限制。

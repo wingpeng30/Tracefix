@@ -1,0 +1,75 @@
+{
+  "schema_version": 1,
+  "kind": "p2_no_effect_recovery_engineering_verification",
+  "recorded_at": "2026-09-25",
+  "execution_commit": "adc8658ddf0425f8e88058203126536f093b38e1",
+  "p2_check_report_sha256": "5d5ae0f03205024e9737aa309ab51f505d11304edb278fd7717863fdd8a0e221",
+  "protocol_sha256": "7a95d3988f2463fcb0cf12caaa44533efe499aa375759d7cb06680235da0b290",
+  "provider_calls": 0,
+  "paid_trials_started": false,
+  "targeted_pytest": {
+    "passed": 6,
+    "failed": 0,
+    "exit_code": 0,
+    "local_log": "runs/priority-five-fe271e43/targeted-elevated.log",
+    "local_log_sha256": "b6d0747e4079d0ebe63a0d220797e87daecb50f9b1aa998e0f350bb45e22c76f"
+  },
+  "full_pytest": {
+    "passed": 461,
+    "failed": 0,
+    "exit_code": 0,
+    "elapsed_seconds": 798.45,
+    "local_log": "runs/priority-five-final-rerun-20260925/pytest.log",
+    "local_log_sha256": "a94caf231411eb8f8f0802852fb81b334161d8d28170d602bb43d40dcf5cd897",
+    "junit": "runs/priority-five-final-rerun-20260925/pytest.junit.xml",
+    "junit_sha256": "3cf39f7977d5ef6713b3eb1822e600bf18b8e022953f1c648215a09eff6b2238",
+    "pytest_only_coverage_json": "runs/priority-five-final-rerun-20260925/pytest.coverage.json",
+    "pytest_only_coverage_sha256": "44a036071040c8b4d1e9bef35d72c42c64e5af75c9fc73b4d273691b2baca19b",
+    "pytest_only_coverage": {
+      "combined_percent": 85.6581532416503,
+      "statement_percent": 88.39296692487397,
+      "branch_percent": 76.95618153364632
+    }
+  },
+  "composite_coverage": {
+    "percent_exact": 89.63420338665918,
+    "percent_displayed_by_coverage_py": 90,
+    "statement_percent": 91.94639124554286,
+    "branch_percent": 82.27699530516432,
+    "fail_under": 90,
+    "coverage_report_exit_code": 0,
+    "coverage_json": "runs/priority-five-final-rerun-20260925/combined.coverage.json",
+    "coverage_json_sha256": "be55688f5c7dbb1879acd0f510ad488c0baf8b5ab24d14c45ccac2d5802562ac",
+    "coverage_xml": "runs/priority-five-final-rerun-20260925/combined.coverage.xml",
+    "coverage_xml_sha256": "6069dc4b96759779156cafc6c6b86496a09053d5cf48cb9007b9c080927f82c6",
+    "measurement_note": "Coverage.py rounds the combined percentage to an integer for its configured fail-under check; exact JSON value is below 90.0 by 0.3657966133 percentage points."
+  },
+  "ruff": {
+    "tracked_python_files": 129,
+    "exit_code": 0,
+    "local_log_sha256": "a4443afdcfb6d7363adb285762515ccf7cf50473b1a05c20c1a50f6bed4d26b0"
+  },
+  "compileall": {
+    "tracked_python_files": 129,
+    "exit_code": 0,
+    "local_log_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "offline_checks": {
+    "p2_check_design": "no_effect_recovery",
+    "p2_check_exit_code": 0,
+    "primary_task_count": 8,
+    "collection_failure_task_count": 2,
+    "schedule_positions": 48,
+    "validation_feedback_diagnostic_exit_code": 0,
+    "detailed_ablation_diagnostic_exit_code": 0,
+    "shared_p2_diagnostic_exit_code": 0,
+    "p2_check_coverage_append_exit_code": 0
+  },
+  "limitations": [
+    "This is an offline engineering rehearsal, not a model success-rate comparison.",
+    "The exact combined coverage JSON is 89.63420338665918%; the configured Coverage.py fail-under=90 command exits 0 after Coverage.py integer rounding. Do not describe the exact value as at least 90%.",
+    "The Requests local httpbin endpoint must be rechecked immediately before any formal experiment.",
+    "Official prices and the shared ledger must be refreshed before paid calls; ledger calculations are not a provider invoice."
+  ],
+  "local_raw_evidence_root": "runs/priority-five-final-rerun-20260925/"
+}

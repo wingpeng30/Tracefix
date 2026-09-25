@@ -665,3 +665,11 @@ C 独立验收 16/24，T 13/24；配对为双方成功 12、双方失败 7、C �
 ### 32. 2026-09-25 重复无效果补丁恢复门槛零费用预检
 
 在独立 fixture 为重复无效果补丁增加可选恢复门槛：同一 `no_effect` 补丁再次提交后，Agent 要求重读目标路径；未读取即直接换补丁会被拒，成功重读后不同补丁可应用。默认配置保持关闭。脚本化 Agent 循环完成修复、pytest 和 Diff 验证，仅证明控制流可运行，不证明真实模型会恢复或提高成功率。最终定向回归 3 passed。全量 pytest 457 passed、0 failed、623.41 秒；pytest-only 综合覆盖率 86.073278%（语句 88.754717%、分支 77.463651%），故按原 fail-under=90 正确退出 1。沿用项目综合统计口径追加 `p2-diagnose --validation-feedback` 与 `--detailed-ablation` 真实只读入口后，覆盖门槛退出 0，综合 90.149626%、语句 92.377358%、分支 82.996769%。Ruff 退出 0，129/129 个跟踪 Python 文件 compileall、`git diff --check` 均退出 0。日志、JUnit、Coverage JSON/XML、只读诊断及各项准确退出码保存在本机 `tracefix-noeffect-full-short-20260925/`。下一轮已固定为 8 道普通开发题、C/T 各 24 项、C/T—T/C—C/T；两组只允许 T 开启恢复门槛，采纳要求 T≥16/24、较 C 净增≥4 且至少两题净增，并要求完整证据、无未解决基础设施事故。机器草案 SHA-256 为 `e99aa7531a85426cda57743edb8f1facc26f8899f5a65b78d5304bb81ee017b2`。最近记录共享余额 ¥23.12462080，低于完整日程 ¥41.28 上界；阶段预算提案 ¥42、缺口 ¥18.87537920，开跑前须刷新账本并接入正式执行器。未调用供应商、未改历史评分或账本、未使用 20 题留出集。详见 [`experiments/v0.8.20-no-effect-recovery-preflight.md`](experiments/v0.8.20-no-effect-recovery-preflight.md)。
+
+### 2026-09-25 V0.8.21 正式路径接线与执行冻结
+
+V0.8.20 的“执行器尚未暴露恢复门槛”与 ¥23.12462080 余额均已被本轮结果取代。重复 `no_effect` 后的完整目标读取门槛现已接入 `no_effect_recovery` P2 设计、CLI、有效配置、固定日程和恢复流程。C/T 唯一配置差异是该门槛开关；8 道普通题共 48 项，2 道收集失败资格题不进入主分析。六位置模拟供应商端到端测试通过，恢复后请求数不增加。Requests-1766 固定本地 httpbin 服务配置；pytest-10051 两阶段断言失败被具体分类，仍为失败。
+
+执行提交 `adc8658ddf0425f8e88058203126536f093b38e1` 的离线 `p2-check --design no_effect_recovery` 通过，绑定 10 题 P1 证据、源码哈希、配方和依赖身份。全量 pytest 461 passed，Ruff/compileall 对 129 个跟踪 Python 文件退出码均为 0。pytest-only coverage 85.658153%；追加真实 P2 只读路径后的精确综合 coverage 89.634203%、语句 91.946391%、分支 82.276995%。`coverage report --fail-under=90` 按 Coverage.py 整数百分比规则退出 0；精确值未达到 90%，在交付中如实保留。完整结果见 [`experiments/v0.8.21-no-effect-recovery-execution.md`](experiments/v0.8.21-no-effect-recovery-execution.md)；协议和执行身份见 `benchmarks/experiments/v0.8.21-no-effect-recovery-execution/`。原始验证产物留在本机 `runs/priority-five-final-rerun-20260925/`。本轮没有付费请求或留出题运行。
+
+共享 CNY 账本哈希仍为 `f0f1be69c2911ee01a853ff65f7a62fabe331e0da33045cf86f0926164ac74fc`，累计计算金额 ¥60.21126508、余额 ¥89.78873492、预留 0、未知请求否、5,847 笔请求。该账本计算值不是供应商账单；启动前须刷新价格与账本，并确认 Requests 本地服务健康。按最近已保存价格估算，完整 48 项上界 ¥41.28、阶段上限草案 ¥42；现有本地账本容量足够，但本轮没有启动付费比较。

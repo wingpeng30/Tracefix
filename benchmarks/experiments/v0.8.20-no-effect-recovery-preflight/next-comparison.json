@@ -1,0 +1,383 @@
+{
+  "kind": "p2_no_effect_recovery_gate_preregistration",
+  "schema_version": 1,
+  "status": "draft_requires_executor_integration_and_paid_budget_recheck",
+  "source_preregistration_sha256": "79da50edcc76827efd032beb9a580a8c8f026228342613538a5cccc87b06021c",
+  "execution_code_commit_to_bind_after_gate": null,
+  "primary_task_ids": [
+    "psf__requests-1142",
+    "psf__requests-1766",
+    "pylint-dev__pylint-4661",
+    "pytest-dev__pytest-10051",
+    "pytest-dev__pytest-10081",
+    "pytest-dev__pytest-10356",
+    "sphinx-doc__sphinx-10435",
+    "sphinx-doc__sphinx-10449"
+  ],
+  "special_task_ids_excluded": [
+    "pylint-dev__pylint-4551",
+    "pylint-dev__pylint-4604"
+  ],
+  "development_only": true,
+  "holdout_tasks_used": false,
+  "model": "deepseek/deepseek-flash",
+  "provider": "DeepSeek official direct",
+  "shared_base_prompt_and_scoring": "same as V0.8.17 corrected-feedback protocol; exact hashes to bind after implementation",
+  "common_agent_config": {
+    "max_input_tokens": 350000,
+    "max_output_tokens": 20000,
+    "max_steps": 24,
+    "max_test_runs": 6,
+    "wall_time_seconds": 900,
+    "per_request_output_tokens": 4096,
+    "per_request_input_tokens": 128000
+  },
+  "arms": {
+    "base": {
+      "token_optimization_enabled": false,
+      "tool_result_presentation_enabled": false,
+      "action_guidance_enabled": false,
+      "read_cache_enabled": false,
+      "repo_map_enabled": false,
+      "context_compaction_enabled": false,
+      "validation_closure_enabled": false,
+      "require_fresh_read_after_repeated_no_effect_patch": false
+    },
+    "fresh_read_recovery": {
+      "token_optimization_enabled": false,
+      "tool_result_presentation_enabled": false,
+      "action_guidance_enabled": false,
+      "read_cache_enabled": false,
+      "repo_map_enabled": false,
+      "context_compaction_enabled": false,
+      "validation_closure_enabled": false,
+      "require_fresh_read_after_repeated_no_effect_patch": true
+    }
+  },
+  "only_allowed_difference": "require_fresh_read_after_repeated_no_effect_patch",
+  "schedule": [
+    {
+      "sequence": 1,
+      "task_id": "psf__requests-1142",
+      "repetition": 1,
+      "arm": "base"
+    },
+    {
+      "sequence": 2,
+      "task_id": "psf__requests-1142",
+      "repetition": 1,
+      "arm": "fresh_read_recovery"
+    },
+    {
+      "sequence": 3,
+      "task_id": "psf__requests-1766",
+      "repetition": 1,
+      "arm": "base"
+    },
+    {
+      "sequence": 4,
+      "task_id": "psf__requests-1766",
+      "repetition": 1,
+      "arm": "fresh_read_recovery"
+    },
+    {
+      "sequence": 5,
+      "task_id": "pylint-dev__pylint-4661",
+      "repetition": 1,
+      "arm": "base"
+    },
+    {
+      "sequence": 6,
+      "task_id": "pylint-dev__pylint-4661",
+      "repetition": 1,
+      "arm": "fresh_read_recovery"
+    },
+    {
+      "sequence": 7,
+      "task_id": "pytest-dev__pytest-10051",
+      "repetition": 1,
+      "arm": "base"
+    },
+    {
+      "sequence": 8,
+      "task_id": "pytest-dev__pytest-10051",
+      "repetition": 1,
+      "arm": "fresh_read_recovery"
+    },
+    {
+      "sequence": 9,
+      "task_id": "pytest-dev__pytest-10081",
+      "repetition": 1,
+      "arm": "base"
+    },
+    {
+      "sequence": 10,
+      "task_id": "pytest-dev__pytest-10081",
+      "repetition": 1,
+      "arm": "fresh_read_recovery"
+    },
+    {
+      "sequence": 11,
+      "task_id": "pytest-dev__pytest-10356",
+      "repetition": 1,
+      "arm": "base"
+    },
+    {
+      "sequence": 12,
+      "task_id": "pytest-dev__pytest-10356",
+      "repetition": 1,
+      "arm": "fresh_read_recovery"
+    },
+    {
+      "sequence": 13,
+      "task_id": "sphinx-doc__sphinx-10435",
+      "repetition": 1,
+      "arm": "base"
+    },
+    {
+      "sequence": 14,
+      "task_id": "sphinx-doc__sphinx-10435",
+      "repetition": 1,
+      "arm": "fresh_read_recovery"
+    },
+    {
+      "sequence": 15,
+      "task_id": "sphinx-doc__sphinx-10449",
+      "repetition": 1,
+      "arm": "base"
+    },
+    {
+      "sequence": 16,
+      "task_id": "sphinx-doc__sphinx-10449",
+      "repetition": 1,
+      "arm": "fresh_read_recovery"
+    },
+    {
+      "sequence": 17,
+      "task_id": "psf__requests-1142",
+      "repetition": 2,
+      "arm": "fresh_read_recovery"
+    },
+    {
+      "sequence": 18,
+      "task_id": "psf__requests-1142",
+      "repetition": 2,
+      "arm": "base"
+    },
+    {
+      "sequence": 19,
+      "task_id": "psf__requests-1766",
+      "repetition": 2,
+      "arm": "fresh_read_recovery"
+    },
+    {
+      "sequence": 20,
+      "task_id": "psf__requests-1766",
+      "repetition": 2,
+      "arm": "base"
+    },
+    {
+      "sequence": 21,
+      "task_id": "pylint-dev__pylint-4661",
+      "repetition": 2,
+      "arm": "fresh_read_recovery"
+    },
+    {
+      "sequence": 22,
+      "task_id": "pylint-dev__pylint-4661",
+      "repetition": 2,
+      "arm": "base"
+    },
+    {
+      "sequence": 23,
+      "task_id": "pytest-dev__pytest-10051",
+      "repetition": 2,
+      "arm": "fresh_read_recovery"
+    },
+    {
+      "sequence": 24,
+      "task_id": "pytest-dev__pytest-10051",
+      "repetition": 2,
+      "arm": "base"
+    },
+    {
+      "sequence": 25,
+      "task_id": "pytest-dev__pytest-10081",
+      "repetition": 2,
+      "arm": "fresh_read_recovery"
+    },
+    {
+      "sequence": 26,
+      "task_id": "pytest-dev__pytest-10081",
+      "repetition": 2,
+      "arm": "base"
+    },
+    {
+      "sequence": 27,
+      "task_id": "pytest-dev__pytest-10356",
+      "repetition": 2,
+      "arm": "fresh_read_recovery"
+    },
+    {
+      "sequence": 28,
+      "task_id": "pytest-dev__pytest-10356",
+      "repetition": 2,
+      "arm": "base"
+    },
+    {
+      "sequence": 29,
+      "task_id": "sphinx-doc__sphinx-10435",
+      "repetition": 2,
+      "arm": "fresh_read_recovery"
+    },
+    {
+      "sequence": 30,
+      "task_id": "sphinx-doc__sphinx-10435",
+      "repetition": 2,
+      "arm": "base"
+    },
+    {
+      "sequence": 31,
+      "task_id": "sphinx-doc__sphinx-10449",
+      "repetition": 2,
+      "arm": "fresh_read_recovery"
+    },
+    {
+      "sequence": 32,
+      "task_id": "sphinx-doc__sphinx-10449",
+      "repetition": 2,
+      "arm": "base"
+    },
+    {
+      "sequence": 33,
+      "task_id": "psf__requests-1142",
+      "repetition": 3,
+      "arm": "base"
+    },
+    {
+      "sequence": 34,
+      "task_id": "psf__requests-1142",
+      "repetition": 3,
+      "arm": "fresh_read_recovery"
+    },
+    {
+      "sequence": 35,
+      "task_id": "psf__requests-1766",
+      "repetition": 3,
+      "arm": "base"
+    },
+    {
+      "sequence": 36,
+      "task_id": "psf__requests-1766",
+      "repetition": 3,
+      "arm": "fresh_read_recovery"
+    },
+    {
+      "sequence": 37,
+      "task_id": "pylint-dev__pylint-4661",
+      "repetition": 3,
+      "arm": "base"
+    },
+    {
+      "sequence": 38,
+      "task_id": "pylint-dev__pylint-4661",
+      "repetition": 3,
+      "arm": "fresh_read_recovery"
+    },
+    {
+      "sequence": 39,
+      "task_id": "pytest-dev__pytest-10051",
+      "repetition": 3,
+      "arm": "base"
+    },
+    {
+      "sequence": 40,
+      "task_id": "pytest-dev__pytest-10051",
+      "repetition": 3,
+      "arm": "fresh_read_recovery"
+    },
+    {
+      "sequence": 41,
+      "task_id": "pytest-dev__pytest-10081",
+      "repetition": 3,
+      "arm": "base"
+    },
+    {
+      "sequence": 42,
+      "task_id": "pytest-dev__pytest-10081",
+      "repetition": 3,
+      "arm": "fresh_read_recovery"
+    },
+    {
+      "sequence": 43,
+      "task_id": "pytest-dev__pytest-10356",
+      "repetition": 3,
+      "arm": "base"
+    },
+    {
+      "sequence": 44,
+      "task_id": "pytest-dev__pytest-10356",
+      "repetition": 3,
+      "arm": "fresh_read_recovery"
+    },
+    {
+      "sequence": 45,
+      "task_id": "sphinx-doc__sphinx-10435",
+      "repetition": 3,
+      "arm": "base"
+    },
+    {
+      "sequence": 46,
+      "task_id": "sphinx-doc__sphinx-10435",
+      "repetition": 3,
+      "arm": "fresh_read_recovery"
+    },
+    {
+      "sequence": 47,
+      "task_id": "sphinx-doc__sphinx-10449",
+      "repetition": 3,
+      "arm": "base"
+    },
+    {
+      "sequence": 48,
+      "task_id": "sphinx-doc__sphinx-10449",
+      "repetition": 3,
+      "arm": "fresh_read_recovery"
+    }
+  ],
+  "primary_metric": "independent acceptance successes over 24 planned positions for each arm, with all failures retained",
+  "adoption_rule": {
+    "fresh_read_recovery_min_successes": 16,
+    "net_success_gain_over_base": 4,
+    "minimum_tasks_with_net_gain": 2,
+    "require_complete_evidence": true,
+    "require_unresolved_infrastructure_incidents": false
+  },
+  "budget": {
+    "currency": "CNY",
+    "shared_cap": 150,
+    "shared_calculated_balance_before_next_batch": 23.1246208,
+    "full_batch_conservative_upper_bound": 41.28,
+    "stage_cap_proposal": 42,
+    "additional_budget_gap_to_stage_cap": 18.8753792,
+    "paid_execution_authorized_by_this_record": false
+  },
+  "preflight_evidence": {
+    "fixture": "synthetic Git/pytest fixture; no provider client",
+    "real_task_success_rate_claim": false,
+    "limitations": [
+      "Does not establish a real-model response to the recovery gate.",
+      "Does not establish an increase in independent acceptance success rate.",
+      "Formal P2 runner does not yet expose this AgentConfig switch as a protocol arm."
+    ]
+  },
+  "scoring_contract_version": "p2-scoring-v1",
+  "scoring_instruction_sha256": "ae11b4db431d9c61f4efd24f9d19a552674ad704538ad3c8794f20ecb1019f55",
+  "fairness_rules": [
+    "both arms use the same corrected patch tool and test audit",
+    "same model, task text, selectors, tools, base prompt, scoring contract, and budget",
+    "baseline is rerun contemporaneously; historical control is not pooled",
+    "all 48 positions are retained regardless of result or feature trigger"
+  ],
+  "schedule_sha256": "76aaa08c8006dea44efa203f1ccec51acd83df785b67ef21d4cdad0902eabfb4"
+}

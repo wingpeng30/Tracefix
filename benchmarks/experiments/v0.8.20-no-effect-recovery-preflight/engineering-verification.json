@@ -1,0 +1,62 @@
+{
+  "schema_version": 1,
+  "kind": "v0.8.20_engineering_verification",
+  "baseline_commit": "36f53cbb43ccd82f1723dc500a54e47da5c7f6d2",
+  "working_tree_snapshot": "dirty; source hashes below bind the tested tree state",
+  "full_pytest": {
+    "passed": 457,
+    "failed": 0,
+    "duration_seconds": 623.41,
+    "pytest_process_exit_code": 1,
+    "pytest_only_coverage_percent": 86.07327834260502,
+    "reason_for_pytest_exit_1": "configured coverage fail-under=90; tests themselves all passed"
+  },
+  "combined_coverage": {
+    "percent": 90.14962593516209,
+    "statement_percent": 92.37735849056604,
+    "branch_percent": 82.9967689822294,
+    "threshold": 90,
+    "coverage_report_exit_code": 0
+  },
+  "targeted_regression": {
+    "passed": 3,
+    "exit_code": 0
+  },
+  "ruff_exit_code": 0,
+  "compileall": {
+    "tracked_python_files": 129,
+    "exit_code": 0
+  },
+  "offline_diagnostics": {
+    "validation_feedback_exit_code": 0,
+    "detailed_ablation_exit_code": 0,
+    "supplier_calls": 0
+  },
+  "source_sha256": {
+    "src/tracefix/agent/base.py": "c185202366b17ca9c5d0bf421ef5cabb3bf28ccb9490da551eb94463dab16751",
+    "src/tracefix/agent/minimal.py": "d085873566b362e06dc911aaa9a84475bfbacb9172a7f82be995ae36b9d23d34",
+    "tests/test_builtin_tools.py": "87ee9f55a9543fb381c7351432fad473faa6ba3871da51aa7f25204ad47e6cde",
+    "benchmarks/experiments/v0.8.20-no-effect-recovery-preflight/next-comparison.json": "7ce63dffc045e97299cfb4d857200d94cb8657d08d07625394175ac1f389de41"
+  },
+  "local_evidence_directory": "tracefix-noeffect-full-short-20260925",
+  "evidence_sha256": {
+    "pytest.log": "82d9a0fc456b93e1452ceae79561c1bd6d9c0880ada39421689e59072a5e505c",
+    "pytest.exit-code.txt": "f1b2f662800122bed0ff255693df89c4487fbdcf453d3524a42d4ec20c3d9c04",
+    "junit.xml": "1543fb20e1be4c8bf33a4e87b6903028e2b76721b63254f9bd6bf951cc09ddab",
+    "coverage-final.json": "92c411759e7ddd5d544ca83cc38fdf3ae7d5157ef1caa39c7de6481df67f2aec",
+    "coverage-final.xml": "f84eb948713c6ccffc055234f9545b6b12be48e690a767495addb9a0b18b6699",
+    "coverage-final.log": "0300be3a23746c434cfbcfeff9d9f24be5205529c93b4bb1de09f6fbab04c531",
+    "coverage-final.exit-code.txt": "13bf7b3039c63bf5a50491fa3cfd8eb4e699d1ba1436315aef9cbe5711530354",
+    "ruff.exit-code.txt": "13bf7b3039c63bf5a50491fa3cfd8eb4e699d1ba1436315aef9cbe5711530354",
+    "compileall.log": "cbdb641400487cf8f4de15891b72bcb44986d89ca8bc8adc8f1536fd0c05c72c",
+    "compileall.exit-code.txt": "13bf7b3039c63bf5a50491fa3cfd8eb4e699d1ba1436315aef9cbe5711530354",
+    "targeted-final-elevated.log": "b59f80596e03d93f38d5debdf390f4eb7105ce85247564116fc46703d958b078",
+    "targeted-final-elevated.exit-code.txt": "13bf7b3039c63bf5a50491fa3cfd8eb4e699d1ba1436315aef9cbe5711530354",
+    "diagnostic-feedback-legacy-v1.exit-code.txt": "13bf7b3039c63bf5a50491fa3cfd8eb4e699d1ba1436315aef9cbe5711530354",
+    "diagnostic-detailed-ablation-v2.exit-code.txt": "13bf7b3039c63bf5a50491fa3cfd8eb4e699d1ba1436315aef9cbe5711530354",
+    "validation-feedback-legacy-v1/validation-feedback.json": "e1fde29487d48c1da84321c5ac6edb008721d6d436987b1c69a3e08018267b0a",
+    "detailed-ablation-diagnostic-v2/detailed-diagnostic.json": "eecfa4681e1e7d28d0f2a708c350b54c825d5fd15171065b64bb187272528a01"
+  },
+  "paid_requests": 0,
+  "holdout_tasks_used": false
+}

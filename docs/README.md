@@ -107,3 +107,5 @@
 唯一留档。
 
 最新机制预检见 [`experiments/v0.8.20-no-effect-recovery-preflight.md`](experiments/v0.8.20-no-effect-recovery-preflight.md)；全量 457 项测试通过，pytest-only coverage 86.073278%，追加只读诊断入口后的综合 coverage 90.149626%。新门槛默认关闭，脚本化 fixture 不代表真实修复成功率。下一轮 C/T 草案及预算缺口见 [`../benchmarks/experiments/v0.8.20-no-effect-recovery-preflight/next-comparison.json`](../benchmarks/experiments/v0.8.20-no-effect-recovery-preflight/next-comparison.json)。前序证据更正与失败复盘见 [`experiments/v0.8.19-validation-closure-failure-review.md`](experiments/v0.8.19-validation-closure-failure-review.md)。V0.8.18 的原始结果、逐项哈希及后续更正索引分别位于 `benchmarks/experiments/v0.8.18-validation-closure-comparison/` 与 `benchmarks/experiments/v0.8.19-closure-failure-review/`。
+
+最新冻结版本为 [V0.8.21](experiments/v0.8.21-no-effect-recovery-execution.md)：恢复门槛正式路径模拟、完成态恢复及离线 `p2-check` 已通过，执行提交 `adc8658`；48 项真实模型比较尚未运行。共享账本计算余额 ¥89.78873492（不是供应商账单）。全量 pytest 461 passed；Coverage.py 门槛命令通过，但 JSON 精确综合覆盖率为 89.634203%，未取整值低于 90%，报告已披露。
