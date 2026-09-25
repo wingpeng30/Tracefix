@@ -43,6 +43,9 @@ from tracefix.paired import ExperimentArm
 from tracefix.provenance import collect_run_provenance, inspect_test_environment
 from tracefix.real_benchmark import RealIssueTask
 from tracefix.real_experiment import (
+    CollectionErrorEvidence,
+    ProcessEvidence,
+    PytestExecutionEvidence,
     RealExperimentConfig,
     RealPairedExperimentRunner,
     RealPrescreenRunner,
@@ -55,8 +58,11 @@ from tracefix.real_experiment import (
     _eligibility_failures,
     _git,
     _matches_expected_collection_failure,
+    _probe_source_import,
     _pytest_command,
     _pytest_evidence,
+    _read_audit,
+    _run_recipe_build,
     _task_python,
     analyze_real_trajectory,
     classify_p2_paths,
@@ -143,9 +149,7 @@ def test_requests_1766_recipe_pins_local_httpbin_and_requires_health_check(monke
             assert timeout == 5
             return FakeResponse()
 
-    monkeypatch.setattr(
-        "tracefix.p2_protocol.build_opener", lambda handler: FakeOpener()
-    )
+    monkeypatch.setattr("tracefix.p2_protocol.build_opener", lambda handler: FakeOpener())
     _verify_recipe_service(recipe.task_id, recipe)
 
     class WrongService(FakeOpener):
@@ -157,6 +161,123 @@ def test_requests_1766_recipe_pins_local_httpbin_and_requires_health_check(monke
     monkeypatch.setattr("tracefix.p2_protocol.build_opener", lambda _handler: WrongService())
     with pytest.raises(BenchmarkError, match="unexpected health identity"):
         _verify_recipe_service(recipe.task_id, recipe)
+
+
+def test_recipe_service_requires_expected_environment_url() -> None:
+    recipe = EnvironmentRecipe(
+        task_id="psf__requests-1766",
+        environment_variables={"HTTPBIN_URL": "http://127.0.0.1:8765/"},
+        service_health_url="http://127.0.0.1:8765/get",
+    )
+    recipe = recipe.model_copy(update={"environment_variables": {}})
+
+    with pytest.raises(BenchmarkError, match="has no HTTPBIN_URL"):
+        _verify_recipe_service(recipe.task_id, recipe)
+
+
+def test_recipe_service_connection_failure_is_a_blocking_error(monkeypatch) -> None:
+    recipe = EnvironmentRecipe(
+        task_id="psf__requests-1766",
+        environment_variables={"HTTPBIN_URL": "http://127.0.0.1:8765/"},
+        service_health_url="http://127.0.0.1:8765/get",
+    )
+
+    class OfflineOpener:
+        def open(self, *_args, **_kwargs):
+            raise OSError("connection refused")
+
+    monkeypatch.setattr("tracefix.p2_protocol.build_opener", lambda _handler: OfflineOpener())
+    with pytest.raises(BenchmarkError, match="service is unavailable"):
+        _verify_recipe_service(recipe.task_id, recipe)
+
+
+@pytest.mark.parametrize(
+    ("run_result", "expected_message"),
+    [
+        (OSError("interpreter missing"), "source import probe failed"),
+        (
+            subprocess.CompletedProcess(
+                args=["python"], returncode=1, stdout="", stderr="bad import"
+            ),
+            "source import probe failed",
+        ),
+        (
+            subprocess.CompletedProcess(
+                args=["python"], returncode=0, stdout="C:/outside/site-packages/pkg.py\n", stderr=""
+            ),
+            "resolved outside",
+        ),
+    ],
+)
+def test_source_import_probe_fails_closed_for_process_and_path_errors(
+    tmp_path: Path, monkeypatch, run_result, expected_message: str
+) -> None:
+    recipe = EnvironmentRecipe(task_id="org__repo-1", source_import_probe="pkg")
+
+    def fake_run(*_args, **_kwargs):
+        if isinstance(run_result, Exception):
+            raise run_result
+        return run_result
+
+    monkeypatch.setattr("tracefix.real_experiment.subprocess.run", fake_run)
+    message, imported = _probe_source_import(recipe, tmp_path, Path("python"))
+
+    assert message is not None and expected_message in message
+    assert (
+        imported is None
+        if (isinstance(run_result, Exception) or run_result.returncode != 0)
+        else imported is not None
+    )
+
+
+def test_recipe_build_stops_after_first_failed_step(tmp_path: Path, monkeypatch) -> None:
+    recipe = EnvironmentRecipe(
+        task_id="org__repo-1",
+        build_commands=(("{python}", "-m", "build"), ("{python}", "-m", "pytest")),
+    )
+    calls = []
+
+    def fake_process(command, checkout, environment, evidence_root, stage):
+        calls.append((command, stage))
+        return ProcessEvidence(
+            stage=stage,
+            command=command,
+            working_directory=str(checkout),
+            returncode=1 if len(calls) == 1 else 0,
+            timed_out=False,
+            duration_ms=1,
+            stdout_path=str(evidence_root / "stdout"),
+            stderr_path=str(evidence_root / "stderr"),
+        )
+
+    monkeypatch.setattr("tracefix.real_experiment._run_validation_process", fake_process)
+    steps = _run_recipe_build(recipe, tmp_path, Path("python"), tmp_path / "evidence")
+
+    assert len(steps) == 1
+    assert calls[0][0][0] == "python"
+    assert steps[0].returncode == 1
+
+
+@pytest.mark.parametrize(
+    ("contents", "expected"),
+    [
+        ("{not-json", ((), None)),
+        (
+            json.dumps({"collected_node_ids": ["tests/test_x.py", 5]}),
+            (("tests/test_x.py",), "{path}"),
+        ),
+    ],
+)
+def test_read_audit_handles_corrupt_and_mixed_node_records(
+    tmp_path: Path, contents: str, expected
+) -> None:
+    audit = tmp_path / "audit.json"
+    audit.write_text(contents, encoding="utf-8")
+    expected_nodes, expected_path = expected
+    if expected_path == "{path}":
+        expected_path = str(audit)
+
+    assert _read_audit(audit) == (expected_nodes, expected_path)
 
 
 def test_pytest_evidence_marks_xfail_as_non_qualifying_pass(tmp_path: Path) -> None:
@@ -439,10 +560,13 @@ def test_assertion_failure_with_assertion_teardown_is_not_mislabeled_execution_e
 
     from tracefix.p2_protocol import _verification_failure_kind
 
-    assert _verification_failure_kind(
-        "pytest-dev__pytest-10051",
-        {"eligible": False, "evidence": evidence.model_dump(mode="json")},
-    ) is None
+    assert (
+        _verification_failure_kind(
+            "pytest-dev__pytest-10051",
+            {"eligible": False, "evidence": evidence.model_dump(mode="json")},
+        )
+        is None
+    )
 
 
 @pytest.mark.parametrize(
@@ -865,6 +989,159 @@ def test_behavior_validation_proves_initial_fail_and_gold_pass(tmp_path) -> None
         result.environment_before.fingerprint_sha256
         == result.environment_after_gold.fingerprint_sha256
     )
+
+
+def test_behavior_qualification_distinguishes_business_and_environment_outcomes(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """base/gold 分类要区分真实断言失败、未复现、环境阻塞和收集例外。"""
+    task, source = _fixture(tmp_path)
+    environment = inspect_test_environment(Path(sys.executable))
+    active_evidence: dict[str, PytestExecutionEvidence] = {}
+    returncodes = {"initial": 1, "gold": 0}
+
+    def fake_runner(_task, checkout, _python, call_id, *_args, **_kwargs):
+        variant = "gold" if checkout.name.endswith("-gold") else "initial"
+        return ToolResult(
+            call_id=call_id,
+            tool_name="run_tests",
+            success=returncodes[variant] == 0,
+            error=None if returncodes[variant] == 0 else "simulated pytest failure",
+            output={"returncode": returncodes[variant]},
+        )
+
+    monkeypatch.setattr(
+        "tracefix.real_experiment._create_behavior_checkout", lambda _s, d: d.mkdir()
+    )
+    monkeypatch.setattr("tracefix.real_experiment._git", lambda *_args: "")
+    monkeypatch.setattr("tracefix.real_experiment._run_qualified_pytest", fake_runner)
+    monkeypatch.setattr(
+        "tracefix.real_experiment.inspect_test_environment",
+        lambda *_args, **_kwargs: environment,
+    )
+    monkeypatch.setattr(
+        "tracefix.real_experiment._pytest_evidence",
+        lambda result, _checkout: active_evidence[result.call_id],
+    )
+
+    def evidence(
+        status: str,
+        nodes: tuple[str, ...],
+        *,
+        collection_error: bool = False,
+    ) -> PytestExecutionEvidence:
+        rule_error = (
+            (
+                CollectionErrorEvidence(
+                    nodeid="tests/test_x.py",
+                    longrepr="ImportError: cannot import name 'NEW_API' from 'pkg.module'",
+                ),
+            )
+            if collection_error
+            else ()
+        )
+        collection = (
+            ProcessEvidence(
+                stage="collection",
+                command=("pytest", "--collect-only"),
+                working_directory=str(source),
+                returncode=2,
+                timed_out=False,
+                duration_ms=1,
+                stdout_path="stdout.log",
+                stderr_path="stderr.log",
+            )
+            if collection_error
+            else None
+        )
+        return PytestExecutionEvidence(
+            status=status,
+            returncode=2 if collection_error else (1 if status == "assertion_failed" else 0),
+            timed_out=status == "timeout",
+            junit_available=status == "passed",
+            audit_available=True,
+            collection_audit_available=True,
+            execution_audit_available=status == "passed",
+            source_import_audit_valid=True,
+            test_count=len(nodes),
+            failure_count=1 if status == "assertion_failed" else 0,
+            error_count=0,
+            skipped_count=0,
+            xfailed_count=0,
+            xpassed_count=0,
+            collected_node_ids=nodes,
+            executed_node_ids=nodes,
+            collection_error_records=rule_error,
+            collection=collection,
+        )
+
+    node = "tests/test_x.py::test_x"
+    gold_pass = evidence("passed", (node,))
+
+    def evaluate(name: str, initial: PytestExecutionEvidence, *, recipe=None, drift=False):
+        nonlocal environment
+        returncodes["initial"] = (
+            2
+            if initial.status == "collection_error"
+            else (1 if initial.status in {"assertion_failed", "timeout"} else 0)
+        )
+        active_evidence.clear()
+        active_evidence[f"behavior-{task.id}-initial"] = initial
+        active_evidence[f"behavior-{task.id}-gold"] = gold_pass
+        if drift:
+            changed = environment.model_copy(update={"fingerprint_sha256": "different"})
+            states = iter((environment, changed, changed, changed))
+            monkeypatch.setattr(
+                "tracefix.real_experiment.inspect_test_environment",
+                lambda *_args, **_kwargs: next(states, changed),
+            )
+        else:
+            monkeypatch.setattr(
+                "tracefix.real_experiment.inspect_test_environment",
+                lambda *_args, **_kwargs: environment,
+            )
+        return validate_real_task_behavior(
+            task,
+            source=source,
+            test_python=Path(sys.executable),
+            output_dir=tmp_path / name,
+            recipe=recipe,
+        )
+
+    assertion = evaluate("assertion", evidence("assertion_failed", (node,)))
+    assert assertion.eligible_for_llm_prescreen is True
+    assert assertion.qualification_type == "assertion_failure"
+
+    not_reproduced = evaluate("not-reproduced", gold_pass)
+    assert not_reproduced.qualification_type == "business_not_reproduced"
+
+    blocked = evaluate("blocked", evidence("timeout", ()))
+    assert blocked.qualification_type == "environment_blocked"
+    assert "base/gold executed node IDs differ" in blocked.eligibility_reason
+
+    mismatch = evaluate("mismatch", evidence("assertion_failed", ("tests/other.py::test_x",)))
+    assert mismatch.qualification_type == "behavior_unqualified"
+    assert "base/gold executed node IDs differ" in mismatch.eligibility_reason
+
+    drifted = evaluate("drifted", evidence("assertion_failed", (node,)), drift=True)
+    assert drifted.dependency_drift_detected is True
+    assert "fingerprint drifted" in drifted.eligibility_reason
+
+    collection_rule = ExpectedBaseFailure(
+        stage="collection",
+        exception_type="ImportError",
+        module="pkg.module",
+        symbol="NEW_API",
+        test_entry="tests/test_x.py",
+        reason="gold adds the API",
+    )
+    collection = evaluate(
+        "collection",
+        evidence("collection_error", (), collection_error=True),
+        recipe=EnvironmentRecipe(task_id=task.id, expected_base_failure=collection_rule),
+    )
+    assert collection.eligible_for_llm_prescreen is True
+    assert collection.qualification_type == "expected_collection_failure"
 
 
 def test_behavior_validation_records_isolated_source_import_probe(tmp_path: Path) -> None:
@@ -1809,11 +2086,7 @@ def test_single_variable_p2_simulation_runs_agent_verifier_and_resumes_without_c
     treatment_config = protocol.effective_agent_configurations[treatment_arm]
     assert control_config["require_tested_completion"] is False
     assert treatment_config["require_tested_completion"] is False
-    diff_fields = {
-        key
-        for key in control_config
-        if control_config[key] != treatment_config[key]
-    }
+    diff_fields = {key for key in control_config if control_config[key] != treatment_config[key]}
     expected_diff = (
         "tool_result_presentation_enabled"
         if design == "presentation_only"

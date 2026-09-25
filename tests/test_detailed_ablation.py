@@ -167,6 +167,167 @@ def test_tool_facts_checks_request_cycle_and_never_returns_raw_contents() -> Non
         )
 
 
+def test_tool_facts_tracks_repository_context_and_tools_between_requests() -> None:
+    """离线诊断应将索引、Repo Map 和响应后工具调用归入正确请求周期。"""
+    raw = "src/core.py:12 AssertionError tests/test_mod.py::test_a"
+    trace = [
+        _event("repository_indexed", {"duration_ms": 1250}, "index-1"),
+        _event("repo_map_added", {}, "map-1"),
+        _event(
+            "tool_called",
+            {
+                "call": {
+                    "id": "call-1",
+                    "name": "read_file",
+                    "arguments": {"path": "D:/repo/src/core.py"},
+                }
+            },
+            "called-1",
+        ),
+        _event(
+            "tool_returned",
+            {
+                "result": {
+                    "call_id": "call-1",
+                    "tool_name": "read_file",
+                    "success": True,
+                    "duration_ms": 10,
+                    "output": raw,
+                }
+            },
+            "returned-1",
+        ),
+        _event(
+            "tool_result_presented",
+            {
+                "call_id": "call-1",
+                "tool_name": "read_file",
+                "original_chars": 100,
+                "presented_chars": len(raw),
+                "compacted": True,
+            },
+            "presented-1",
+        ),
+        _event(
+            "context_prepared",
+            {
+                "estimated_tokens_before": 1000,
+                "estimated_tokens_after": 1000,
+                "tool_results_pruned": 0,
+                "messages_compacted": 0,
+                "batches_compacted": 0,
+                "compacted": False,
+            },
+            "context-1",
+        ),
+        _event(
+            "model_request_view",
+            {
+                "sanitized": True,
+                "messages": [
+                    {"role": "system", "content": "map", "metadata": {"kind": "repository_map"}},
+                    {"role": "tool", "tool_call_id": "call-1", "content": raw},
+                ],
+                "tools": [],
+            },
+            "view-1",
+        ),
+        _event("model_requested", {"message_count": 2}, "requested-1"),
+        _event(
+            "message_added",
+            {
+                "message": {
+                    "role": "assistant",
+                    "content": "inspect next",
+                    "tool_calls": [
+                        {
+                            "id": "call-2",
+                            "name": "read_file",
+                            "arguments": {"path": "src/other file.py"},
+                        }
+                    ],
+                }
+            },
+            "assistant-1",
+        ),
+        _event(
+            "model_responded",
+            {"duration_ms": 25, "usage": {"input_tokens": 20, "output_tokens": 3}},
+            "responded-1",
+        ),
+        _event(
+            "tool_called",
+            {
+                "call": {
+                    "id": "call-2",
+                    "name": "read_file",
+                    "arguments": {"path": "D:/repo/src/other file.py"},
+                }
+            },
+            "called-2",
+        ),
+        _event(
+            "tool_returned",
+            {
+                "result": {
+                    "call_id": "call-2",
+                    "tool_name": "read_file",
+                    "success": True,
+                    "duration_ms": 5,
+                    "output": "no additional markers",
+                }
+            },
+            "returned-2",
+        ),
+        _event(
+            "tool_result_presented",
+            {
+                "call_id": "call-2",
+                "tool_name": "read_file",
+                "original_chars": 22,
+                "presented_chars": 22,
+                "compacted": False,
+            },
+            "presented-2",
+        ),
+        _event(
+            "model_request_view",
+            {
+                "sanitized": True,
+                "messages": [
+                    {"role": "tool", "tool_call_id": "call-2", "content": "no additional markers"}
+                ],
+                "tools": [],
+            },
+            "view-2",
+        ),
+        _event("model_requested", {"message_count": 3}, "requested-2"),
+        _event(
+            "message_added",
+            {"message": {"role": "assistant", "content": "done", "tool_calls": []}},
+            "assistant-2",
+        ),
+        _event(
+            "model_responded",
+            {"duration_ms": 75, "usage": {"input_tokens": 30, "output_tokens": 4}},
+            "responded-2",
+        ),
+    ]
+
+    facts = _tool_facts(trace, "D:/repo")
+
+    assert facts["repository_index_seconds"] == 1.25
+    assert facts["repo_index_event_count"] == 1
+    assert facts["repo_map_added_event_count"] == 1
+    assert facts["model_response_event_seconds"] == 0.1
+    assert facts["model_response_event_count"] == 2
+    assert facts["model_cycles"][0]["repo_map_in_request"] is True
+    assert facts["model_cycles"][0]["tools"][0]["name"] == "read_file"
+    assert facts["model_cycles"][0]["tool_results"][0]["success"] is True
+    assert facts["per_tool_result"][0]["was_shortened"] is True
+    assert facts["per_tool_result"][1]["presented_to_next_request"] is True
+
+
 @pytest.mark.parametrize(
     ("tool_pruned", "messages", "batches", "folded", "pruning", "fold"),
     [
