@@ -1,0 +1,911 @@
+{
+  "format": "tracefix.closure_failure_review.v1",
+  "generated_at": "2026-09-25T07:35:02.210117+00:00",
+  "execution_code_commit": "97f521599f0602e79a50f782c4282001bbab6ed3",
+  "protocol_sha256": "29e892f9cde6fefded4ae2bb57b95c232312715670cab2ae76a577237519a856",
+  "previous_report_sha256": "fb1ed348b2b1f5a7aa9a144c2ae97bee27511c084d7eb9bc7441b50df1ea1690",
+  "read_only_source_dir": "runs/validation-closure-corrected-feedback-paid-20260925-v2/experiment",
+  "only_arm_configuration_difference": {
+    "validation_closure_enabled": [
+      false,
+      true
+    ]
+  },
+  "recorded_fixed_denominator_successes": {
+    "C": 16,
+    "T": 13,
+    "positions_each": 24
+  },
+  "shared_evidence_audit": {
+    "valid_positions": 46,
+    "planned_positions": 48,
+    "invalid_positions": [
+      {
+        "sequence": 19,
+        "task_id": "psf__requests-1766",
+        "arm": "validation_closure",
+        "issues": [
+          "verification_unusable:network_error"
+        ],
+        "verification_status": "network_error"
+      },
+      {
+        "sequence": 39,
+        "task_id": "pytest-dev__pytest-10051",
+        "arm": "no_compaction",
+        "issues": [
+          "verification_unusable:execution_error"
+        ],
+        "verification_status": "execution_error"
+      }
+    ],
+    "original_scores_unchanged": true
+  },
+  "independent_reverification": [
+    {
+      "sequence": 19,
+      "task_id": "psf__requests-1766",
+      "result_sha256": "866ca773b92307c165f506fbca56ff879a33d3ede626983cdd7c998e43827014",
+      "eligible": false,
+      "reason": "executed_node_ids_differ_from_frozen_p1_set",
+      "status": "timeout"
+    },
+    {
+      "sequence": 39,
+      "task_id": "pytest-dev__pytest-10051",
+      "result_sha256": "f8c9d7db0b585ac0a148a6ca68ef0ebf0e082ced74936d6bd20b8a9b21cc1c7f",
+      "eligible": false,
+      "reason": "pytest execution failed",
+      "status": "execution_error"
+    }
+  ],
+  "validation_reminder_positions": [
+    {
+      "sequence": 17,
+      "task_id": "psf__requests-1142",
+      "arm": "validation_closure",
+      "independent_passed": true,
+      "event_ids": [
+        "af1851d8487b4cfdaca19db75cc019dc"
+      ]
+    },
+    {
+      "sequence": 19,
+      "task_id": "psf__requests-1766",
+      "arm": "validation_closure",
+      "independent_passed": false,
+      "event_ids": [
+        "acef51a641354a8ea3a9ec7764e9965b"
+      ]
+    }
+  ],
+  "pytest_10081_first_tool_divergences": [
+    {
+      "repetition": 1,
+      "C_sequence": 9,
+      "T_sequence": 10,
+      "first_differing_tool_call_index": 7,
+      "C_step": 5,
+      "T_step": 5,
+      "C_event_id": "a82a7505ea82481893e7e1bdb2352979",
+      "T_event_id": "06bb6b22505f412885fc9d1521ff1b16",
+      "C_tool": "search_code",
+      "T_tool": "search_code"
+    },
+    {
+      "repetition": 2,
+      "C_sequence": 26,
+      "T_sequence": 25,
+      "first_differing_tool_call_index": 8,
+      "C_step": 6,
+      "T_step": 6,
+      "C_event_id": "b8d9bdbe5a9140c4b4d48da584902145",
+      "T_event_id": "ede9d1722c58427ba84a48d9166923a6",
+      "C_tool": "search_code",
+      "T_tool": "run_tests"
+    },
+    {
+      "repetition": 3,
+      "C_sequence": 41,
+      "T_sequence": 42,
+      "first_differing_tool_call_index": 6,
+      "C_step": 5,
+      "T_step": 5,
+      "C_event_id": "9b15a415403a4b2c8b5600fb35290f38",
+      "T_event_id": "7f45f969474d4a25bccb15f0e71c4559",
+      "C_tool": "search_code",
+      "T_tool": "search_code"
+    }
+  ],
+  "reviewed_positions": [
+    {
+      "sequence": 9,
+      "task_id": "pytest-dev__pytest-10081",
+      "arm": "no_compaction",
+      "repetition": 1,
+      "independent_passed_as_recorded": true,
+      "verification_reason": null,
+      "verification_status": "passed",
+      "stop_reason": "benchmark_error",
+      "agent_validation_status": "unverified",
+      "step_count": 15,
+      "test_runs_counted": 4,
+      "final_patch_bytes": 821,
+      "first_request_content_sha256": "7138cbef1d11c5e95ca734fc1884c9160791582df96a216a1416cd6a04cf9453",
+      "trajectory_sha256": "6f49e011549263c6387770acbba53bd35585a78b6b777b562d12b4e87ed22e3b",
+      "run_result_sha256": "50b005558bc258962f52d771bc9fa826ecba4fbacae21f691c918a5c987ed799",
+      "patch_sha256": "4f4e67547d2b0052e3d4c425a7012c4abd89dc68f92adf56f559b3e53f38bcb5",
+      "verification_sha256": "cacc76acdf825cb655449b7c80ddd8d355b9cf415a503793b82a1987d9e36790",
+      "patch_attempt_count": 2,
+      "unique_patch_payloads": 2,
+      "no_effect_results": 0,
+      "duplicate_patch_rejections": 0,
+      "validation_reminder_event_ids": [],
+      "no_effect_guidance_visible": false,
+      "duplicate_error_visible": false,
+      "test_statuses": {
+        "test_failure": 2,
+        "invalid_test_run": 2
+      },
+      "key_events": [
+        {
+          "step": 9,
+          "event_id": "13299144f0654adc9a416dacd2eb4a7b",
+          "tool": "apply_patch",
+          "success": true,
+          "error": "",
+          "test_status": null
+        },
+        {
+          "step": 10,
+          "event_id": "72f64074ef2d4156ac5273dadcae0125",
+          "tool": "run_tests",
+          "success": false,
+          "error": "tests failed with exit code 1",
+          "test_status": "test_failure"
+        },
+        {
+          "step": 10,
+          "event_id": "c03640e0f18e489784dd21abd055f945",
+          "tool": "run_tests",
+          "success": false,
+          "error": "pytest did not provide valid passing test evidence (invalid_test_run)",
+          "test_status": "invalid_test_run"
+        },
+        {
+          "step": 12,
+          "event_id": "ded3c1d9297d464e9a86fb4ce0c127f5",
+          "tool": "apply_patch",
+          "success": true,
+          "error": "",
+          "test_status": null
+        },
+        {
+          "step": 13,
+          "event_id": "12481b8831184ec4aa71e217feb611eb",
+          "tool": "run_tests",
+          "success": false,
+          "error": "pytest did not provide valid passing test evidence (invalid_test_run)",
+          "test_status": "invalid_test_run"
+        },
+        {
+          "step": 14,
+          "event_id": "eceec529c9444a3d9225abc5307aaf3f",
+          "tool": "run_tests",
+          "success": false,
+          "error": "tests failed with exit code 1",
+          "test_status": "test_failure"
+        }
+      ]
+    },
+    {
+      "sequence": 10,
+      "task_id": "pytest-dev__pytest-10081",
+      "arm": "validation_closure",
+      "repetition": 1,
+      "independent_passed_as_recorded": false,
+      "verification_reason": "empty_agent_patch",
+      "verification_status": null,
+      "stop_reason": "p2_trial_budget_exhausted",
+      "agent_validation_status": "unverified",
+      "step_count": 22,
+      "test_runs_counted": 0,
+      "final_patch_bytes": 0,
+      "first_request_content_sha256": "7138cbef1d11c5e95ca734fc1884c9160791582df96a216a1416cd6a04cf9453",
+      "trajectory_sha256": "2203e21d46b273fae9b35eb70d938416650b0032eefe8a757d7d6689c5324fe2",
+      "run_result_sha256": "d4e65ff1a90bde6893101f99d99e4dabf85bcf49ee48ffd6b3d3cf7a951eb116",
+      "patch_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "verification_sha256": "2469c204552d924d93c14c899655ac106f21617b85332db9820d490152c7ee0f",
+      "patch_attempt_count": 12,
+      "unique_patch_payloads": 2,
+      "no_effect_results": 2,
+      "duplicate_patch_rejections": 10,
+      "validation_reminder_event_ids": [],
+      "no_effect_guidance_visible": true,
+      "duplicate_error_visible": true,
+      "test_statuses": {},
+      "key_events": [
+        {
+          "step": 9,
+          "event_id": "c2f2305e1a644b6ea3cbfd22352e3f67",
+          "tool": "apply_patch",
+          "success": false,
+          "error": "no_effect",
+          "test_status": null
+        },
+        {
+          "step": 10,
+          "event_id": "747d7c8c67b34120982fce21cc3fec4c",
+          "tool": "apply_patch",
+          "success": false,
+          "error": "duplicate failed patch call was not executed",
+          "test_status": null
+        },
+        {
+          "step": 11,
+          "event_id": "678154fe65b5429c821cc65ca6fa035d",
+          "tool": "apply_patch",
+          "success": false,
+          "error": "duplicate failed patch call was not executed",
+          "test_status": null
+        },
+        {
+          "step": 12,
+          "event_id": "6dd988d9b6134f75abe6905142925033",
+          "tool": "apply_patch",
+          "success": false,
+          "error": "duplicate failed patch call was not executed",
+          "test_status": null
+        },
+        {
+          "step": 14,
+          "event_id": "4a541104ee894ea4b74d15ffbd0bd924",
+          "tool": "apply_patch",
+          "success": false,
+          "error": "duplicate failed patch call was not executed",
+          "test_status": null
+        },
+        {
+          "step": 15,
+          "event_id": "764dad9dbe4c43a9869c529aaeaacd55",
+          "tool": "apply_patch",
+          "success": false,
+          "error": "no_effect",
+          "test_status": null
+        },
+        {
+          "step": 16,
+          "event_id": "a921cfb2e0cc4984ab057b68bb02b472",
+          "tool": "apply_patch",
+          "success": false,
+          "error": "duplicate failed patch call was not executed",
+          "test_status": null
+        },
+        {
+          "step": 17,
+          "event_id": "fa79349daa184a9eb49f45f8723dd47e",
+          "tool": "apply_patch",
+          "success": false,
+          "error": "duplicate failed patch call was not executed",
+          "test_status": null
+        },
+        {
+          "step": 18,
+          "event_id": "1a4dd85dcf2b43028a1aa18e0b586e5f",
+          "tool": "apply_patch",
+          "success": false,
+          "error": "duplicate failed patch call was not executed",
+          "test_status": null
+        },
+        {
+          "step": 19,
+          "event_id": "e3d27d80e051429587273eee40ebeecb",
+          "tool": "apply_patch",
+          "success": false,
+          "error": "duplicate failed patch call was not executed",
+          "test_status": null
+        },
+        {
+          "step": 20,
+          "event_id": "985998321780407c9d4a0c2e7a874047",
+          "tool": "apply_patch",
+          "success": false,
+          "error": "duplicate failed patch call was not executed",
+          "test_status": null
+        },
+        {
+          "step": 21,
+          "event_id": "fc1482964ea64b3392d8b836e3c0585e",
+          "tool": "apply_patch",
+          "success": false,
+          "error": "duplicate failed patch call was not executed",
+          "test_status": null
+        }
+      ]
+    },
+    {
+      "sequence": 25,
+      "task_id": "pytest-dev__pytest-10081",
+      "arm": "validation_closure",
+      "repetition": 2,
+      "independent_passed_as_recorded": false,
+      "verification_reason": "empty_agent_patch",
+      "verification_status": null,
+      "stop_reason": "p2_trial_budget_exhausted",
+      "agent_validation_status": "unverified",
+      "step_count": 23,
+      "test_runs_counted": 2,
+      "final_patch_bytes": 0,
+      "first_request_content_sha256": "7138cbef1d11c5e95ca734fc1884c9160791582df96a216a1416cd6a04cf9453",
+      "trajectory_sha256": "dbd36484cceba9897914ef8c7ab81936026f76873d3afbc413744ec42b30ea49",
+      "run_result_sha256": "0eec14fda47ea81ea1002b0eebc6e9660dfdd244a8fc8820dbce1bd9630a61a0",
+      "patch_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "verification_sha256": "2469c204552d924d93c14c899655ac106f21617b85332db9820d490152c7ee0f",
+      "patch_attempt_count": 10,
+      "unique_patch_payloads": 2,
+      "no_effect_results": 2,
+      "duplicate_patch_rejections": 8,
+      "validation_reminder_event_ids": [],
+      "no_effect_guidance_visible": true,
+      "duplicate_error_visible": true,
+      "test_statuses": {
+        "test command contains disallowed shell syntax": 2
+      },
+      "key_events": [
+        {
+          "step": 6,
+          "event_id": "0d1b07d19ed441b48bbc551c55ee0118",
+          "tool": "run_tests",
+          "success": false,
+          "error": "test command contains disallowed shell syntax",
+          "test_status": null
+        },
+        {
+          "step": 7,
+          "event_id": "45fe1ccca57b439da1a306b4aa57e70f",
+          "tool": "run_tests",
+          "success": false,
+          "error": "test command contains disallowed shell syntax",
+          "test_status": null
+        },
+        {
+          "step": 12,
+          "event_id": "65423b0be08745b282183d7ab6618596",
+          "tool": "apply_patch",
+          "success": false,
+          "error": "no_effect",
+          "test_status": null
+        },
+        {
+          "step": 13,
+          "event_id": "125d5dc89d7c4e649889185a198fcdce",
+          "tool": "apply_patch",
+          "success": false,
+          "error": "duplicate failed patch call was not executed",
+          "test_status": null
+        },
+        {
+          "step": 15,
+          "event_id": "839da5cac1a74d9bb29a54d1ecbbbcda",
+          "tool": "apply_patch",
+          "success": false,
+          "error": "duplicate failed patch call was not executed",
+          "test_status": null
+        },
+        {
+          "step": 16,
+          "event_id": "ad372dd024f84ff2a7827cf9a08c189c",
+          "tool": "apply_patch",
+          "success": false,
+          "error": "duplicate failed patch call was not executed",
+          "test_status": null
+        },
+        {
+          "step": 17,
+          "event_id": "abc43ab72e2f45c0ac13d9849e0dcb82",
+          "tool": "apply_patch",
+          "success": false,
+          "error": "no_effect",
+          "test_status": null
+        },
+        {
+          "step": 18,
+          "event_id": "050c448b503341ea9d50bf83bc6075ec",
+          "tool": "apply_patch",
+          "success": false,
+          "error": "duplicate failed patch call was not executed",
+          "test_status": null
+        },
+        {
+          "step": 19,
+          "event_id": "b1e5e3c918164c4992d8c5d394cf8ddc",
+          "tool": "apply_patch",
+          "success": false,
+          "error": "duplicate failed patch call was not executed",
+          "test_status": null
+        },
+        {
+          "step": 20,
+          "event_id": "d4e2bcf11d23454caa131bc54401b1e0",
+          "tool": "apply_patch",
+          "success": false,
+          "error": "duplicate failed patch call was not executed",
+          "test_status": null
+        },
+        {
+          "step": 21,
+          "event_id": "7775c33547824add9c01d2672c1ef2fe",
+          "tool": "apply_patch",
+          "success": false,
+          "error": "duplicate failed patch call was not executed",
+          "test_status": null
+        },
+        {
+          "step": 22,
+          "event_id": "48ec46e55ffc4defb9def39e9f7505b6",
+          "tool": "apply_patch",
+          "success": false,
+          "error": "duplicate failed patch call was not executed",
+          "test_status": null
+        }
+      ]
+    },
+    {
+      "sequence": 26,
+      "task_id": "pytest-dev__pytest-10081",
+      "arm": "no_compaction",
+      "repetition": 2,
+      "independent_passed_as_recorded": true,
+      "verification_reason": null,
+      "verification_status": "passed",
+      "stop_reason": "benchmark_error",
+      "agent_validation_status": "unverified",
+      "step_count": 22,
+      "test_runs_counted": 2,
+      "final_patch_bytes": 864,
+      "first_request_content_sha256": "7138cbef1d11c5e95ca734fc1884c9160791582df96a216a1416cd6a04cf9453",
+      "trajectory_sha256": "25379527d82410e2abe45d43b31add321511c5200265d3c78fb128fd4723149d",
+      "run_result_sha256": "c1d0c7e9a9b05a54f1672aae0aad218fd417453ec42e9d18256d79fba077bd95",
+      "patch_sha256": "c5676ec4f0da37e34d423e6312665f378eb54c2ed71b24017b0f152bf38430b2",
+      "verification_sha256": "6624a825e43d309f31b20851274396b384988c8abface4f31255d7678de57ad1",
+      "patch_attempt_count": 6,
+      "unique_patch_payloads": 5,
+      "no_effect_results": 2,
+      "duplicate_patch_rejections": 1,
+      "validation_reminder_event_ids": [],
+      "no_effect_guidance_visible": true,
+      "duplicate_error_visible": true,
+      "test_statuses": {
+        "invalid_test_run": 1,
+        "test_failure": 1
+      },
+      "key_events": [
+        {
+          "step": 10,
+          "event_id": "9df5b62cd8b2437fa0d8d1f6dfe6d07e",
+          "tool": "apply_patch",
+          "success": false,
+          "error": "no_effect",
+          "test_status": null
+        },
+        {
+          "step": 12,
+          "event_id": "e59dbb26f98a424db4adcd05f34df03b",
+          "tool": "apply_patch",
+          "success": false,
+          "error": "duplicate failed patch call was not executed",
+          "test_status": null
+        },
+        {
+          "step": 13,
+          "event_id": "bf06462ea8dc40cb9a15e6b918e726fc",
+          "tool": "apply_patch",
+          "success": true,
+          "error": "",
+          "test_status": null
+        },
+        {
+          "step": 15,
+          "event_id": "b1943328101b4275afec5b2dcedb0243",
+          "tool": "apply_patch",
+          "success": true,
+          "error": "",
+          "test_status": null
+        },
+        {
+          "step": 17,
+          "event_id": "a31d4c421a574bdfaacdeb2f2f7e7875",
+          "tool": "apply_patch",
+          "success": false,
+          "error": "no_effect",
+          "test_status": null
+        },
+        {
+          "step": 18,
+          "event_id": "4cdcf9cffad5443d9b529c1223120cca",
+          "tool": "apply_patch",
+          "success": true,
+          "error": "",
+          "test_status": null
+        },
+        {
+          "step": 20,
+          "event_id": "154d05774c444576ad8cd5414a4fab35",
+          "tool": "run_tests",
+          "success": false,
+          "error": "pytest did not provide valid passing test evidence (invalid_test_run)",
+          "test_status": "invalid_test_run"
+        },
+        {
+          "step": 21,
+          "event_id": "7bd01b3ce1a344d19ea46c32ddf0ccce",
+          "tool": "run_tests",
+          "success": false,
+          "error": "tests failed with exit code 1",
+          "test_status": "test_failure"
+        }
+      ]
+    },
+    {
+      "sequence": 41,
+      "task_id": "pytest-dev__pytest-10081",
+      "arm": "no_compaction",
+      "repetition": 3,
+      "independent_passed_as_recorded": true,
+      "verification_reason": null,
+      "verification_status": "passed",
+      "stop_reason": "benchmark_error",
+      "agent_validation_status": "unverified",
+      "step_count": 19,
+      "test_runs_counted": 6,
+      "final_patch_bytes": 760,
+      "first_request_content_sha256": "7138cbef1d11c5e95ca734fc1884c9160791582df96a216a1416cd6a04cf9453",
+      "trajectory_sha256": "fde3fd482c843c031e685f961930b720cca6013129b05bd6812e174212a59187",
+      "run_result_sha256": "6a242745273c7afe3f0286a1f861f499d4be70b4a9d982c3216eb14497e5cc54",
+      "patch_sha256": "1c7147e04eadddc39ec45b4498b228b904fb4551a7562f553b42dfb584849a96",
+      "verification_sha256": "52a7940a76592aadf33a15544bcafdbd736e17ecba0788a8b5a731309685f0b6",
+      "patch_attempt_count": 5,
+      "unique_patch_payloads": 5,
+      "no_effect_results": 1,
+      "duplicate_patch_rejections": 0,
+      "validation_reminder_event_ids": [],
+      "no_effect_guidance_visible": true,
+      "duplicate_error_visible": false,
+      "test_statuses": {
+        "invalid_test_run": 3,
+        "test_failure": 2,
+        "passed": 1
+      },
+      "key_events": [
+        {
+          "step": 8,
+          "event_id": "8007b19d0fdf40fa8fd8effd23908048",
+          "tool": "run_tests",
+          "success": false,
+          "error": "pytest did not provide valid passing test evidence (invalid_test_run)",
+          "test_status": "invalid_test_run"
+        },
+        {
+          "step": 9,
+          "event_id": "894ef5d62c1a4e06938f8a8cde80062a",
+          "tool": "run_tests",
+          "success": false,
+          "error": "tests failed with exit code 2",
+          "test_status": "invalid_test_run"
+        },
+        {
+          "step": 10,
+          "event_id": "4a4888719ec84f238220b36dee641e0d",
+          "tool": "apply_patch",
+          "success": false,
+          "error": "only *** Update File is supported inside Begin Patch",
+          "test_status": null
+        },
+        {
+          "step": 11,
+          "event_id": "19f2015ff71149c199c03f45ba91d212",
+          "tool": "apply_patch",
+          "success": false,
+          "error": "no_effect",
+          "test_status": null
+        },
+        {
+          "step": 12,
+          "event_id": "d2466e5b90fa463bbe03bfda86de16b8",
+          "tool": "apply_patch",
+          "success": true,
+          "error": "",
+          "test_status": null
+        },
+        {
+          "step": 13,
+          "event_id": "45f57e710b60479b800931df588f5193",
+          "tool": "run_tests",
+          "success": false,
+          "error": "tests failed with exit code 2",
+          "test_status": "test_failure"
+        },
+        {
+          "step": 15,
+          "event_id": "f278b9530a9d4c44846c9feafd84e018",
+          "tool": "apply_patch",
+          "success": true,
+          "error": "",
+          "test_status": null
+        },
+        {
+          "step": 16,
+          "event_id": "be9304c71bf14eb5b5390b2c2437410f",
+          "tool": "run_tests",
+          "success": false,
+          "error": "pytest did not provide valid passing test evidence (invalid_test_run)",
+          "test_status": "invalid_test_run"
+        },
+        {
+          "step": 17,
+          "event_id": "c0bdea2f4cd54093ab2ff04145fc05e6",
+          "tool": "apply_patch",
+          "success": true,
+          "error": "",
+          "test_status": null
+        },
+        {
+          "step": 18,
+          "event_id": "374ca58b5e494744aadca34644add697",
+          "tool": "run_tests",
+          "success": true,
+          "error": "",
+          "test_status": "passed"
+        },
+        {
+          "step": 18,
+          "event_id": "84d4cd24ded04a7daf13308b626c2cd5",
+          "tool": "run_tests",
+          "success": false,
+          "error": "tests failed with exit code 1",
+          "test_status": "test_failure"
+        }
+      ]
+    },
+    {
+      "sequence": 42,
+      "task_id": "pytest-dev__pytest-10081",
+      "arm": "validation_closure",
+      "repetition": 3,
+      "independent_passed_as_recorded": true,
+      "verification_reason": null,
+      "verification_status": "passed",
+      "stop_reason": "p2_trial_budget_exhausted",
+      "agent_validation_status": "unverified",
+      "step_count": 21,
+      "test_runs_counted": 4,
+      "final_patch_bytes": 1540,
+      "first_request_content_sha256": "7138cbef1d11c5e95ca734fc1884c9160791582df96a216a1416cd6a04cf9453",
+      "trajectory_sha256": "ad9cc857b5a355380845c104b49e6ac2b89734de3dac0305f19690cb0b5bc2d8",
+      "run_result_sha256": "df44c686fb399d08e3743c3b994256a40c69f5f3607a0b5ee687f2dab0a3529b",
+      "patch_sha256": "5752edba96cbb256c4851dc358690d138abf308b6336f517040c50ffa3f8371b",
+      "verification_sha256": "b406ca22639fd0fa3bdd1cd214d5788b702ae4f853884d7ab121cd54dd9c712e",
+      "patch_attempt_count": 6,
+      "unique_patch_payloads": 6,
+      "no_effect_results": 1,
+      "duplicate_patch_rejections": 0,
+      "validation_reminder_event_ids": [],
+      "no_effect_guidance_visible": true,
+      "duplicate_error_visible": false,
+      "test_statuses": {
+        "invalid_test_run": 1,
+        "test command contains disallowed shell syntax": 1,
+        "only pytest or python -m pytest commands are allowed": 1,
+        "passed": 1
+      },
+      "key_events": [
+        {
+          "step": 10,
+          "event_id": "860510f626cc49b29fb2bb6bdf2e341e",
+          "tool": "apply_patch",
+          "success": false,
+          "error": "no_effect",
+          "test_status": null
+        },
+        {
+          "step": 11,
+          "event_id": "507473e91bd9429cac35e5f235e165b9",
+          "tool": "apply_patch",
+          "success": true,
+          "error": "",
+          "test_status": null
+        },
+        {
+          "step": 13,
+          "event_id": "ad709db914d94e888bb28a2c9e39758f",
+          "tool": "apply_patch",
+          "success": true,
+          "error": "",
+          "test_status": null
+        },
+        {
+          "step": 14,
+          "event_id": "5db98e1f3d0d4e948bb10c1081671629",
+          "tool": "run_tests",
+          "success": false,
+          "error": "pytest did not provide valid passing test evidence (invalid_test_run)",
+          "test_status": "invalid_test_run"
+        },
+        {
+          "step": 15,
+          "event_id": "2a9fac3435384b758108a2efe1cdf059",
+          "tool": "run_tests",
+          "success": false,
+          "error": "test command contains disallowed shell syntax",
+          "test_status": null
+        },
+        {
+          "step": 16,
+          "event_id": "ee3761cce67f4b058910b621eb1e2be6",
+          "tool": "apply_patch",
+          "success": false,
+          "error": "only *** Update File is supported inside Begin Patch",
+          "test_status": null
+        },
+        {
+          "step": 17,
+          "event_id": "3c37cc10b8084a1d81e8ec72c22325b1",
+          "tool": "apply_patch",
+          "success": true,
+          "error": "",
+          "test_status": null
+        },
+        {
+          "step": 18,
+          "event_id": "7b6044681c8e4d0992f126b30a43ee07",
+          "tool": "run_tests",
+          "success": false,
+          "error": "only pytest or python -m pytest commands are allowed",
+          "test_status": null
+        },
+        {
+          "step": 19,
+          "event_id": "ae67bfcff0004b179a0a9e50c194ce5b",
+          "tool": "apply_patch",
+          "success": true,
+          "error": "",
+          "test_status": null
+        },
+        {
+          "step": 20,
+          "event_id": "4e23530db0fb4d078a09e006d994f795",
+          "tool": "run_tests",
+          "success": true,
+          "error": "",
+          "test_status": "passed"
+        }
+      ]
+    },
+    {
+      "sequence": 38,
+      "task_id": "pylint-dev__pylint-4661",
+      "arm": "validation_closure",
+      "repetition": 3,
+      "independent_passed_as_recorded": false,
+      "verification_reason": "empty_agent_patch",
+      "verification_status": null,
+      "stop_reason": "test_limit_exceeded",
+      "agent_validation_status": "unverified",
+      "step_count": 13,
+      "test_runs_counted": 6,
+      "final_patch_bytes": 0,
+      "first_request_content_sha256": "f9c69c7d8beeedc8909a8f2a9beec197e95584d358bf55ff2652558d8b2043b3",
+      "trajectory_sha256": "826f322855770bbc98a843bad4c34c5f4db644daa56f37ba5c3917d55d7f3766",
+      "run_result_sha256": "9a09cf7a02680a71be9a8dd8544a38a494d602d49c8bbf8cd2f9abf20105bb83",
+      "patch_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "verification_sha256": "2e45c6c6ed71afd7d45a79d5d1a4bced3e3615787f63f2f8caa26a1210145dde",
+      "patch_attempt_count": 0,
+      "unique_patch_payloads": 0,
+      "no_effect_results": 0,
+      "duplicate_patch_rejections": 0,
+      "validation_reminder_event_ids": [],
+      "no_effect_guidance_visible": false,
+      "duplicate_error_visible": false,
+      "test_statuses": {
+        "test command contains disallowed shell syntax": 4,
+        "passed": 2,
+        "not executed: test run budget exceeded": 2
+      },
+      "key_events": [
+        {
+          "step": 7,
+          "event_id": "eadb75c8dee44b1abdfbd2028f48c07a",
+          "tool": "run_tests",
+          "success": false,
+          "error": "test command contains disallowed shell syntax",
+          "test_status": null
+        },
+        {
+          "step": 7,
+          "event_id": "ff3b88ccc1aa4986936ca2d18c2b9088",
+          "tool": "run_tests",
+          "success": false,
+          "error": "test command contains disallowed shell syntax",
+          "test_status": null
+        },
+        {
+          "step": 8,
+          "event_id": "5abb8ba9ea6a4f01be8b17cac2fc25e6",
+          "tool": "run_tests",
+          "success": false,
+          "error": "test command contains disallowed shell syntax",
+          "test_status": null
+        },
+        {
+          "step": 8,
+          "event_id": "ab2d60ca88bc4e8ba64d277d2895ecda",
+          "tool": "run_tests",
+          "success": false,
+          "error": "test command contains disallowed shell syntax",
+          "test_status": null
+        },
+        {
+          "step": 10,
+          "event_id": "1f6c277066a540a3a3d0bd0ebb6debb6",
+          "tool": "run_tests",
+          "success": true,
+          "error": "",
+          "test_status": "passed"
+        },
+        {
+          "step": 12,
+          "event_id": "e0cb1733a7e548c4894c95be7dfe6c38",
+          "tool": "run_tests",
+          "success": true,
+          "error": "",
+          "test_status": "passed"
+        },
+        {
+          "step": 13,
+          "event_id": "bb015f6cb0eb4dfda9f539b731d73677",
+          "tool": "run_tests",
+          "success": false,
+          "error": "not executed: test run budget exceeded",
+          "test_status": null
+        },
+        {
+          "step": 13,
+          "event_id": "4da69f73f3cf4aeb9f408e5ed6461452",
+          "tool": "run_tests",
+          "success": false,
+          "error": "not executed: test run budget exceeded",
+          "test_status": null
+        }
+      ]
+    }
+  ],
+  "conclusions": {
+    "pytest_10081_regression_observed": true,
+    "validation_reminder_triggered_for_pytest_10081": false,
+    "closure_causal_effect_established": false,
+    "treatment_empty_patch_sequences": [
+      10,
+      25,
+      38
+    ],
+    "candidate_zero_cost_preflight": "A single-variable synthetic fixture for a bounded repeated no-effect patch guard: after two identical ineffective patches, require a fresh file read and a different patch payload before another attempt.",
+    "holdout_used": false,
+    "new_paid_requests": 0,
+    "secondary_observation": "Trial 38 made four rejected non-pytest run_tests calls and two valid pytest calls; all six consumed the test call cap. This is a separate feedback-budget contract question, not part of the selected preflight.",
+    "decision_limit": "Among the two audit-invalid positions, only trial 19 is in T; even if it passed on clean re-verification, T could reach at most 14/24, below the preregistered 16/24 adoption threshold."
+  },
+  "supersedes_evidence_assessment": {
+    "report": "benchmarks/experiments/v0.8.18-validation-closure-comparison/report.json",
+    "incorrect_fields": [
+      "adoption_rule.all_evidence_valid",
+      "adoption_rule.unresolved_infrastructure_incidents",
+      "evidence classification in prose"
+    ],
+    "corrected_valid_positions": 46,
+    "corrected_invalid_positions": [
+      19,
+      39
+    ],
+    "recorded_success_counts_unchanged": true
+  }
+}

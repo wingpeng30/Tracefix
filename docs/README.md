@@ -106,4 +106,4 @@
 `docs/experiments/`，结构化数据进入 `benchmarks/experiments/`。聊天中的结论不能作为
 唯一留档。
 
-最新开发集比较见 [`experiments/v0.8.18-validation-closure-comparison.md`](experiments/v0.8.18-validation-closure-comparison.md)，其脱敏逐项结果与哈希清单位于 `benchmarks/experiments/v0.8.18-validation-closure-comparison/`。
+最新证据更正与失败复盘见 [`experiments/v0.8.19-validation-closure-failure-review.md`](experiments/v0.8.19-validation-closure-failure-review.md)。V0.8.18 的原始结果、逐项哈希及后续更正索引分别位于 `benchmarks/experiments/v0.8.18-validation-closure-comparison/` 与 `benchmarks/experiments/v0.8.19-closure-failure-review/`。

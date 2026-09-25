@@ -655,3 +655,9 @@ T 相较 C 多用输入 300,066 Token、输出 2,701 Token、Agent 时间 167.44
 C 独立验收 16/24，T 13/24；配对为双方成功 12、双方失败 7、C 独赢 4、T 独赢 1。T 仅在 pytest-10051 净增，pytest-10081 净减 2。19 个原始 `benchmark_error` 经结构化事件核对都是调用前单请求输入上界拒绝；不是外部基础设施事故。19 个独立验收失败的原因计数为 pytest 执行失败 13、空补丁 4、测试/pytest 配置修改拒绝 2。Agent 自报验证状态与独立验收分别记录。
 
 恢复运行成功复用 48/48 位置，Agent 运行目录 48、请求计数 5,847、账本计算金额和未决状态均不变。48 项运行结果、补丁、独立验收工件哈希全部复核。T 输入减少约 6.0%、Agent 用时减少约 0.4%，但修复成功数下降；按预注册规则不采纳 T，继续保留 C。20 道留出题没有运行。本轮运行代码未改动，因此复用 `97f5215` 上已记录的 pytest、覆盖率、Ruff 和 compileall 结果，没有重复跑全量工程检查。报告：[`v0.8.18-validation-closure-comparison.md`](experiments/v0.8.18-validation-closure-comparison.md)；机器结果与哈希清单：[`report.json`](../benchmarks/experiments/v0.8.18-validation-closure-comparison/report.json)、[`evidence-manifest.json`](../benchmarks/experiments/v0.8.18-validation-closure-comparison/evidence-manifest.json)。
+
+### 31. 2026-09-25 验证闭环空补丁与证据有效性复盘
+
+只读核对执行提交 `97f5215` 的 48 项原轨迹和协议；C/T 配置仅闭环开关不同。pytest-10081 六项首次请求内容哈希相同，三组首次工具分歧在第 5/6/5 步。T 第 010、025 项各只有两种无效果补丁内容、分别尝试 12/10 次，后续请求可见 `no_effect` 和重复失败反馈；均未运行有效测试，最终空补丁。T 第 042 项从同一无效果补丁恢复为实际修改并通过独立验收。该题三次 T 都没有触发闭环结束提醒；全批 T 仅第 017、019 项触发。T 第 038 项四条不受支持的测试命令也计入六次测试上限，另两次 pytest 通过但没有补丁。观察关联不构成闭环因果结论。
+
+复用共享审计时发现 V0.8.18 的手工哈希核对遗漏验收状态：第 019 项 `network_error`、第 039 项 `execution_error`，有效证据 46/48。新目录严格复验第 019 项超时、第 039 项重复执行错误；不能授予两项完整证据。原始固定分母仍为 C 16/24、T 13/24，即使唯一无效的 T 第 019 项变为通过，仍不能达到 16/24 采纳门槛。旧报告加注更正，原始评分不回写。离线 CLI `p2-diagnose --validation-feedback` 因两项无效证据拒绝生成全证据诊断，这是正确保护行为。共享账本哈希与请求数 5,847 在复盘前后不变；没有模型调用和运行代码修改，故未重跑工程检查。复盘说明见 [`v0.8.19-validation-closure-failure-review.md`](experiments/v0.8.19-validation-closure-failure-review.md)。
