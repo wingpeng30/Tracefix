@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import re
+import shlex
 import time
 from datetime import UTC, datetime
 from typing import Any
@@ -46,6 +48,12 @@ class MinimalAgent(BaseAgent):
         self._patch_recovery_reminder_sent = False
         self._no_effect_patch_reminder_sent = False
         self._last_patch_failure_reason: str | None = None
+        self._no_effect_patch_targets: dict[
+            str, dict[str, tuple[tuple[int, int], ...] | None]
+        ] = {}
+        self._repeated_no_effect_patch_signature: str | None = None
+        self._fresh_read_required_for_patch = False
+        self._fresh_target_reads: dict[str, list[tuple[int, int, int, bool]]] = {}
         self._tests_passed = False
         self._diff_nonempty = False
         self._finish_reminder_sent = False
@@ -369,13 +377,28 @@ class MinimalAgent(BaseAgent):
             call.name == ReservedToolName.APPLY_PATCH.value
             and signature in self._failed_apply_calls
         ):
+            repeated_no_effect = (
+                self.config.require_fresh_read_after_repeated_no_effect_patch
+                and signature in self._no_effect_patch_targets
+                and bool(self._no_effect_patch_targets[signature])
+            )
+            if repeated_no_effect:
+                self._repeated_no_effect_patch_signature = signature
+                self._fresh_read_required_for_patch = True
+                self._fresh_target_reads.clear()
+                self._invalidate_no_effect_target_read_cache(signature)
             result = ToolResult(
                 call_id=call.id,
                 tool_name=call.name,
                 success=False,
-                error="duplicate failed patch call was not executed",
+                error=(
+                    "repeated no-effect patch requires a fresh target read and different patch"
+                    if repeated_no_effect
+                    else "duplicate failed patch call was not executed"
+                ),
                 metadata={
                     "duplicate": True,
+                    **({"recovery_gate": "fresh_read_required"} if repeated_no_effect else {}),
                     "original_call_id": self._failed_apply_calls[signature],
                     "recommendation": (
                         "不要重复相同补丁；请重新读取目标文件，并使用标准 unified diff "
@@ -386,6 +409,39 @@ class MinimalAgent(BaseAgent):
             )
             self._record_tool_outcome(call, result, signature)
             return result
+
+        if (
+            call.name == ReservedToolName.APPLY_PATCH.value
+            and self.config.require_fresh_read_after_repeated_no_effect_patch
+            and self._fresh_read_required_for_patch
+            and not self._no_effect_paths_were_read()
+        ):
+            result = ToolResult(
+                call_id=call.id,
+                tool_name=call.name,
+                success=False,
+                error="fresh target read required after repeated no-effect patch",
+                metadata={
+                    "recovery_gate": "fresh_read_required",
+                    "target_paths": sorted(
+                        self._no_effect_patch_targets.get(
+                            self._repeated_no_effect_patch_signature or "", {}
+                        )
+                    ),
+                },
+                duration_ms=(time.monotonic() - started) * 1000,
+            )
+            return result
+
+        if (
+            call.name == ReservedToolName.APPLY_PATCH.value
+            and self.config.require_fresh_read_after_repeated_no_effect_patch
+            and self._fresh_read_required_for_patch
+        ):
+            # A fresh read authorizes exactly one distinct patch attempt.
+            self._fresh_read_required_for_patch = False
+            self._fresh_target_reads.clear()
+            self._repeated_no_effect_patch_signature = None
 
         try:
             tool = self.tools.get(call.name)
@@ -507,11 +563,38 @@ class MinimalAgent(BaseAgent):
     ) -> None:
         """记录影响失败恢复和正常收尾的少量确定性事实。"""
         if call.name == ReservedToolName.READ_FILE.value and result.success:
-            path = call.arguments.get("path")
-            if isinstance(path, str):
-                normalized = path.replace("\\", "/")
-                if normalized in self.repository_candidates:
-                    self._repo_map_candidate_reads.add(normalized)
+            output = result.output if isinstance(result.output, dict) else {}
+            requested_path = call.arguments.get("path")
+            output_path = output.get("path")
+            if isinstance(output_path, str):
+                normalized_output_path = output_path.replace("\\", "/")
+                if (
+                    self._fresh_read_required_for_patch
+                    and not result.metadata.get("cached")
+                    and self._path_key(normalized_output_path)
+                    in {
+                        self._path_key(target)
+                        for target in self._no_effect_patch_targets.get(
+                            self._repeated_no_effect_patch_signature or "", {}
+                        ).keys()
+                    }
+                ):
+                    self._fresh_target_reads.setdefault(
+                        self._path_key(normalized_output_path), []
+                    ).append(
+                        (
+                            int(output.get("start_line", 1)),
+                            int(output.get("end_line", 0)),
+                            int(output.get("total_lines", 0)),
+                            bool(output.get("truncated", True)),
+                        )
+                    )
+            # Repo Map 记录的是成功的候选读取调用。保留请求路径兼容旧工具适配器；
+            # 恢复门槛上方则只认工具返回的真实路径与行范围。
+            if isinstance(requested_path, str):
+                normalized_requested_path = requested_path.replace("\\", "/")
+                if normalized_requested_path in self.repository_candidates:
+                    self._repo_map_candidate_reads.add(normalized_requested_path)
                     self.state.repo_map_candidate_reads = len(self._repo_map_candidate_reads)
                     # Repo Map 候选被读到只是一条定位证据，不强行切换阶段；模型仍可在
                     # 后续测试反馈下补读调用方，避免过早补丁导致准确率下降。
@@ -531,6 +614,13 @@ class MinimalAgent(BaseAgent):
             else:
                 self._set_phase(AgentPhase.PATCH, "patch_attempted")
                 self._failed_apply_calls.setdefault(signature, call.id)
+                if (
+                    self.config.require_fresh_read_after_repeated_no_effect_patch
+                    and result.error == "no_effect"
+                ):
+                    self._no_effect_patch_targets[signature] = self._extract_patch_read_ranges(
+                        str(call.arguments.get("patch", ""))
+                    )
                 self._consecutive_apply_failures += 1
                 self._last_patch_failure_reason = result.error
             return
@@ -571,6 +661,104 @@ class MinimalAgent(BaseAgent):
     def _feature_enabled(self, override: bool | None) -> bool:
         """Resolve a split optimization flag with backward-compatible fallback."""
         return self.config.token_optimization_enabled if override is None else override
+
+    @staticmethod
+    def _extract_patch_paths(patch: str) -> set[str]:
+        """Extract old-side file paths, honoring quoted paths containing whitespace."""
+        return set(MinimalAgent._extract_patch_read_ranges(patch))
+
+    @staticmethod
+    def _extract_patch_read_ranges(
+        patch: str,
+    ) -> dict[str, tuple[tuple[int, int], ...] | None]:
+        """Return pre-patch line ranges the recovery gate must observe.
+
+        ``None`` means that the patch syntax did not expose reliable hunk ranges, so
+        a complete, untruncated read of that file is required.
+        """
+        ranges: dict[str, list[tuple[int, int]] | None] = {}
+        old_path: str | None = None
+        for line in patch.splitlines():
+            if line.startswith("*** Update File: "):
+                old_path = line.removeprefix("*** Update File: ").strip()
+                if old_path:
+                    ranges.setdefault(old_path.replace("\\", "/"), None)
+                continue
+            if line.startswith("--- "):
+                try:
+                    candidate = shlex.split(line[4:], posix=True)[0]
+                except (ValueError, IndexError):
+                    old_path = None
+                    continue
+                if candidate == "/dev/null":
+                    old_path = None
+                    continue
+                old_path = candidate[2:] if candidate.startswith("a/") else candidate
+                old_path = old_path.replace("\\", "/")
+                ranges.setdefault(old_path, [])
+                continue
+            if old_path is not None and line.startswith("@@"):
+                match = re.match(r"^@@ -(\d+)(?:,(\d+))? \+\d+(?:,\d+)? @@", line)
+                if match is None:
+                    ranges[old_path] = None
+                    continue
+                start = int(match.group(1))
+                count = int(match.group(2) or "1")
+                first = max(1, start if count else start + 1)
+                last = max(first, start + count - 1)
+                existing = ranges.get(old_path)
+                if existing is not None:
+                    existing.append((first, last))
+        return {
+            path: None if not spans else tuple(spans)
+            for path, spans in ranges.items()
+        }
+
+    @staticmethod
+    def _path_key(path: str) -> str:
+        """Normalize separators and case for workspace-relative path comparisons."""
+        return path.replace("\\", "/").casefold()
+
+    def _no_effect_paths_were_read(self) -> bool:
+        targets = self._no_effect_patch_targets.get(
+            self._repeated_no_effect_patch_signature or "", set()
+        )
+        if not targets:
+            return False
+        for target, required_ranges in targets.items():
+            observations = self._fresh_target_reads.get(self._path_key(target), ())
+            if required_ranges is None:
+                if not any(
+                    start <= 1 and end >= total and total > 0 and not truncated
+                    for start, end, total, truncated in observations
+                ):
+                    return False
+                continue
+            for required_start, required_end in required_ranges:
+                if not any(
+                    start <= required_start and end >= required_end and not truncated
+                    for start, end, _total, truncated in observations
+                ):
+                    return False
+        return True
+
+    def _invalidate_no_effect_target_read_cache(self, signature: str) -> None:
+        """A cached pre-failure read cannot satisfy recovery or hide a new read."""
+        targets = {
+            self._path_key(path)
+            for path in self._no_effect_patch_targets.get(signature, {})
+        }
+        for cached_signature in tuple(self._successful_tool_cache):
+            tool_name, separator, encoded = cached_signature.partition(":")
+            if tool_name != ReservedToolName.READ_FILE.value or not separator:
+                continue
+            try:
+                arguments = json.loads(encoded)
+            except json.JSONDecodeError:
+                continue
+            path = arguments.get("path") if isinstance(arguments, dict) else None
+            if isinstance(path, str) and self._path_key(path) in targets:
+                self._successful_tool_cache.pop(cached_signature, None)
 
     def _append_exploration_guidance_if_needed(self) -> None:
         """探索达到任一软上限后推动收敛，不直接拒绝模型后续的定向读取。"""

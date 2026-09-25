@@ -160,3 +160,12 @@ T 输入 -2.73%、Agent 用时 -6.14%，但成功率 -3.33pp，因此尚未达�
 - 共享审计证据有效 46/48；第 19 项网络错误、第 39 项执行错误。复验分别超时和再次执行错误，原始评分不改。V0.8.18 的“48/48 证据有效”已更正。
 - pytest-10081 的两次 T 空补丁来自重复无效果补丁直到预算终止，闭环提醒未触发；没有证据证明闭环造成该题退步。全批 T 提醒仅在 2/24 项触发。
 - 决定先做重复无效果补丁恢复的单变量零费用 fixture 预检；本轮没有代码修改、付费调用或留出集使用。
+
+## V0.8.20：重复无效果补丁恢复门槛零费用预检
+
+- 报告：[`v0.8.20-no-effect-recovery-preflight.md`](v0.8.20-no-effect-recovery-preflight.md)。
+- 新增默认关闭的 Agent 配置门槛：重复无效果补丁后要求成功重读目标文件，再允许不同补丁。
+- 独立 fixture 证明未重读换补丁会被拦截；重读后脚本化 Agent 循环可应用修复并通过 pytest/Diff。最终定向回归 3 passed；全量 pytest 457 passed、0 failed，623.41 秒。
+- pytest-only 综合覆盖率 86.073278% 未达 90%，追加真实只读诊断入口后综合 90.149626% 通过；语句 92.377358%、分支 82.996769%。Ruff 与 129 个受跟踪 Python 文件 compileall 退出 0。日志及工件保存在本机 `tracefix-noeffect-full-short-20260925/`。
+- 同期比较的 48 位置 C/T 草案及固定采纳规则见 [`next-comparison.json`](../../benchmarks/experiments/v0.8.20-no-effect-recovery-preflight/next-comparison.json)，SHA-256 `7ce63dffc045e97299cfb4d857200d94cb8657d08d07625394175ac1f389de41`。共享余额最近记录 ¥23.12462080，不足以覆盖 ¥41.28 完整上界；新恢复开关尚未接入正式执行器。本轮不付费、不使用 20 题留出集，合成流程不构成修复成功率证据。
+- 指标和本机工件 SHA 清单：[`engineering-verification.json`](../../benchmarks/experiments/v0.8.20-no-effect-recovery-preflight/engineering-verification.json)，SHA-256 `bf84212b2c98f6006ab42f8d8cd3919854762b87fde44980e97bc595fb3f05a8`。

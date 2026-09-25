@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import shutil
 import subprocess
 import sys
 import time
@@ -89,6 +90,7 @@ class RunConfig(BaseModel):
     test_python_executable: Path | None = None
     test_pythonpath_entries: tuple[Path, ...] = ()
     environment_recipe: EnvironmentRecipe | None = None
+    test_environment_variables: dict[str, str] = Field(default_factory=dict)
     agent_config: AgentConfig = Field(default_factory=AgentConfig)
 
     @model_validator(mode="after")
@@ -290,6 +292,7 @@ class TraceFixRunner:
                     if config.environment_recipe is not None
                     else None
                 ),
+                test_environment_variables=config.test_environment_variables,
             )
             agent = MinimalAgent(
                 llm,
@@ -597,6 +600,15 @@ class TraceFixRunner:
     def _clone_repository(cls, source: Path, destination: Path) -> Path:
         """从已验证 HEAD 建立隔离源码副本，并保留完整 Git 元数据。"""
         destination.parent.mkdir(parents=True, exist_ok=True)
+        if (
+            destination.exists()
+            or destination.is_symlink()
+            or cls._is_junction(destination)
+        ):
+            raise WorkspaceError(
+                "isolated workspace destination already exists",
+                context={"destination": str(destination)},
+            )
         try:
             cls._run_git(
                 ["clone", "--quiet", "--no-hardlinks", str(source), str(destination)],
@@ -604,6 +616,7 @@ class TraceFixRunner:
                 purpose="clone isolated workspace",
             )
         except WorkspaceError as clone_error:
+            cls._discard_partial_clone(destination)
             # Git for Windows may start MSYS sh.exe for a local file clone;
             # restricted Windows workers can deny its signal-pipe setup. A
             # detached worktree gives the run its own files and index while
@@ -624,6 +637,33 @@ class TraceFixRunner:
                     },
                 ) from worktree_error
         return destination.resolve()
+
+
+    @staticmethod
+    def _is_junction(path: Path) -> bool:
+        """检测 Windows junction，同时兼容没有 Path.is_junction 的解释器。"""
+        checker = getattr(path, "is_junction", None)
+        return bool(checker and checker())
+
+    @staticmethod
+    def _discard_partial_clone(destination: Path) -> None:
+        """只删除本次从空目标创建、且仍位于原父目录内的失败 clone。"""
+        if destination.is_symlink() or TraceFixRunner._is_junction(destination):
+            raise WorkspaceError(
+                "refusing to remove a linked partial clone",
+                context={"destination": str(destination)},
+            )
+        try:
+            parent = destination.parent.resolve(strict=True)
+            resolved = destination.resolve(strict=True)
+        except FileNotFoundError:
+            return
+        if resolved.parent != parent or not resolved.is_dir():
+            raise WorkspaceError(
+                "refusing to remove an unexpected partial clone path",
+                context={"destination": str(destination), "resolved": str(resolved)},
+            )
+        shutil.rmtree(resolved)
 
     @staticmethod
     def _run_git(

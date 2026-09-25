@@ -733,6 +733,292 @@ def test_simulated_agent_keeps_valid_evidence_after_no_effect_patch(
     )
 
 
+def test_opt_in_no_effect_recovery_gate_requires_fresh_target_read_and_new_patch(
+    git_workspace: Path,
+) -> None:
+    """Repeated no-op patch retries must read the target before a distinct repair."""
+    (git_workspace / "other file.py").write_text("value = 1\n", encoding="utf-8")
+    run_git(git_workspace, "add", "other file.py")
+    run_git(git_workspace, "commit", "-qm", "add second patch target")
+
+    class ScriptedModel(BaseLLM):
+        def __init__(self) -> None:
+            super().__init__(LLMConfig(model_name="scripted"))
+            self.responses = iter(
+                [
+                    make_response(
+                        ToolCall(
+                            id="initial-read", name="read_file", arguments={"path": "sample.py"}
+                        )
+                    ),
+                    make_response(
+                        ToolCall(id="noop-1", name="apply_patch", arguments={"patch": no_effect})
+                    ),
+                    make_response(
+                        ToolCall(
+                            id="invalid-patch",
+                            name="apply_patch",
+                            arguments={"patch": "not a patch"},
+                        )
+                    ),
+                    make_response(
+                        ToolCall(id="noop-2", name="apply_patch", arguments={"patch": no_effect})
+                    ),
+                    make_response(
+                        ToolCall(
+                            id="wrong-read",
+                            name="read_file",
+                            arguments={"path": "tests/test_sample.py"},
+                        )
+                    ),
+                    make_response(
+                        ToolCall(
+                            id="missing-read",
+                            name="read_file",
+                            arguments={"path": "missing.py"},
+                        )
+                    ),
+                    make_response(
+                        ToolCall(id="premature", name="apply_patch", arguments={"patch": repair})
+                    ),
+                    make_response(
+                        ToolCall(
+                            id="cached-read", name="read_file", arguments={"path": "sample.py"}
+                        )
+                    ),
+                    make_response(
+                        ToolCall(
+                            id="premature-cached", name="apply_patch", arguments={"patch": repair}
+                        )
+                    ),
+                    make_response(
+                        ToolCall(
+                            id="fresh-read",
+                            name="read_file",
+                            arguments={"path": "sample.py", "end_line": 1},
+                        )
+                    ),
+                    make_response(
+                        ToolCall(
+                            id="premature-multifile",
+                            name="apply_patch",
+                            arguments={"patch": repair},
+                        )
+                    ),
+                    make_response(
+                        ToolCall(
+                            id="fresh-read-complete",
+                            name="read_file",
+                            arguments={"path": "sample.py"},
+                        )
+                    ),
+                    make_response(
+                        ToolCall(
+                            id="premature-other-missing",
+                            name="apply_patch",
+                            arguments={"patch": repair},
+                        )
+                    ),
+                    make_response(
+                        ToolCall(
+                            id="fresh-read-other",
+                            name="read_file",
+                            arguments={"path": "other file.py"},
+                        )
+                    ),
+                    make_response(
+                        ToolCall(id="repair", name="apply_patch", arguments={"patch": repair})
+                    ),
+                    make_response(
+                        ToolCall(
+                            id="test",
+                            name="run_tests",
+                            arguments={"command": "pytest -q tests/test_sample.py"},
+                        )
+                    ),
+                    make_response(ToolCall(id="diff", name="get_git_diff")),
+                    make_response(content="完成"),
+                ]
+            )
+
+        def complete(self, messages, tools=()):
+            return next(self.responses, make_response(content="完成"))
+
+    def make_response(*calls: ToolCall, content: str | None = None) -> LLMResponse:
+        return LLMResponse(
+            message=Message(role=MessageRole.ASSISTANT, content=content, tool_calls=calls),
+            usage=TokenUsage(input_tokens=1, output_tokens=1, total_tokens=2, cost_usd=0),
+            model_name="scripted",
+            finish_reason="tool_calls" if calls else "stop",
+        )
+
+    no_effect = """diff --git a/sample.py b/sample.py
+--- a/sample.py
++++ b/sample.py
+@@ -1,2 +1,2 @@
+ def add(a, b):
+-    return a - b  # BUG
++    return a - b  # BUG
+diff --git "a/other file.py" "b/other file.py"
+--- "a/other file.py"
++++ "b/other file.py"
+@@ -1 +1 @@
+-value = 1
++value = 1
+"""
+    repair = """diff --git a/sample.py b/sample.py
+--- a/sample.py
++++ b/sample.py
+@@ -1,2 +1,2 @@
+ def add(a, b):
+-    return a - b  # BUG
++    return a + b
+diff --git "a/other file.py" "b/other file.py"
+--- "a/other file.py"
++++ "b/other file.py"
+@@ -1 +1 @@
+-value = 1
++value = 2
+"""
+
+    agent = MinimalAgent(
+        ScriptedModel(),
+        create_default_tool_registry(git_workspace),
+        AgentConfig(
+            require_tested_completion=True,
+            require_fresh_read_after_repeated_no_effect_patch=True,
+            read_cache_enabled=True,
+        ),
+    )
+
+    state = agent.run("修复 add 并运行测试")
+
+    assert state.validation_status == "verified"
+    assert state.test_runs == 1
+    assert state.stop_reason == "agent_completed"
+    assert (git_workspace / "sample.py").read_text(encoding="utf-8").endswith(
+        "    return a + b\n"
+    )
+    tool_results = [
+        message for message in agent.history.snapshot()
+        if message.role is MessageRole.TOOL
+    ]
+    repeated_result = next(
+        message for message in tool_results if message.tool_call_id == "noop-2"
+    )
+    assert (
+        json.loads(repeated_result.content)["metadata"]["recovery_gate"]
+        == "fresh_read_required"
+    )
+    premature_result = next(
+        message for message in tool_results if message.tool_call_id == "premature"
+    )
+    assert (
+        json.loads(premature_result.content)["metadata"]["recovery_gate"]
+        == "fresh_read_required"
+    )
+    premature_cached_result = next(
+        message for message in tool_results if message.tool_call_id == "premature-cached"
+    )
+    assert (
+        json.loads(premature_cached_result.content)["metadata"]["recovery_gate"]
+        == "fresh_read_required"
+    )
+    premature_multifile_result = next(
+        message for message in tool_results if message.tool_call_id == "premature-multifile"
+    )
+    assert (
+        json.loads(premature_multifile_result.content)["metadata"]["recovery_gate"]
+        == "fresh_read_required"
+    )
+    premature_other_result = next(
+        message for message in tool_results if message.tool_call_id == "premature-other-missing"
+    )
+    assert (
+        json.loads(premature_other_result.content)["metadata"]["recovery_gate"]
+        == "fresh_read_required"
+    )
+    cached_read_result = next(
+        message for message in tool_results if message.tool_call_id == "cached-read"
+    )
+    cached_result = json.loads(cached_read_result.content)
+    assert cached_result.get("metadata", {}).get("cached") is not True
+
+
+def test_no_effect_recovery_gate_does_not_block_a_distinct_first_repair(
+    git_workspace: Path,
+) -> None:
+    """The opt-in gate only activates after the exact no-effect patch is repeated."""
+
+    def response(*calls: ToolCall, content: str | None = None) -> LLMResponse:
+        return LLMResponse(
+            message=Message(role=MessageRole.ASSISTANT, content=content, tool_calls=calls),
+            usage=TokenUsage(input_tokens=1, output_tokens=1, total_tokens=2, cost_usd=0),
+            model_name="scripted",
+        )
+
+    no_effect = """diff --git a/sample.py b/sample.py
+--- a/sample.py
++++ b/sample.py
+@@ -1,2 +1,2 @@
+ def add(a, b):
+-    return a - b  # BUG
++    return a - b  # BUG
+"""
+    repair = """diff --git a/sample.py b/sample.py
+--- a/sample.py
++++ b/sample.py
+@@ -1,2 +1,2 @@
+ def add(a, b):
+-    return a - b  # BUG
++    return a + b
+"""
+
+    class ScriptedModel(BaseLLM):
+        def __init__(self) -> None:
+            super().__init__(LLMConfig(model_name="scripted"))
+            self.responses = iter(
+                (
+                    response(
+                        ToolCall(id="noop", name="apply_patch", arguments={"patch": no_effect})
+                    ),
+                    response(
+                        ToolCall(id="repair", name="apply_patch", arguments={"patch": repair})
+                    ),
+                    response(
+                        ToolCall(
+                            id="tests",
+                            name="run_tests",
+                            arguments={"command": "pytest -q tests/test_sample.py"},
+                        )
+                    ),
+                    response(ToolCall(id="diff", name="get_git_diff")),
+                    response(content="完成"),
+                )
+            )
+
+        def complete(self, messages, tools=()):
+            return next(self.responses)
+
+    agent = MinimalAgent(
+        ScriptedModel(),
+        create_default_tool_registry(git_workspace),
+        AgentConfig(
+            require_tested_completion=True,
+            require_fresh_read_after_repeated_no_effect_patch=True,
+        ),
+    )
+    state = agent.run("修复 add")
+
+    assert state.validation_status == "verified"
+    repair_result = next(
+        message
+        for message in agent.history.snapshot()
+        if message.role is MessageRole.TOOL and message.tool_call_id == "repair"
+    )
+    assert json.loads(repair_result.content)["success"] is True
+
+
 @pytest.mark.parametrize("undo_repair", [False, True])
 def test_simulated_agent_invalidates_tests_after_real_change_and_exports_final_diff(
     git_workspace: Path, undo_repair: bool

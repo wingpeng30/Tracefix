@@ -20,6 +20,7 @@ from tracefix.p2_protocol import (
     P2ProtocolConfig,
     P2SimulationLLM,
     P2TrialRecord,
+    _verify_recipe_service,
     _verify_saved_artifacts,
     _write_cost_ledger,
     build_p2_protocol,
@@ -117,6 +118,45 @@ def test_pytest_command_honors_frozen_historical_config(tmp_path: Path) -> None:
 def test_recipe_rejects_unsafe_pytest_config() -> None:
     with pytest.raises(ValueError, match="pytest_config"):
         EnvironmentRecipe(task_id="org__repo-1", pytest_config="../pytest.ini")
+
+
+def test_requests_1766_recipe_pins_local_httpbin_and_requires_health_check(monkeypatch) -> None:
+    recipe = EnvironmentRecipe(
+        task_id="psf__requests-1766",
+        environment_variables={"HTTPBIN_URL": "http://127.0.0.1:8765/"},
+        service_health_url="http://127.0.0.1:8765/get",
+    )
+
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self, *_args):
+            return b'{"url":"http://127.0.0.1:8765/get"}'
+
+    class FakeOpener:
+        def open(self, url, timeout):
+            assert url == "http://127.0.0.1:8765/get"
+            assert timeout == 5
+            return FakeResponse()
+
+    monkeypatch.setattr(
+        "tracefix.p2_protocol.build_opener", lambda handler: FakeOpener()
+    )
+    _verify_recipe_service(recipe.task_id, recipe)
+
+    class WrongService(FakeOpener):
+        def open(self, _url, timeout):
+            response = FakeResponse()
+            response.read = lambda *_args: b'{"url":"http://127.0.0.1:9999/get"}'
+            return response
+
+    monkeypatch.setattr("tracefix.p2_protocol.build_opener", lambda _handler: WrongService())
+    with pytest.raises(BenchmarkError, match="unexpected health identity"):
+        _verify_recipe_service(recipe.task_id, recipe)
 
 
 def test_pytest_evidence_marks_xfail_as_non_qualifying_pass(tmp_path: Path) -> None:
@@ -302,6 +342,107 @@ def test_pytest_evidence_rejects_source_loaded_outside_checkout(tmp_path: Path) 
     evidence = _pytest_evidence(result, tmp_path)
     assert evidence.status == "source_import_error"
     assert evidence.source_import_audit_valid is False
+
+
+def test_assertion_failure_with_assertion_teardown_is_not_mislabeled_execution_error(
+    tmp_path: Path,
+) -> None:
+    """pytest-10051 style assertion failures remain behavioral evidence when teardown asserts."""
+    junit = tmp_path / "junit.xml"
+    junit.write_text(
+        '<testsuite tests="1" failures="1" errors="1" skipped="0">'
+        '<testcase classname="tests.test_case" name="test_case">'
+        '<failure message="call assertion">AssertionError: call assertion</failure>'
+        '<error message="teardown assertion">AssertionError: teardown assertion</error>'
+        "</testcase></testsuite>",
+        encoding="utf-8",
+    )
+    collection = tmp_path / "collection.json"
+    execution = tmp_path / "execution.json"
+    common = {
+        "format_version": 2,
+        "collected_node_ids": ["tests/test_case.py::test_case"],
+        "collection_errors": [],
+        "completed": True,
+    }
+    collection.write_text(
+        json.dumps(
+            common
+            | {
+                "run_id": "mixed:collection",
+                "stage": "collection",
+                "exitstatus": 0,
+                "reports": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    reports = [
+        {"nodeid": "tests/test_case.py::test_case", "when": "setup", "outcome": "passed"},
+        {
+            "nodeid": "tests/test_case.py::test_case",
+            "when": "call",
+            "outcome": "failed",
+            "longrepr": "AssertionError: call assertion",
+        },
+        {
+            "nodeid": "tests/test_case.py::test_case",
+            "when": "teardown",
+            "outcome": "failed",
+            "longrepr": "AssertionError: teardown assertion",
+        },
+    ]
+    execution.write_text(
+        json.dumps(
+            common
+            | {
+                "run_id": "mixed:execution",
+                "stage": "execution",
+                "exitstatus": 1,
+                "reports": reports,
+            }
+        ),
+        encoding="utf-8",
+    )
+    process = {
+        "stage": "execution",
+        "command": ["pytest"],
+        "working_directory": str(tmp_path),
+        "returncode": 1,
+        "timed_out": False,
+        "duration_ms": 1,
+        "stdout_path": str(tmp_path / "out"),
+        "stderr_path": str(tmp_path / "err"),
+    }
+    collection_process = process | {"stage": "collection", "returncode": 0}
+    result = ToolResult(
+        call_id="mixed",
+        tool_name="run_tests",
+        success=False,
+        error="pytest execution failed",
+        output={
+            "returncode": 1,
+            "junit_path": str(junit),
+            "audit_path": str(execution),
+            "collection_audit_path": str(collection),
+            "audit_run_id": "mixed",
+            "stdout": "1 failed, 1 error",
+            "stderr": "",
+            "collection": collection_process,
+            "execution": process,
+        },
+    )
+    evidence = _pytest_evidence(result, tmp_path)
+    assert evidence.status == "assertion_failed_with_phase_errors"
+    assert evidence.failure_count == 1
+    assert evidence.error_count == 1
+
+    from tracefix.p2_protocol import _verification_failure_kind
+
+    assert _verification_failure_kind(
+        "pytest-dev__pytest-10051",
+        {"eligible": False, "evidence": evidence.model_dump(mode="json")},
+    ) is None
 
 
 @pytest.mark.parametrize(
@@ -521,8 +662,8 @@ def _fixture(tmp_path: Path) -> tuple[RealIssueTask, Path]:
     task_dir = tmp_path / "tasks" / "owner__repo-1"
     task_dir.mkdir(parents=True)
     (task_dir / "problem.md").write_text("Fix both flags.\n", encoding="utf-8")
-    (task_dir / "gold.patch").write_text(GOLD, encoding="utf-8")
-    (task_dir / "test.patch").write_text(HIDDEN, encoding="utf-8")
+    (task_dir / "gold.patch").write_bytes(GOLD.encode("utf-8"))
+    (task_dir / "test.patch").write_bytes(HIDDEN.encode("utf-8"))
     manifest = {
         "id": "owner__repo-1",
         "title": "Two-file issue",
@@ -1524,11 +1665,33 @@ def test_p2_simulation_completes_and_resumes_all_trials(tmp_path, monkeypatch) -
         run_p2_simulation(config, experiment_dir=root)
 
 
-def test_presentation_only_p2_simulation_runs_agent_verifier_and_resumes_without_calls(
-    tmp_path, monkeypatch
+@pytest.mark.parametrize(
+    ("design", "treatment_arm"),
+    (
+        ("presentation_only", "tool_presentation_only"),
+        ("no_effect_recovery", "no_effect_recovery"),
+    ),
+)
+def test_single_variable_p2_simulation_runs_agent_verifier_and_resumes_without_calls(
+    tmp_path, monkeypatch, design, treatment_arm
 ) -> None:
     """Synthetic only: tool facts reach the model view, strict tests pass, resume is read-only."""
     import tracefix.p2_protocol as p2
+
+    # Copy the committed fixture for the two isolated checkouts. Git clone and
+    # worktree are covered separately; this host's global LFS filter is not part
+    # of the behavior this offline P2 protocol test is exercising.
+    import tracefix.real_experiment as real_experiment
+
+    def copy_checkout(source_path: Path, checkout: Path) -> None:
+        shutil.copytree(source_path, checkout)
+
+    def copy_agent_workspace(_cls, source_path: Path, destination: Path) -> Path:
+        copy_checkout(source_path, destination)
+        return destination.resolve()
+
+    monkeypatch.setattr(p2.TraceFixRunner, "_clone_repository", classmethod(copy_agent_workspace))
+    monkeypatch.setattr(real_experiment, "_create_behavior_checkout", copy_checkout)
 
     # Keep this small formal-path simulation independent of the outer checkout.
     monkeypatch.setattr(
@@ -1537,6 +1700,10 @@ def test_presentation_only_p2_simulation_runs_agent_verifier_and_resumes_without
     )
 
     task, source = _fixture(tmp_path)
+    # Git for Windows checks out CRLF under the host system config; keep this
+    # unified-diff fixture byte-stable so apply_patch tests the code path itself.
+    (source / "pkg" / "a.py").write_bytes(b"VALUE = 0\n")
+    (source / "pkg" / "b.py").write_bytes(b"ENABLED = False\n")
     visible_markers = (
         "# TARGET_PATH:pkg/a.py NODE:tests/test_visible.py::test_visible\n"
         + "# fixture context " * 450
@@ -1616,21 +1783,46 @@ def test_presentation_only_p2_simulation_runs_agent_verifier_and_resumes_without
     monkeypatch.setattr(p2, "P2SimulationLLM", FixtureModel)
     monkeypatch.setattr("tracefix.runtime.LiteLLMAdapter", ForbiddenSupplier)
     config = P2ProtocolConfig(
-        design="presentation_only",
+        design=design,
         source_root=sources,
         p1_evidence_path=_p1_qualification_evidence(tmp_path, (task,)),
     )
     protocol = build_p2_protocol(config)
-    assert protocol.kind == "p2_presentation_only_protocol"
+    expected_kind = (
+        "p2_presentation_only_protocol"
+        if design == "presentation_only"
+        else "p2_no_effect_recovery_protocol"
+    )
+    assert protocol.kind == expected_kind
     assert len(protocol.schedule) == 6
     assert protocol.arm_configurations["no_compaction"]["tool_result_presentation_enabled"] is False
-    assert (
-        protocol.arm_configurations["tool_presentation_only"]["tool_result_presentation_enabled"]
-        is True
+    assert protocol.arm_configurations[treatment_arm]["action_guidance_enabled"] is False
+    assert protocol.arm_configurations[treatment_arm]["read_cache_enabled"] is False
+    assert protocol.arm_configurations[treatment_arm]["validation_closure_enabled"] is False
+    assert protocol.arm_configurations[treatment_arm]["tool_result_presentation_enabled"] is (
+        design == "presentation_only"
     )
-    assert protocol.arm_configurations["tool_presentation_only"]["action_guidance_enabled"] is False
-    assert protocol.arm_configurations["tool_presentation_only"]["read_cache_enabled"] is False
-    assert protocol.analysis_plan["fixed_denominator"] is True
+    assert protocol.arm_configurations[treatment_arm][
+        "require_fresh_read_after_repeated_no_effect_patch"
+    ] is (design == "no_effect_recovery")
+    control_config = protocol.effective_agent_configurations["no_compaction"]
+    treatment_config = protocol.effective_agent_configurations[treatment_arm]
+    assert control_config["require_tested_completion"] is False
+    assert treatment_config["require_tested_completion"] is False
+    diff_fields = {
+        key
+        for key in control_config
+        if control_config[key] != treatment_config[key]
+    }
+    expected_diff = (
+        "tool_result_presentation_enabled"
+        if design == "presentation_only"
+        else "require_fresh_read_after_repeated_no_effect_patch"
+    )
+    assert diff_fields == {expected_diff}
+    assert protocol.analysis_plan["fixed_denominator"] == (
+        24 if design == "no_effect_recovery" else True
+    )
     monkeypatch.setattr(
         p2,
         "check_p2_inputs",
@@ -1660,7 +1852,9 @@ def test_presentation_only_p2_simulation_runs_agent_verifier_and_resumes_without
     assert all(
         "ASSERT: expected 2 got 1 EXCEPTION: AssertionError" in view for view in fixture_views
     )
-    assert sum("TraceFix 已裁剪" in view for view in fixture_views) == 3
+    assert sum("TraceFix 已裁剪" in view for view in fixture_views) == (
+        3 if design == "presentation_only" else 0
+    )
 
     resumed = run_p2_simulation(config, experiment_dir=root)
     assert resumed.completed_count == 6 and resumed.resumed_count == 6

@@ -3,6 +3,10 @@
   "task_id": "psf__requests-1766",
   "python_versions": ["3.9"],
   "extra_dependencies": [],
+  "environment_variables": {
+    "HTTPBIN_URL": "http://127.0.0.1:8765/"
+  },
+  "service_health_url": "http://127.0.0.1:8765/get",
   "build_commands": [],
   "selector_overrides": [],
   "supported_platforms": ["windows"],

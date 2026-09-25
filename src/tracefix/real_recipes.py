@@ -8,6 +8,7 @@ import json
 import sys
 from pathlib import Path
 from typing import Literal
+from urllib.parse import urlparse
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -45,6 +46,8 @@ class EnvironmentRecipe(BaseModel):
     supported_platforms: tuple[str, ...] = ()
     source_import_probe: str | None = None
     pytest_config: str | None = None
+    environment_variables: dict[str, str] = Field(default_factory=dict)
+    service_health_url: str | None = None
 
     @model_validator(mode="after")
     def validate_recipe(self) -> EnvironmentRecipe:
@@ -59,6 +62,25 @@ class EnvironmentRecipe(BaseModel):
             "pytest.ini", "pyproject.toml", "tox.ini", "setup.cfg"
         }:
             raise ValueError("pytest_config must name a supported repository config")
+        for name, value in self.environment_variables.items():
+            if not name.isidentifier() or not isinstance(value, str):
+                raise ValueError("recipe environment variable names and values must be strings")
+            if name.upper().startswith("PYTEST_") or any(
+                marker in name.upper()
+                for marker in ("API_KEY", "TOKEN", "PASSWORD", "SECRET", "CREDENTIAL")
+            ):
+                raise ValueError("recipe cannot inject pytest controls or credentials")
+        if self.service_health_url is not None:
+            parsed = urlparse(self.service_health_url)
+            target = urlparse(self.environment_variables.get("HTTPBIN_URL", ""))
+            if (
+                parsed.scheme != "http"
+                or parsed.hostname not in {"127.0.0.1", "localhost", "::1"}
+                or target.scheme != parsed.scheme
+                or target.hostname != parsed.hostname
+                or target.port != parsed.port
+            ):
+                raise ValueError("service health check and HTTPBIN_URL must identify one local service")
         return self
 
     @property

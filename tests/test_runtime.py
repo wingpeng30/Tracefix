@@ -286,6 +286,9 @@ def test_workspace_clone_falls_back_to_detached_worktree(tmp_path, monkeypatch) 
 
     def clone_blocked(cls, arguments, *, cwd, purpose):
         if arguments[0] == "clone":
+            destination = Path(arguments[-1])
+            destination.mkdir(parents=True)
+            (destination / "partial-clone.marker").write_text("partial", encoding="utf-8")
             raise WorkspaceError(
                 "cannot clone isolated workspace",
                 context={"returncode": 128, "stderr": "MSYS signal pipe denied"},
@@ -298,6 +301,7 @@ def test_workspace_clone_falls_back_to_detached_worktree(tmp_path, monkeypatch) 
     workspace = TraceFixRunner._clone_repository(repo, destination)
 
     assert workspace == destination.resolve()
+    assert not (workspace / "partial-clone.marker").exists()
     assert (workspace / "sample.py").read_text(encoding="utf-8") == "VALUE = 1\n"
     assert _git(workspace, "rev-parse", "HEAD").stdout.strip() == expected_commit
     assert _git(workspace, "status", "--porcelain").stdout.strip() == ""

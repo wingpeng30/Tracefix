@@ -764,6 +764,7 @@ class RunTestsTool(_WorkspaceTool):
         python_executable: str | Path | None = None,
         pythonpath_entries: tuple[Path, ...] = (),
         pytest_config: str | None = None,
+        environment_variables: dict[str, str] | None = None,
     ) -> None:
         super().__init__(workspace, max_output_chars=max_output_chars)
         if default_timeout_seconds <= 0:
@@ -781,6 +782,14 @@ class RunTestsTool(_WorkspaceTool):
         if any(not entry.is_dir() for entry in self.pythonpath_entries):
             raise ValueError("test PYTHONPATH entries must be existing directories")
         self.pytest_config = pytest_config
+        self.environment_variables = dict(environment_variables or {})
+        if any(
+            not name.isidentifier()
+            or name.upper().startswith("PYTEST_")
+            or any(marker in name.upper() for marker in ("API_KEY", "TOKEN", "PASSWORD", "SECRET"))
+            for name in self.environment_variables
+        ):
+            raise ValueError("test environment overrides cannot set pytest controls or credentials")
 
     def execute(self, call: ToolCall) -> ToolResult:
         """执行 pytest，并把失败和超时作为模型可以继续处理的结果返回。"""
@@ -792,6 +801,7 @@ class RunTestsTool(_WorkspaceTool):
 
         try:
             environment = _sanitized_subprocess_env()
+            environment.update(self.environment_variables)
             test_tmp = self.workspace / ".tracefix-test-tmp"
             test_tmp.mkdir(parents=True, exist_ok=True)
             # 污染性的 pytest 参数和自动插件注入不会从 TraceFix 父进程继承。
@@ -1253,6 +1263,7 @@ def create_default_tool_registry(
     test_python_executable: str | Path | None = None,
     test_pythonpath_entries: tuple[Path, ...] = (),
     pytest_config: str | None = None,
+    test_environment_variables: dict[str, str] | None = None,
 ) -> ToolRegistry:
     """为一个已有初始提交的 Git 仓库创建五工具注册表。"""
     root = _resolve_workspace(workspace)
@@ -1268,6 +1279,7 @@ def create_default_tool_registry(
                 python_executable=test_python_executable,
                 pythonpath_entries=test_pythonpath_entries,
                 pytest_config=pytest_config,
+                environment_variables=test_environment_variables,
             ),
             GetGitDiffTool(root, max_output_chars=max_output_chars),
         ]

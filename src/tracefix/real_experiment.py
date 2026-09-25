@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
 import subprocess
 import time
 import xml.etree.ElementTree as element_tree
@@ -348,7 +349,12 @@ def validate_real_task_behavior(
         if variant == "gold":
             _git(["apply", str(task.gold_patch_path)], checkout)
         results[variant] = _run_qualified_pytest(
-            task, checkout, test_python, f"behavior-{task.id}-{variant}", recipe
+            task,
+            checkout,
+            test_python,
+            f"behavior-{task.id}-{variant}",
+            recipe,
+            environment_variables=recipe.environment_variables if recipe else None,
         )
         if variant == "initial":
             environment_after_initial = inspect_test_environment(
@@ -383,7 +389,7 @@ def validate_real_task_behavior(
         initial_evidence, recipe.expected_base_failure if recipe else None
     )
     initial_failed = (
-        initial_evidence.status == "assertion_failed"
+        initial_evidence.status in {"assertion_failed", "assertion_failed_with_phase_errors"}
         and initial_evidence.collection_audit_available
         and same_execution_set
     )
@@ -454,6 +460,7 @@ def validate_agent_patch_strict(
     task: RealIssueTask, *, source: Path, agent_patch: Path, test_python: Path,
     output_dir: Path, recipe: EnvironmentRecipe | None = None,
     expected_node_ids: tuple[str, ...] | None = None,
+    environment_variables: dict[str, str] | None = None,
 ) -> AgentPatchValidation:
     """在全新 checkout 中验收 Agent 补丁，拒绝不完整证据与环境漂移。"""
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -467,7 +474,7 @@ def validate_agent_patch_strict(
             environment_before=before, environment_after=before,
         )
     try:
-        _git(["apply", str(agent_patch)], checkout)
+        _git_apply_patch_file(agent_patch, checkout)
         # ``git diff`` 不会列出 Agent 新建但尚未追踪的文件；测试篡改也可能
         # 恰好以这种形式出现。因此合并 HEAD 差异和未追踪文件清单。
         # NUL 分隔避免 Windows 路径、空格或重命名记录被按行截断；name-status
@@ -497,7 +504,7 @@ def validate_agent_patch_strict(
                 environment_before=before, environment_after=after,
                 dependency_drift_detected=before.fingerprint_sha256 != after.fingerprint_sha256,
             )
-        _git(["apply", str(task.test_patch_path)], checkout)
+        _git_apply_patch_file(task.test_patch_path, checkout)
     except BenchmarkError as exc:
         after = inspect_test_environment(test_python, pythonpath_entries=task.test_pythonpath_paths)
         return AgentPatchValidation(
@@ -505,7 +512,14 @@ def validate_agent_patch_strict(
             environment_before=before, environment_after=after,
             dependency_drift_detected=before.fingerprint_sha256 != after.fingerprint_sha256,
         )
-    result = _run_qualified_pytest(task, checkout, test_python, f"p2-{task.id}-agent", recipe)
+    result = _run_qualified_pytest(
+        task,
+        checkout,
+        test_python,
+        f"p2-{task.id}-agent",
+        recipe,
+        environment_variables=environment_variables,
+    )
     after = inspect_test_environment(test_python, pythonpath_entries=task.test_pythonpath_paths)
     evidence = _pytest_evidence(result, checkout)
     drift = before.fingerprint_sha256 != after.fingerprint_sha256
@@ -532,6 +546,29 @@ def validate_agent_patch_strict(
         evidence=evidence, environment_before=before, environment_after=after,
         dependency_drift_detected=drift,
     )
+
+
+def _git_apply_patch_file(patch_path: Path, checkout: Path) -> None:
+    """Apply stored patch bytes after normalizing Windows text-mode CRLF."""
+    patch_bytes = patch_path.read_bytes().replace(b"\r\n", b"\n")
+    try:
+        result = subprocess.run(
+            ["git", "-c", "core.longpaths=true", "apply", "-"],
+            cwd=checkout,
+            input=patch_bytes,
+            capture_output=True,
+            timeout=300,
+            check=False,
+            shell=False,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise BenchmarkError(f"real experiment git apply failed to start: {exc}") from exc
+    if result.returncode:
+        stderr = result.stderr.decode("utf-8", errors="replace").strip()
+        raise BenchmarkError(
+            "real experiment git command failed",
+            context={"arguments": ["apply", str(patch_path)], "returncode": result.returncode, "stderr": stderr},
+        )
 
 
 def _canonical_node_ids(node_ids: tuple[str, ...], checkout: Path) -> frozenset[str]:
@@ -577,10 +614,42 @@ def _create_behavior_checkout(source: Path, checkout: Path) -> None:
     无法建立信号管道。worktree 仍会生成独立工作目录，补丁只修改该目录，且不会让
     base/gold 导入同一源码副本，因此满足行为验收的源码隔离要求。
     """
+    if checkout.exists() or checkout.is_symlink() or _is_junction(checkout):
+        raise BenchmarkError(
+            "behavior checkout destination already exists",
+            context={"checkout": str(checkout)},
+        )
     try:
         _git(["clone", "--quiet", "--no-hardlinks", str(source), str(checkout)], source.parent)
     except BenchmarkError:
+        _discard_partial_clone(checkout)
         _git(["worktree", "add", "--detach", str(checkout), "HEAD"], source)
+
+
+def _is_junction(path: Path) -> bool:
+    """检测 Windows junction，同时兼容没有 Path.is_junction 的解释器。"""
+    checker = getattr(path, "is_junction", None)
+    return bool(checker and checker())
+
+
+def _discard_partial_clone(checkout: Path) -> None:
+    """仅清理从空目标启动但失败的 clone，拒绝链接或逃逸路径。"""
+    if checkout.is_symlink() or _is_junction(checkout):
+        raise BenchmarkError(
+            "refusing to remove a linked partial behavior checkout",
+            context={"checkout": str(checkout)},
+        )
+    try:
+        parent = checkout.parent.resolve(strict=True)
+        resolved = checkout.resolve(strict=True)
+    except FileNotFoundError:
+        return
+    if resolved.parent != parent or not resolved.is_dir():
+        raise BenchmarkError(
+            "refusing to remove an unexpected partial behavior checkout",
+            context={"checkout": str(checkout), "resolved": str(resolved)},
+        )
+    shutil.rmtree(resolved)
 
 
 def _run_qualified_pytest(
@@ -589,6 +658,8 @@ def _run_qualified_pytest(
     test_python: Path,
     call_id: str,
     recipe: EnvironmentRecipe | None = None,
+    *,
+    environment_variables: dict[str, str] | None = None,
 ) -> ToolResult:
     """用参数列表执行严格 pytest 验收，并完整保留每个阶段的日志。"""
     evidence_root = checkout / ".tracefix-validation"
@@ -613,6 +684,8 @@ def _run_qualified_pytest(
     )
     command = _pytest_command(test_python, checkout, expected, evidence_root, recipe)
     environment = _validation_environment(checkout, task.test_pythonpath_paths)
+    if environment_variables:
+        environment.update(environment_variables)
     if recipe and recipe.source_import_probe:
         environment["TRACEFIX_SOURCE_IMPORT_PROBE"] = recipe.source_import_probe
     _write_audit_plugin(checkout)
@@ -1199,6 +1272,8 @@ def _pytest_evidence(result: ToolResult, checkout: Path) -> PytestExecutionEvide
             status = "report_missing"
     elif tests == 0:
         status = "no_tests"
+    elif failures > 0 and errors > 0 and _has_only_assertion_phase_errors(reports, errors):
+        status = "assertion_failed_with_phase_errors"
     elif failures > 0 and errors == 0:
         status = "assertion_failed"
     elif errors > 0:
@@ -1268,6 +1343,24 @@ def _collection_exception(message: str) -> tuple[str | None, str | None, str | N
     if match is None:
         return None, None, None
     return match.group("type"), match.group("module"), match.group("symbol")
+
+
+def _has_only_assertion_phase_errors(reports: object, error_count: int) -> bool:
+    """Keep assertion-driven teardown errors distinct from environmental execution errors."""
+    if not isinstance(reports, list):
+        return False
+    phase_errors = [
+        item
+        for item in reports
+        if isinstance(item, dict)
+        and item.get("when") in {"setup", "teardown"}
+        and item.get("outcome") == "failed"
+    ]
+    return len(phase_errors) == error_count and all(
+        isinstance(item.get("longrepr"), str)
+        and ("AssertionError" in item["longrepr"] or "pytest.fail" in item["longrepr"])
+        for item in phase_errors
+    )
 
 
 def _load_audit(path: Path) -> dict[str, object]:

@@ -67,6 +67,7 @@ class AgentConfig(BaseModel):
     action_guidance_enabled: bool | None = None
     read_cache_enabled: bool | None = None
     require_tested_completion: bool = False
+    require_fresh_read_after_repeated_no_effect_patch: bool = False
     presentation: ToolPresentationConfig = Field(default_factory=ToolPresentationConfig)
     record_request_views: bool = False
     context: ContextConfig = Field(default_factory=ContextConfig)

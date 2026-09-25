@@ -18,6 +18,7 @@ from datetime import UTC, datetime
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Literal
+from urllib.request import ProxyHandler, build_opener
 from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -49,7 +50,7 @@ from tracefix.real_experiment import (
     p2_scoring_instruction,
     validate_agent_patch_strict,
 )
-from tracefix.real_recipes import load_environment_recipes
+from tracefix.real_recipes import EnvironmentRecipe, load_environment_recipes
 from tracefix.repository import RepoMapConfig
 from tracefix.runtime import RunConfig, TraceFixRunner
 from tracefix.tools.base import ToolSpec
@@ -220,9 +221,9 @@ class P2ProtocolConfig(BaseModel):
     test_env_root: Path = Path("runs/p1-revalidation-20260917/environments")
     output_dir: Path = Path("runs")
     repetitions: int = Field(default=3, ge=3, le=3)
-    design: Literal["whole_system", "ablation", "presentation_only", "validation_closure"] = (
-        "whole_system"
-    )
+    design: Literal[
+        "whole_system", "ablation", "presentation_only", "validation_closure", "no_effect_recovery"
+    ] = "whole_system"
     context_trigger_tokens: int = Field(default=32_000, ge=1)
     max_input_tokens: int = Field(default=350_000, ge=1)
     max_output_tokens: int = Field(default=20_000, ge=1)
@@ -252,6 +253,7 @@ class P2TrialPlan(BaseModel):
     action_guidance_enabled: bool | None = None
     read_cache_enabled: bool | None = None
     validation_closure_enabled: bool = False
+    no_effect_recovery_enabled: bool = False
 
 
 class P2ProtocolRecord(BaseModel):
@@ -270,6 +272,8 @@ class P2ProtocolRecord(BaseModel):
     collection_failure_task_ids: tuple[str, ...]
     task_hashes: dict[str, dict[str, str]]
     recipe_hashes: dict[str, str]
+    test_environment_variables: dict[str, dict[str, str]] = Field(default_factory=dict)
+    service_health_urls: dict[str, str] = Field(default_factory=dict)
     p1_evidence_sha256: str | None = None
     p1_qualifications: dict[str, P2QualificationRecord] = Field(default_factory=dict)
     code_hashes: dict[str, str] = Field(default_factory=dict)
@@ -521,7 +525,7 @@ class P2ExperimentSummary(BaseModel):
     calculated_cost_amount: float | None = None
     cost_currency: str | None = None
     task_summaries: tuple[P2TaskSummary, ...]
-    schema_version: str = "4"
+    schema_version: str = "5"
     evidence_valid_count: int = 0
     evidence_issue_count: int = 0
     termination_categories: dict[str, int] = Field(default_factory=dict)
@@ -537,6 +541,9 @@ class P2ExperimentSummary(BaseModel):
     validation_closure_net_success_gain: int | None = None
     validation_closure_tasks_with_gain: int | None = None
     validation_closure_adoptable: bool | None = None
+    no_effect_recovery_net_success_gain: int | None = None
+    no_effect_recovery_tasks_with_gain: int | None = None
+    no_effect_recovery_adoptable: bool | None = None
 
 
 class P2BudgetedLLM(BaseLLM):
@@ -1186,6 +1193,8 @@ def _verification_failure_kind(task_id: str, payload: dict[str, object]) -> str 
             return None  # Explicit rejection before pytest runs.
         return "missing_verification_evidence"
     status = evidence.get("status")
+    if status == "assertion_failed_with_phase_errors":
+        return None
     if payload.get("eligible") is True and status != "passed":
         return "invalid_success_status"
     if status == "collection_error":
@@ -1242,7 +1251,7 @@ def _verification_failure_kind(task_id: str, payload: dict[str, object]) -> str 
         return "frozen_target_mismatch"
     if evidence.get("source_import_audit_valid") is False:
         return "source_import_error"
-    if status in {"passed", "assertion_failed"} and not all(
+    if status in {"passed", "assertion_failed", "assertion_failed_with_phase_errors"} and not all(
         evidence.get(flag) is True
         for flag in (
             "junit_available",
@@ -1261,6 +1270,62 @@ def _audit_p2_evidence(experiment_dir: Path) -> dict[str, object]:
     root = experiment_dir.expanduser().resolve()
     protocol_path = root / "protocol.json"
     protocol = P2ProtocolRecord.model_validate_json(protocol_path.read_text(encoding="utf-8"))
+    if protocol.kind == "p2_no_effect_recovery_protocol":
+        expected = _schedule(protocol.qualified_task_ids, "no_effect_recovery")
+        if protocol.schedule != expected:
+            raise BenchmarkError("no-effect recovery schedule does not match the frozen design")
+        arm_control = protocol.arm_configurations.get(ExperimentArm.CONTROL.value)
+        arm_treatment = protocol.arm_configurations.get(
+            ExperimentArm.NO_EFFECT_RECOVERY.value
+        )
+        expected_arm_difference = "require_fresh_read_after_repeated_no_effect_patch"
+        if (
+            not isinstance(arm_control, dict)
+            or not isinstance(arm_treatment, dict)
+            or set(arm_control) != set(arm_treatment)
+            or {
+                key for key in arm_control if arm_control.get(key) != arm_treatment.get(key)
+            }
+            != {expected_arm_difference}
+            or arm_control.get("validation_closure_enabled") is not False
+            or arm_treatment.get("validation_closure_enabled") is not False
+            or arm_control.get(expected_arm_difference) is not False
+            or arm_treatment.get(expected_arm_difference) is not True
+        ):
+            raise BenchmarkError("no-effect recovery arm configuration is invalid")
+        control = protocol.effective_agent_configurations.get(ExperimentArm.CONTROL.value)
+        treatment = protocol.effective_agent_configurations.get(
+            ExperimentArm.NO_EFFECT_RECOVERY.value
+        )
+        if not isinstance(control, dict) or not isinstance(treatment, dict):
+            raise BenchmarkError("no-effect recovery effective configurations are missing")
+        changed = {key for key in control if control.get(key) != treatment.get(key)}
+        if set(control) != set(treatment) or changed != {
+            "require_fresh_read_after_repeated_no_effect_patch"
+        }:
+            raise BenchmarkError(
+                "no-effect recovery protocol changes more than its single treatment variable"
+            )
+        for configuration, expected_gate in ((control, False), (treatment, True)):
+            if (
+                configuration.get("token_optimization_enabled") is not False
+                or configuration.get("tool_result_presentation_enabled") is not False
+                or configuration.get("action_guidance_enabled") is not False
+                or configuration.get("read_cache_enabled") is not False
+                or configuration.get("require_tested_completion") is not False
+                or configuration.get("require_fresh_read_after_repeated_no_effect_patch")
+                is not expected_gate
+            ):
+                raise BenchmarkError("no-effect recovery treatment configuration is invalid")
+            context = configuration.get("context")
+            repo_map = configuration.get("repo_map")
+            if (
+                not isinstance(context, dict)
+                or context.get("enabled") is not False
+                or not isinstance(repo_map, dict)
+                or repo_map.get("enabled") is not False
+            ):
+                raise BenchmarkError("no-effect recovery enables an unrelated optimization")
     rows: list[dict[str, object]] = []
     for plan in protocol.schedule:
         trial_path = root / "trials" / f"{plan.sequence:03d}.json"
@@ -1426,6 +1491,8 @@ def summarize_p2_experiment(experiment_dir: Path) -> P2ExperimentSummary:
         if protocol.kind == "p2_presentation_only_protocol"
         else ExperimentArm.VALIDATION_CLOSURE.value
         if protocol.kind == "p2_validation_closure_protocol"
+        else ExperimentArm.NO_EFFECT_RECOVERY.value
+        if protocol.kind == "p2_no_effect_recovery_protocol"
         else ExperimentArm.TREATMENT.value
     )
     scheduled_task_ids = {plan.task_id for plan in protocol.schedule}
@@ -1561,6 +1628,22 @@ def summarize_p2_experiment(experiment_dir: Path) -> P2ExperimentSummary:
         and closure_net_gain >= 4
         and len(closure_task_gains) >= 2
     )
+    no_effect_net_gain = primary_treatment_successes - primary_control_successes
+    no_effect_task_gains = [
+        item
+        for item in task_summaries
+        if item.task_id in protocol.primary_task_ids
+        and item.treatment_success_count > item.control_success_count
+    ]
+    no_effect_adoptable = (
+        protocol.kind == "p2_no_effect_recovery_protocol"
+        and len(complete_records) == len(protocol.schedule) == 48
+        and len(valid) == len(protocol.schedule)
+        and terminations["infrastructure_error"] == 0
+        and primary_treatment_successes >= 16
+        and no_effect_net_gain >= 4
+        and len(no_effect_task_gains) >= 2
+    )
     return P2ExperimentSummary(
         protocol_sha256=str(audit["protocol_sha256"]),
         mode=(complete_records[0].mode if complete_records else "unknown"),
@@ -1627,6 +1710,17 @@ def summarize_p2_experiment(experiment_dir: Path) -> P2ExperimentSummary:
         validation_closure_adoptable=(
             closure_adoptable if protocol.kind == "p2_validation_closure_protocol" else None
         ),
+        no_effect_recovery_net_success_gain=(
+            no_effect_net_gain if protocol.kind == "p2_no_effect_recovery_protocol" else None
+        ),
+        no_effect_recovery_tasks_with_gain=(
+            len(no_effect_task_gains)
+            if protocol.kind == "p2_no_effect_recovery_protocol"
+            else None
+        ),
+        no_effect_recovery_adoptable=(
+            no_effect_adoptable if protocol.kind == "p2_no_effect_recovery_protocol" else None
+        ),
     )
 
 
@@ -1683,8 +1777,31 @@ def write_p2_summary(experiment_dir: Path) -> Path:
                 ),
             ]
         )
-    elif protocol.get("kind") == "p2_validation_closure_protocol":
+    elif protocol.get("kind") in {
+        "p2_validation_closure_protocol",
+        "p2_no_effect_recovery_protocol",
+    }:
         primary_denominator = len(protocol.get("primary_task_ids", ())) * 3
+        metric_prefix = (
+            "no_effect 恢复"
+            if protocol.get("kind") == "p2_no_effect_recovery_protocol"
+            else "验证闭环"
+        )
+        net_gain = (
+            summary.no_effect_recovery_net_success_gain
+            if protocol.get("kind") == "p2_no_effect_recovery_protocol"
+            else summary.validation_closure_net_success_gain
+        )
+        tasks_with_gain = (
+            summary.no_effect_recovery_tasks_with_gain
+            if protocol.get("kind") == "p2_no_effect_recovery_protocol"
+            else summary.validation_closure_tasks_with_gain
+        )
+        adoptable = (
+            summary.no_effect_recovery_adoptable
+            if protocol.get("kind") == "p2_no_effect_recovery_protocol"
+            else summary.validation_closure_adoptable
+        )
         lines.extend(
             [
                 "",
@@ -1696,11 +1813,9 @@ def write_p2_summary(experiment_dir: Path) -> Path:
                     f"({summary.primary_treatment_success_rate:.1%})。"
                 ),
                 (
-                    "验证闭环预注册门槛：T 至少 16/24、较同期 C 净增至少 4 次、"
-                    "至少 2 道题有净增、证据完整且无基础设施事故；"
-                    f"本批净增 {summary.validation_closure_net_success_gain} 次，"
-                    f"净增任务 {summary.validation_closure_tasks_with_gain} 道，"
-                    f"符合门槛：{summary.validation_closure_adoptable}。"
+                    f"{metric_prefix}预注册门槛：T 至少 16/24、较同期 C 净增至少 4 次、"
+                    f"至少 2 道题有净增、证据完整且无基础设施事故；本批净增 {net_gain} 次，"
+                    f"净增任务 {tasks_with_gain} 道，符合门槛：{adoptable}。"
                 ),
             ]
         )
@@ -2199,14 +2314,19 @@ def _task_hashes(tasks: tuple[RealIssueTask, ...]) -> dict[str, dict[str, str]]:
 
 
 def _schedule(task_ids: tuple[str, ...], design: str = "whole_system") -> tuple[P2TrialPlan, ...]:
-    if design == "validation_closure":
+    if design in {"validation_closure", "no_effect_recovery"}:
+        treatment_arm = (
+            ExperimentArm.VALIDATION_CLOSURE
+            if design == "validation_closure"
+            else ExperimentArm.NO_EFFECT_RECOVERY
+        )
         primary_ids = tuple(task for task in task_ids if task not in COLLECTION_FAILURE_TASK_IDS)
         plans: list[P2TrialPlan] = []
         for repetition, arms in enumerate(
             (
-                (ExperimentArm.CONTROL, ExperimentArm.VALIDATION_CLOSURE),
-                (ExperimentArm.VALIDATION_CLOSURE, ExperimentArm.CONTROL),
-                (ExperimentArm.CONTROL, ExperimentArm.VALIDATION_CLOSURE),
+                (ExperimentArm.CONTROL, treatment_arm),
+                (treatment_arm, ExperimentArm.CONTROL),
+                (ExperimentArm.CONTROL, treatment_arm),
             ),
             start=1,
         ):
@@ -2224,7 +2344,10 @@ def _schedule(task_ids: tuple[str, ...], design: str = "whole_system") -> tuple[
                             tool_result_presentation_enabled=False,
                             action_guidance_enabled=False,
                             read_cache_enabled=False,
-                            validation_closure_enabled=arm is ExperimentArm.VALIDATION_CLOSURE,
+                            validation_closure_enabled=(
+                                arm is ExperimentArm.VALIDATION_CLOSURE
+                            ),
+                            no_effect_recovery_enabled=(arm is ExperimentArm.NO_EFFECT_RECOVERY),
                         )
                     )
         return tuple(plans)
@@ -2322,6 +2445,7 @@ def _agent_configuration(config: P2ProtocolConfig, plan: P2TrialPlan) -> AgentCo
         action_guidance_enabled=plan.action_guidance_enabled,
         read_cache_enabled=plan.read_cache_enabled,
         require_tested_completion=plan.validation_closure_enabled,
+        require_fresh_read_after_repeated_no_effect_patch=plan.no_effect_recovery_enabled,
         context=ContextConfig(
             enabled=plan.context_compaction_enabled,
             compaction_trigger_tokens=config.context_trigger_tokens,
@@ -2368,8 +2492,12 @@ def build_p2_protocol(
                 if config.design == "presentation_only"
                 else (
                     "p2_validation_closure_protocol"
-                    if config.design == "validation_closure"
-                    else "p2_whole_system_ct_protocol"
+                if config.design == "validation_closure"
+                    else (
+                        "p2_no_effect_recovery_protocol"
+                        if config.design == "no_effect_recovery"
+                        else "p2_whole_system_ct_protocol"
+                    )
                 )
             )
         ),
@@ -2383,6 +2511,16 @@ def build_p2_protocol(
         collection_failure_task_ids=COLLECTION_FAILURE_TASK_IDS,
         task_hashes=_task_hashes(tasks),
         recipe_hashes={key: recipes[key].fingerprint for key in ids},
+        test_environment_variables={
+            key: dict(recipes[key].environment_variables)
+            for key in ids
+            if recipes[key].environment_variables
+        },
+        service_health_urls={
+            key: recipes[key].service_health_url
+            for key in ids
+            if recipes[key].service_health_url
+        },
         p1_evidence_sha256=p1_sha256,
         p1_qualifications=p1_qualifications,
         code_hashes=_code_hashes(repository_root),
@@ -2417,11 +2555,16 @@ def build_p2_protocol(
                     "repo_map_enabled": plan.repo_map_enabled,
                     "context_compaction_enabled": plan.context_compaction_enabled,
                     "validation_closure_enabled": plan.validation_closure_enabled,
+                    "require_fresh_read_after_repeated_no_effect_patch": (
+                        plan.no_effect_recovery_enabled
+                    ),
                     "context_trigger_tokens": config.context_trigger_tokens,
                 }
                 for plan in schedule
             }
-            if config.design in {"ablation", "presentation_only", "validation_closure"}
+            if config.design in {
+                "ablation", "presentation_only", "validation_closure", "no_effect_recovery"
+            }
             else {
                 "control": {
                     "token_optimization_enabled": False,
@@ -2431,6 +2574,7 @@ def build_p2_protocol(
                     "repo_map_enabled": False,
                     "context_compaction_enabled": False,
                     "validation_closure_enabled": False,
+                    "require_fresh_read_after_repeated_no_effect_patch": False,
                     "context_trigger_tokens": config.context_trigger_tokens,
                 },
                 "treatment": {
@@ -2441,6 +2585,7 @@ def build_p2_protocol(
                     "repo_map_enabled": True,
                     "context_compaction_enabled": True,
                     "validation_closure_enabled": False,
+                    "require_fresh_read_after_repeated_no_effect_patch": False,
                     "context_trigger_tokens": config.context_trigger_tokens,
                 },
             }
@@ -2493,7 +2638,28 @@ def build_p2_protocol(
                     "holdout_policy": "keep the 20 frozen holdout tasks unevaluated",
                 }
                 if config.design == "validation_closure"
-                else {}
+                else (
+                    {
+                        "schema_version": 1,
+                        "primary_task_ids": [
+                            item for item in ids if item not in COLLECTION_FAILURE_TASK_IDS
+                        ],
+                        "special_task_ids_reported_separately": list(
+                            COLLECTION_FAILURE_TASK_IDS
+                        ),
+                        "fixed_denominator": 24,
+                        "success_threshold": 16,
+                        "minimum_net_paired_success_gain": 4,
+                        "minimum_tasks_with_success_gain": 2,
+                        "unresolved_infrastructure_incidents": 0,
+                        "task_weighting": (
+                            "average_three_repetitions_within_task_then_equal_weight_tasks"
+                        ),
+                        "holdout_policy": "keep the 20 frozen holdout tasks unevaluated",
+                    }
+                    if config.design == "no_effect_recovery"
+                    else {}
+                )
             )
         ),
         effective_agent_configurations=(
@@ -2501,7 +2667,9 @@ def build_p2_protocol(
                 plan.arm.value: _agent_configuration(config, plan).model_dump(mode="json")
                 for plan in schedule
             }
-            if config.design in {"ablation", "presentation_only", "validation_closure"}
+            if config.design in {
+                "ablation", "presentation_only", "validation_closure", "no_effect_recovery"
+            }
             else {}
         ),
         formal=config.formal,
@@ -2520,6 +2688,33 @@ def write_p2_dry_run(config: P2ProtocolConfig, *, repository_root: Path = Path("
     path = root / "p2-protocol.json"
     path.write_text(protocol.model_dump_json(indent=2), encoding="utf-8")
     return path
+
+
+def _verify_recipe_service(task_id: str, recipe: EnvironmentRecipe) -> None:
+    """Fail before an Agent request if a frozen local test service is unavailable."""
+    health_url = recipe.service_health_url
+    if health_url is None:
+        return
+    expected_environment_url = recipe.environment_variables.get("HTTPBIN_URL")
+    if not expected_environment_url:
+        raise BenchmarkError(
+            "local service health check has no HTTPBIN_URL",
+            context={"task_id": task_id},
+        )
+    opener = build_opener(ProxyHandler({}))
+    try:
+        with opener.open(health_url, timeout=5) as response:
+            payload = json.load(response)
+    except Exception as exc:
+        raise BenchmarkError(
+            "frozen local HTTP test service is unavailable",
+            context={"task_id": task_id, "health_url": health_url},
+        ) from exc
+    if not isinstance(payload, dict) or payload.get("url") != health_url:
+        raise BenchmarkError(
+            "frozen local HTTP test service returned an unexpected health identity",
+            context={"task_id": task_id, "health_url": health_url},
+        )
 
 
 def check_p2_inputs(
@@ -2546,6 +2741,7 @@ def check_p2_inputs(
             raise BenchmarkError("P2 source checkout is not clean", context={"task_id": task.id})
         python = resolve_managed_environment_python(config.test_env_root, task.id)
         provenance = inspect_test_environment(python, pythonpath_entries=task.test_pythonpath_paths)
+        _verify_recipe_service(task.id, recipes[task.id])
         frozen = protocol.p1_qualifications.get(task.id)
         if frozen is None or provenance.fingerprint_sha256 != frozen.dependency_fingerprint:
             raise BenchmarkError(
@@ -2616,6 +2812,7 @@ def run_p2_experiment(
         "ablation",
         "presentation_only",
         "validation_closure",
+        "no_effect_recovery",
     }:
         campaign = config.formal.campaign_ledger_path
         if campaign is None or not campaign.is_file():
@@ -2752,7 +2949,8 @@ def _run_p2_locked(
             check_interval = 4 if config.design == "ablation" else 2
             if (
                 mode == "formal"
-                and config.design in {"ablation", "presentation_only", "validation_closure"}
+                and config.design
+                in {"ablation", "presentation_only", "validation_closure", "no_effect_recovery"}
                 and plan.sequence % check_interval == 1
             ):
                 block_check = check_p2_inputs(config)
@@ -2811,6 +3009,7 @@ def _run_p2_locked(
                         config.test_env_root, task.id
                     ),
                     test_pythonpath_entries=task.test_pythonpath_paths,
+                    test_environment_variables=recipes[task.id].environment_variables,
                     environment_recipe=recipes[task.id],
                     agent_config=agent_config,
                 )
@@ -2905,6 +3104,7 @@ def _run_p2_locked(
             output_dir=verification_dir,
             recipe=recipes[task.id],
             expected_node_ids=protocol.p1_qualifications[task.id].expected_node_ids,
+            environment_variables=recipes[task.id].environment_variables,
         )
         verification_path = verification_dir / "result.json"
         verification_path.parent.mkdir(parents=True, exist_ok=True)

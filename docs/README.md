@@ -106,4 +106,4 @@
 `docs/experiments/`，结构化数据进入 `benchmarks/experiments/`。聊天中的结论不能作为
 唯一留档。
 
-最新证据更正与失败复盘见 [`experiments/v0.8.19-validation-closure-failure-review.md`](experiments/v0.8.19-validation-closure-failure-review.md)。V0.8.18 的原始结果、逐项哈希及后续更正索引分别位于 `benchmarks/experiments/v0.8.18-validation-closure-comparison/` 与 `benchmarks/experiments/v0.8.19-closure-failure-review/`。
+最新机制预检见 [`experiments/v0.8.20-no-effect-recovery-preflight.md`](experiments/v0.8.20-no-effect-recovery-preflight.md)；全量 457 项测试通过，pytest-only coverage 86.073278%，追加只读诊断入口后的综合 coverage 90.149626%。新门槛默认关闭，脚本化 fixture 不代表真实修复成功率。下一轮 C/T 草案及预算缺口见 [`../benchmarks/experiments/v0.8.20-no-effect-recovery-preflight/next-comparison.json`](../benchmarks/experiments/v0.8.20-no-effect-recovery-preflight/next-comparison.json)。前序证据更正与失败复盘见 [`experiments/v0.8.19-validation-closure-failure-review.md`](experiments/v0.8.19-validation-closure-failure-review.md)。V0.8.18 的原始结果、逐项哈希及后续更正索引分别位于 `benchmarks/experiments/v0.8.18-validation-closure-comparison/` 与 `benchmarks/experiments/v0.8.19-closure-failure-review/`。

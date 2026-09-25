@@ -30,6 +30,7 @@ class ExperimentArm(StrEnum):
     CONTEXT_ONLY = "context_management_only"
     PRESENTATION_ONLY = "tool_presentation_only"
     VALIDATION_CLOSURE = "validation_closure"
+    NO_EFFECT_RECOVERY = "no_effect_recovery"
 
 
 class TrajectoryMetrics(BaseModel):
