@@ -275,6 +275,7 @@ class TraceFixRunner:
                     repo_map_task=config.task,
                     repo_map_config=config.agent_config.repo_map,
                     skills_enabled=config.agent_config.skills_enabled,
+                    skill_limits=config.agent_config.skill_limits,
                 )
                 workspace_preparation = docker_backend.workspace_preparation
                 repository_map = docker_backend.repo_map
@@ -339,6 +340,7 @@ class TraceFixRunner:
                     evidence_dir=run_dir / "test-evidence",
                     protected_dirs=internal_artifacts,
                     skills_enabled=config.agent_config.skills_enabled,
+                    skill_limits=config.agent_config.skill_limits,
                     test_timeout_seconds=min(120.0, float(config.agent_config.wall_time_seconds)),
                     test_python_executable=config.test_python_executable,
                     test_pythonpath_entries=config.test_pythonpath_entries,

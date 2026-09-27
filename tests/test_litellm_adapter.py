@@ -304,3 +304,26 @@ def test_deepseek_budget_count_uses_serialized_byte_upper_bound_with_tools() -> 
     assert plain > len("修复这个问题".encode())
     assert with_tool > plain
     assert getattr(adapter.client, "token_counter", None) is not None
+
+
+def test_counted_request_hash_rejects_payload_change_before_provider_call() -> None:
+    class Client:
+        def completion(self, **kwargs):
+            raise AssertionError("changed request must not reach provider")
+
+    adapter = LiteLLMAdapter(
+        LLMConfig(
+            model_name="deepseek/deepseek-flash",
+            extra_kwargs={
+                "api_base": "https://api.deepseek.com",
+                "extra_body": {"thinking": {"type": "disabled"}},
+            },
+        ),
+        client=Client(),
+    )
+    message = Message(role=MessageRole.USER, content="hello")
+    bound = adapter.count_input_bound([message])
+    assert bound.request_sha256 and len(bound.request_sha256) == 64
+    adapter.config.max_retries = 1
+    with pytest.raises(LLMProviderError, match="changed after input counting"):
+        adapter.complete([message])

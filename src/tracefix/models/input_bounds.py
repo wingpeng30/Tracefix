@@ -34,6 +34,7 @@ class InputBound:
     status: Literal["verified_exact", "verified_upper_bound", "estimate", "unavailable"]
     method: str
     identity: str
+    request_sha256: str | None = None
 
 
 def deepseek_flash_capability(model_name: str, provider: str, api_base: str) -> tuple[int, int]:
@@ -49,15 +50,66 @@ def deepseek_flash_capability(model_name: str, provider: str, api_base: str) -> 
 
 def count_deepseek_v41_request(body: dict[str, Any]) -> InputBound:
     """Use the pinned official renderer/tokenizer only in the calibrated text scope."""
+    try:
+        request_sha256 = hashlib.sha256(
+            json.dumps(body, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode(
+                "utf-8"
+            )
+        ).hexdigest()
+    except (TypeError, ValueError):
+        return InputBound(None, "unavailable", "deepseek-v41", "non-serializable request")
+
+    def unavailable(identity: str) -> InputBound:
+        return InputBound(None, "unavailable", "deepseek-v41", identity, request_sha256)
+
     if body.get("model") != "deepseek-flash" or body.get("thinking") != {"type": "disabled"}:
-        return InputBound(None, "unavailable", "deepseek-v41", "unsupported request settings")
-    if any(not isinstance(m.get("content"), (str, type(None))) for m in body.get("messages", [])):
-        return InputBound(None, "unavailable", "deepseek-v41", "non-text message")
+        return unavailable("unsupported request settings")
+    if set(body) - {"model", "thinking", "messages", "tools"}:
+        return unavailable("unsupported request fields")
+    messages = body.get("messages")
+    if not isinstance(messages, list) or not messages:
+        return unavailable("invalid messages")
+    allowed_roles = {"system", "user", "assistant", "tool"}
+    for message in messages:
+        if not isinstance(message, dict) or set(message) - {
+            "role", "content", "tool_calls", "tool_call_id"
+        }:
+            return unavailable("invalid message structure")
+        if message.get("role") not in allowed_roles:
+            return unavailable("invalid message role")
+        if not isinstance(message.get("content"), (str, type(None))):
+            return unavailable("non-text message")
+        calls = message.get("tool_calls", [])
+        if not isinstance(calls, list):
+            return unavailable("invalid tool calls")
+        for call in calls:
+            if (
+                not isinstance(call, dict)
+                or call.get("type") != "function"
+                or not isinstance(call.get("id"), str)
+                or not isinstance(call.get("function"), dict)
+                or set(call["function"]) != {"name", "arguments"}
+                or not isinstance(call["function"]["name"], str)
+                or not isinstance(call["function"]["arguments"], str)
+            ):
+                return unavailable("invalid tool call structure")
+    tools = body.get("tools", [])
+    if not isinstance(tools, list):
+        return unavailable("invalid tool schemas")
+    for tool in tools:
+        if (
+            not isinstance(tool, dict)
+            or tool.get("type") != "function"
+            or not isinstance(tool.get("function"), dict)
+            or not isinstance(tool["function"].get("name"), str)
+            or not isinstance(tool["function"].get("parameters"), dict)
+        ):
+            return unavailable("invalid tool schema")
     if any(literal in json.dumps(body, ensure_ascii=False) for literal in _UNSAFE_LITERALS):
-        return InputBound(None, "unavailable", "deepseek-v41", "unverified special-token literal")
+        return unavailable("unverified special-token literal")
     tokenizer_path = os.environ.get("TRACEFIX_DEEPSEEK_V41_TOKENIZER_JSON")
     if not tokenizer_path:
-        return InputBound(None, "unavailable", "deepseek-v41", "official tokenizer not configured")
+        return unavailable("official tokenizer not configured")
     path = Path(tokenizer_path).expanduser().resolve()
     try:
         if metadata.version("deepseek-recipe") != V41_RECIPE_VERSION:
@@ -71,10 +123,12 @@ def count_deepseek_v41_request(body: dict[str, Any]) -> InputBound:
         encoding = recipe.DeepseekV41Encoding().with_tokenizer(tokenizer)
         value = len(encoding.encode(converted.conversation))
     except (ImportError, OSError, ValueError, AttributeError, RuntimeError) as exc:
-        return InputBound(None, "unavailable", "deepseek-v41", type(exc).__name__)
+        return unavailable(type(exc).__name__)
     if value <= 0:
-        return InputBound(None, "unavailable", "deepseek-v41", "invalid token count")
+        return unavailable("invalid token count")
     # Rendering a request is not proof that the hosted API accounts for every
     # wrapper token in the same way. Until a provider-usage comparison proves a
     # conservative contract, this count can guide context reduction only.
-    return InputBound(value, "estimate", "deepseek-recipe-v41", V41_TOKENIZER_SHA256)
+    return InputBound(
+        value, "estimate", "deepseek-recipe-v41", V41_TOKENIZER_SHA256, request_sha256
+    )

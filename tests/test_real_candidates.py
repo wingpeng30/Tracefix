@@ -1,5 +1,8 @@
 import json
 
+import pytest
+
+from tracefix.exceptions import BenchmarkError
 from tracefix.real_benchmark import RealIssueTask
 from tracefix.real_candidates import CandidateCollectionConfig, collect_candidates, patch_paths
 
@@ -121,3 +124,44 @@ def test_holdout_collection_freezes_seeded_order_exclusions_and_duplicates(tmp_p
     reasons = {item.instance_id: item.exclusion_reasons for item in first.excluded}
     assert reasons["psf__requests-0"] == ("previously_reviewed_task",)
     assert reasons["psf__requests-7"] == ("duplicate_problem_statement",)
+
+
+def test_candidate_collector_reads_jsonl_and_explains_quota_failure(tmp_path) -> None:
+    row = {
+        "instance_id": "psf__requests-1",
+        "repo": "psf/requests",
+        "base_commit": "a" * 40,
+        "problem_statement": "",
+        "patch": "",
+        "test_patch": "",
+    }
+    source = tmp_path / "rows.jsonl"
+    source.write_text(json.dumps(row) + "\n", encoding="utf-8")
+    output = tmp_path / "quota-report"
+    with pytest.raises(BenchmarkError, match="candidate quota is not satisfied") as error:
+        collect_candidates(
+            CandidateCollectionConfig(
+                source=source,
+                output_dir=output,
+                repositories=("psf/requests",),
+                per_repository=1,
+            )
+        )
+    saved = output / "candidate-pool.json"
+    assert saved.is_file()
+    assert error.value.context["counts"] == {"psf/requests": 0}
+    result = json.loads(saved.read_text(encoding="utf-8"))
+    reasons = result["excluded"][0]["exclusion_reasons"]
+    assert "empty_problem_statement" in reasons
+    assert "missing_patch_or_test_patch" in reasons
+    assert "no_test_patch_files" in reasons
+
+
+def test_candidate_collection_rejects_malformed_local_source_and_patch_paths(tmp_path) -> None:
+    source = tmp_path / "broken.json"
+    source.write_text("{", encoding="utf-8")
+    with pytest.raises(BenchmarkError, match="invalid local SWE-bench source"):
+        collect_candidates(
+            CandidateCollectionConfig(source=source, output_dir=tmp_path / "out")
+        )
+    assert patch_paths(_patch("../outside.py", "tests/../unsafe.py")) == ()

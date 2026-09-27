@@ -60,6 +60,7 @@ from tracefix.runtime import (
     TraceFixRunner,
     load_environment_file,
 )
+from tracefix.tools.skills import SkillLimits
 from tracefix.validation_feedback import write_validation_feedback_diagnostic
 
 
@@ -140,6 +141,10 @@ def _add_shared_options(parser: argparse.ArgumentParser) -> None:
         default=None,
         help="启用按需加载 TraceFix 内置 skills",
     )
+    parser.add_argument("--skills-max-active", type=int, help="最多激活的技能数（默认 4）")
+    parser.add_argument("--skills-max-bytes", type=int, help="单个技能正文 UTF-8 字节上限")
+    parser.add_argument("--skills-max-reference-bytes", type=int, help="单份参考文本字节上限")
+    parser.add_argument("--skills-max-total-bytes", type=int, help="技能与参考文本累计字节上限")
     parser.add_argument(
         "--test-python",
         type=Path,
@@ -621,6 +626,21 @@ def _resolve_shared(args: argparse.Namespace, *, real_issue_budget: bool = False
                 args.skills
                 if args.skills is not None
                 else _env_bool("TRACEFIX_SKILLS_ENABLED", False)
+            ),
+            skill_limits=SkillLimits(
+                max_active_skills=_number_or_default(
+                    args.skills_max_active, "TRACEFIX_SKILLS_MAX_ACTIVE", int, 4
+                ),
+                max_skill_bytes=_number_or_default(
+                    args.skills_max_bytes, "TRACEFIX_SKILLS_MAX_BYTES", int, 16 * 1024
+                ),
+                max_reference_bytes=_number_or_default(
+                    args.skills_max_reference_bytes,
+                    "TRACEFIX_SKILLS_MAX_REFERENCE_BYTES", int, 8 * 1024
+                ),
+                max_total_bytes=_number_or_default(
+                    args.skills_max_total_bytes, "TRACEFIX_SKILLS_MAX_TOTAL_BYTES", int, 32 * 1024
+                ),
             ),
             max_steps=_number_or_default(args.max_steps, "TRACEFIX_MAX_STEPS", int, 30),
             max_input_tokens=_number_or_default(

@@ -37,7 +37,11 @@ def main() -> None:
 
     signal.signal(signal.SIGTERM, stop)
     signal.signal(signal.SIGINT, stop)
-    while any(thread.is_alive() for thread in threading.enumerate() if thread is not threading.main_thread()):
+    while any(
+        thread.is_alive()
+        for thread in threading.enumerate()
+        if thread is not threading.main_thread()
+    ):
         time.sleep(0.1)
 
 

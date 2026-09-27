@@ -204,6 +204,51 @@ def test_bridge_rejects_wrong_handshake_identity(tmp_path: Path) -> None:
         _BridgeSession([sys.executable, "-u", "-c", code], 1, tmp_path / "bad-hello.jsonl")
 
 
+def test_bridge_transfers_path_free_skill_catalog_and_rejects_mismatch(tmp_path: Path) -> None:
+    import json
+
+    from tracefix.tools import SkillCatalogEntry, ToolRegistry
+
+    digest = "a" * 64
+    catalog = [{"name": "demo", "description": "A demo skill", "version": "1", "sha256": digest}]
+    spec = {
+        "name": "load_skill",
+        "description": "Load skill",
+        "input_schema": {
+            "type": "object",
+            "properties": {"name": {"type": "string", "enum": ["demo"]}},
+            "required": ["name"],
+            "additionalProperties": False,
+        },
+    }
+    payload = {"type": "hello", "protocol": 1, "run_id": "skills", "tools": [spec],
+               "skill_catalog": catalog}
+    code = f"print({json.dumps(payload)!r}, flush=True)"
+    session = _BridgeSession(
+        [sys.executable, "-u", "-c", code], 2, tmp_path / "skill-catalog.jsonl",
+        skills_enabled=True,
+    )
+    try:
+        remote = _RemoteTool(
+            session.tools[0],
+            type("Backend", (), {"session": session})(),  # type: ignore[arg-type]
+            session.skill_catalog,
+        )
+        registry = ToolRegistry([remote])
+        assert registry.skill_catalog == (SkillCatalogEntry.model_validate(catalog[0]),)
+        assert not hasattr(registry.skill_catalog[0], "path")
+    finally:
+        session.close()
+
+    mismatch = {**payload, "tools": [{**spec, "input_schema": {"type": "object"}}]}
+    bad_code = f"print({json.dumps(mismatch)!r}, flush=True)"
+    with pytest.raises(WorkspaceError, match="does not match"):
+        _BridgeSession(
+            [sys.executable, "-u", "-c", bad_code], 2,
+            tmp_path / "skill-catalog-mismatch.jsonl", skills_enabled=True,
+        )
+
+
 def test_bridge_startup_timeout_kills_unresponsive_child(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

@@ -24,6 +24,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_valida
 from tracefix.exceptions import ToolExecutionError, ToolValidationError
 from tracefix.messages import ToolCall
 from tracefix.tools.base import BaseTool, ReservedToolName, ToolRegistry, ToolResult, ToolSpec
+from tracefix.tools.skills import SkillLimits
 
 _SKIPPED_DIRECTORIES = frozenset(
     {
@@ -1374,6 +1375,7 @@ def create_default_tool_registry(
     evidence_dir: Path | None = None,
     protected_dirs: set[str] | None = None,
     skills_enabled: bool = False,
+    skill_limits: SkillLimits | None = None,
 ) -> ToolRegistry:
     """为一个已有初始提交的 Git 仓库创建五工具注册表。"""
     root = _resolve_workspace(workspace)
@@ -1398,5 +1400,5 @@ def create_default_tool_registry(
     if skills_enabled:
         from tracefix.tools.skills import SkillActivationTool
 
-        tools.append(SkillActivationTool())
+        tools.append(SkillActivationTool(limits=skill_limits))
     return ToolRegistry(tools)

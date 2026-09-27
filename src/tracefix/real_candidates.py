@@ -6,7 +6,7 @@ import hashlib
 import json
 import re
 from datetime import UTC, datetime
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -99,7 +99,13 @@ def patch_paths(patch: str) -> tuple[str, ...]:
     """解析 unified diff 路径并拒绝绝对路径、目录逃逸和改名。"""
     paths: list[str] = []
     for before, after in _DIFF_PATH.findall(patch):
-        if before != after or after.startswith(("/", "../")) or ".git" in Path(after).parts:
+        path = PurePosixPath(after)
+        if (
+            before != after
+            or path.is_absolute()
+            or ".." in path.parts
+            or ".git" in Path(after).parts
+        ):
             continue
         normalized = Path(after).as_posix()
         if normalized not in paths:

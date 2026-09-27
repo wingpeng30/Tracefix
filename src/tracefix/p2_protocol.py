@@ -480,6 +480,7 @@ class P2CostRequestRecord(BaseModel):
     output_token_upper_bound: int
     input_count_method: str | None = None
     input_count_identity: str | None = None
+    request_sha256: str | None = None
     actual_input_tokens: int | None = None
     actual_output_tokens: int | None = None
     actual_cost_usd: float | None = None
@@ -713,6 +714,9 @@ class P2BudgetedLLM(BaseLLM):
                 qualified.method if not self._legacy_input_counting else "legacy-byte-upper"
             ),
             input_count_identity=(qualified.identity if not self._legacy_input_counting else None),
+            request_sha256=(
+                qualified.request_sha256 if not self._legacy_input_counting else None
+            ),
         )
         ledger = ledger.model_copy(
             update={

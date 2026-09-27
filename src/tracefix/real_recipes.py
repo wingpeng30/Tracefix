@@ -78,12 +78,20 @@ class EnvironmentRecipe(BaseModel):
         if self.service_health_url is not None:
             parsed = urlparse(self.service_health_url)
             target = urlparse(self.environment_variables.get("HTTPBIN_URL", ""))
+            same_http_endpoint = (
+                target.scheme == parsed.scheme and target.port == parsed.port
+            )
+            paired_https_endpoint = (
+                parsed.scheme == "http"
+                and target.scheme == "https"
+                and (parsed.port or 80) == 80
+                and (target.port or 443) == 443
+            )
             if (
                 parsed.scheme != "http"
                 or parsed.hostname not in {"127.0.0.1", "localhost", "::1"}
-                or target.scheme != parsed.scheme
                 or target.hostname != parsed.hostname
-                or target.port != parsed.port
+                or not (same_http_endpoint or paired_https_endpoint)
             ):
                 raise ValueError("service health check and HTTPBIN_URL must identify one local service")
         return self

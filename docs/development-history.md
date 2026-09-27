@@ -765,3 +765,13 @@ G7 逐路径与哈希复核确认 G0 脏工作区快照、此前正式 Runner �
 历史账本文件的当前哈希与时间戳已只读核验，时间早于本 Goal；本 Goal 没有写入账本或评分。G0 快照范围本来不含该账本/评分文件，因此不声称由快照哈希证明其未变；审计结论以零调用守卫、执行范围及只读时间/哈希检查为限。供应商调用为 0，没有付费实验或留出题，旧评分、账本和历史运行证据未改。pytest-10081 公开文件资格继续不合格，async/unraisable warning 的归因仅限当前冻结 profile，未证明 Python 点版本单独致因；三题脚本替身 Runner 结果也不构成模型修复能力证据。
 
 最终交接：[`handoffs/2026-09-27-container-qualification-final.md`](handoffs/2026-09-27-container-qualification-final.md)。主要原始证据仍保存在 `E:\TraceFixRunsActive\goal-container-qualification-20260927` 与既有 `environment-recovery-*` 目录；审计不覆盖此前现场。
+
+### 2026-09-28：当前 checkout Skills/Docker 复现与工程复核
+
+当前 GitHub 基线 `5a5bf8a24f605b3f2dc5392995b22940be9f3d61` 上实现默认关闭的 Skills 目录贯通、按需加载与字节预算；新增公开本地/Docker 零调用复现入口、pytest-10081 诊断参数校验、历史 pilot 配方清单、请求哈希前置契约和复现文档。Docker bridge 只传 path-free 技能目录，完整指令按需加载，并跨压缩保留。发现候选补丁路径会接受 `tests/../unsafe.py` 后，修为拒绝路径中任意 `..` 段，新增回归。
+
+当前生产源码树 SHA-256 `430f586726f58f102e4abaac14429be95c861cb7c1c731bf7771d09c4b448020`。Requests-1766 正式 Runner Skills/TLS 在实际测试子进程完成 HTTPS CA 与 hostname 校验，Skills 去重及 7 次上下文压缩行为通过；4 个全新独立验收容器通过，零模型/供应商调用。E2E 摘要位于 `E:\TraceFixRunsActive\reproduce-zero-call-20260928\docker-requests-skills-tls-release-candidate`。本地与 Docker baseline/Skills-only 合成闭环均通过，Docker smoke image ID `sha256:1b9173d675c3214aecebc6f687736ab9401e06a2915f33cd4b190820c595b911`；均非真实模型修复成功率证据。
+
+最终 pytest-only 全量 602 passed、0 failed、681.40 秒，Coverage.py 精确覆盖率 89.62%（8392/9128 语句、2415/2926 分支）；命令因保留的 90% coverage gate 退出 1。Ruff、compileall、`git diff --check` 与相关目标测试通过。纯 pytest gate 未满足，不能按终端四舍五入显示的 90% 认定工程验收通过。全量 JUnit、日志、coverage JSON/XML 和退出码位于 `E:\TraceFixRunsActive\reproduce-zero-call-20260928\pytest-only-final-v2`。
+
+未完成边界：跨平台完整传递依赖哈希锁和 apt/build tool 锁定；pytest-10081 上一个可用 Python 3.10 点版本对照；Sphinx 基线 inputs-v4 外部重建材料；纯 pytest 90% gate。未接入 MCP/Serena。无供应商请求、付费实验、留出题访问或历史评分/账本变更。干净安装、材料缺口、回退和后续 baseline/Skills-only 方案见 [`reproduction.md`](reproduction.md) 与 [`tasks/2026-09-28-current-checkout-reproduction.md`](tasks/2026-09-28-current-checkout-reproduction.md)。

@@ -24,6 +24,7 @@ class TraceEventType(StrEnum):
     WORKSPACE_PREPARED = "workspace_prepared"
     REPO_MAP_ADDED = "repo_map_added"
     SKILL_ACTIVATED = "skill_activated"
+    SKILL_CATALOG_EXPOSED = "skill_catalog_exposed"
     MODEL_RESPONDED = "model_responded"
     TOOL_CALLED = "tool_called"
     TEST_PROCESS_STARTED = "test_process_started"

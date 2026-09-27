@@ -100,12 +100,11 @@ class MinimalAgent(BaseAgent):
             Message(role=MessageRole.SYSTEM, content=self.config.system_prompt)
         )
         if self.config.skills_enabled:
-            skill_tool = self.tools.get("load_skill")
-            catalog = getattr(skill_tool, "catalog", {})
+            catalog = self.tools.skill_catalog
             if catalog:
                 entries = "\n".join(
-                    f"- {name}: {item['description']}"
-                    for name, item in sorted(catalog.items())
+                    f"- {item.name}: {item.description}"
+                    for item in catalog
                 )
                 self._append_message(
                     Message(
@@ -117,6 +116,10 @@ class MinimalAgent(BaseAgent):
                         ),
                         metadata={"kind": "skill_catalog"},
                     )
+                )
+                self._emit(
+                    TraceEventType.SKILL_CATALOG_EXPOSED,
+                    {"skills": [entry.model_dump(mode="json") for entry in catalog]},
                 )
         if self.repository_map:
             # 将静态地图作为 system 锚点加入完整历史：压缩器会永久保留它，模型请求视图
@@ -293,6 +296,7 @@ class MinimalAgent(BaseAgent):
                 context={"final_output": self.state.final_output},
             )
 
+        pending_skill_messages: list[tuple[Message, dict[str, object]]] = []
         for index, call in enumerate(response.message.tool_calls):
             try:
                 self._check_time_budget()
@@ -355,30 +359,36 @@ class MinimalAgent(BaseAgent):
                 and isinstance(result.output.get("content"), str)
             ):
                 content = result.output["content"]
-                metadata = {
+                metadata: dict[str, object] = {
                     "kind": "skill_instructions",
                     "skill_name": result.output.get("name"),
                     "skill_version": result.output.get("version"),
                     "content_sha256": result.output.get("sha256"),
                     "source": result.output.get("path"),
+                    "content_bytes": result.output.get("content_bytes"),
                 }
-                self._append_message(
-                    Message(
-                        role=MessageRole.SYSTEM,
-                        content=(
-                            "<tracefix_skill_instructions>\n"
-                            + content
-                            + "\n</tracefix_skill_instructions>"
+                pending_skill_messages.append(
+                    (
+                        Message(
+                            role=MessageRole.SYSTEM,
+                            content=(
+                                "<tracefix_skill_instructions>\n"
+                                + content
+                                + "\n</tracefix_skill_instructions>"
+                            ),
+                            metadata=metadata,
                         ),
-                        metadata=metadata,
+                        metadata,
                     )
-                )
-                self._emit(
-                    TraceEventType.SKILL_ACTIVATED,
-                    {**metadata, "content": content},
                 )
 
         # 提示只能在本轮全部 tool result 写回后追加，否则会违反消息配对协议。
+        for message, metadata in pending_skill_messages:
+            self._append_message(message)
+            self._emit(
+                TraceEventType.SKILL_ACTIVATED,
+                {**metadata, "content": message.content},
+            )
         self._append_patch_recovery_reminder_if_needed()
         self._append_no_effect_patch_guidance_if_needed()
         self._append_exploration_guidance_if_needed()
@@ -986,7 +996,16 @@ class MinimalAgent(BaseAgent):
     def _append_tool_result(self, result: ToolResult) -> None:
         """把工具结果转换成模型可消费的 tool 消息并写入轨迹。"""
         original = result.model_dump_json()
-        presented = self._presenter.present(result)
+        model_result = result
+        if (
+            result.success
+            and result.tool_name == "load_skill"
+            and isinstance(result.output, dict)
+            and isinstance(result.output.get("content"), str)
+        ):
+            receipt = {key: value for key, value in result.output.items() if key != "content"}
+            model_result = result.model_copy(update={"output": receipt}, deep=True)
+        presented = self._presenter.present(model_result)
         self.state.presentation_metrics.add(original, presented)
         self._append_message(
             Message(

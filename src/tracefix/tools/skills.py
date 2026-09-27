@@ -7,23 +7,54 @@ import json
 import re
 from pathlib import Path
 
-from pydantic import JsonValue
+from pydantic import BaseModel, ConfigDict, Field, JsonValue
 
 from tracefix.exceptions import ToolExecutionError
 from tracefix.messages import ToolCall
-from tracefix.tools.base import BaseTool, ToolResult, ToolSpec
+from tracefix.tools.base import BaseTool, SkillCatalogEntry, ToolResult, ToolSpec
 
 _SKILL_ROOT = Path(__file__).resolve().parents[1] / "skills"
 _NAME_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 
 
+class SkillLimits(BaseModel):
+    """Hard UTF-8 byte and skill-count bounds; these are not token limits."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    max_active_skills: int = Field(default=4, ge=1)
+    max_skill_bytes: int = Field(default=16 * 1024, ge=1)
+    max_reference_bytes: int = Field(default=8 * 1024, ge=1)
+    max_total_bytes: int = Field(default=32 * 1024, ge=1)
+
+
 class SkillActivationTool(BaseTool):
     """Expose catalog metadata at startup and approved text only on request."""
 
-    def __init__(self, root: Path = _SKILL_ROOT) -> None:
+    def __init__(
+        self,
+        root: Path = _SKILL_ROOT,
+        *,
+        limits: SkillLimits | None = None,
+    ) -> None:
+        self.limits = limits or SkillLimits()
         self.root = root.resolve(strict=True)
         self.catalog = self._discover()
         self._activated: set[str] = set()
+        self._loaded: dict[tuple[str, str], tuple[str, str]] = {}
+        self._loaded_bytes = 0
+
+    @property
+    def skill_catalog(self) -> tuple[SkillCatalogEntry, ...]:
+        return tuple(
+            SkillCatalogEntry(
+                name=name,
+                description=str(item["description"]),
+                version=str(item["version"]),
+                sha256=str(item["sha256"]),
+            )
+            for name, item in sorted(self.catalog.items())
+        )
 
     @property
     def spec(self) -> ToolSpec:
@@ -58,6 +89,10 @@ class SkillActivationTool(BaseTool):
                 continue
             if skill_file.is_symlink() or not skill_file.resolve().is_relative_to(self.root):
                 raise ToolExecutionError("skill file escapes the approved skill root")
+            if skill_file.stat().st_size > self.limits.max_skill_bytes + 8192:
+                raise ToolExecutionError(
+                    f"skill file exceeds the discovery size limit: {directory.name}"
+                )
             text = skill_file.read_text(encoding="utf-8")
             if not text.startswith("---\n"):
                 raise ToolExecutionError(f"skill has malformed frontmatter: {directory.name}")
@@ -83,6 +118,10 @@ class SkillActivationTool(BaseTool):
                 raise ToolExecutionError(
                     f"skill metadata is invalid or duplicated: {directory.name}"
                 )
+            if len(body.encode("utf-8")) > self.limits.max_skill_bytes:
+                raise ToolExecutionError(
+                    f"skill instructions exceed the size limit: {directory.name}"
+                )
             version = metadata.get("metadata", {}).get("version", "unversioned")
             if not isinstance(version, str):
                 version = str(version)
@@ -90,6 +129,7 @@ class SkillActivationTool(BaseTool):
                 "description": description.strip(),
                 "version": version,
                 "path": skill_file,
+                "sha256": hashlib.sha256(text.encode("utf-8")).hexdigest(),
             }
         return found
 
@@ -165,6 +205,7 @@ class SkillActivationTool(BaseTool):
         reference = call.arguments.get("reference")
         path = Path(item["path"])
         kind = "skill"
+        relative_path = "SKILL.md"
         if reference is not None:
             if name not in self._activated:
                 raise ToolExecutionError("activate the skill before loading its references")
@@ -188,27 +229,67 @@ class SkillActivationTool(BaseTool):
                 or not candidate.is_file()
             ):
                 raise ToolExecutionError("reference is outside the approved Markdown directory")
+            relative_path = candidate.relative_to(path.parent).as_posix()
+            if candidate.stat().st_size > self.limits.max_reference_bytes:
+                raise ToolExecutionError(
+                    f"reference text exceeds the {self.limits.max_reference_bytes}-byte limit"
+                )
             path = candidate
             kind = "reference"
-        elif name in self._activated:
+        try:
+            if path.is_symlink() or not path.resolve(strict=True).is_relative_to(self.root):
+                raise ToolExecutionError("approved skill path changed or escaped its root")
+            content = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeError) as exc:
+            raise ToolExecutionError("approved skill text could not be read") from exc
+        digest = hashlib.sha256(content.encode("utf-8")).hexdigest()
+        if kind == "skill" and digest != item["sha256"]:
+            raise ToolExecutionError("skill content changed after catalog discovery")
+        identity = (str(item["version"]), digest)
+        loaded_key = (name, relative_path)
+        if kind == "skill" and name in self._activated:
             return ToolResult(
                 call_id=call.id,
                 tool_name=call.name,
                 success=True,
                 output={"name": name, "already_loaded": True},
             )
-
-        content = path.read_text(encoding="utf-8")
-        digest = hashlib.sha256(content.encode("utf-8")).hexdigest()
+        if loaded_key in self._loaded:
+            previous = self._loaded[loaded_key]
+            if previous != identity:
+                raise ToolExecutionError("skill text changed after it was loaded")
+            return ToolResult(
+                call_id=call.id,
+                tool_name=call.name,
+                success=True,
+                output={"name": name, "path": relative_path, "already_loaded": True},
+            )
+        size = len(content.encode("utf-8"))
+        size_limit = (
+            self.limits.max_skill_bytes if kind == "skill" else self.limits.max_reference_bytes
+        )
+        if size > size_limit:
+            raise ToolExecutionError(f"{kind} text exceeds the {size_limit}-byte limit")
+        if self._loaded_bytes + size > self.limits.max_total_bytes:
+            raise ToolExecutionError(
+                "skill text budget exceeded "
+                f"({self._loaded_bytes}/{self.limits.max_total_bytes} bytes used)"
+            )
+        if kind == "skill" and len(self._activated) >= self.limits.max_active_skills:
+            raise ToolExecutionError("maximum number of active skills reached")
         metadata: dict[str, JsonValue] = {
             "kind": kind,
             "name": name,
             "version": item["version"],
             "sha256": digest,
             "path": str(path.relative_to(self.root)),
+            "content_bytes": size,
         }
         output: dict[str, JsonValue] = {**metadata, "content": content}
-        self._activated.add(name)
+        self._loaded[loaded_key] = identity
+        self._loaded_bytes += size
+        if kind == "skill":
+            self._activated.add(name)
         return ToolResult(
             call_id=call.id,
             tool_name=call.name,

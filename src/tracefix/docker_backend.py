@@ -26,7 +26,8 @@ from tracefix.docker_tls import write_test_tls_material
 from tracefix.exceptions import RunConfigurationError, WorkspaceError
 from tracefix.messages import ToolCall
 from tracefix.repository import RepoMap, RepoMapConfig
-from tracefix.tools import BaseTool, ToolRegistry, ToolResult, ToolSpec
+from tracefix.tools import BaseTool, SkillCatalogEntry, ToolRegistry, ToolResult, ToolSpec
+from tracefix.tools.skills import SkillLimits
 
 _IMAGES: dict[str, tuple[str, str]] = {
     "pytest-dev__pytest-10081": (
@@ -79,7 +80,14 @@ def _run(
 class _BridgeSession:
     """Bounded JSONL session; protocol events are separated from test output."""
 
-    def __init__(self, command: list[str], timeout: float, journal_path: Path) -> None:
+    def __init__(
+        self,
+        command: list[str],
+        timeout: float,
+        journal_path: Path,
+        *,
+        skills_enabled: bool = False,
+    ) -> None:
         self.timeout = timeout
         self.journal_path = journal_path
         self.process = subprocess.Popen(
@@ -106,17 +114,57 @@ class _BridgeSession:
             self.close(force=True)
             raise WorkspaceError("invalid Docker tool bridge handshake") from exc
         if (
-            handshake.get("type") != "hello"
+            not isinstance(handshake, dict)
+            or handshake.get("type") != "hello"
             or handshake.get("protocol") != 1
             or not isinstance(handshake.get("tools"), list)
         ):
             self.close(force=True)
             raise WorkspaceError("Docker tool bridge protocol identity mismatch")
+        raw_catalog = handshake.get("skill_catalog", [])
+        if not isinstance(raw_catalog, list):
+            self.close(force=True)
+            raise WorkspaceError("Docker tool bridge skill catalog is malformed")
+        try:
+            catalog = tuple(SkillCatalogEntry.model_validate(item) for item in raw_catalog)
+        except ValidationError as exc:
+            self.close(force=True)
+            raise WorkspaceError("Docker tool bridge skill catalog identity is invalid") from exc
+        if len({item.name for item in catalog}) != len(catalog):
+            self.close(force=True)
+            raise WorkspaceError("Docker tool bridge skill catalog contains duplicate names")
+        try:
+            specs = tuple(ToolSpec.model_validate(item) for item in handshake["tools"])
+        except ValidationError as exc:
+            self.close(force=True)
+            raise WorkspaceError("Docker tool bridge tool schema is invalid") from exc
+        if len({spec.name for spec in specs}) != len(specs):
+            self.close(force=True)
+            raise WorkspaceError("Docker tool bridge contains duplicate tool names")
+        load_specs = [spec for spec in specs if spec.name == "load_skill"]
+        if skills_enabled:
+            declared = (
+                set(
+                    load_specs[0]
+                    .input_schema.get("properties", {})
+                    .get("name", {})
+                    .get("enum", [])
+                )
+                if len(load_specs) == 1
+                else set()
+            )
+            if not catalog or declared != {item.name for item in catalog}:
+                self.close(force=True)
+                raise WorkspaceError("Docker skill catalog does not match the load_skill tool")
+        elif catalog or load_specs:
+            self.close(force=True)
+            raise WorkspaceError("Docker bridge exposed skills while skills are disabled")
         self.run_id = handshake.get("run_id")
         self._record_event(
             {"event": "handshake", "protocol": handshake.get("protocol"), "run_id": self.run_id}
         )
-        self.tools = tuple(ToolSpec.model_validate(item) for item in handshake["tools"])
+        self.tools = specs
+        self.skill_catalog = catalog
         self.repo_map = (
             RepoMap.model_validate(handshake["repo_map"]) if handshake.get("repo_map") else None
         )
@@ -263,14 +311,22 @@ class _BridgeSession:
 
 
 class _RemoteTool(BaseTool):
-    def __init__(self, spec: ToolSpec, backend: DockerToolBackend) -> None:
+    def __init__(
+        self, spec: ToolSpec, backend: DockerToolBackend,
+        skill_catalog: tuple[SkillCatalogEntry, ...] = (),
+    ) -> None:
         self._spec = spec
         self.backend = backend
+        self._skill_catalog = skill_catalog if spec.name == "load_skill" else ()
         self.on_process_started = None
 
     @property
     def spec(self) -> ToolSpec:
         return self._spec
+
+    @property
+    def skill_catalog(self) -> tuple[SkillCatalogEntry, ...]:
+        return self._skill_catalog
 
     def prepare(self, call: ToolCall) -> None:
         result = self.backend.session.call("__prepare__", call.model_dump(mode="json"))
@@ -325,6 +381,7 @@ class DockerToolBackend:
         repo_map_task: str | None = None,
         repo_map_config: RepoMapConfig | None = None,
         skills_enabled: bool = False,
+        skill_limits: SkillLimits | None = None,
     ) -> ToolRegistry:
         stage = self.input_root / self.task_id
         bundle = stage / "source.bundle"
@@ -438,6 +495,7 @@ class DockerToolBackend:
                 f"{self.container_name}:/opt/tracefix/agent-bridge.py",
             ]
         )
+        tls_certificate_sha256 = None
         if self.recipe.get("test_pythonpath_entries"):
             _run(
                 [
@@ -464,6 +522,7 @@ class DockerToolBackend:
                 certificate = Path(tls_directory) / "test-ca.pem"
                 private_key = Path(tls_directory) / "test-key.pem"
                 write_test_tls_material(certificate, private_key)
+                tls_certificate_sha256 = hashlib.sha256(certificate.read_bytes()).hexdigest()
                 for path in (certificate, private_key):
                     _run(
                         [
@@ -648,6 +707,7 @@ class DockerToolBackend:
                 "healthy": healthy and https_healthy is not False,
                 "http_healthy": healthy,
                 "https_healthy": https_healthy,
+                "tls_certificate_sha256": tls_certificate_sha256,
                 "log": log_result.stdout.decode("utf-8", "replace")[-4000:],
             }
             if not service_info["healthy"]:
@@ -730,9 +790,16 @@ class DockerToolBackend:
                 ]
             )
         if skills_enabled:
-            command.append("--skills-enabled")
+            command.extend(
+                [
+                    "--skills-enabled",
+                    "--skill-limits-json",
+                    (skill_limits or SkillLimits()).model_dump_json(),
+                ]
+            )
         self.session = _BridgeSession(
-            command, self.timeout_seconds + 60, self.run_dir / "tool-events.jsonl"
+            command, self.timeout_seconds + 60, self.run_dir / "tool-events.jsonl",
+            skills_enabled=skills_enabled,
         )
         if self.session.run_id != self.run_id:
             raise WorkspaceError("Docker bridge run identity mismatch")
@@ -752,7 +819,9 @@ class DockerToolBackend:
             "protocol": 1,
         }
         self._write_run_state("agent_ready")
-        return ToolRegistry(_RemoteTool(spec, self) for spec in self.session.tools)
+        return ToolRegistry(
+            _RemoteTool(spec, self, self.session.skill_catalog) for spec in self.session.tools
+        )
 
     def set_phase(self, phase: str) -> None:
         """Persist the owned container identity and current lifecycle phase."""

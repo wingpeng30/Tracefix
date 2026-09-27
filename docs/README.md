@@ -13,6 +13,8 @@
 - [`roadmap.md`](roadmap.md)：项目目标、当前阶段、验收门槛与下一步行动。
 - [`development-history.md`](development-history.md)：从 V0 接口骨架到 V0.3.2 实验可追溯性
   A/B 的代码说明、设计取舍、验证结果和 Git 版本。
+- [`reproduction.md`](reproduction.md)：干净安装、wheel、零模型调用本地/Docker 复现、材料清单与当前外部复验边界。
+- [`tasks/2026-09-28-current-checkout-reproduction.md`](tasks/2026-09-28-current-checkout-reproduction.md)：当前 checkout 的 Skills/TLS 实现、验证门槛与未完成环境复验记录。
 
 ## 实验记录
 

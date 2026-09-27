@@ -10,6 +10,7 @@ from pathlib import Path
 from tracefix.exceptions import TraceFixError
 from tracefix.messages import ToolCall
 from tracefix.tools import create_default_tool_registry
+from tracefix.tools.skills import SkillLimits
 
 
 def main() -> int:
@@ -25,6 +26,7 @@ def main() -> int:
     parser.add_argument("--repo-map-task")
     parser.add_argument("--repo-map-config")
     parser.add_argument("--skills-enabled", action="store_true")
+    parser.add_argument("--skill-limits-json")
     args = parser.parse_args()
     environment = (
         json.loads(args.environment_json.read_text(encoding="utf-8"))
@@ -49,6 +51,11 @@ def main() -> int:
         evidence_dir=args.evidence,
         protected_dirs=protected,
         skills_enabled=args.skills_enabled,
+        skill_limits=(
+            SkillLimits.model_validate_json(args.skill_limits_json)
+            if args.skills_enabled and args.skill_limits_json
+            else None
+        ),
     )
     repo_map = None
     if args.repo_map_task is not None:
@@ -66,6 +73,7 @@ def main() -> int:
                 "protocol": 1,
                 "run_id": args.run_id,
                 "tools": [spec.model_dump(mode="json") for spec in tools.specs()],
+                "skill_catalog": [entry.model_dump(mode="json") for entry in tools.skill_catalog],
                 "repo_map": repo_map,
             }
         )

@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 
+import tracefix.detailed_ablation as detailed
 from tracefix.cli import main
 from tracefix.detailed_ablation import (
     _cycle_difference,
@@ -549,3 +550,259 @@ def test_detailed_writer_never_overwrites_existing_output(tmp_path: Path, monkey
             campaign_before_path=ledger,
             trace_hash_lock_path=ledger,
         )
+
+
+def test_detailed_writer_renders_new_reports_from_synthetic_summary(tmp_path, monkeypatch) -> None:
+    ledger = tmp_path / "ledger.json"
+    ledger.write_text('{"fixture": true}', encoding="utf-8")
+    ledger_sha = hashlib.sha256(ledger.read_bytes()).hexdigest()
+    experiment = tmp_path / "experiment"
+    experiment.mkdir()
+    output = tmp_path / "new-report"
+    arms = ("action_optimization_bundle", "context_management_only")
+    metric_names = (
+        "agent_seconds", "verification_seconds", "model_request_seconds",
+        "tool_execution_seconds", "test_tool_seconds_nested_in_tool_execution",
+        "context_preparation_seconds", "repository_index_seconds", "unassigned_agent_seconds",
+    )
+    metrics = {
+        arm: {"task_equal_weight_mean": dict.fromkeys(metric_names, 0.0)} for arm in arms
+    }
+    mechanism_names = (
+        "provider_request_count", "repo_map_requests", "repo_map_candidate_reads",
+        "repeated_request_tool_views", "cached_tool_calls", "failed_tool_calls",
+        "presentation_shortened_results", "presentation_lengthened_results",
+        "context_tool_pruned_operations", "context_tool_pruning_events",
+        "context_history_fold_events", "max_preparation_peak_before_estimate",
+        "max_preparation_peak_after_estimate", "presentation_original_chars",
+        "presentation_visible_chars",
+    )
+    mechanisms = {arm: dict.fromkeys(mechanism_names, 0) for arm in arms}
+    pair = {
+        "primary_ordinary": True,
+        "direction": "regression",
+        "task_id": "synthetic-fixture",
+        "repetition": 1,
+        "baseline_sequence": 1,
+        "action_sequence": 2,
+        "first_post_request_observable_difference": {
+            "stage": "assistant_decision", "baseline_event_line": 1, "action_event_line": 2,
+        },
+        "baseline_failure": None,
+        "action_failure": "fixture_failure",
+        "input_delta_action_minus_baseline": 0,
+        "agent_seconds_delta_action_minus_baseline": 0.0,
+        "content_marker_count_changes": {},
+    }
+    summary = {
+        "schema_version": 1,
+        "protocol_sha256": "protocol-fixture",
+        "input_artifact_sha256": "input-fixture",
+        "execution_commit": "fixture-commit",
+        "evidence": {"audited": 1, "valid": 1, "provider_responses_verified": 1},
+        "paired_cases": [pair],
+        "task_equal_weight_metrics": metrics,
+        "mechanism_totals": mechanisms,
+        "interpretation_limits": ["synthetic fixture only"],
+    }
+    monkeypatch.setattr(
+        "tracefix.detailed_ablation._analyze", lambda *args: (summary, ledger_sha)
+    )
+
+    json_path, markdown_path, pairs_path = write_detailed_ablation_diagnostic(
+        experiment,
+        output_dir=output,
+        ledger_path=ledger,
+        campaign_before_path=ledger,
+        trace_hash_lock_path=ledger,
+    )
+
+    assert json.loads(json_path.read_text(encoding="utf-8"))["execution_commit"] == "fixture-commit"
+    assert "synthetic-fixture" in markdown_path.read_text(encoding="utf-8")
+    assert json.loads(pairs_path.read_text(encoding="utf-8"))["ordinary_pair_count"] == 1
+    assert (output / "evidence-index.json").is_file()
+
+
+def test_detailed_analyzer_validates_a_complete_synthetic_frozen_batch(
+    tmp_path, monkeypatch
+) -> None:
+    root = tmp_path / "synthetic-formal-run"
+    trials_dir = root / "trials"
+    trials_dir.mkdir(parents=True)
+    campaign = tmp_path / "campaign.json"
+    before = tmp_path / "campaign-before.json"
+    protocol_path = root / "protocol.json"
+    lock_path = tmp_path / "trace-lock.json"
+    ledger_identity = {
+        "cap_amount": 100.0,
+        "currency": "USD",
+        "provider": "synthetic provider",
+        "model_name": "deepseek/deepseek-flash",
+        "protocol_identity": "protocol-fixture",
+        "pricing_identity": "pricing-fixture",
+    }
+    before.write_text(json.dumps({**ledger_identity, "requests": []}), encoding="utf-8")
+    task_ids = [f"fixture-task-{index}" for index in range(10)]
+    primary, special = task_ids[:8], task_ids[8:]
+    schedule = []
+    for task_id in task_ids:
+        for arm in detailed._ARMS:
+            for repetition in range(1, 4):
+                sequence = len(schedule) + 1
+                schedule.append(
+                    {
+                        "sequence": sequence,
+                        "task_id": task_id,
+                        "arm": arm,
+                        "repetition": repetition,
+                    }
+                )
+    protocol = {
+        "kind": "p2_four_arm_ablation_protocol",
+        "mode": "formal",
+        "code_commit": "synthetic-commit",
+        "qualified_task_ids": task_ids,
+        "primary_task_ids": primary,
+        "collection_failure_task_ids": special,
+        "schedule": schedule,
+    }
+    protocol_path.write_text(json.dumps(protocol), encoding="utf-8")
+    protocol_sha = hashlib.sha256(protocol_path.read_bytes()).hexdigest()
+    audit_rows = []
+    trial_requests = []
+    trace_hashes = {}
+    ledger = {**ledger_identity, "requests": [], "uncertain_request": False,
+              "halt_reason": None, "reserved_amount": 0}
+
+    def write_json(path: Path, value: dict) -> str:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(value, ensure_ascii=False), encoding="utf-8")
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+
+    for plan in schedule:
+        sequence = plan["sequence"]
+        attempt = f"fixture-attempt-{sequence:03d}"
+        trace_path = root / "traces" / f"trace-{sequence:03d}.jsonl"
+        trace_events = _minimal_trace()
+        trace_events.insert(
+            0,
+            _event("task_started", {"task": "Synthetic bounded analysis fixture."},
+                   f"task-start-{sequence}"),
+        )
+        trace_path.parent.mkdir(parents=True, exist_ok=True)
+        trace_path.write_text(
+            "\n".join(json.dumps(event, ensure_ascii=False) for event in trace_events),
+            encoding="utf-8",
+        )
+        trace_sha = hashlib.sha256(trace_path.read_bytes()).hexdigest()
+        relative_trace = detailed._relative(trace_path)
+        trace_hashes[relative_trace] = trace_sha
+
+        patch_path = root / "patches" / f"patch-{sequence:03d}.diff"
+        patch_sha = hashlib.sha256(b"synthetic diff\n").hexdigest()
+        patch_path.parent.mkdir(parents=True, exist_ok=True)
+        patch_path.write_bytes(b"synthetic diff\n")
+        verification_path = root / "verification" / f"verification-{sequence:03d}.json"
+        verification_sha = write_json(verification_path, {"status": "synthetic"})
+        run_path = root / "runs" / f"run-{sequence:03d}.json"
+        write_json(
+            run_path,
+            {
+                "trace_path": str(trace_path),
+                "workspace": "fixture-workspace",
+                "duration_seconds": 1.0,
+                "model_request_seconds": 0.1,
+                "tool_execution_seconds": 0.1,
+                "context_preparation_seconds": 0.1,
+                "repository_index_seconds": 0.1,
+                "cached_tool_calls": 0,
+                "repo_map": None,
+                "presentation_metrics": {
+                    "original_chars": 12,
+                    "presented_chars": 12,
+                    "compacted_result_count": 0,
+                },
+            },
+        )
+        response_path = root / "responses" / f"response-{sequence:03d}.json"
+        request_id = f"{attempt}:1"
+        response_usage = {
+            "prompt_tokens": 10,
+            "completion_tokens": 2,
+            "total_tokens": 12,
+            "prompt_cache_hit_tokens": 0,
+            "prompt_cache_miss_tokens": 10,
+        }
+        response_sha = write_json(
+            response_path,
+            {
+                "request_id": request_id,
+                "provider_model": "deepseek-flash",
+                "provider_usage": response_usage,
+            },
+        )
+        trial_requests.append(
+            {
+                "request_id": request_id,
+                "status": "settled",
+                "response_received": True,
+                "calculated_cost_amount": 0.1,
+                "response_evidence_path": str(response_path),
+                "response_evidence_sha256": response_sha,
+                "currency": "USD",
+            }
+        )
+        write_json(
+            trials_dir / f"{sequence:03d}.json",
+            {
+                **plan,
+                "mode": "formal",
+                "status": "verification_complete",
+                "attempt_id": attempt,
+                "stop_reason": "completed",
+                "run_result_path": str(run_path),
+                "agent_patch_path": str(patch_path),
+                "agent_patch_sha256": patch_sha,
+                "verification_path": str(verification_path),
+                "verification_sha256": verification_sha,
+                "input_tokens": 10,
+                "output_tokens": 2,
+                "calculated_cost_amount": 0.1,
+                "agent_duration_seconds": 1.0,
+                "verification_duration_seconds": 0.2,
+            },
+        )
+        audit_rows.append(
+            {
+                "sequence": sequence,
+                "evidence_valid": True,
+                "independent_passed": sequence % 2 == 0,
+                "verification_reason": None,
+                "termination_category": "completed",
+                "repo_map_candidate_reads": 0,
+                "system_prompt_sha256": "prompt-fixture",
+            }
+        )
+    ledger["requests"] = trial_requests
+    campaign.write_text(json.dumps(ledger), encoding="utf-8")
+    lock_path.write_text(
+        json.dumps({
+            "kind": "offline_context_stage_diagnostic",
+            "execution_commit": "synthetic-commit",
+            "trace_sha256": trace_hashes,
+        }),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        detailed,
+        "_audit_p2_evidence",
+        lambda _root: {"protocol_sha256": protocol_sha, "rows": audit_rows},
+    )
+
+    report, unchanged_ledger_sha = detailed._analyze(root, campaign, before, lock_path)
+
+    assert report["evidence"]["audited"] == 120
+    assert report["evidence"]["provider_responses_verified"] == 120
+    assert len(report["paired_cases"]) == 30
+    assert report["paid_requests_made"] == report["provider_clients_constructed"] == 0
+    assert unchanged_ledger_sha == hashlib.sha256(campaign.read_bytes()).hexdigest()

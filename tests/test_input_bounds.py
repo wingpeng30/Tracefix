@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import json
+from types import SimpleNamespace
+
 import pytest
 
 from tracefix.exceptions import BenchmarkError, LLMProviderError
@@ -53,7 +56,9 @@ def _llm(
 
     class Delegate:
         def count_input_bound(self, messages, tools=()):
-            return InputBound(tokens, status, "test-qualified-counter", "fixture")
+            return InputBound(
+                tokens, status, "test-qualified-counter", "fixture", "a" * 64
+            )
 
         def complete(self, messages, tools=()):
             raise AssertionError("admission test must not invoke provider")
@@ -86,6 +91,13 @@ def test_standard_budget_and_unqualified_count_stop_before_reservation(tmp_path)
     assert limited.value.code == "p2_request_input_limit_exceeded"
     assert not (tmp_path / "standard" / "ledger.json").exists()
     assert not (tmp_path / "estimate" / "ledger.json").exists()
+
+
+def test_reserved_request_ledger_records_final_request_hash(tmp_path) -> None:
+    with pytest.raises(AssertionError, match="must not invoke provider"):
+        _llm(tmp_path, 100).complete(())
+    ledger = json.loads((tmp_path / "ledger.json").read_text(encoding="utf-8"))
+    assert ledger["requests"][0]["request_sha256"] == "a" * 64
 
 
 def test_provider_identity_and_profiles() -> None:
@@ -137,6 +149,9 @@ def test_official_counter_scope_rejects_unqualified_text_and_special_markers(
         ],
     }
     assert count_deepseek_v41_request(body).status == "unavailable"
+    missing_tokenizer = count_deepseek_v41_request(body)
+    assert len(missing_tokenizer.request_sha256 or "") == 64
+    assert missing_tokenizer.request_sha256 == count_deepseek_v41_request(body).request_sha256
     assert (
         count_deepseek_v41_request(
             {**body, "messages": [{"role": "user", "content": "<think>literal"}]}
@@ -144,6 +159,19 @@ def test_official_counter_scope_rejects_unqualified_text_and_special_markers(
         == "unverified special-token literal"
     )
     assert count_deepseek_v41_request({**body, "model": "unknown"}).status == "unavailable"
+    assert count_deepseek_v41_request({**body, "unknown_parameter": True}).identity == (
+        "unsupported request fields"
+    )
+    assert count_deepseek_v41_request({**body, "messages": []}).identity == "invalid messages"
+    assert count_deepseek_v41_request(
+        {**body, "messages": [{"role": "system", "content": "x", "unexpected": 1}]}
+    ).identity == "invalid message structure"
+    assert count_deepseek_v41_request(
+        {**body, "messages": [{"role": "developer", "content": "x"}]}
+    ).identity == "invalid message role"
+    assert count_deepseek_v41_request({**body, "tools": [None]}).identity == (
+        "invalid tool schema"
+    )
     assert (
         count_deepseek_v41_request(
             {**body, "messages": [{"role": "user", "content": [{"type": "image_url"}]}]}
@@ -166,3 +194,103 @@ def test_official_counter_rejects_package_version_change_before_counting(
     })
     assert result.status == "unavailable"
     assert result.identity == "ValueError"
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "identity"),
+    [
+        ("tool_calls", {}, "invalid tool calls"),
+        ("tool_calls", [{"id": "x"}], "invalid tool call structure"),
+    ],
+)
+def test_official_counter_rejects_malformed_tool_calls(field, value, identity) -> None:
+    body = {
+        "model": "deepseek-flash",
+        "thinking": {"type": "disabled"},
+        "messages": [{"role": "assistant", "content": None, field: value}],
+    }
+    assert count_deepseek_v41_request(body).identity == identity
+    assert count_deepseek_v41_request(
+        {
+            "model": "deepseek-flash",
+            "thinking": {"type": "disabled"},
+            "messages": [{"role": "user", "content": "x"}],
+            "tools": None,
+        }
+    ).identity == "invalid tool schemas"
+    assert count_deepseek_v41_request(
+        {
+            "model": "deepseek-flash",
+            "thinking": {"type": "disabled"},
+            "messages": [{"role": "user", "content": "x"}],
+            "tools": [{"type": "function", "function": {"name": "x", "parameters": []}}],
+        }
+    ).identity == "invalid tool schema"
+
+
+@pytest.mark.parametrize(("encoded", "expected"), [([1, 2, 3], "estimate"), ([], "unavailable")])
+def test_official_counter_uses_frozen_renderer_as_estimate(
+    tmp_path, monkeypatch, encoded, expected
+) -> None:
+    import hashlib
+
+    import tracefix.models.input_bounds as bounds
+
+    tokenizer = tmp_path / "tokenizer.json"
+    tokenizer.write_text("fixture tokenizer", encoding="utf-8")
+    digest = hashlib.sha256(tokenizer.read_bytes()).hexdigest()
+    monkeypatch.setenv("TRACEFIX_DEEPSEEK_V41_TOKENIZER_JSON", str(tokenizer))
+    monkeypatch.setattr(bounds, "V41_TOKENIZER_SHA256", digest)
+    monkeypatch.setattr(bounds.metadata, "version", lambda _: bounds.V41_RECIPE_VERSION)
+
+    class Encoding:
+        def with_tokenizer(self, _tokenizer):
+            return self
+
+        def encode(self, conversation):
+            assert conversation == "rendered fixture"
+            return encoded
+
+    class Request:
+        def __init__(self, payload):
+            self.payload = payload
+
+        def convert(self, _options):
+            return SimpleNamespace(conversation="rendered fixture")
+
+    recipe = SimpleNamespace(
+        ChatCompletionRequest=Request,
+        ConversionOptions=lambda: object(),
+        Tokenizer=SimpleNamespace(from_file=lambda _path: object()),
+        DeepseekV41Encoding=Encoding,
+    )
+    monkeypatch.setattr(bounds.importlib, "import_module", lambda _name: recipe)
+    result = bounds.count_deepseek_v41_request(
+        {
+            "model": "deepseek-flash",
+            "thinking": {"type": "disabled"},
+            "messages": [{"role": "user", "content": "中文 😀"}],
+            "tools": [],
+        }
+    )
+    assert result.status == expected
+    assert result.tokens == (len(encoded) if encoded else None)
+    assert result.request_sha256 and len(result.request_sha256) == 64
+    if expected == "estimate":
+        assert result.identity == digest
+        monkeypatch.setattr(bounds, "V41_TOKENIZER_SHA256", "0" * 64)
+        mismatch = bounds.count_deepseek_v41_request(
+            {
+                "model": "deepseek-flash",
+                "thinking": {"type": "disabled"},
+                "messages": [{"role": "user", "content": "中文 😀"}],
+            }
+        )
+        assert mismatch.status == "unavailable"
+        assert mismatch.identity == "ValueError"
+
+
+def test_official_counter_rejects_unserializable_request_hash() -> None:
+    result = count_deepseek_v41_request({"unserializable": object()})
+    assert result.status == "unavailable"
+    assert result.identity == "non-serializable request"

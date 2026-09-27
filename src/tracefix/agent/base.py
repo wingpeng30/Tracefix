@@ -15,6 +15,7 @@ from tracefix.messages import MessageHistory
 from tracefix.models.base import BaseLLM
 from tracefix.repository import RepoMapConfig
 from tracefix.tools.base import ToolRegistry
+from tracefix.tools.skills import SkillLimits
 from tracefix.tracing.base import TraceSink
 
 DEFAULT_SYSTEM_PROMPT = """你是 TraceFix，一个负责修复 Python 仓库问题的 Coding Agent。
@@ -62,6 +63,7 @@ class AgentConfig(BaseModel):
     max_file_reads_before_patch: int = Field(default=8, ge=1)
     repo_map_reads_before_patch: int = Field(default=2, ge=1)
     skills_enabled: bool = False
+    skill_limits: SkillLimits = Field(default_factory=SkillLimits)
     token_optimization_enabled: bool = True
     # Optional per-feature overrides preserve the legacy master switch when unset.
     tool_result_presentation_enabled: bool | None = None

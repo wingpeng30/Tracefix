@@ -6,7 +6,7 @@ Token 预算下，通过仓库结构检索、动态上下文和测试驱动的�
 
 完整的版本代码说明与实验索引见 [`docs/README.md`](docs/README.md)。
 
-最新开发版本为 **v0.8.3**（最新稳定标签以 GitHub Releases 为准）。它已经具备一条可真实运行的最小闭环，并新增确定性上下文管理：
+当前包版本为 **v0.8.4**（最新稳定标签以 GitHub Releases 为准）。它已经具备一条可真实运行的最小闭环，并新增确定性上下文管理：
 完整轨迹始终保留，模型请求视图会按压力裁剪超长工具输出并折叠较早轮次。
 
 ## 当前能力
@@ -27,6 +27,7 @@ Token 预算下，通过仓库结构检索、动态上下文和测试驱动的�
 - 支持关闭压缩与 32k 压缩的交替、至少三次重复配对实验。
 - 3 道来自 SWE-bench Verified、gold 实际修改多个源码文件的真实 Issue 任务。
 - 确定性 Python AST Repository Indexer 与任务相关 Repo Map，先给出候选文件和符号行号。
+- 可选 Skills 目录与按需正文加载；默认关闭，首版只附带 TraceFix 审核过的只读指令。
 
 ## 架构
 
@@ -71,6 +72,12 @@ python -m pip install -i https://pypi.tuna.tsinghua.edu.cn/simple -e ".[llm]"
 
 ```powershell
 python -m pip install -i https://pypi.tuna.tsinghua.edu.cn/simple -e ".[dev,llm]"
+```
+
+若使用 Docker 执行后端或运行 Requests TLS 验收，还需安装 `docker` extra：
+
+```powershell
+python -m pip install -i https://pypi.tuna.tsinghua.edu.cn/simple -e ".[dev,llm,docker]"
 ```
 
 核心数据模型仍然只依赖 Pydantic；LiteLLM 和 `.env` 加载器位于 `llm` 可选依赖中。
@@ -164,6 +171,38 @@ CLI 参数优先于 `TRACEFIX_*` 环境变量，环境变量优先于代码默�
 模式。需要检查压缩后的实际供应商输入时，可加 `--record-request-views`；该选项会增大
 `trajectory.jsonl`，默认关闭，且记录只做凭据脱敏，不应直接公开含业务代码的轨迹。
 当前消息协议尚未保存思考模式工具轮次要求的 `reasoning_content`。
+
+## 零模型调用复现
+
+从干净 checkout 安装后，可用固定模型替身走一次真实 `TraceFixRunner` 控制流：搜索、读取、
+应用补丁、执行 pytest、读取 Diff 并保存轨迹。替身不会构造供应商客户端或发送网络请求：
+
+```powershell
+python -m pip install -e ".[dev]"
+python scripts/reproduce_zero_call.py --output runs/reproduction-baseline
+python scripts/reproduce_zero_call.py --skills-enabled --output runs/reproduction-skills
+```
+
+该合成流程验证的是安装和工程控制流，不是离线定位效果或真实独立修复成功率。Docker 容器
+复现、受控 Requests TLS 检查、历史三题输入和外部材料边界见
+[`docs/reproduction.md`](docs/reproduction.md)。
+
+## 按需 Skills
+
+Skills 默认关闭。可通过 `tracefix run --skills` 或 `TRACEFIX_SKILLS_ENABLED=true` 开启；启动时
+只向 Agent 展示审核技能的名称和简介，需要时才由 `load_skill` 读取指令及显式列出的 Markdown
+参考文本。工具权限不会随技能变化，`allowed-tools` 不会扩大 ToolRegistry。
+
+```powershell
+tracefix run --repo D:\repos\example --task-file issue.md --skills `
+  --skills-max-active 4 `
+  --skills-max-bytes 16384 `
+  --skills-max-reference-bytes 8192 `
+  --skills-max-total-bytes 32768
+```
+
+字节上限按 UTF-8 计量，是内容大小限制，不是 Token 硬上限。Skills 开关、Docker bridge 行为、
+上下文压缩保留以及回退配置见复现指南。
 
 ## 上下文压缩
 

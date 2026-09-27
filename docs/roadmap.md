@@ -4,6 +4,8 @@
 
 2026-09-27 Skills/MCP 接入：TraceFix 内置 `tracefix-debugging` skill 已完成默认关闭的按需加载实现，含运行轨迹、哈希身份和压缩后 system 锚点；fixture 与全量测试通过。MCP 单独评估后暂不接入 Serena：其语义引用能力有潜在补充价值，但当前源码/容器与异步会话生命周期、工具白名单和冻结依赖尚未完成零费用端到端验证，故不引入空壳适配器或依赖。没有离线定位或真实独立修复收益结论。配置与证据见 [`experiments/2026-09-27-skills-mcp-integration.md`](experiments/2026-09-27-skills-mcp-integration.md)。
 
+2026-09-28 当前 checkout 复现与 Skills Docker 链路：实现 bridge 技能目录传递、UTF-8 字节限制、参考文本去重、运行轨迹记录、可压缩上下文锚点、请求序列哈希契约及本地/Docker 零调用复现入口；Requests TLS 在实际测试进程与新独立验收容器通过。最终 pytest-only 602 passed，但精确覆盖率 89.62%，pytest 因既有 90% 门槛退出 1；不能宣称工程门槛通过。pytest-10081 点版本归因、Sphinx 基线 recipe 重建和跨平台完整依赖哈希锁仍待补齐。具体实现、证据位置和限制见 [`tasks/2026-09-28-current-checkout-reproduction.md`](tasks/2026-09-28-current-checkout-reproduction.md)。
+
 TraceFix 的目标是在固定模型和预算下，通过代码检索、上下文管理和测试反馈，减少真实 Issue
 修复的输入 Token 与耗时，同时维持或提高独立验收成功率。
 

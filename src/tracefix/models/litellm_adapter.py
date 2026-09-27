@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import importlib
 import json
 from collections.abc import Mapping, Sequence
@@ -35,6 +36,7 @@ class LiteLLMAdapter(BaseLLM):
     def __init__(self, config: LLMConfig, *, client: Any | None = None) -> None:
         super().__init__(config)
         self._client = client
+        self._counted_request_sha256: str | None = None
 
     @property
     def client(self) -> Any:
@@ -53,8 +55,17 @@ class LiteLLMAdapter(BaseLLM):
         messages: Sequence[Message],
         tools: Sequence[ToolSpec] = (),
     ) -> LLMResponse:
-        client = self.client
         kwargs = self.request_kwargs(messages, tools)
+        if self._counted_request_sha256 is not None:
+            serialized = json.dumps(
+                kwargs, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+            ).encode("utf-8")
+            actual_sha256 = hashlib.sha256(serialized).hexdigest()
+            expected_sha256 = self._counted_request_sha256
+            self._counted_request_sha256 = None
+            if actual_sha256 != expected_sha256:
+                raise LLMProviderError("serialized request changed after input counting")
+        client = self.client
 
         try:
             response = client.completion(**kwargs)
@@ -174,12 +185,20 @@ class LiteLLMAdapter(BaseLLM):
                 return InputBound(
                     None, "unavailable", "deepseek-v41", "unsupported request parameters"
                 )
-            return count_deepseek_v41_request({
+            bound = count_deepseek_v41_request({
                 "model": "deepseek-flash",
                 "messages": kwargs["messages"],
                 "tools": kwargs.get("tools", []),
                 "thinking": kwargs.get("extra_body", {}).get("thinking"),
             })
+            serialized = json.dumps(
+                kwargs, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+            ).encode("utf-8")
+            request_sha256 = hashlib.sha256(serialized).hexdigest()
+            self._counted_request_sha256 = request_sha256
+            return InputBound(
+                bound.tokens, bound.status, bound.method, bound.identity, request_sha256
+            )
         return InputBound(None, "unavailable", "unknown", "no qualified model counter")
 
     @staticmethod
