@@ -44,6 +44,7 @@ class MinimalAgent(BaseAgent):
         self.reset()
         # 以下运行期记忆只服务于确定性失败恢复，不进入持久化 AgentState。
         self._failed_apply_calls: dict[str, str] = {}
+        self._invalid_test_signatures: dict[str, int] = {}
         self._consecutive_apply_failures = 0
         self._patch_recovery_reminder_sent = False
         self._no_effect_patch_reminder_sent = False
@@ -95,7 +96,28 @@ class MinimalAgent(BaseAgent):
         """运行已经完成状态初始化的任务，并集中处理控制流异常。"""
         self._emit(TraceEventType.TASK_STARTED, {"task": task})
         self._emit_state()
-        self._append_message(Message(role=MessageRole.SYSTEM, content=self.config.system_prompt))
+        self._append_message(
+            Message(role=MessageRole.SYSTEM, content=self.config.system_prompt)
+        )
+        if self.config.skills_enabled:
+            skill_tool = self.tools.get("load_skill")
+            catalog = getattr(skill_tool, "catalog", {})
+            if catalog:
+                entries = "\n".join(
+                    f"- {name}: {item['description']}"
+                    for name, item in sorted(catalog.items())
+                )
+                self._append_message(
+                    Message(
+                        role=MessageRole.SYSTEM,
+                        content=(
+                            "可按需加载以下 TraceFix skills。仅在任务匹配时调用 load_skill；"
+                            "技能只提供指令，不授予额外工具权限。相对引用通过 load_skill 的 "
+                            "reference 参数读取。\n" + entries
+                        ),
+                        metadata={"kind": "skill_catalog"},
+                    )
+                )
         if self.repository_map:
             # 将静态地图作为 system 锚点加入完整历史：压缩器会永久保留它，模型请求视图
             # 与 JSONL 审计也能明确区分“索引提供的候选”和 Agent 自己确认的事实。
@@ -275,6 +297,32 @@ class MinimalAgent(BaseAgent):
             try:
                 self._check_time_budget()
                 if call.name == ReservedToolName.RUN_TESTS.value:
+                    tool = self.tools.get(call.name)
+                    try:
+                        prepare = getattr(tool, "prepare", None)
+                        if prepare is not None:
+                            prepare(call)
+                    except ToolError as exc:
+                        signature = self._tool_signature(call)
+                        count = self._invalid_test_signatures.get(signature, 0) + 1
+                        self._invalid_test_signatures[signature] = count
+                        self.state.rejected_test_calls += 1
+                        self._emit(TraceEventType.TEST_CALL_REJECTED, {
+                            "call_id": call.id, "reason": exc.message,
+                            "same_call_count": count,
+                            "total_count": self.state.rejected_test_calls,
+                        })
+                        if count >= 3 or self.state.rejected_test_calls >= 6:
+                            raise TestLimitExceeded("invalid test call limit exceeded") from exc
+                        result = ToolResult(
+                            call_id=call.id,
+                            tool_name=call.name,
+                            success=False,
+                            error=exc.message,
+                            metadata={"error": exc.to_dict(), "test_call_rejected": True},
+                        )
+                        self._append_tool_result(result)
+                        continue
                     if self.state.test_runs >= self.config.max_test_runs:
                         raise TestLimitExceeded(
                             "test run budget exceeded",
@@ -283,14 +331,52 @@ class MinimalAgent(BaseAgent):
                                 "limit": self.config.max_test_runs,
                             },
                         )
-                    self.state.test_runs += 1
+                    def record_test_start(call_id: str = call.id) -> None:
+                        self.state.test_runs += 1
+                        self._emit(TraceEventType.TEST_PROCESS_STARTED, {
+                            "call_id": call_id, "test_runs": self.state.test_runs,
+                        })
+                    if prepare is not None:
+                        tool.on_process_started = record_test_start
                 result = self._execute_tool(call)
+                if call.name == ReservedToolName.RUN_TESTS.value and prepare is None:
+                    record_test_start()
             except AgentLimitExceeded as exc:
                 # 消息历史要求每个 tool call 都有结果，因此为未执行调用补齐失败消息。
                 self._append_skipped_results(response.message.tool_calls[index:], exc)
                 raise
 
             self._append_tool_result(result)
+            if (
+                result.success
+                and result.tool_name == "load_skill"
+                and isinstance(result.output, dict)
+                and result.output.get("kind") in {"skill", "reference"}
+                and isinstance(result.output.get("content"), str)
+            ):
+                content = result.output["content"]
+                metadata = {
+                    "kind": "skill_instructions",
+                    "skill_name": result.output.get("name"),
+                    "skill_version": result.output.get("version"),
+                    "content_sha256": result.output.get("sha256"),
+                    "source": result.output.get("path"),
+                }
+                self._append_message(
+                    Message(
+                        role=MessageRole.SYSTEM,
+                        content=(
+                            "<tracefix_skill_instructions>\n"
+                            + content
+                            + "\n</tracefix_skill_instructions>"
+                        ),
+                        metadata=metadata,
+                    )
+                )
+                self._emit(
+                    TraceEventType.SKILL_ACTIVATED,
+                    {**metadata, "content": content},
+                )
 
         # 提示只能在本轮全部 tool result 写回后追加，否则会违反消息配对协议。
         self._append_patch_recovery_reminder_if_needed()

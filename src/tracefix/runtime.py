@@ -25,6 +25,7 @@ from tracefix.agent import (
     ToolPresentationMetrics,
 )
 from tracefix.context import ContextMetrics
+from tracefix.docker_backend import DockerToolBackend
 from tracefix.exceptions import (
     RunConfigurationError,
     TraceFixError,
@@ -73,6 +74,14 @@ def load_environment_file(env_file: str | Path | None) -> None:
     load_dotenv(path, override=False)
 
 
+def default_output_root() -> Path:
+    """Allow the user to move new Agent run artifacts off the source drive."""
+    configured = os.environ.get("TRACEFIX_RUNS_ROOT")
+    if configured:
+        return Path(configured)
+    return Path(r"E:\TraceFixRunsActive") if os.name == "nt" else Path("runs")
+
+
 class RunConfig(BaseModel):
     """运行一个真实 TraceFix 任务需要的完整、可序列化配置。"""
 
@@ -81,7 +90,7 @@ class RunConfig(BaseModel):
     repo: Path
     task: str = Field(min_length=1)
     model_name: str = Field(default=DEFAULT_MODEL_NAME, min_length=1)
-    output_dir: Path = Path("runs")
+    output_dir: Path = Field(default_factory=default_output_root)
     env_file: Path | None = Path(".env")
     usd_cny_rate: float = Field(default=DEFAULT_USD_CNY_RATE, gt=0)
     llm_timeout_seconds: float = Field(default=120.0, gt=0)
@@ -91,6 +100,9 @@ class RunConfig(BaseModel):
     test_pythonpath_entries: tuple[Path, ...] = ()
     environment_recipe: EnvironmentRecipe | None = None
     test_environment_variables: dict[str, str] = Field(default_factory=dict)
+    execution_backend: Literal["local", "docker"] = "local"
+    docker_task_id: str | None = None
+    docker_input_root: Path | None = None
     agent_config: AgentConfig = Field(default_factory=AgentConfig)
 
     @model_validator(mode="after")
@@ -103,6 +115,10 @@ class RunConfig(BaseModel):
             raise ValueError("task cannot be empty")
         if not self.model_name:
             raise ValueError("model_name cannot be empty")
+        if self.execution_backend == "docker" and (
+            not self.docker_task_id or not self.docker_input_root
+        ):
+            raise ValueError("Docker execution requires a frozen task ID and input root")
         return self
 
 
@@ -186,6 +202,8 @@ class TraceFixRunner:
         source_repo = str(config.repo.expanduser().resolve())
         source_commit: str | None = None
         workspace: Path | None = None
+        docker_backend: DockerToolBackend | None = None
+        tools = None
         workspace_preparation: dict[str, JsonValue] = {}
         state = AgentState(
             status=AgentStatus.FAILED,
@@ -197,6 +215,7 @@ class TraceFixRunner:
         error: dict[str, JsonValue] | None = None
         changed_files: tuple[str, ...] = ()
         patch = ""
+        internal_artifacts: set[str] = set()
         sink: JSONLTraceSink | None = None
         agent: MinimalAgent | None = None
         repository_map: RepoMap | None = None
@@ -240,13 +259,44 @@ class TraceFixRunner:
             self._validate_credentials(config.model_name)
             source, source_commit = self._validate_source_repository(config.repo)
             source_repo = str(source)
-            workspace = self._clone_repository(source, workspace_path)
-            workspace_preparation = self._prepare_workspace(config, workspace, run_dir)
-            if workspace_preparation.get("success") is not True:
-                raise WorkspaceError(
-                    "agent workspace preparation failed",
-                    context={"workspace_preparation": workspace_preparation},
+            if config.execution_backend == "docker":
+                assert config.docker_task_id and config.docker_input_root
+                docker_backend = DockerToolBackend(
+                    task_id=config.docker_task_id,
+                    input_root=config.docker_input_root,
+                    run_dir=run_dir,
+                    run_id=run_id,
+                    timeout_seconds=min(120, int(config.agent_config.wall_time_seconds)),
                 )
+                tools = docker_backend.prepare(
+                    source_commit,
+                    source,
+                    Path(__file__).resolve().parents[2],
+                    repo_map_task=config.task,
+                    repo_map_config=config.agent_config.repo_map,
+                    skills_enabled=config.agent_config.skills_enabled,
+                )
+                workspace_preparation = docker_backend.workspace_preparation
+                repository_map = docker_backend.repo_map
+                if repository_map is not None:
+                    repo_map_path.write_text(
+                        repository_map.model_dump_json(indent=2), encoding="utf-8"
+                    )
+                    repository_index_seconds = float(
+                        docker_backend.workspace_preparation.get("repo_map_seconds", 0.0)
+                    )
+                internal_artifacts.add(".tracefix-build-tmp")
+            else:
+                workspace = self._clone_repository(source, workspace_path)
+                build_root = workspace / ".tracefix-build-tmp"
+                if not build_root.exists() and not build_root.is_symlink():
+                    internal_artifacts.add(build_root.name)
+                workspace_preparation = self._prepare_workspace(config, workspace, run_dir)
+                if workspace_preparation.get("success") is not True:
+                    raise WorkspaceError(
+                        "agent workspace preparation failed",
+                        context={"workspace_preparation": workspace_preparation},
+                    )
             sink.write(
                 TraceEvent(
                     event_type=TraceEventType.WORKSPACE_PREPARED,
@@ -256,7 +306,7 @@ class TraceFixRunner:
                 )
             )
 
-            if config.agent_config.repo_map.enabled:
+            if config.agent_config.repo_map.enabled and config.execution_backend == "local":
                 # 索引失败不应被静默吞掉：它会导致模型少看到本应稳定提供的定位信息。
                 # 但 AST 解析失败的单个文件由 RepositoryIndexer 自己作为 skipped 记录。
                 index_started = time.monotonic()
@@ -282,18 +332,23 @@ class TraceFixRunner:
                 )
 
             llm = self._llm_factory(llm_config)
-            tools = create_default_tool_registry(
-                workspace,
-                test_timeout_seconds=min(120.0, float(config.agent_config.wall_time_seconds)),
-                test_python_executable=config.test_python_executable,
-                test_pythonpath_entries=config.test_pythonpath_entries,
-                pytest_config=(
-                    config.environment_recipe.pytest_config
-                    if config.environment_recipe is not None
-                    else None
-                ),
-                test_environment_variables=config.test_environment_variables,
-            )
+            if tools is None:
+                assert workspace is not None
+                tools = create_default_tool_registry(
+                    workspace,
+                    evidence_dir=run_dir / "test-evidence",
+                    protected_dirs=internal_artifacts,
+                    skills_enabled=config.agent_config.skills_enabled,
+                    test_timeout_seconds=min(120.0, float(config.agent_config.wall_time_seconds)),
+                    test_python_executable=config.test_python_executable,
+                    test_pythonpath_entries=config.test_pythonpath_entries,
+                    pytest_config=(
+                        config.environment_recipe.pytest_config
+                        if config.environment_recipe is not None
+                        else None
+                    ),
+                    test_environment_variables=config.test_environment_variables,
+                )
             agent = MinimalAgent(
                 llm,
                 tools,
@@ -302,6 +357,8 @@ class TraceFixRunner:
                 repository_map=repository_map.text if repository_map else None,
                 repository_candidates=(repository_map.candidate_files if repository_map else ()),
             )
+            if docker_backend is not None:
+                docker_backend.set_phase("agent_running")
             state = agent.run(config.task)
         except KeyboardInterrupt:
             state = agent.state if agent is not None else state
@@ -318,9 +375,44 @@ class TraceFixRunner:
             error = self._serialize_error(exc)
             self._write_runner_error(sink, run_id, error)
         finally:
-            if workspace is not None:
+            if docker_backend is not None:
                 try:
-                    patch, changed_files = self._collect_diff(workspace)
+                    if docker_backend.session is None:
+                        raise WorkspaceError("Docker tool session was not initialized")
+                    remote_diff = docker_backend.session.call("get_git_diff", {"context_lines": 3})
+                    if not remote_diff.success or not isinstance(remote_diff.output, dict):
+                        raise WorkspaceError(
+                            "cannot collect final container product diff",
+                            context={"error": remote_diff.error},
+                        )
+                    if remote_diff.output.get("truncated"):
+                        raise WorkspaceError("container product diff exceeds export limit")
+                    patch = str(remote_diff.output.get("diff", ""))
+                    changed_files = tuple(
+                        str(item) for item in remote_diff.output.get("changed_files", [])
+                    )
+                    docker_backend.export_evidence()
+                    identity_path = run_dir / "container-identity.json"
+                    identity_path.write_text(
+                        json.dumps(
+                            docker_backend.workspace_preparation,
+                            ensure_ascii=False,
+                            indent=2,
+                        ),
+                        encoding="utf-8",
+                    )
+                except Exception as exc:
+                    if error is None:
+                        error = self._serialize_error(exc)
+                        state.status = AgentStatus.FAILED
+                        state.stop_reason = getattr(exc, "code", "container_export_error")
+                    try:
+                        docker_backend.export_evidence()
+                    except Exception:
+                        pass
+            elif workspace is not None:
+                try:
+                    patch, changed_files = self._collect_diff(workspace, internal_artifacts)
                 except Exception as exc:
                     # Diff 收集失败不应覆盖更早的根因，但必须在结果中可见。
                     if error is None:
@@ -344,7 +436,13 @@ class TraceFixRunner:
             run_id=run_id,
             source_repo=source_repo,
             source_commit=source_commit,
-            workspace=str(workspace) if workspace is not None else None,
+            workspace=(
+                str(workspace)
+                if workspace is not None
+                else f"docker://{docker_backend.container_id}/work/agent"
+                if docker_backend and docker_backend.container_id
+                else None
+            ),
             model_name=config.model_name,
             status=state.status,
             stop_reason=state.stop_reason,
@@ -382,6 +480,24 @@ class TraceFixRunner:
             error=error,
         )
         result_path.write_text(result.model_dump_json(indent=2), encoding="utf-8")
+        # Do not advertise a terminal container phase until the run result is durable.
+        if docker_backend is not None:
+            try:
+                docker_backend.set_phase(
+                    "interrupted"
+                    if state.status is AgentStatus.INTERRUPTED
+                    else "failed"
+                    if state.status is AgentStatus.FAILED or error is not None
+                    else "completed"
+                )
+            except Exception:
+                pass
+        if docker_backend is not None:
+            docker_backend.close(
+                remove=(
+                    state.status is AgentStatus.COMPLETED and error is None and bool(changed_files)
+                )
+            )
         return result
 
     @staticmethod
@@ -421,17 +537,9 @@ class TraceFixRunner:
         recipe = config.environment_recipe
         python = str((config.test_python_executable or Path(sys.executable)).resolve())
         build_root = workspace / ".tracefix-build-tmp"
-        build_root.mkdir(parents=True, exist_ok=True)
-        exclude = workspace / ".git" / "info" / "exclude"
-        if exclude.is_file():
-            current = exclude.read_text(encoding="utf-8", errors="replace")
-            for entry in (".tracefix-build-tmp/", ".tracefix-test-tmp/"):
-                if entry not in current.splitlines():
-                    with exclude.open("a", encoding="utf-8") as stream:
-                        if current and not current.endswith("\n"):
-                            stream.write("\n")
-                        stream.write(f"{entry}\n")
-                    current += f"{entry}\n"
+        if build_root.exists() or build_root.is_symlink():
+            raise WorkspaceError("TraceFix build temporary path already exists")
+        build_root.mkdir(parents=True)
         environment = dict(os.environ)
         for name in tuple(environment):
             normalized = name.upper()
@@ -600,11 +708,7 @@ class TraceFixRunner:
     def _clone_repository(cls, source: Path, destination: Path) -> Path:
         """从已验证 HEAD 建立隔离源码副本，并保留完整 Git 元数据。"""
         destination.parent.mkdir(parents=True, exist_ok=True)
-        if (
-            destination.exists()
-            or destination.is_symlink()
-            or cls._is_junction(destination)
-        ):
+        if destination.exists() or destination.is_symlink() or cls._is_junction(destination):
             raise WorkspaceError(
                 "isolated workspace destination already exists",
                 context={"destination": str(destination)},
@@ -637,7 +741,6 @@ class TraceFixRunner:
                     },
                 ) from worktree_error
         return destination.resolve()
-
 
     @staticmethod
     def _is_junction(path: Path) -> bool:
@@ -698,9 +801,11 @@ class TraceFixRunner:
         return result
 
     @staticmethod
-    def _collect_diff(workspace: Path) -> tuple[str, tuple[str, ...]]:
+    def _collect_diff(
+        workspace: Path, protected_dirs: set[str] | None = None
+    ) -> tuple[str, tuple[str, ...]]:
         """复用公开 diff 工具收集 tracked 与 untracked 修改。"""
-        tool = GetGitDiffTool(workspace, max_output_chars=10_000_000)
+        tool = GetGitDiffTool(workspace, max_output_chars=10_000_000, protected_dirs=protected_dirs)
         result = tool.execute(ToolCall(id="runner-final-diff", name=tool.spec.name))
         if not result.success or not isinstance(result.output, dict):
             raise WorkspaceError(

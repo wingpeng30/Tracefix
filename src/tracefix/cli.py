@@ -112,7 +112,9 @@ def _add_shared_options(parser: argparse.ArgumentParser) -> None:
     """为 run 与 eval 添加完全一致的模型、费用和预算参数。"""
     parser.add_argument("--model", help=f"LiteLLM 模型名，默认 {DEFAULT_MODEL_NAME}")
     parser.add_argument("--env-file", type=Path, default=Path(".env"), help="密钥环境文件")
-    parser.add_argument("--output-dir", type=Path, help="运行产物根目录，默认 runs")
+    parser.add_argument(
+        "--output-dir", type=Path, help="运行产物根目录，默认由 TRACEFIX_RUNS_ROOT 决定"
+    )
     parser.add_argument("--usd-cny-rate", type=float, help="美元兑人民币估算汇率")
     parser.add_argument("--max-steps", type=int, help="最大模型请求次数")
     parser.add_argument("--max-input-tokens", type=int, help="累计输入 Token 上限")
@@ -131,6 +133,12 @@ def _add_shared_options(parser: argparse.ArgumentParser) -> None:
         "--per-request-output-tokens",
         type=int,
         help="单次模型响应的最大输出 Token",
+    )
+    parser.add_argument(
+        "--skills",
+        action="store_true",
+        default=None,
+        help="启用按需加载 TraceFix 内置 skills",
     )
     parser.add_argument(
         "--test-python",
@@ -185,6 +193,23 @@ def build_parser() -> argparse.ArgumentParser:
 
     run_parser = subparsers.add_parser("run", help="运行一个仓库修复任务")
     run_parser.add_argument("--repo", type=Path, required=True, help="干净的本地 Git 仓库")
+    run_parser.add_argument(
+        "--execution-backend",
+        choices=("local", "docker"),
+        default="local",
+        help="工具执行后端；Docker 仅接受冻结试点任务",
+    )
+    run_parser.add_argument(
+        "--docker-task-id",
+        choices=("pytest-dev__pytest-10081", "psf__requests-1766", "sphinx-doc__sphinx-10449"),
+        help="匹配冻结 Docker 任务身份",
+    )
+    run_parser.add_argument(
+        "--docker-input-root",
+        type=Path,
+        default=Path("runs/docker-foundation-20260926-v1/inputs-v2"),
+        help="只读冻结 Docker 输入根目录",
+    )
     task_group = run_parser.add_mutually_exclusive_group(required=True)
     task_group.add_argument("--task", help="直接传入 Bug 描述")
     task_group.add_argument("--task-file", type=Path, help="从 UTF-8 文件读取 Bug 描述")
@@ -327,7 +352,10 @@ def build_parser() -> argparse.ArgumentParser:
     p2_parser.add_argument(
         "--design",
         choices=(
-            "whole_system", "ablation", "presentation_only", "validation_closure",
+            "whole_system",
+            "ablation",
+            "presentation_only",
+            "validation_closure",
             "no_effect_recovery",
         ),
         default="whole_system",
@@ -337,12 +365,20 @@ def build_parser() -> argparse.ArgumentParser:
     p2_run.add_argument(
         "--design",
         choices=(
-            "whole_system", "ablation", "presentation_only", "validation_closure",
+            "whole_system",
+            "ablation",
+            "presentation_only",
+            "validation_closure",
             "no_effect_recovery",
         ),
         default="whole_system",
     )
     p2_run.add_argument("--experiment-dir", type=Path, required=True)
+    p2_run.add_argument(
+        "--input-budget-profile", choices=("standard", "long-context"), default="standard"
+    )
+    p2_run.add_argument("--max-input-tokens", type=int)
+    p2_run.add_argument("--per-request-input-tokens", type=int)
     p2_run.add_argument("--tasks", type=Path, default=Path("benchmarks/real_candidates"))
     p2_run.add_argument("--recipes", type=Path, default=Path("benchmarks/real_recipes"))
     p2_run.add_argument("--source-root", type=Path, required=True)
@@ -390,7 +426,10 @@ def build_parser() -> argparse.ArgumentParser:
     p2_check.add_argument(
         "--design",
         choices=(
-            "whole_system", "ablation", "presentation_only", "validation_closure",
+            "whole_system",
+            "ablation",
+            "presentation_only",
+            "validation_closure",
             "no_effect_recovery",
         ),
         default="whole_system",
@@ -530,7 +569,14 @@ def _resolve_shared(args: argparse.Namespace, *, real_issue_budget: bool = False
     load_environment_file(args.env_file)
     return {
         "model_name": _first(args.model, "TRACEFIX_MODEL", DEFAULT_MODEL_NAME),
-        "output_dir": Path(_first(args.output_dir, "TRACEFIX_OUTPUT_DIR", "runs")),
+        "output_dir": Path(
+            _first(
+                args.output_dir,
+                "TRACEFIX_OUTPUT_DIR",
+                os.getenv("TRACEFIX_RUNS_ROOT")
+                or (r"E:\TraceFixRunsActive" if os.name == "nt" else "runs"),
+            )
+        ),
         "env_file": args.env_file,
         "usd_cny_rate": _number_or_default(
             args.usd_cny_rate,
@@ -571,6 +617,11 @@ def _resolve_shared(args: argparse.Namespace, *, real_issue_budget: bool = False
             )
         ),
         "agent_config": AgentConfig(
+            skills_enabled=(
+                args.skills
+                if args.skills is not None
+                else _env_bool("TRACEFIX_SKILLS_ENABLED", False)
+            ),
             max_steps=_number_or_default(args.max_steps, "TRACEFIX_MAX_STEPS", int, 30),
             max_input_tokens=_number_or_default(
                 args.max_input_tokens,
@@ -895,7 +946,14 @@ def main(argv: list[str] | None = None) -> int:
                     prior_unsettled_reservation=args.prior_unsettled_reservation,
                     campaign_ledger_path=args.campaign_ledger,
                 )
+            budget_options = {
+                "input_budget_profile": args.input_budget_profile,
+                "per_request_input_tokens": args.per_request_input_tokens,
+            }
+            if args.max_input_tokens is not None:
+                budget_options["max_input_tokens"] = args.max_input_tokens
             config = P2ProtocolConfig(
+                **budget_options,
                 design=args.design,
                 tasks_dir=args.tasks,
                 recipes_dir=args.recipes,
@@ -1083,6 +1141,15 @@ def main(argv: list[str] | None = None) -> int:
             in {"real-prescreen", "real-repo-map-prescreen", "real-paired-eval"},
         )
         if args.command == "run":
+            shared.update(
+                {
+                    "execution_backend": args.execution_backend,
+                    "docker_task_id": args.docker_task_id,
+                    "docker_input_root": args.docker_input_root
+                    if args.execution_backend == "docker"
+                    else None,
+                }
+            )
             result = TraceFixRunner().run(
                 RunConfig(repo=args.repo, task=_read_task(args), **shared)
             )

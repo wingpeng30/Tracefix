@@ -249,6 +249,30 @@ class P2TrialBudgetExceeded(AgentLimitExceeded, BenchmarkError):
     code = "p2_trial_budget_exhausted"
 
 
+class P2TrialInputBudgetExceeded(P2TrialBudgetExceeded):
+    """A trial's cumulative input allocation cannot admit another request."""
+
+    code = "p2_trial_input_budget_exhausted"
+
+
+class P2CounterUnavailable(BenchmarkError):
+    """No qualified hard input-token bound exists for this request."""
+
+    code = "p2_input_counter_unavailable"
+
+
+class P2ModelContextExceeded(BenchmarkError):
+    """The qualified input bound plus output exceeds official capacity."""
+
+    code = "p2_model_context_exceeded"
+
+
+class P2RequestInputLimitExceeded(BenchmarkError):
+    """A user-set per-request input cap rejects the request."""
+
+    code = "p2_request_input_limit_exceeded"
+
+
 class P2CampaignBudgetExceeded(AgentLimitExceeded, BenchmarkError):
     """共享费用上限不足；停止调用，但仍验收已保存补丁。"""
 

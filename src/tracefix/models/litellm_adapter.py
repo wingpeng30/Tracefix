@@ -19,6 +19,7 @@ from tracefix.exceptions import (
 )
 from tracefix.messages import Message, MessageRole, ToolCall
 from tracefix.models.base import BaseLLM, LLMConfig, LLMResponse, TokenUsage
+from tracefix.models.input_bounds import InputBound, count_deepseek_v41_request
 from tracefix.tools.base import ToolSpec
 
 
@@ -156,6 +157,30 @@ class LiteLLMAdapter(BaseLLM):
         if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
             raise LLMProviderError("provider token counter returned an invalid input bound")
         return value
+
+    def count_input_bound(
+        self, messages: Sequence[Message], tools: Sequence[ToolSpec] = ()
+    ) -> InputBound:
+        """Qualified model count for new formal requests; legacy byte counts stay diagnostic."""
+        kwargs = self.request_kwargs(messages, tools)
+        if self.config.model_name.casefold() == "deepseek/deepseek-flash":
+            allowed = {
+                "model", "messages", "tools", "timeout", "num_retries", "temperature",
+                "max_tokens", "api_base", "extra_body",
+            }
+            if set(kwargs) - allowed or kwargs.get("extra_body") != {
+                "thinking": {"type": "disabled"}
+            }:
+                return InputBound(
+                    None, "unavailable", "deepseek-v41", "unsupported request parameters"
+                )
+            return count_deepseek_v41_request({
+                "model": "deepseek-flash",
+                "messages": kwargs["messages"],
+                "tools": kwargs.get("tools", []),
+                "thinking": kwargs.get("extra_body", {}).get("thinking"),
+            })
+        return InputBound(None, "unavailable", "unknown", "no qualified model counter")
 
     @staticmethod
     def _format_message(message: Message) -> dict[str, Any]:

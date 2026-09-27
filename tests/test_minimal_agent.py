@@ -23,6 +23,7 @@ from tracefix import (
     ToolRegistry,
     ToolResult,
     ToolSpec,
+    ToolValidationError,
     TraceEvent,
     TraceEventType,
     TraceProtocolError,
@@ -506,6 +507,27 @@ def test_test_budget_stops_multi_call_response_without_dangling_calls() -> None:
     assert len(test_tool.calls) == 1
     assert search_tool.calls == []
     assert agent.history.pending_tool_call_ids == frozenset()
+
+
+def test_repeated_invalid_test_calls_do_not_consume_started_test_quota() -> None:
+    class RejectingTests(RecordingTool):
+        def prepare(self, call: ToolCall) -> None:
+            raise ToolValidationError("only pytest commands are allowed")
+
+    tool = RejectingTests(name="run_tests")
+    calls = tuple(ToolCall(id=f"invalid-{index}", name="run_tests") for index in range(3))
+    sink = MemorySink()
+    state = MinimalAgent(
+        ScriptedLLM([response(calls=calls)]),
+        ToolRegistry([tool]),
+        trace_sink=sink,
+    ).run("测试命令校验")
+    assert state.status is AgentStatus.INTERRUPTED
+    assert state.stop_reason == "test_limit_exceeded"
+    assert state.test_runs == 0
+    assert state.rejected_test_calls == 3
+    assert tool.calls == []
+    assert sum(event.event_type is TraceEventType.TEST_CALL_REJECTED for event in sink.events) == 3
 
 
 def test_wall_time_budget_is_checked_before_model_request(monkeypatch) -> None:

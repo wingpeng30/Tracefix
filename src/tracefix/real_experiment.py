@@ -322,6 +322,13 @@ class RealExperimentConfig(BaseModel):
     )
 
 
+def _task_pythonpath_entries(
+    task: RealIssueTask, recipe: EnvironmentRecipe | None
+) -> tuple[Path, ...]:
+    recipe_paths = tuple(Path(value) for value in recipe.test_pythonpath_entries) if recipe else ()
+    return (*task.test_pythonpath_paths, *recipe_paths)
+
+
 def validate_real_task_behavior(
     task: RealIssueTask,
     *,
@@ -333,8 +340,9 @@ def validate_real_task_behavior(
     """在独立副本中用 JUnit 证明目标测试先失败、gold 后通过。"""
     output_dir.mkdir(parents=True, exist_ok=True)
     task.validate_checkout(source)
+    pythonpath_entries = _task_pythonpath_entries(task, recipe)
     environment_before = inspect_test_environment(
-        test_python, pythonpath_entries=task.test_pythonpath_paths
+        test_python, pythonpath_entries=pythonpath_entries
     )
     results: dict[str, ToolResult] = {}
     for variant in ("initial", "gold"):
@@ -345,9 +353,9 @@ def validate_real_task_behavior(
                 context={"task_id": task.id, "variant": variant},
             )
         _create_behavior_checkout(source, checkout)
-        _git(["apply", str(task.test_patch_path)], checkout)
+        _git_apply_patch_file(task.test_patch_path, checkout)
         if variant == "gold":
-            _git(["apply", str(task.gold_patch_path)], checkout)
+            _git_apply_patch_file(task.gold_patch_path, checkout)
         results[variant] = _run_qualified_pytest(
             task,
             checkout,
@@ -358,10 +366,10 @@ def validate_real_task_behavior(
         )
         if variant == "initial":
             environment_after_initial = inspect_test_environment(
-                test_python, pythonpath_entries=task.test_pythonpath_paths
+                test_python, pythonpath_entries=pythonpath_entries
             )
     environment_after_gold = inspect_test_environment(
-        test_python, pythonpath_entries=task.test_pythonpath_paths
+        test_python, pythonpath_entries=pythonpath_entries
     )
     dependency_drift_detected = len(
         {
@@ -442,7 +450,7 @@ def validate_real_task_behavior(
         gold_returncode=_returncode(results["gold"]),
         test_command=task.test_command,
         test_environment=inspect_test_environment(
-            test_python, pythonpath_entries=task.test_pythonpath_paths
+            test_python, pythonpath_entries=pythonpath_entries
         ),
         environment_before=environment_before,
         environment_after_initial=environment_after_initial,
@@ -465,7 +473,8 @@ def validate_agent_patch_strict(
     """在全新 checkout 中验收 Agent 补丁，拒绝不完整证据与环境漂移。"""
     output_dir.mkdir(parents=True, exist_ok=True)
     task.validate_checkout(source)
-    before = inspect_test_environment(test_python, pythonpath_entries=task.test_pythonpath_paths)
+    pythonpath_entries = _task_pythonpath_entries(task, recipe)
+    before = inspect_test_environment(test_python, pythonpath_entries=pythonpath_entries)
     checkout = output_dir / f"{task.id}-agent"
     _create_behavior_checkout(source, checkout)
     if not agent_patch.is_file() or not agent_patch.stat().st_size:
@@ -496,7 +505,7 @@ def validate_agent_patch_strict(
         _, forbidden = classify_p2_changed_paths(task, tuple(changed))
         if forbidden:
             after = inspect_test_environment(
-                test_python, pythonpath_entries=task.test_pythonpath_paths
+                test_python, pythonpath_entries=pythonpath_entries
             )
             return AgentPatchValidation(
                 task_id=task.id, patch_applied=True, eligible=False,
@@ -506,7 +515,7 @@ def validate_agent_patch_strict(
             )
         _git_apply_patch_file(task.test_patch_path, checkout)
     except BenchmarkError as exc:
-        after = inspect_test_environment(test_python, pythonpath_entries=task.test_pythonpath_paths)
+        after = inspect_test_environment(test_python, pythonpath_entries=pythonpath_entries)
         return AgentPatchValidation(
             task_id=task.id, patch_applied=False, eligible=False, reason=str(exc),
             environment_before=before, environment_after=after,
@@ -520,7 +529,7 @@ def validate_agent_patch_strict(
         recipe,
         environment_variables=environment_variables,
     )
-    after = inspect_test_environment(test_python, pythonpath_entries=task.test_pythonpath_paths)
+    after = inspect_test_environment(test_python, pythonpath_entries=pythonpath_entries)
     evidence = _pytest_evidence(result, checkout)
     drift = before.fingerprint_sha256 != after.fingerprint_sha256
     frozen_nodes_match = (
@@ -683,7 +692,7 @@ def _run_qualified_pytest(
         else task.fail_to_pass
     )
     command = _pytest_command(test_python, checkout, expected, evidence_root, recipe)
-    environment = _validation_environment(checkout, task.test_pythonpath_paths)
+    environment = _validation_environment(checkout, _task_pythonpath_entries(task, recipe))
     if environment_variables:
         environment.update(environment_variables)
     if recipe and recipe.source_import_probe:

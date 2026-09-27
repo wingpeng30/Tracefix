@@ -991,6 +991,24 @@ def test_behavior_validation_proves_initial_fail_and_gold_pass(tmp_path) -> None
     )
 
 
+def test_behavior_validation_accepts_crlf_patch_files_on_lf_checkout(tmp_path) -> None:
+    task, source = _fixture(tmp_path)
+    for patch in (task.test_patch_path, task.gold_patch_path):
+        normalized = patch.read_bytes().replace(b"\r\n", b"\n")
+        patch.write_bytes(normalized.replace(b"\n", b"\r\n"))
+
+    result = validate_real_task_behavior(
+        task,
+        source=source,
+        test_python=Path(sys.executable),
+        output_dir=tmp_path / "behavior-crlf",
+    )
+
+    assert result.eligible_for_llm_prescreen is True
+    assert result.initial_evidence.status == "assertion_failed"
+    assert result.gold_evidence.status == "passed"
+
+
 def test_behavior_qualification_distinguishes_business_and_environment_outcomes(
     tmp_path: Path, monkeypatch
 ) -> None:
@@ -1014,6 +1032,7 @@ def test_behavior_qualification_distinguishes_business_and_environment_outcomes(
         "tracefix.real_experiment._create_behavior_checkout", lambda _s, d: d.mkdir()
     )
     monkeypatch.setattr("tracefix.real_experiment._git", lambda *_args: "")
+    monkeypatch.setattr("tracefix.real_experiment._git_apply_patch_file", lambda *_args: None)
     monkeypatch.setattr("tracefix.real_experiment._run_qualified_pytest", fake_runner)
     monkeypatch.setattr(
         "tracefix.real_experiment.inspect_test_environment",
@@ -1487,6 +1506,7 @@ def test_p2_budgeted_llm_reserves_reconciles_and_freezes_uncertain_request(tmp_p
         ledger_path=ledger,
         formal=requirements,
         input_upper_bound=1000,
+        legacy_input_counting=True,
     )
 
     class Delegate:
@@ -1525,6 +1545,7 @@ def test_p2_budgeted_llm_reserves_reconciles_and_freezes_uncertain_request(tmp_p
         ledger_path=tmp_path / "limited.json",
         formal=too_small,
         input_upper_bound=1000,
+        legacy_input_counting=True,
     )
     limited._delegate = Delegate()
     with pytest.raises(BenchmarkError, match="cost cap"):
@@ -1537,6 +1558,7 @@ def test_p2_budgeted_llm_reserves_reconciles_and_freezes_uncertain_request(tmp_p
         ledger_path=mismatched_path,
         formal=requirements,
         input_upper_bound=1000,
+        legacy_input_counting=True,
     )
     with pytest.raises(BenchmarkError, match="does not match"):
         mismatch.complete(())
@@ -1546,6 +1568,7 @@ def test_p2_budgeted_llm_reserves_reconciles_and_freezes_uncertain_request(tmp_p
         ledger_path=tmp_path / "missing-usage.json",
         formal=requirements,
         input_upper_bound=1000,
+        legacy_input_counting=True,
     )
     missing_usage._delegate = type(
         "MissingUsage",
@@ -1575,6 +1598,7 @@ def test_p2_budgeted_llm_reserves_reconciles_and_freezes_uncertain_request(tmp_p
         ledger_path=tmp_path / "halted.json",
         formal=too_small,
         input_upper_bound=1000,
+        legacy_input_counting=True,
     )
     halted_llm._delegate = Delegate()
     with pytest.raises(BenchmarkError, match="cost cap"):
@@ -1612,6 +1636,7 @@ def test_p2_budget_gate_blocks_provider_before_remaining_input_is_exceeded(tmp_p
         ledger_path=tmp_path / "boundary.json",
         formal=requirements,
         input_upper_bound=128_000,
+        legacy_input_counting=True,
         trial_input_budget=350_000,
     )
     llm._delegate = Delegate()
@@ -1656,6 +1681,7 @@ def test_p2_budget_gate_sends_remaining_output_limit_and_records_currency(tmp_pa
         ledger_path=ledger_path,
         formal=requirements,
         input_upper_bound=128_000,
+        legacy_input_counting=True,
     )
     llm._trial_output_used = 19_950
     llm._delegate = Delegate()
@@ -1696,6 +1722,7 @@ def test_p2_returned_response_exceeding_bound_is_preserved_and_halted(tmp_path) 
         ledger_path=ledger_path,
         formal=requirements,
         input_upper_bound=1000,
+        legacy_input_counting=True,
     )
     llm._delegate = Delegate()
     with pytest.raises(BenchmarkError, match="exceeds the persisted request bound"):
@@ -1816,6 +1843,7 @@ def test_p2_cny_calculated_amount_is_not_returned_as_usd(tmp_path) -> None:
         ledger_path=tmp_path / "ledger.json",
         formal=requirements,
         input_upper_bound=1000,
+        legacy_input_counting=True,
     )
     llm._delegate = Delegate()
     response = llm.complete(())

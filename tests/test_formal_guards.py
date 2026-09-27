@@ -170,6 +170,7 @@ def budgeted_fixture(monkeypatch, tmp_path, reply):
         ledger_path=ledger,
         formal=formal_parameters(),
         input_upper_bound=100,
+        legacy_input_counting=True,
     )
     return model, ledger, calls
 

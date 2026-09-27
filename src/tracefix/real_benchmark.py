@@ -346,10 +346,8 @@ class RealIssueTask(BaseModel):
         # 关联文件可能是 test patch 新增文件，或只是候选阶段的待扩展提示；
         # 它们缺失不影响 base commit 与补丁可应用性的验收，后续报告保留实际计数。
         # 两个补丁一次性交给 git apply --check，才能证明组合后也不存在上下文冲突。
-        self._run_git(
-            ["apply", "--check", str(self.test_patch_path), str(self.gold_patch_path)],
-            cwd=root,
-            timeout=120,
+        self._run_git_patch(
+            (self.test_patch_path, self.gold_patch_path), cwd=root, check_only=True
         )
         offline = self.validate_artifacts()
         return offline.model_copy(
@@ -365,8 +363,33 @@ class RealIssueTask(BaseModel):
         """在 Agent 结束后应用隐藏测试补丁；不执行测试或应用 gold patch。"""
         root = Path(workspace).expanduser().resolve()
         # 先预检再写入，失败时保持工作区不变。
-        self._run_git(["apply", "--check", str(self.test_patch_path)], cwd=root, timeout=120)
-        self._run_git(["apply", str(self.test_patch_path)], cwd=root, timeout=120)
+        self._run_git_patch((self.test_patch_path,), cwd=root, check_only=True)
+        self._run_git_patch((self.test_patch_path,), cwd=root, check_only=False)
+
+    @staticmethod
+    def _run_git_patch(paths: tuple[Path, ...], *, cwd: Path, check_only: bool) -> None:
+        """Apply frozen patch bytes on both CRLF and LF checkouts."""
+        patch = b"\n".join(path.read_bytes().replace(b"\r\n", b"\n") for path in paths)
+        command = ["git", "-c", "core.longpaths=true", "apply"]
+        if check_only:
+            command.append("--check")
+        command.append("-")
+        try:
+            result = subprocess.run(
+                command, cwd=cwd, input=patch, capture_output=True,
+                timeout=120, check=False, shell=False,
+            )
+        except (OSError, subprocess.SubprocessError) as exc:
+            raise BenchmarkError(f"real task git patch command failed to start: {exc}") from exc
+        if result.returncode:
+            raise BenchmarkError(
+                "real task git patch command failed",
+                context={
+                    "returncode": result.returncode,
+                    "stderr": result.stderr.decode("utf-8", errors="replace").strip(),
+                    "arguments": command,
+                },
+            )
 
     @staticmethod
     def _run_git(arguments: list[str], *, cwd: Path, timeout: int = 60) -> str:

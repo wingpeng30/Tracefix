@@ -65,6 +65,41 @@ def test_default_registry_contains_five_tools(git_workspace: Path) -> None:
     )
 
 
+def test_test_evidence_is_not_a_product_patch_without_git_exclude(
+    git_workspace: Path, tmp_path: Path
+) -> None:
+    exclude = git_workspace / ".git" / "info" / "exclude"
+    exclude.unlink()
+    evidence_dir = tmp_path.parent / f"{tmp_path.name}-external-evidence"
+    registry = create_default_tool_registry(git_workspace, evidence_dir=evidence_dir)
+    tested = registry.get("run_tests").execute(
+        ToolCall(
+            id="test", name="run_tests", arguments={"command": "pytest -q tests/test_sample.py"}
+        )
+    )
+    assert tested.metadata["process_started"] is True
+    assert evidence_dir.is_dir()
+    diff_tool = registry.get("get_git_diff")
+    diff = diff_tool.execute(ToolCall(id="diff", name="get_git_diff"))
+    assert diff.success and diff.output["diff"] == ""
+    assert diff.output["changed_files"] == []
+
+    internal_patch = """diff --git a/.tracefix-test-tmp/hidden.txt b/.tracefix-test-tmp/hidden.txt
+new file mode 100644
+--- /dev/null
++++ b/.tracefix-test-tmp/hidden.txt
+@@ -0,0 +1 @@
++hidden
+"""
+    with pytest.raises(ToolValidationError, match="internal directory"):
+        registry.get("apply_patch").execute(
+            ToolCall(id="patch", name="apply_patch", arguments={"patch": internal_patch})
+        )
+    (git_workspace / "sample.py").write_text("value = 1\n", encoding="utf-8")
+    changed = diff_tool.execute(ToolCall(id="changed", name="get_git_diff"))
+    assert changed.output["changed_files"] == ["sample.py"]
+
+
 def test_tool_constructor_and_workspace_validation(tmp_path: Path) -> None:
     with pytest.raises(ValueError):
         SearchCodeTool(tmp_path, max_output_chars=0)
@@ -104,6 +139,25 @@ def test_search_code_returns_locations_and_skips_binary(git_workspace: Path) -> 
     assert result.output["matches"][0]["path"] == "sample.py"
     assert result.output["matches"][0]["line"] == 2
     assert all(match["path"] != "binary.bin" for match in result.output["matches"])
+
+
+def test_search_code_skips_secret_and_oversized_files(git_workspace: Path) -> None:
+    secret = git_workspace / ".env.production"
+    secret.write_text("TOKEN=TOPSECRET\n", encoding="utf-8")
+    oversized = git_workspace / "large.py"
+    oversized.write_bytes(b"TOPSECRET\n" + b"x" * 1_000_000)
+
+    result = SearchCodeTool(git_workspace).execute(
+        ToolCall(
+            id="search-protected-files",
+            name="search_code",
+            arguments={"query": "TOPSECRET", "glob": "**/*"},
+        )
+    )
+
+    assert result.success
+    blocked_paths = {".env.production", "large.py"}
+    assert all(match["path"] not in blocked_paths for match in result.output["matches"])
 
 
 def test_search_code_supports_file_scope_limits_and_case(git_workspace: Path) -> None:
@@ -267,6 +321,40 @@ def test_apply_patch_checks_then_modifies_file(git_workspace: Path) -> None:
     assert second.error == "patch validation failed"
 
 
+def test_apply_patch_reports_race_after_successful_precheck(
+    git_workspace: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A post-precheck Git apply failure must not be reported as a successful edit."""
+    patch = """diff --git a/sample.py b/sample.py
+--- a/sample.py
++++ b/sample.py
+@@ -1,2 +1,2 @@
+ def add(a, b):
+-    return a - b  # BUG
++    return a + b
+"""
+    tool = ApplyPatchTool(git_workspace)
+    before = (git_workspace / "sample.py").read_bytes()
+    check_states: list[bool] = []
+
+    def fail_after_check(_patch: str, *, check: bool) -> subprocess.CompletedProcess[str]:
+        check_states.append(check)
+        if check:
+            return subprocess.CompletedProcess(["git", "apply"], 0, "", "")
+        return subprocess.CompletedProcess(["git", "apply"], 1, "", "index changed")
+
+    monkeypatch.setattr(tool, "_run_git_apply", fail_after_check)
+    result = tool.execute(
+        ToolCall(id="apply-race", name="apply_patch", arguments={"patch": patch})
+    )
+
+    assert check_states == [True, False]
+    assert not result.success
+    assert result.error == "git apply failed after validation"
+    assert result.output["stderr"] == "index changed"
+    assert (git_workspace / "sample.py").read_bytes() == before
+
+
 @pytest.mark.parametrize("format_name", ["unified", "begin"])
 def test_apply_patch_rejects_successful_no_effect_change(
     git_workspace: Path, format_name: str
@@ -416,6 +504,31 @@ def test_apply_patch_strips_accidental_end_marker(git_workspace: Path) -> None:
     assert result.success is True
 
 
+def test_apply_patch_preserves_trailing_blank_context_line(git_workspace: Path) -> None:
+    (git_workspace / "sample.py").write_text("value = 1\n\nend = True\n", encoding="utf-8")
+    run_git(git_workspace, "add", "sample.py")
+    run_git(git_workspace, "commit", "-qm", "blank context fixture")
+    patch = "\n".join(
+        [
+            "diff --git a/sample.py b/sample.py",
+            "--- a/sample.py",
+            "+++ b/sample.py",
+            "@@ -1,2 +1,2 @@",
+            "-value = 1",
+            "+value = 2",
+            " ",
+            "",
+        ]
+    )
+    result = ApplyPatchTool(git_workspace).execute(
+        ToolCall(id="blank-context", name="apply_patch", arguments={"patch": patch})
+    )
+    assert result.success is True
+    assert (git_workspace / "sample.py").read_text(encoding="utf-8") == (
+        "value = 2\n\nend = True\n"
+    )
+
+
 def test_begin_patch_rejects_unsafe_or_unmatched_updates(git_workspace: Path) -> None:
     original = (git_workspace / "sample.py").read_text(encoding="utf-8")
     unsafe = """*** Begin Patch
@@ -441,6 +554,69 @@ def test_begin_patch_rejects_unsafe_or_unmatched_updates(git_workspace: Path) ->
                 )
             )
         assert (git_workspace / "sample.py").read_text(encoding="utf-8") == original
+
+
+@pytest.mark.parametrize(
+    ("patch", "directory_target", "duplicate_context"),
+    [
+        ("not a Begin Patch", False, False),
+        ("*** Begin Patch\n*** Update File: sample.py\n@@\n-old\n+new", False, False),
+        ("*** Begin Patch\n*** Delete File: sample.py\n*** End Patch", False, False),
+        (
+            "*** Begin Patch\n*** Update File: tests\n@@\n-old\n+new\n*** End Patch",
+            True,
+            False,
+        ),
+        ("*** Begin Patch\n*** Update File: sample.py\n*** End Patch", False, False),
+        (
+            "*** Begin Patch\n*** Update File: sample.py\nold\n+new\n*** End Patch",
+            False,
+            False,
+        ),
+        (
+            "*** Begin Patch\n*** Update File: sample.py\n@@\n?invalid\n*** End Patch",
+            False,
+            False,
+        ),
+        (
+            "*** Begin Patch\n*** Update File: sample.py\n@@\n+insert\n*** End Patch",
+            False,
+            False,
+        ),
+        (
+            "*** Begin Patch\n*** Update File: sample.py\n@@\n-duplicate\n+changed\n*** End Patch",
+            False,
+            True,
+        ),
+    ],
+)
+def test_begin_patch_parser_rejects_malformed_or_ambiguous_updates(
+    git_workspace: Path,
+    patch: str,
+    directory_target: bool,
+    duplicate_context: bool,
+) -> None:
+    """Malformed model patches must be rejected before any workspace write."""
+    if directory_target:
+        target = git_workspace / "tests"
+        before = None
+    elif duplicate_context:
+        target = git_workspace / "sample.py"
+        target.write_text("duplicate\nmiddle\nduplicate\n", encoding="utf-8")
+        run_git(git_workspace, "add", "sample.py")
+        run_git(git_workspace, "commit", "-qm", "ambiguous context fixture")
+        before = target.read_bytes()
+    else:
+        target = git_workspace / "sample.py"
+        before = target.read_bytes()
+
+    with pytest.raises(ToolValidationError):
+        ApplyPatchTool(git_workspace).execute(
+            ToolCall(id="malformed-begin", name="apply_patch", arguments={"patch": patch})
+        )
+
+    if before is not None:
+        assert target.read_bytes() == before
 
 
 def test_apply_patch_rejects_path_traversal(git_workspace: Path) -> None:
@@ -533,7 +709,11 @@ def test_passing_junit_requires_complete_pytest_phase_audit() -> None:
         ],
     }
     passed_junit = {
-        "tests": 1, "passed": 1, "failures": 0, "errors": 0, "skipped": 0,
+        "tests": 1,
+        "passed": 1,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
         "node_ids": ["tests/test_ok.py::test_case"],
     }
     assert "complete setup/call/teardown" in RunTestsTool._validate_agent_phases(
@@ -565,8 +745,7 @@ def test_run_tests_accepts_only_executed_items_after_pytest_deselection(
     git_workspace: Path, selector: str
 ) -> None:
     (git_workspace / "tests" / "test_selection.py").write_text(
-        "def test_target():\n    assert True\n\n"
-        "def test_other():\n    assert False\n",
+        "def test_target():\n    assert True\n\ndef test_other():\n    assert False\n",
         encoding="utf-8",
     )
     tool = RunTestsTool(git_workspace)
@@ -583,9 +762,7 @@ def test_run_tests_accepts_only_executed_items_after_pytest_deselection(
         "tests/test_selection.py::test_target",
         "tests/test_selection.py::test_other",
     ]
-    assert result.output["audit"]["selected_node_ids"] == [
-        "tests/test_selection.py::test_target"
-    ]
+    assert result.output["audit"]["selected_node_ids"] == ["tests/test_selection.py::test_target"]
     empty = tool.execute(
         ToolCall(
             id="deselected-all",
@@ -612,13 +789,15 @@ def test_selected_pytest_audit_rejects_extra_or_missing_evidence() -> None:
         "reports": reports,
     }
     junit = {
-        "tests": 1, "passed": 1, "failures": 0, "errors": 0, "skipped": 0,
+        "tests": 1,
+        "passed": 1,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
         "node_ids": [selected],
     }
     assert RunTestsTool._validate_agent_phases(audit, junit) is None
-    assert "JUnit count" in RunTestsTool._validate_agent_phases(
-        audit, {**junit, "tests": 2}
-    )
+    assert "JUnit count" in RunTestsTool._validate_agent_phases(audit, {**junit, "tests": 2})
     assert "node identities" in RunTestsTool._validate_agent_phases(
         audit, {**junit, "node_ids": [deselected]}
     )
@@ -645,8 +824,7 @@ def test_agent_junit_requires_embedded_node_identity(tmp_path: Path) -> None:
 
     junit_path = tmp_path / "junit.xml"
     junit_path.write_text(
-        '<testsuite><testcase classname="tests.test_case" name="test_one" />'
-        "</testsuite>",
+        '<testsuite><testcase classname="tests.test_case" name="test_one" /></testsuite>',
         encoding="utf-8",
     )
     _, issue = RunTestsTool._read_junit(junit_path)
@@ -658,8 +836,7 @@ def test_simulated_agent_keeps_valid_evidence_after_no_effect_patch(
 ) -> None:
     test_file = git_workspace / "tests" / "test_sample.py"
     test_file.write_text(
-        test_file.read_text(encoding="utf-8")
-        + "\n\ndef test_unselected():\n    assert False\n",
+        test_file.read_text(encoding="utf-8") + "\n\ndef test_unselected():\n    assert False\n",
         encoding="utf-8",
     )
     run_git(git_workspace, "add", "tests/test_sample.py")
@@ -667,6 +844,7 @@ def test_simulated_agent_keeps_valid_evidence_after_no_effect_patch(
     (git_workspace / ".git" / "info" / "exclude").write_text(
         "__pycache__/\n*.pyc\n", encoding="utf-8"
     )
+
     class ScriptedModel(BaseLLM):
         def __init__(self) -> None:
             super().__init__(LLMConfig(model_name="scripted"))
@@ -728,8 +906,7 @@ def test_simulated_agent_keeps_valid_evidence_after_no_effect_patch(
     assert state.test_runs == 1
     assert "return a + b" in (git_workspace / "sample.py").read_text(encoding="utf-8")
     assert any(
-        message.metadata.get("kind") == "no_effect_patch"
-        for message in agent.history.snapshot()
+        message.metadata.get("kind") == "no_effect_patch" for message in agent.history.snapshot()
     )
 
 
@@ -896,26 +1073,17 @@ diff --git "a/other file.py" "b/other file.py"
     assert state.validation_status == "verified"
     assert state.test_runs == 1
     assert state.stop_reason == "agent_completed"
-    assert (git_workspace / "sample.py").read_text(encoding="utf-8").endswith(
-        "    return a + b\n"
-    )
+    assert (git_workspace / "sample.py").read_text(encoding="utf-8").endswith("    return a + b\n")
     tool_results = [
-        message for message in agent.history.snapshot()
-        if message.role is MessageRole.TOOL
+        message for message in agent.history.snapshot() if message.role is MessageRole.TOOL
     ]
-    repeated_result = next(
-        message for message in tool_results if message.tool_call_id == "noop-2"
-    )
-    assert (
-        json.loads(repeated_result.content)["metadata"]["recovery_gate"]
-        == "fresh_read_required"
-    )
+    repeated_result = next(message for message in tool_results if message.tool_call_id == "noop-2")
+    assert json.loads(repeated_result.content)["metadata"]["recovery_gate"] == "fresh_read_required"
     premature_result = next(
         message for message in tool_results if message.tool_call_id == "premature"
     )
     assert (
-        json.loads(premature_result.content)["metadata"]["recovery_gate"]
-        == "fresh_read_required"
+        json.loads(premature_result.content)["metadata"]["recovery_gate"] == "fresh_read_required"
     )
     premature_cached_result = next(
         message for message in tool_results if message.tool_call_id == "premature-cached"
@@ -1026,6 +1194,7 @@ def test_simulated_agent_invalidates_tests_after_real_change_and_exports_final_d
     (git_workspace / ".git" / "info" / "exclude").write_text(
         "__pycache__/\n*.pyc\n", encoding="utf-8"
     )
+
     def make_response(*calls: ToolCall, content: str | None = None) -> LLMResponse:
         return LLMResponse(
             message=Message(role=MessageRole.ASSISTANT, content=content, tool_calls=calls),

@@ -8,10 +8,13 @@ import json
 import os
 import re
 import shlex
+import signal
 import subprocess
 import sys
+import tempfile
 import time
 import xml.etree.ElementTree as element_tree
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any, ClassVar
 from uuid import uuid4
@@ -417,6 +420,12 @@ class ApplyPatchTool(_WorkspaceTool):
         input_schema=_ApplyPatchArgs.model_json_schema(),
     )
 
+    def __init__(
+        self, workspace: Path, *, protected_dirs: set[str] | None = None, **kwargs: Any
+    ) -> None:
+        super().__init__(workspace, **kwargs)
+        self.protected_dirs = protected_dirs if protected_dirs is not None else set()
+
     def execute(self, call: ToolCall) -> ToolResult:
         """先执行无副作用检查，确认安全且可应用后才修改工作区。"""
         started = time.monotonic()
@@ -527,10 +536,13 @@ class ApplyPatchTool(_WorkspaceTool):
         # 模型偶尔会在标准 diff 末尾误带 Codex 结束标记。它不是 diff 内容，
         # 可以确定性移除；其他未知控制行仍交由 git apply 拒绝。
         lines = patch.splitlines()
-        while lines and not lines[-1].strip():
+        # Unified diff 中以单空格开头的空白上下文行有语义，不能当作尾随空行删除。
+        while lines and lines[-1] == "":
             lines.pop()
         if lines and lines[-1].strip() == "*** End Patch":
             lines.pop()
+            while lines and lines[-1] == "":
+                lines.pop()
         return "\n".join(lines) + "\n"
 
     def _convert_begin_patch(self, patch: str) -> str:
@@ -696,6 +708,10 @@ class ApplyPatchTool(_WorkspaceTool):
                     continue
                 normalized = token[2:] if token.startswith(("a/", "b/")) else token
                 _resolve_path(self.workspace, normalized)
+                if Path(normalized).parts and Path(normalized).parts[0] in self.protected_dirs:
+                    raise ToolValidationError(
+                        "patch targets a registered TraceFix internal directory"
+                    )
                 paths.add(Path(normalized).as_posix())
 
         if not paths:
@@ -765,6 +781,9 @@ class RunTestsTool(_WorkspaceTool):
         pythonpath_entries: tuple[Path, ...] = (),
         pytest_config: str | None = None,
         environment_variables: dict[str, str] | None = None,
+        protected_dirs: set[str] | None = None,
+        evidence_dir: Path | None = None,
+        on_process_started: Callable[[], None] | None = None,
     ) -> None:
         super().__init__(workspace, max_output_chars=max_output_chars)
         if default_timeout_seconds <= 0:
@@ -783,6 +802,12 @@ class RunTestsTool(_WorkspaceTool):
             raise ValueError("test PYTHONPATH entries must be existing directories")
         self.pytest_config = pytest_config
         self.environment_variables = dict(environment_variables or {})
+        self.protected_dirs = protected_dirs if protected_dirs is not None else set()
+        self.evidence_dir = evidence_dir or Path(tempfile.mkdtemp(prefix="tracefix-test-evidence-"))
+        evidence_root = self.evidence_dir.resolve()
+        if evidence_root == self.workspace or self.workspace in evidence_root.parents:
+            raise ToolValidationError("test evidence directory must be outside the checkout")
+        self.on_process_started = on_process_started
         if any(
             not name.isidentifier()
             or name.upper().startswith("PYTEST_")
@@ -794,20 +819,25 @@ class RunTestsTool(_WorkspaceTool):
     def execute(self, call: ToolCall) -> ToolResult:
         """执行 pytest，并把失败和超时作为模型可以继续处理的结果返回。"""
         started = time.monotonic()
-        args = self._validate_call(call, _RunTestsArgs)
-        assert isinstance(args, _RunTestsArgs)
-        command = self._parse_command(args.command, self.python_executable)
-        timeout = args.timeout_seconds or self.default_timeout_seconds
+        command, timeout = self.prepare(call)
 
         try:
             environment = _sanitized_subprocess_env()
             environment.update(self.environment_variables)
             test_tmp = self.workspace / ".tracefix-test-tmp"
-            test_tmp.mkdir(parents=True, exist_ok=True)
+            if ".tracefix-test-tmp" not in self.protected_dirs:
+                if test_tmp.exists() or test_tmp.is_symlink():
+                    raise ToolValidationError("TraceFix test temporary path already exists")
+                test_tmp.mkdir(parents=True)
+                self.protected_dirs.add(".tracefix-test-tmp")
+            elif not test_tmp.is_dir() or test_tmp.is_symlink():
+                raise ToolValidationError("registered test temporary directory changed identity")
+            self.evidence_dir.mkdir(parents=True, exist_ok=True)
             # 污染性的 pytest 参数和自动插件注入不会从 TraceFix 父进程继承。
             environment.pop("PYTEST_ADDOPTS", None)
             environment.pop("PYTEST_PLUGINS", None)
             environment["PYTEST_DISABLE_PLUGIN_AUTOLOAD"] = "1"
+            environment["PYTHONDONTWRITEBYTECODE"] = "1"
             # 被测 checkout 的源码必须优先于用于提供测试依赖的额外路径。
             import_roots: list[str] = []
             if (self.workspace / "src").is_dir():
@@ -819,24 +849,15 @@ class RunTestsTool(_WorkspaceTool):
             # 临时目录必须位于仓库内：部分项目的嵌套 pytest 会沿父目录寻找
             # pyproject，放到仓库外可能误读 TraceFix 自身配置。通过仅修改本克隆
             # 的 .git/info/exclude 隐藏副产物，不改变受测源码或共享 .gitignore。
-            exclude = self.workspace / ".git" / "info" / "exclude"
-            if exclude.is_file():
-                current = exclude.read_text(encoding="utf-8", errors="replace")
-                marker = ".tracefix-test-tmp/"
-                if marker not in current.splitlines():
-                    with exclude.open("a", encoding="utf-8") as stream:
-                        if current and not current.endswith("\n"):
-                            stream.write("\n")
-                        stream.write(f"{marker}\n")
             environment["TMP"] = str(test_tmp)
             environment["TEMP"] = str(test_tmp)
-            config_path = self._pytest_config_path(test_tmp)
+            config_path = self._pytest_config_path(self.evidence_dir)
             audit_id = uuid4().hex
-            audit_path = test_tmp / f"agent-audit-{audit_id}.json"
-            junit_path = test_tmp / f"agent-junit-{audit_id}.xml"
-            plugin_path = test_tmp / "tracefix_agent_audit.py"
+            audit_path = self.evidence_dir / f"agent-audit-{audit_id}.json"
+            junit_path = self.evidence_dir / f"agent-junit-{audit_id}.xml"
+            plugin_path = self.evidence_dir / "tracefix_agent_audit.py"
             plugin_path.write_text(_AGENT_PYTEST_AUDIT_PLUGIN, encoding="utf-8")
-            environment["PYTHONPATH"] = os.pathsep.join([str(test_tmp), *import_roots])
+            environment["PYTHONPATH"] = os.pathsep.join([str(self.evidence_dir), *import_roots])
             environment["TRACEFIX_AGENT_AUDIT_ID"] = audit_id
             environment["TRACEFIX_AGENT_AUDIT_PATH"] = str(audit_path)
             command.extend(
@@ -847,20 +868,52 @@ class RunTestsTool(_WorkspaceTool):
                     str(config_path),
                     "-p",
                     "tracefix_agent_audit",
+                    "-p",
+                    "no:cacheprovider",
                     f"--junitxml={junit_path}",
                 ]
             )
-            completed = subprocess.run(
+            process = subprocess.Popen(
                 command,
                 cwd=self.workspace,
                 env=environment,
-                capture_output=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
                 text=True,
                 encoding="utf-8",
                 errors="replace",
-                timeout=timeout,
-                check=False,
                 shell=False,
+                start_new_session=(os.name != "nt"),
+            )
+            try:
+                if self.on_process_started is not None:
+                    self.on_process_started()
+                try:
+                    stdout_text, stderr_text = process.communicate(timeout=timeout)
+                except subprocess.TimeoutExpired:
+                    if os.name != "nt":
+                        try:
+                            os.killpg(process.pid, signal.SIGKILL)
+                        except ProcessLookupError:
+                            pass
+                    else:
+                        process.kill()
+                    process.communicate()
+                    raise
+            except BaseException:
+                # If the bridge or its event pipe fails after Popen succeeds,
+                # do not leave pytest running in the container without an owner.
+                if process.poll() is None and os.name != "nt":
+                    try:
+                        os.killpg(process.pid, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+                elif process.poll() is None:
+                    process.kill()
+                process.communicate()
+                raise
+            completed = subprocess.CompletedProcess(
+                command, process.returncode, stdout_text, stderr_text
             )
             stdout, stdout_truncated = _truncate_text(completed.stdout, self.max_output_chars)
             stderr, stderr_truncated = _truncate_text(completed.stderr, self.max_output_chars)
@@ -929,7 +982,10 @@ class RunTestsTool(_WorkspaceTool):
                         else f"tests failed with exit code {completed.returncode}"
                     )
                 ),
-                metadata={"truncated": stdout_truncated or stderr_truncated},
+                metadata={
+                    "truncated": stdout_truncated or stderr_truncated,
+                    "process_started": True,
+                },
                 duration_ms=(time.monotonic() - started) * 1000,
             )
         except subprocess.TimeoutExpired as exc:
@@ -951,13 +1007,42 @@ class RunTestsTool(_WorkspaceTool):
                     "timed_out": True,
                 },
                 error=f"test command timed out after {timeout} seconds",
-                metadata={"truncated": stdout_truncated or stderr_truncated},
+                metadata={
+                    "truncated": stdout_truncated or stderr_truncated,
+                    "process_started": True,
+                },
                 duration_ms=(time.monotonic() - started) * 1000,
             )
         except OSError as exc:
             raise ToolExecutionError(
                 f"cannot start test command: {exc}", context={"command": command}
             ) from exc
+
+    def prepare(self, call: ToolCall) -> tuple[list[str], float]:
+        """Reject invalid calls and checkout configuration before consuming test quota."""
+        args = self._validate_call(call, _RunTestsArgs)
+        assert isinstance(args, _RunTestsArgs)
+        command = self._parse_command(args.command, self.python_executable)
+        self._validate_pytest_config()
+        return command, args.timeout_seconds or self.default_timeout_seconds
+
+    def _validate_pytest_config(self) -> None:
+        test_tmp = self.workspace / ".tracefix-test-tmp"
+        if ".tracefix-test-tmp" not in self.protected_dirs and (
+            test_tmp.exists() or test_tmp.is_symlink()
+        ):
+            raise ToolValidationError("TraceFix test temporary path already exists")
+        if self.pytest_config is not None:
+            workspace = self.workspace.resolve()
+            config = (workspace / self.pytest_config).resolve()
+            if not config.is_file() or config.parent != workspace:
+                raise ToolValidationError("configured pytest file is missing from the checkout")
+        else:
+            workspace = self.workspace.resolve()
+            for name in ("pytest.ini", "tox.ini", "setup.cfg", "pyproject.toml"):
+                config = self.workspace / name
+                if config.is_file() and config.resolve().parent != workspace:
+                    raise ToolValidationError("pytest configuration escapes the checkout root")
 
     @staticmethod
     def _parse_command(command: str, python_executable: str | None = None) -> list[str]:
@@ -1072,7 +1157,11 @@ class RunTestsTool(_WorkspaceTool):
     @staticmethod
     def _read_junit(path: Path) -> tuple[dict[str, Any], str | None]:
         stats: dict[str, Any] = {
-            "tests": 0, "passed": 0, "failures": 0, "errors": 0, "skipped": 0,
+            "tests": 0,
+            "passed": 0,
+            "failures": 0,
+            "errors": 0,
+            "skipped": 0,
             "node_ids": [],
         }
         try:
@@ -1137,9 +1226,8 @@ class RunTestsTool(_WorkspaceTool):
             if junit.get("tests") != len(selected):
                 return "pytest audit selected tests differ from JUnit count"
             reported_nodes = junit.get("node_ids", [])
-            if (
-                len(reported_nodes) != len(set(reported_nodes))
-                or set(reported_nodes) != set(selected)
+            if len(reported_nodes) != len(set(reported_nodes)) or set(reported_nodes) != set(
+                selected
             ):
                 return "pytest audit selected tests differ from JUnit node identities"
             expected = {"setup", "call", "teardown"}
@@ -1164,25 +1252,44 @@ class GetGitDiffTool(_WorkspaceTool):
         input_schema=_GetGitDiffArgs.model_json_schema(),
     )
 
+    def __init__(
+        self, workspace: Path, *, protected_dirs: set[str] | None = None, **kwargs: Any
+    ) -> None:
+        super().__init__(workspace, **kwargs)
+        self.protected_dirs = protected_dirs if protected_dirs is not None else set()
+
     def execute(self, call: ToolCall) -> ToolResult:
         """在不暂存文件的前提下组合 tracked 与 untracked diff。"""
         started = time.monotonic()
         args = self._validate_call(call, _GetGitDiffArgs)
         assert isinstance(args, _GetGitDiffArgs)
 
+        excludes = [f":(exclude){name}/" for name in sorted(self.protected_dirs)]
         tracked = self._run_git(
-            ["diff", "--no-ext-diff", f"--unified={args.context_lines}", "HEAD", "--"]
+            [
+                "diff",
+                "--no-ext-diff",
+                f"--unified={args.context_lines}",
+                "HEAD",
+                "--",
+                ".",
+                *excludes,
+            ]
         )
         if tracked.returncode != 0:
             return self._git_failure(call, tracked, started)
 
-        names = self._run_git(["diff", "--name-only", "HEAD", "--"])
+        names = self._run_git(["diff", "--name-only", "HEAD", "--", ".", *excludes])
         untracked = self._run_git(["ls-files", "--others", "--exclude-standard", "-z"])
         if names.returncode != 0 or untracked.returncode != 0:
             return self._git_failure(call, names if names.returncode else untracked, started)
 
         changed_files = [line for line in names.stdout.splitlines() if line]
-        untracked_files = sorted(path for path in untracked.stdout.split("\0") if path)
+        untracked_files = sorted(
+            path
+            for path in untracked.stdout.split("\0")
+            if path and Path(path).parts[0] not in self.protected_dirs
+        )
         patches = [tracked.stdout]
         for relative in untracked_files:
             _resolve_path(self.workspace, relative, must_exist=True)
@@ -1264,14 +1371,17 @@ def create_default_tool_registry(
     test_pythonpath_entries: tuple[Path, ...] = (),
     pytest_config: str | None = None,
     test_environment_variables: dict[str, str] | None = None,
+    evidence_dir: Path | None = None,
+    protected_dirs: set[str] | None = None,
+    skills_enabled: bool = False,
 ) -> ToolRegistry:
     """为一个已有初始提交的 Git 仓库创建五工具注册表。"""
     root = _resolve_workspace(workspace)
-    return ToolRegistry(
-        [
+    internal = protected_dirs if protected_dirs is not None else set()
+    tools = [
             SearchCodeTool(root, max_output_chars=max_output_chars),
             ReadFileTool(root, max_output_chars=max_output_chars),
-            ApplyPatchTool(root, max_output_chars=max_output_chars),
+            ApplyPatchTool(root, max_output_chars=max_output_chars, protected_dirs=internal),
             RunTestsTool(
                 root,
                 max_output_chars=max_output_chars,
@@ -1280,7 +1390,13 @@ def create_default_tool_registry(
                 pythonpath_entries=test_pythonpath_entries,
                 pytest_config=pytest_config,
                 environment_variables=test_environment_variables,
+                protected_dirs=internal,
+                evidence_dir=evidence_dir,
             ),
-            GetGitDiffTool(root, max_output_chars=max_output_chars),
+            GetGitDiffTool(root, max_output_chars=max_output_chars, protected_dirs=internal),
         ]
-    )
+    if skills_enabled:
+        from tracefix.tools.skills import SkillActivationTool
+
+        tools.append(SkillActivationTool())
+    return ToolRegistry(tools)

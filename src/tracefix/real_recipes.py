@@ -6,7 +6,7 @@ from __future__ import annotations
 import hashlib
 import json
 import sys
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Literal
 from urllib.parse import urlparse
 
@@ -47,6 +47,7 @@ class EnvironmentRecipe(BaseModel):
     source_import_probe: str | None = None
     pytest_config: str | None = None
     environment_variables: dict[str, str] = Field(default_factory=dict)
+    test_pythonpath_entries: tuple[str, ...] = ()
     service_health_url: str | None = None
 
     @model_validator(mode="after")
@@ -62,6 +63,10 @@ class EnvironmentRecipe(BaseModel):
             "pytest.ini", "pyproject.toml", "tox.ini", "setup.cfg"
         }:
             raise ValueError("pytest_config must name a supported repository config")
+        for entry in self.test_pythonpath_entries:
+            path = PurePosixPath(entry)
+            if not path.is_absolute() or ".." in path.parts:
+                raise ValueError("test Python paths must be safe absolute container paths")
         for name, value in self.environment_variables.items():
             if not name.isidentifier() or not isinstance(value, str):
                 raise ValueError("recipe environment variable names and values must be strings")
@@ -87,6 +92,9 @@ class EnvironmentRecipe(BaseModel):
     def fingerprint(self) -> str:
         """返回决定环境可复用性的稳定配方摘要。"""
         payload = self.model_dump(mode="json")
+        # Keep identities of recipes frozen before this optional path field existed.
+        if not self.test_pythonpath_entries:
+            payload.pop("test_pythonpath_entries", None)
         raw = json.dumps(payload, sort_keys=True, separators=(",", ":"))
         return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 

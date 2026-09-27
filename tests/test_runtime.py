@@ -82,6 +82,19 @@ def _response(
     )
 
 
+def test_run_config_uses_tracefix_runs_root_environment(tmp_path, monkeypatch) -> None:
+    output_root = tmp_path / "external-runs"
+    monkeypatch.setenv("TRACEFIX_RUNS_ROOT", str(output_root))
+    config = RunConfig(repo=tmp_path, task="output root test")
+    assert config.output_dir == output_root
+
+
+def test_run_config_defaults_to_external_windows_output_root(monkeypatch) -> None:
+    monkeypatch.delenv("TRACEFIX_RUNS_ROOT", raising=False)
+    expected = Path(r"E:\TraceFixRunsActive") if os.name == "nt" else Path("runs")
+    assert RunConfig(repo=Path("."), task="platform default").output_dir == expected
+
+
 class ScriptedLLM(BaseLLM):
     def __init__(self, config: LLMConfig, responses: list[LLMResponse]) -> None:
         super().__init__(config)
@@ -245,6 +258,8 @@ def test_runner_does_not_construct_model_when_agent_source_probe_fails(
     assert result.status is AgentStatus.FAILED
     assert result.workspace_preparation["success"] is False
     assert calls == []
+    assert ".tracefix-build-tmp" not in Path(result.diff_path).read_text(encoding="utf-8")
+    assert ".tracefix-build-tmp" not in result.changed_files
 
 
 def test_runner_marks_unknown_cost_incomplete(tmp_path, monkeypatch) -> None:
@@ -443,6 +458,228 @@ def test_runner_records_keyboard_interrupt_and_diff_collection_failure(
     )
     assert failed.status is AgentStatus.FAILED
     assert failed.error["code"] == "unexpected_run_error"
+
+
+def test_docker_runner_persists_result_before_terminal_phase(tmp_path, monkeypatch) -> None:
+    """A terminal container phase must never outrun its durable host result."""
+    from tracefix import runtime
+    from tracefix.tools.base import ToolRegistry, ToolResult
+
+    repo = _make_repo(tmp_path)
+    input_root = tmp_path / "frozen-input"
+    input_root.mkdir()
+    phases: list[str] = []
+    close_calls: list[bool] = []
+    run_dir_holder: list[Path] = []
+
+    class FakeSession:
+        def call(self, tool_name, arguments):
+            assert tool_name == "get_git_diff"
+            assert arguments == {"context_lines": 3}
+            return ToolResult(
+                call_id="final-diff",
+                tool_name=tool_name,
+                success=True,
+                output={"diff": "", "changed_files": []},
+            )
+
+    class FakeDockerBackend:
+        def __init__(self, *, run_dir, **kwargs):
+            self.run_dir = run_dir
+            run_dir_holder.append(run_dir)
+            self.container_id = "qualification-container"
+            self.session = FakeSession()
+            self.repo_map = None
+            self.workspace_preparation = {"success": True, "backend": "docker"}
+
+        def prepare(self, *args, **kwargs):
+            return ToolRegistry()
+
+        def set_phase(self, phase):
+            phases.append(phase)
+            if phase in {"completed", "failed", "interrupted"}:
+                result_path = self.run_dir / "result.json"
+                assert result_path.is_file()
+                assert json.loads(result_path.read_text(encoding="utf-8"))["status"] == phase
+
+        def export_evidence(self):
+            return None
+
+        def close(self, *, remove):
+            close_calls.append(remove)
+
+    monkeypatch.setattr(runtime, "DockerToolBackend", FakeDockerBackend)
+    runner = TraceFixRunner(lambda config: ScriptedLLM(config, [_response("done")]))
+    result = runner.run(
+        RunConfig(
+            repo=repo,
+            task="verify durable terminal phase",
+            model_name="offline/scripted",
+            output_dir=tmp_path / "runs",
+            env_file=None,
+            execution_backend="docker",
+            docker_task_id="pytest-dev__pytest-10081",
+            docker_input_root=input_root,
+            agent_config=AgentConfig(require_tested_completion=False),
+        )
+    )
+
+    assert result.status is AgentStatus.COMPLETED
+    assert phases == ["agent_running", "completed"]
+    assert close_calls == [False]
+    assert json.loads(Path(result.result_path).read_text(encoding="utf-8"))["status"] == "completed"
+
+
+@pytest.mark.parametrize("failure_stage", ["diff", "truncated", "evidence"])
+def test_docker_runner_persists_export_failure_and_preserves_first_error(
+    tmp_path, monkeypatch, failure_stage: str
+) -> None:
+    """Final container export failures must be durable and fail closed."""
+    from tracefix import runtime
+    from tracefix.tools.base import ToolRegistry, ToolResult
+
+    repo = _make_repo(tmp_path)
+    input_root = tmp_path / "frozen-input"
+    input_root.mkdir()
+    phases: list[str] = []
+    export_attempts: list[bool] = []
+
+    class FakeSession:
+        def call(self, tool_name, arguments):
+            assert tool_name == "get_git_diff"
+            if failure_stage == "diff":
+                return ToolResult(
+                    call_id="final-diff",
+                    tool_name=tool_name,
+                    success=False,
+                    error="bridge unavailable",
+                )
+            output = {
+                "diff": "",
+                "changed_files": [],
+                "truncated": failure_stage == "truncated",
+            }
+            return ToolResult(
+                call_id="final-diff",
+                tool_name=tool_name,
+                success=True,
+                output=output,
+            )
+
+    class FakeDockerBackend:
+        def __init__(self, *, run_dir, **kwargs):
+            self.run_dir = run_dir
+            self.container_id = "qualification-container"
+            self.session = FakeSession()
+            self.repo_map = None
+            self.workspace_preparation = {"success": True, "backend": "docker"}
+
+        def prepare(self, *args, **kwargs):
+            return ToolRegistry()
+
+        def set_phase(self, phase):
+            phases.append(phase)
+            if phase in {"completed", "failed", "interrupted"}:
+                result_path = self.run_dir / "result.json"
+                assert result_path.is_file()
+                assert json.loads(result_path.read_text(encoding="utf-8"))["status"] == phase
+
+        def export_evidence(self):
+            export_attempts.append(True)
+            if failure_stage == "evidence":
+                raise WorkspaceError("primary evidence export failed")
+
+        def close(self, *, remove):
+            assert remove is False
+
+    monkeypatch.setattr(runtime, "DockerToolBackend", FakeDockerBackend)
+    runner = TraceFixRunner(lambda config: ScriptedLLM(config, [_response("done")]))
+    result = runner.run(
+        RunConfig(
+            repo=repo,
+            task="verify durable export failure",
+            model_name="offline/scripted",
+            output_dir=tmp_path / "runs",
+            env_file=None,
+            execution_backend="docker",
+            docker_task_id="pytest-dev__pytest-10081",
+            docker_input_root=input_root,
+            agent_config=AgentConfig(require_tested_completion=False),
+        )
+    )
+
+    assert result.status is AgentStatus.FAILED
+    assert result.error is not None
+    assert result.stop_reason == "workspace_error"
+    assert phases == ["agent_running", "failed"]
+    assert len(export_attempts) == (2 if failure_stage == "evidence" else 1)
+    if failure_stage == "evidence":
+        assert result.error["message"] == "primary evidence export failed"
+
+
+def test_docker_runner_preserves_prepare_error_when_export_also_fails(
+    tmp_path, monkeypatch
+) -> None:
+    """A secondary finalization failure must not replace the original prepare error."""
+    from tracefix import runtime
+    repo = _make_repo(tmp_path)
+    input_root = tmp_path / "frozen-input"
+    input_root.mkdir()
+    phases: list[str] = []
+    export_attempts: list[bool] = []
+    llm_factory_calls: list[bool] = []
+
+    class FakeDockerBackend:
+        def __init__(self, *, run_dir, **kwargs):
+            self.run_dir = run_dir
+            self.container_id = "qualification-container"
+            self.session = None
+            self.repo_map = None
+            self.workspace_preparation = {}
+
+        def prepare(self, *args, **kwargs):
+            raise WorkspaceError("frozen input manifest rejected")
+
+        def set_phase(self, phase):
+            phases.append(phase)
+            if phase in {"completed", "failed", "interrupted"}:
+                result_path = self.run_dir / "result.json"
+                assert result_path.is_file()
+                assert json.loads(result_path.read_text(encoding="utf-8"))["status"] == phase
+
+        def export_evidence(self):
+            export_attempts.append(True)
+            raise WorkspaceError("secondary export failure")
+
+        def close(self, *, remove):
+            assert remove is False
+
+    def llm_factory(config):
+        llm_factory_calls.append(True)
+        return ScriptedLLM(config, [_response("unexpected model invocation")])
+
+    monkeypatch.setattr(runtime, "DockerToolBackend", FakeDockerBackend)
+    result = TraceFixRunner(llm_factory).run(
+        RunConfig(
+            repo=repo,
+            task="preserve container preparation failure",
+            model_name="offline/scripted",
+            output_dir=tmp_path / "runs",
+            env_file=None,
+            execution_backend="docker",
+            docker_task_id="pytest-dev__pytest-10081",
+            docker_input_root=input_root,
+            agent_config=AgentConfig(require_tested_completion=False),
+        )
+    )
+
+    assert result.status is AgentStatus.FAILED
+    assert result.error is not None
+    assert result.error["message"] == "frozen input manifest rejected"
+    assert result.stop_reason == "workspace_error"
+    assert phases == ["failed"]
+    assert len(export_attempts) == 1
+    assert llm_factory_calls == []
 
 
 def test_runtime_validation_errors_are_explicit(tmp_path) -> None:

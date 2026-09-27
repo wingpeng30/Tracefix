@@ -29,8 +29,12 @@ from tracefix.context import ContextConfig
 from tracefix.exceptions import (
     BenchmarkError,
     P2CampaignBudgetExceeded,
+    P2CounterUnavailable,
+    P2ModelContextExceeded,
+    P2RequestInputLimitExceeded,
     P2StageBudgetExceeded,
     P2TrialBudgetExceeded,
+    P2TrialInputBudgetExceeded,
 )
 from tracefix.formal_guards import (
     formal_config_issue,
@@ -39,6 +43,10 @@ from tracefix.formal_guards import (
 )
 from tracefix.messages import Message, MessageRole, ToolCall
 from tracefix.models import BaseLLM, LLMConfig, LLMResponse, TokenUsage
+from tracefix.models.input_bounds import (
+    DEEPSEEK_FLASH_SOURCE,
+    deepseek_flash_capability,
+)
 from tracefix.models.litellm_adapter import LiteLLMAdapter
 from tracefix.paired import ExperimentArm
 from tracefix.provenance import inspect_test_environment
@@ -230,13 +238,21 @@ class P2ProtocolConfig(BaseModel):
     max_steps: int = Field(default=24, ge=1)
     max_test_runs: int = Field(default=6, ge=1)
     wall_time_seconds: int = Field(default=900, ge=1)
-    per_request_input_tokens: int = Field(default=128_000, ge=1)
+    input_budget_profile: Literal["standard", "long-context"] = "standard"
+    per_request_input_tokens: int | None = Field(default=None, ge=1)
     per_request_output_tokens: int = Field(default=4_096, ge=1)
     # Command-line P2 entry points supply the retained P1 record.  Keeping this
     # explicit prevents a library caller from accidentally treating an arbitrary
     # ten-task list as the P1-qualified pool.
     p1_evidence_path: Path | None = None
     formal: P2FormalRunRequirements | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def apply_input_budget_profile(cls, value: object) -> object:
+        if isinstance(value, dict) and value.get("input_budget_profile") == "long-context":
+            return {"max_input_tokens": 2_000_000, **value}
+        return value
 
 
 class P2TrialPlan(BaseModel):
@@ -277,7 +293,9 @@ class P2ProtocolRecord(BaseModel):
     p1_evidence_sha256: str | None = None
     p1_qualifications: dict[str, P2QualificationRecord] = Field(default_factory=dict)
     code_hashes: dict[str, str] = Field(default_factory=dict)
-    budgets: dict[str, int]
+    budgets: dict[str, int | str | None]
+    model_context_source: str | None = None
+    input_counter_method: str | None = None
     arm_configurations: dict[str, dict[str, bool | int]]
     schedule: tuple[P2TrialPlan, ...]
     formal: P2FormalRunRequirements | None = None
@@ -460,6 +478,8 @@ class P2CostRequestRecord(BaseModel):
     reserved_amount: float | None = None
     input_token_upper_bound: int
     output_token_upper_bound: int
+    input_count_method: str | None = None
+    input_count_identity: str | None = None
     actual_input_tokens: int | None = None
     actual_output_tokens: int | None = None
     actual_cost_usd: float | None = None
@@ -555,7 +575,8 @@ class P2BudgetedLLM(BaseLLM):
         *,
         ledger_path: Path,
         formal: P2FormalRunRequirements,
-        input_upper_bound: int,
+        input_upper_bound: int | None,
+        legacy_input_counting: bool = False,
         trial_input_budget: int = 350_000,
         trial_output_budget: int = 20_000,
         request_id_prefix: str = "p2",
@@ -579,6 +600,7 @@ class P2BudgetedLLM(BaseLLM):
         self._ledger_path = ledger_path
         self._formal = formal
         self._input_upper_bound = input_upper_bound
+        self._legacy_input_counting = legacy_input_counting
         self._trial_input_budget = trial_input_budget
         self._trial_output_budget = trial_output_budget
         self._trial_input_used = 0
@@ -607,14 +629,38 @@ class P2BudgetedLLM(BaseLLM):
         self._request_number += 1
         request_id = f"{self._request_id_prefix}:{self._request_number}"
         remaining_input = self._trial_input_budget - self._trial_input_used
-        count_input = getattr(self._delegate, "count_input_tokens", None)
-        if count_input is None:
-            raise BenchmarkError("P2 provider exposes no auditable request token counter")
-        request_input_tokens = count_input(messages, tools)
-        if request_input_tokens > self._input_upper_bound:
-            raise BenchmarkError("P2 request exceeds the configured per-request input bound")
+        if not self._legacy_input_counting:
+            context_window, max_model_output = deepseek_flash_capability(
+                self.config.model_name,
+                self._formal.provider,
+                str(self.config.extra_kwargs.get("api_base", "")),
+            )
+            bound_counter = getattr(self._delegate, "count_input_bound", None)
+            if bound_counter is None:
+                raise P2CounterUnavailable("P2 qualified input counter is unavailable")
+            qualified = bound_counter(messages, tools)
+            if (
+                qualified.status not in {"verified_exact", "verified_upper_bound"}
+                or not qualified.tokens
+            ):
+                raise P2CounterUnavailable(
+                    "P2 qualified input counter is unavailable",
+                    context={"reason": qualified.identity},
+                )
+            request_input_tokens = qualified.tokens
+        else:
+            count_input = getattr(self._delegate, "count_input_tokens", None)
+            if count_input is None:
+                raise BenchmarkError("P2 provider exposes no auditable request token counter")
+            request_input_tokens = count_input(messages, tools)
+            context_window = None  # Only frozen old protocols use the historical byte bound.
+            max_model_output = None
+        if self._input_upper_bound is not None and request_input_tokens > self._input_upper_bound:
+            raise P2RequestInputLimitExceeded(
+                "P2 request exceeds the configured per-request input bound"
+            )
         if request_input_tokens > remaining_input:
-            raise P2TrialBudgetExceeded(
+            raise P2TrialInputBudgetExceeded(
                 "P2 trial input budget is exhausted before provider invocation"
             )
         input_upper_bound = request_input_tokens
@@ -625,6 +671,13 @@ class P2BudgetedLLM(BaseLLM):
         if input_upper_bound <= 0 or output_upper_bound <= 0:
             raise P2TrialBudgetExceeded(
                 "P2 trial token budget is exhausted before another provider request"
+            )
+        if context_window is not None and (
+            output_upper_bound > max_model_output
+            or input_upper_bound + output_upper_bound > context_window
+        ):
+            raise P2ModelContextExceeded(
+                "P2 request exceeds the official model context window"
             )
         reservation = estimated_request_reservation(
             self._formal,
@@ -656,6 +709,10 @@ class P2BudgetedLLM(BaseLLM):
             reserved_amount=reservation,
             input_token_upper_bound=input_upper_bound,
             output_token_upper_bound=output_upper_bound,
+            input_count_method=(
+                qualified.method if not self._legacy_input_counting else "legacy-byte-upper"
+            ),
+            input_count_identity=(qualified.identity if not self._legacy_input_counting else None),
         )
         ledger = ledger.model_copy(
             update={
@@ -1027,6 +1084,13 @@ def _patch_declared_paths(path: Path) -> tuple[str, ...]:
 def _termination_category(stop_reason: str | None, message: str) -> str:
     if stop_reason == "campaign_budget_exhausted":
         return "campaign_budget_exhausted"
+    if stop_reason in {
+        "p2_trial_input_budget_exhausted",
+        "p2_input_counter_unavailable",
+        "p2_model_context_exceeded",
+        "p2_request_input_limit_exceeded",
+    }:
+        return stop_reason
     if stop_reason == "p2_trial_budget_exhausted" or any(
         fragment in message
         for fragment in ("trial input budget is exhausted", "trial token budget is exhausted")
@@ -1864,7 +1928,14 @@ def diagnose_p2_experiment(experiment_dir: Path) -> dict[str, object]:
             )
         error = run_payload.get("error") if isinstance(run_payload.get("error"), dict) else {}
         message = str(error.get("message", "")) if isinstance(error, dict) else ""
-        if (
+        if record.stop_reason in {
+            "p2_trial_input_budget_exhausted",
+            "p2_input_counter_unavailable",
+            "p2_model_context_exceeded",
+            "p2_request_input_limit_exceeded",
+        }:
+            termination = record.stop_reason
+        elif (
             "trial input budget is exhausted" in message
             or "trial token budget is exhausted" in message
         ):
@@ -2526,6 +2597,7 @@ def build_p2_protocol(
         code_hashes=_code_hashes(repository_root),
         budgets={
             "max_input_tokens": config.max_input_tokens,
+            "input_budget_profile": config.input_budget_profile,
             "max_output_tokens": config.max_output_tokens,
             "max_steps": config.max_steps,
             "max_test_runs": config.max_test_runs,
@@ -2533,6 +2605,19 @@ def build_p2_protocol(
             "per_request_input_tokens": config.per_request_input_tokens,
             "per_request_output_tokens": config.per_request_output_tokens,
         },
+        model_context_source=(
+            DEEPSEEK_FLASH_SOURCE
+            if config.formal is not None
+            and config.formal.model_name.casefold() == "deepseek/deepseek-flash"
+            and "deepseek" in config.formal.provider.casefold()
+            else None
+        ),
+        input_counter_method=(
+            "deepseek-recipe-v41-estimate-only"
+            if config.formal is not None
+            and config.formal.model_name.casefold() == "deepseek/deepseek-flash"
+            else "unavailable"
+        ),
         arm_configurations=(
             {
                 plan.arm.value: {
@@ -2817,6 +2902,64 @@ def run_p2_experiment(
         campaign = config.formal.campaign_ledger_path
         if campaign is None or not campaign.is_file():
             raise BenchmarkError("formal ablation requires the existing shared campaign ledger")
+    # A completed frozen run is read-only. Its protocol may predate the new
+    # counter and must not be reinterpreted through current defaults.
+    existing_root = experiment_dir.expanduser().resolve()
+    existing_summary = existing_root / "summary.json"
+    if existing_summary.is_file() and (existing_root / "protocol.json").is_file():
+        saved = P2RunSummary.model_validate_json(existing_summary.read_text(encoding="utf-8"))
+        if saved.batch_complete and saved.mode == mode:
+            frozen = P2ProtocolRecord.model_validate_json(
+                (existing_root / "protocol.json").read_text(encoding="utf-8")
+            )
+            if frozen.input_counter_method is not None:
+                current = check_p2_inputs(config, repository_root=repository_root).protocol
+                if current.model_copy(update={"generated_at": frozen.generated_at}) != frozen:
+                    raise BenchmarkError("P2 resume protocol identity does not match")
+            else:
+                for key, frozen_value in frozen.budgets.items():
+                    if key == "per_request_input_tokens":
+                        continue  # Historical 128k default changed in the new protocol.
+                    if hasattr(config, key) and getattr(config, key) != frozen_value:
+                        raise BenchmarkError("P2 resume protocol identity does not match")
+            if (
+                (mode != "formal" or frozen.formal == config.formal)
+                and len(frozen.schedule) == len(saved.results)
+                and all(
+                    item.status == "verification_complete" for item in saved.results
+                )
+            ):
+                for plan, _item in zip(frozen.schedule, saved.results, strict=True):
+                    recorded = _read_trial(existing_root / "trials" / f"{plan.sequence:03d}.json")
+                    if recorded is None or (
+                        recorded.sequence, recorded.task_id, recorded.arm,
+                        recorded.repetition, recorded.mode, recorded.status,
+                    ) != (
+                        plan.sequence, plan.task_id, plan.arm,
+                        plan.repetition, mode, "verification_complete",
+                    ):
+                        raise BenchmarkError("P2 saved trial identity conflicts with its schedule")
+                    _verify_saved_artifacts(recorded)
+                if mode == "formal" and config.formal is not None:
+                    ledger_path = (
+                        config.formal.campaign_ledger_path or existing_root / "cost-ledger.json"
+                    )
+                    if ledger_path.is_file():
+                        ledger = P2CostLedgerRecord.model_validate_json(
+                            ledger_path.read_text(encoding="utf-8")
+                        )
+                        if ledger.uncertain_request:
+                            raise BenchmarkError(
+                                "P2 campaign requires reconciliation before resume"
+                            )
+                return saved.model_copy(
+                    update={
+                        "resumed_count": len(saved.results),
+                        "results": tuple(
+                            item.model_copy(update={"resumed": True}) for item in saved.results
+                        ),
+                    }
+                )
     check = check_p2_inputs(config, repository_root=repository_root)
     root = experiment_dir.expanduser().resolve()
     root.mkdir(parents=True, exist_ok=True)

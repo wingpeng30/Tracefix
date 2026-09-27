@@ -1,5 +1,27 @@
 # TraceFix 开发历程与代码说明
 
+## 2026-09-27：TraceFix Runtime 按需 Skills 与 MCP 评估
+
+在容器资格与恢复 Goal G0–G7 全部验收后，接入 Agent Skills 的小型受控子集。新增 `tracefix-debugging`，并通过 `AgentConfig.skills_enabled`、CLI `--skills` / `TRACEFIX_SKILLS_ENABLED=1` 默认关闭；仅激活工具加载正文，references 单独按需读取。发现器限制在 TraceFix 随包技能目录，拒绝重名/格式错误、符号链接和越界引用；不运行技能脚本，也不消费 `allowed-tools` 扩权。激活轨迹包括名称、版本、SHA-256 和实际上下文正文；正文以 system 锚点保留，因此上下文折叠后仍存在，重复激活不再次注入。Docker bridge 仅在同一开关开启时添加工具，基线工具描述和 system 提示保持不变。
+
+verification-before-completion 没有新增：当前 Agent 已有测试完成提醒、可选 `require_tested_completion`、run_tests 反馈与独立 Diff 证据要求；此前验证闭环正式比较未达到采纳条件，重复提示会增加上下文但无新验证能力。Serena 的符号查找、文件概览和引用查询能补充当前文本检索和保守 Repo Map 的符号引用关系，但没有在冻结容器源码视图完成可复现 MCP 调用、边界与会话清理验证，故本轮不接入 MCP SDK/Serena，不改 Docker bridge 协议。Context7 与 GitHub MCP 仍是未来候选，不带入冻结基准。
+
+本轮针对性回归 91 passed；最终零费用全量 pytest 550 passed、0 failed、678.59 秒、0 warnings。Ruff、129 个跟踪 Python 文件 compileall、改动文件 compileall、`git diff --check` 均通过。Agent Skills `quick_validate.py` 通过。没有新测本次工作区的 Coverage.py 合并口径，G6 的旧覆盖率结果不代表本次版本；无模型调用、付费实验或留出题访问。原始 pytest 输出和退出码位于 `E:\TraceFixRunsActive\skills-mcp-integration-final-20260927`。执行 HEAD 为 `5258dc44e324626cc9ab5345d5f7b68cc5d47613`；当时工作区含环境 Goal 已有的大量 dirty/untracked 文件，本轮保留且未清理，相关新增文件与代码哈希、Skills/MCP 版本和限制见 [`experiments/2026-09-27-skills-mcp-integration.md`](experiments/2026-09-27-skills-mcp-integration.md)。
+
+## 2026-09-27：容器资格与恢复 Goal 配置（未执行）
+
+按用户要求建立一个总 Goal 的执行合同、八个子目标、依赖顺序、共同约束与逐节点提示词；计划和机器状态位于 [docs/goals](goals/2026-09-27-container-qualification.md)。P0 先复用正式 Harness 完成 pytest-10081 的 base/gold/保存补丁 × 失败节点/整文件 × 两次矩阵并归因；P1 随后验证真实容器断连、中断与恢复分类并修复；P2 完成准确工程门槛与审计交接。子目标依赖验收通过才自动推进，准备失败和未知调用不得记成功。
+
+本轮只新增计划 MD/JSON 并更新路线图与本记录，未改运行代码、镜像、旧实验、账本或评分，未运行 Docker、pytest 或供应商调用。文档与状态文件完成 JSON 解析、八节点唯一性/依赖顺序/提示词完整性检查及指定文档 diff 检查；这不是工程测试通过证据。计划时 HEAD 为 5258dc44e324626cc9ab5345d5f7b68cc5d47613，已有大量脏改动，真正执行身份待 G0 快照固定。保留 501 passed 但覆盖率 83.462867% 未达 90% 的历史结论；pytest 整文件归因和真实恢复仍未完成。按用户先切换模型的要求，Goal 配置后等待恢复，从 G0 开始；无新增实验结果可报告。
+
+## 2026-09-26：历史 run 目录迁到 E 盘
+
+将四份早期 P2 模拟目录复制至 `E:\TraceFixRunsArchive`，以并发校验脚本逐文件比较路径、大小和 SHA-256：464,618 个文件全部一致。D 盘旧路径改为 NTFS junction 指向 E，四份 D 盘重复副本移除；旧绝对路径仍可读取汇总、协议和 Git checkout。D 可用空间从约 14.4 GiB 增至约 29.4 GiB。Docker 数据仍占 D 盘约 4.37 GiB，TraceFix 其他默认 `runs/` 输出仍可能落回 D；后续新运行应显式指定 E 上目录。校验报告与空间记录见 [`maintenance/disk-space-plan-2026-09-26.md`](maintenance/disk-space-plan-2026-09-26.md)及`runs/docker-foundation-20260926-v1/space-migration-final.json`。
+
+## 2026-09-26：Docker 基础迁移与计数器离线核验
+
+增加显式历史 Windows 路径映射与越界拒绝，独立镜像安装官方 `deepseek-recipe==0.1.1`，断网比较 755 个完整请求和供应商 usage；逐项计数相同，但只授予 `estimate`，新正式调用仍在请求前停机。增加通用 staging、Git bundle 恢复和 Docker 严格复验入口；pytest-10081、Requests-1766、Sphinx-10449 的 base/gold/保存补丁各两次结果一致。Linux checkout 对旧 CRLF 补丁的应用已修正。未改原始评分和账本，未发送模型请求。定向回归 13 passed、全量 pytest 489 passed；全项目覆盖率 85.9106216437608%，低于 90% 门槛，故覆盖率命令退出码 1；Ruff、86 文件编译与 diff 检查通过。固定执行身份、报告、失败试运行、验证和限制见 [`experiments/2026-09-26-docker-foundation.md`](experiments/2026-09-26-docker-foundation.md)。下一步是容器 Agent 接口与原目录不可访问条件下的入口验证，不自动迁移所有题目。副本候选见 [`maintenance/docker-migration-cleanup-candidates.md`](maintenance/docker-migration-cleanup-candidates.md)。
+
 本文集中说明各阶段实际完成的代码、验证方式和版本位置。实验数字的详细解释见
 [`experiments/README.md`](experiments/README.md)。
 
@@ -679,3 +701,67 @@ V0.8.20 的“执行器尚未暴露恢复门槛”与 ¥23.12462080 余额均已
 ### 2026-09-26 V0.8.22：修正反馈恢复门槛比较
 
 固定 8 道普通开发题、C/T 各 24 项的同期比较已完成，协议 SHA `a98782c1dd266ed8658513332fd718b15dabe6bbd3bf186385e59b394fae0a15`，执行代码 `b435368`。C、T 独立验收均为 6/24；12/48 总成功，严格证据有效 28/48、问题 20/48，另有一次操作中断基础设施事故。证据问题集中在 Requests-1766 网络验收、Sphinx JUnit/审计报告缺失、pytest-10081 权限错误。未达 T≥16/24、净增≥4及至少两题净增的预注册标准，不采纳 T。账本计算费用 ¥19.466102、共享计算累计 ¥79.67736708；供应商账单只覆盖本批前 95 个请求，后 661 个请求尚未对账。完成态恢复复用 48/48、没有新请求。全量工程验证绑定执行版本：471 passed，综合覆盖率 90.02713069510712%（语句 92.29066765031354%、分支 82.82472613458529%），Ruff 和 129 个 Python 文件 compileall 通过。报告及限制见 [`experiments/v0.8.22-no-effect-recovery-48-campaign-results.md`](experiments/v0.8.22-no-effect-recovery-48-campaign-results.md)。
+
+### 2026-09-26：输入边界、测试计数与产品补丁隔离
+
+从 HEAD `5258dc44e324626cc9ab5345d5f7b68cc5d47613` 出发，调整 P2 新协议默认单请求限制为 null，增加 350k/2M 累计输入档与官方模型容量检查；因官方计数契约尚未验证，新正式请求请求前停机。新增只读校准入口，冻结证据 756/756 旧上界重建一致、755 个 usage 与响应证据核对无差异、37 个未发送视图不推断。测试调用先校验后计额，pytest 成功启动才计一次；审计文件迁至 checkout 外，内部目录显式登记并阻止补丁写入。最终全量 pytest 476 passed，Ruff、compileall、diff 检查通过；聚焦 87 例的五模块合并覆盖率 53%，未达 90% 门槛。原账本、协议、评分未更改，无付费调用、正式实验或留出题运行。限制与下一步见 [`experiments/2026-09-26-input-bound-zero-cost.md`](experiments/2026-09-26-input-bound-zero-cost.md)。
+
+### 2026-09-26：冻结补丁独立复验与官方计数器安装核验
+
+建立当前工作区与 244 份旧输入哈希清单，新增只读旧补丁派生复验、48 项汇总和官方计数诊断。运行准备阶段的 `.tracefix-build-tmp` 提前登记，避免构建失败时内部产物混入最终产品补丁。四道问题任务的 base/gold 在固定复验身份下均重复两次合格；原 20 项证据问题的保存补丁为 14 项两次通过、2 项稳定断言失败、4 项无产品改动。原始评分及账本不变。官方 Python 0.1.1 在 Windows 隔离环境安装失败：PyPI 无 Windows 轮子/源码包，本机无 Rust 工具链；755 个有供应商 usage 请求未获得官方本地 Token 计数，新正式请求继续停机。全量 pytest 477 passed，但全项目综合覆盖率 85.74% 低于 90% 门槛；定向新增回归、Ruff、compileall 通过。工程检查与限制详见 [`experiments/2026-09-26-frozen-evidence-rescue.md`](experiments/2026-09-26-frozen-evidence-rescue.md)。
+
+### 2026-09-26：Docker 保存补丁验收试点
+
+使用 Docker Desktop Linux 引擎对 pytest-10081 的 base、gold 和历史第 26 份产品补丁各重复两次严格验收：base 两次断言失败，gold 和补丁各两次通过。原输入只读，测试 checkout 位于容器 Linux 文件系统，审计证据另存。发现并修正 base/gold 补丁在 Linux checkout 的 CRLF 应用问题；Windows 挂载文件系统不适合作为旧 pytest 的运行 checkout，已移至容器原生文件系统。相关测试文件原有 81 项通过，新增 CRLF 回归 1 项通过；Ruff、compileall、diff 检查通过；244 份冻结输入哈希零变化。未跑全项目覆盖率，也未将该单题派生结果改写为历史评分。当前镜像和入口仅为 pytest-10081 试点；下一步锁定可重建依赖并试点 Requests、Sphinx。详情见 [`experiments/2026-09-26-docker-reverify-pilot.md`](experiments/2026-09-26-docker-reverify-pilot.md)。
+
+### 2026-09-26：Agent 容器工具桥与三题新容器验收
+
+新增 Linux JSONL 工具桥及三题零费用脚本入口。Agent 容器内使用现有五工具；Agent 容器只取得源码 bundle，不接收 gold、隐藏测试补丁、密钥或 Docker socket。独立验收使用同一镜像 ID 的新容器，基于固定 base 重新构造工作区。pytest-10081、Requests-1766、Sphinx-10449 均完成读取、产品补丁应用、公开 smoke、diff 导出；测试前 diff 为空，补丁后 diff 只含预期产品文件。三题独立严格验收各两次通过，测试节点、返回码、测试计数和依赖指纹与旧容器复验一致。Requests 在 Agent 和验收容器分别启动本地 httpbin；额外 Agent 文件未进入独立验收容器。详细运行报告写入 `E:\TraceFixRunsActive`，实验说明见 [`experiments/2026-09-26-docker-agent-container-e2e.md`](experiments/2026-09-26-docker-agent-container-e2e.md)。
+
+最终全量 pytest `492 passed`、640.41 秒、退出码 0。改动文件范围 Ruff、compileall 和 `git diff --check` 退出 0。全仓 Ruff 遇到已有临时夹具和拒绝访问目录，不能作为通过；全树 compileall 返回 0 但也提示若干旧临时夹具不可遍历。覆盖率未运行。三个冻结输入 manifest 执行后校验一致；未调用模型、未运行正式实验、未改历史评分或账本。新 Agent 输出根支持 `TRACEFIX_RUNS_ROOT=E:\TraceFixRunsActive`。正式 `TraceFixRunner` 尚无 Docker 执行模式，自动恢复中断容器也未实现；脚本化闭环仅验证工具通道与验收隔离，不能证明模型修复能力。下一步为正式 Runner 增加容器开关和中断身份恢复 fixture，继续零费用验证。
+
+### 2026-09-27：三类环境问题复核
+
+Windows 短路径 E 盘临时根下，全量 pytest 501 项全部通过且无 setup 错误；覆盖率 83.462867%，因低于原 90% 门槛退出 1。四个此前报 Git 仓库识别错误的测试在短路径下 4/4 通过，原失败 workspace `.git` 路径长 262 字符，确认应同时缩短 TEMP/TMP、basetemp 与 cache 路径。pytest-10081 更换到源 tox 支持的 Python 3.10，正式 Runner base/gold/补丁目标资格均重复通过；完整公开文件两个新 Agent 容器结果相同：61 passed、9 skipped、1 个未 await coroutine warning 失败，未放宽 warning。Requests 整文件在两个独立 Agent 容器均为 90/90；Sphinx 保存补丁整文件 31/31 两次通过，Python 3.11 的同一失败在支持的 Python 3.10 下消失。更新的报告与 E 盘证据索引见 [`experiments/2026-09-27-environment-qualification.md`](experiments/2026-09-27-environment-qualification.md)。最终定向测试 23 passed、Ruff、compileall 与 diff check 通过。无模型调用、正式实验或留出集运行；pytest 整文件 warning 的 base/gold 对照待补，coverage 门槛仍未达标。
+
+### 2026-09-27：pytest-10081 整文件正式矩阵与归因
+
+恢复容器资格 Goal 后，以正式 Harness 验证入口准备 pytest-10081。attempt 01 缺 protocol 输入、attempt 02 用 Python 3.10 调度器触发 `datetime.UTC` 兼容错误，均未启动有效 pytest 格。attempt 03 四条容器命令完成但 Windows `docker cp` 无法创建 Linux 符号链接，原始结果未导出且不接受。修正为容器内 tar 打包、Windows 侧普通文件提取并保留链接清单后，attempt 04/05 的证据成功落盘。新增 `scripts/pytest10081_diagnostic_matrix.py` 运行官方 issue 节点、async warning 节点和整文件三组对照；Ruff、compileall、`git diff --check` 通过。attempt 05 六条命令均返回 0、18 格审计/JUnit/源码身份逐项复核完整。官方 issue 节点 base 两次失败、gold 与保存补丁两次通过；这是资格结果，不是模型能力指标。async warning 节点三种补丁两次均失败；整文件 base 两次 2 failed/9 skipped，gold 和保存补丁两次均 1 failed/9 skipped，剩余失败稳定为 `test_plain_unittest_does_not_support_async` 的未 await coroutine 被记录为 `PytestUnraisableExceptionWarning`。保存补丁解决其目标 PDB teardown 测试；环境指纹未漂移，导入来自每个 Linux checkout。
+
+attempt 05 的默认矩阵摘要因保留了旧的 4 命令计数而误报 `all_commands_completed=false`；原始六条 host log、18 个 matrix-cell 报告、JUnit、审计、tar 和逐文件哈希均保留，E 盘 `g1-matrix-review.json` 已独立核对并记录。严格正式证据解析器把 8 个合法 skip 阶段（setup skipped、teardown passed、无 call）拒为不完整阶段；完整文件资格仍明确不通过，不能据独立诊断完整性改成通过。上游 async 测试注释本来预期子进程打印 RuntimeWarning 后通过，而冻结环境中子测试被转成失败；未做 Python 点版本对照，故不宣称已证明 Python 3.10.21 是单独根因。工作区保存补丁及原历史分数/账本未改，供应商调用为零。下一步先完成 Docker 中断/断连故障注入协议，再启动限定在 Goal 自有容器的真实恢复验证。
+
+### 2026-09-27：Docker 恢复故障注入与首轮修复
+
+G3 在执行前冻结 F01–F08 协议；协议 JSON SHA-256 为 `671da32465681732928932cb492a99f40a4664521b1a664d4f65bc321c295a4f`。G4 使用 Goal 自有、`network none`、无宿主挂载容器和精确子进程注入，保留全部现场。F01a 注入边界无效（请求已写），F01b 在 payload 写前中断且 call 保持 unknown；F02 在 `apply_patch` 已执行后丢弃响应帧，外部 diff 证实副作用且未重放；F03 在 host journal `result_received` 后、trace/result 落盘前崩溃，旧检查器把它报为 completed。F04 Docker 不可达与 F05 容器不存在旧输出无法区分；F04b 反证了“completed + Docker 不可达会误验身份”的源码担忧。F06 身份标签错配被拒；F07 正式验收 pytest 子进程被 SIGKILL，报告明确不合格；F08 完成态只读重复检查一致；F09 容器停止后旧检查器仍将其身份匹配报告成功。五个 Goal 自有长驻容器已停止但保留，未删除。
+
+G5 首轮改动：`scripts/inspect_docker_run.py` 现在分类 `docker_unavailable`、`container_missing`、`container_stopped` 和 `result_received_not_persisted`；只有 trajectory 中存在对应 `tool_returned` 才把结果视作可复用，所有未知结果均不重放；不可恢复检查分类返回非零。检查器也会跟随已保存 `result.json` 的历史 trace 路径。`runtime.py` 在 `result.json` 落盘后才写 terminal phase。新增工具日志对照用例。`tests/test_docker_backend.py` 与 `tests/test_runtime.py` 24 passed，后续最终定向测试 7 passed；Ruff、compileall 与 `git diff --check` 通过。E 盘 `g5-recovery-01`、`g5-recovery-repeat-02` 对 F03/F04/F04b/F05/F09/F08 各重复两次，分类和输出稳定、源证据哈希不变；历史 F08 有 4 个 result_received 缺少持久化 trace，现正确按 unknown 拒绝复用。三题正式回归和最终验收见下段，整文件资格仍不合格，coverage 90% 门槛待 G6 验收。本工作不证明 Agent 模型修复率提升，供应商调用为零，历史评分和账本未改。
+
+G5 最终验收：同一正式 Harness 对 pytest-10081、Requests-1766、Sphinx-10449 各完成一次 Runner 脚本替身贯通；每题严格资格与保存补丁分别在两个全新验收容器运行。三份 `docker-runner-e2e.json` 均 `passed=true`，十项 Runner/隔离/身份/严格审计检查全通过，每份 `model_requests=0`，验收镜像与冻结摘要匹配、无挂载且 Agent-only sentinel 不存在。详细容器 ID、公开文件诊断、JUnit、阶段审计和 report 在 `E:\TraceFixRunsActive\goal-container-qualification-20260927\g5-formal-reruns`。这些结果是脚本替身的端到端和题目资格验证，不计为模型修复成功率。G6 全量工程/coverage 验收继续进行。
+
+### 2026-09-27：G6 工程门槛最终运行（未验收）
+
+最终全量 pytest 收集 **516 项，516 passed、0 failed**，耗时 622.37 秒；原 Coverage.py `source=tracefix` 与 `fail_under=90` 均未修改，pytest 退出码 1 仅因精确合并覆盖率不足。coverage 数据在相同脏工作区源码版本中包含全量 pytest、两个真实只读 P2 诊断入口、三题 `docker_runner_e2e` 正式桥接与独立验收、只读任务环境盘点，以及新增恢复边界定向用例。合并精确覆盖率 **89.32642487046633%**（语句 91.6837315%、分支 81.8996416%），低于 90% 共 0.6735751295 个百分点。最终 516 项 `--cov-append` 报告未单独导出 pytest-only 数值；G6 首次 502 项 pytest-only 为 83.462867%，不得误标成最终 516 项 pytest-only。
+
+为 G6 新增 `tests/test_docker_backend.py` 行为回归：RPC 超时后调用保持 unknown 且不伪造结果、错误 bridge protocol 拒绝、容器清理必须有匹配 run label；准备阶段拒绝缺少 frozen manifest、任务或源码 commit 错配、冻结文件哈希错误、manifest 路径逃逸、错误镜像、缺源码 tag，以及会遮蔽 TraceFix 保留证据目录的源码归档。最终此文件 21 passed。Tracked Python 范围 Ruff 0，compileall 129/129，`git diff --check` 0。E 盘完整原始日志、JUnit、Coverage JSON、覆盖报告、退出码、静态检查和执行身份位于 `E:\TraceFixRunsActive\goal-container-qualification-20260927\g6-engineering-final2`。额外一条不同协议历史诊断在运行前拒绝输入，记录为 preparation failure，不纳入结果/覆盖结论。
+
+G6 仍为 in_progress：继续寻找与真实项目行为相关的覆盖缺口，不降低阈值、不扩大真实任务范围、不用无关执行凑覆盖率。pytest-10081 整文件 async warning 仍不合格；Requests/Sphinx 与三个正式 Runner 目标/补丁资格回归通过。供应商调用为零，未用留出题，历史评分和账本未改；脚本替身贯通不代表模型修复成功率变化。
+
+### 2026-09-27：G6 Docker Runner 终态持久化回归与最终复跑
+
+新增 `tests/test_runtime.py::test_docker_runner_persists_result_before_terminal_phase`，用 Docker 后端替身验证真实 `TraceFixRunner` 编排顺序：终态 phase 调用时 `result.json` 已落盘且状态相符；无产品差异时容器关闭不请求删除。该单测 1 passed，不涉及 Docker daemon 或模型调用。初次全量运行有 517 passed，但 pytest cache 仍指向 D 盘；保留为诊断记录，不作为最终合规运行。
+
+最终全量运行将 TEMP、TMP、basetemp、cache 全放在 E:\TFP，517 passed、0 failed、589.73 秒，未出现 warning。Coverage.py 累计同一工作区的有效 pytest 与 G6 真实入口数据为 8059/8790 语句、2286/2790 分支，精确总覆盖率 89.33506044905009%（语句 91.68373151308305%、分支 81.93548387096774%）；覆盖门槛仍为 90%，pytest exit 1 仅由 coverage 导致。Ruff、compileall（`src/tracefix` 与 `tests/test_runtime.py`）和 `git diff --check` 通过。该新回归命中既有覆盖行，未提升累计覆盖总数，说明这条持久化路径虽有直接行为断言，但不是当前覆盖缺口来源。
+
+最终日志、JUnit、coverage JSON、退出码在 `E:\TraceFixRunsActive\goal-container-qualification-20260927\g6-runtime-durable-phase-final`；含 D 盘 cache 的早期尝试保留在同级 `g6-runtime-durable-phase`。G6 继续未验收，缺口 0.66493955094991 个百分点。下一步先审查其余未覆盖生产分支是否能由真实、隔离的行为场景触达；若无合理路径则继续如实保留短缺，G7 不启动。供应商调用为零，留出题、历史评分与账本未动；不能据此宣称模型修复率变化。
+
+补齐 G6 要求的最终代码版本 pytest-only coverage：517 passed，604.11 秒，纯 pytest exact coverage 84.4041450777202%（语句 87.13310580204778%、分支 75.80645161290323%），因覆盖率不足退出码 1。使用全新 E 盘 `COVERAGE_FILE`，TEMP/TMP/basetemp/cache 均在 E:\TFP，证据目录 `E:\TraceFixRunsActive\goal-container-qualification-20260927\g6-pytest-only-final`。该值和同版本有效诊断/Harness 入口累计值 89.33506044905009% 分开表述；均未达 90%，G6 保持 in progress。
+
+### 2026-09-27：Goal 最终工程门槛与 G7 审计结论
+
+后续为 G6 增加并复核 Runner、MinimalAgent、Docker 五工具及独立验收路径的行为覆盖；最终同版本全量 pytest **543 passed、0 failed**，综合有效入口覆盖率精确 **90.00863557858376%**（8108/8790 语句、2315/2790 分支），严格高于原 90% 门槛。独立 pytest-only 覆盖率 **85.77720207253886%**，单独报告。Ruff、129 个跟踪 Python 文件 compileall、`git diff --check` 均退出 0；没有降低阈值或更改覆盖范围定义。
+
+G7 逐路径与哈希复核确认 G0 脏工作区快照、此前正式 Runner 摘要、G1 18 格原始诊断、G3 协议及 G4/G5 恢复重复证据完整。审计时发现 G5 Sphinx 实际读取 `E:\TraceFixRunsActive\environment-recovery-20260926\inputs-v3`（manifest `2ce71e…`），基线正式验收使用 `inputs-v4`（manifest `8dcbc6…`）。两份 manifest 的 9 个输入文件中仅 recipe 文件不同：G5 recipe JSON 为 Python 3.11/Windows 元数据，基线 recipe 为 Python 3.10/Linux；源 bundle、任务描述、候选、gold/test patch、协议、产品 patch 均逐项哈希相同。G5 与基线均在相同固定 Sphinx Linux 镜像、相同 source commit 上执行，G5 runtime 与四个独立验收容器没有构建步骤并使用该固定镜像。因此保留其固定镜像上的执行/验收结果，但明确不把两次称作完全相同 manifest/recipe，也不据 G5 证明该 recipe 可重建环境。原始报告保留不改。
+
+历史账本文件的当前哈希与时间戳已只读核验，时间早于本 Goal；本 Goal 没有写入账本或评分。G0 快照范围本来不含该账本/评分文件，因此不声称由快照哈希证明其未变；审计结论以零调用守卫、执行范围及只读时间/哈希检查为限。供应商调用为 0，没有付费实验或留出题，旧评分、账本和历史运行证据未改。pytest-10081 公开文件资格继续不合格，async/unraisable warning 的归因仅限当前冻结 profile，未证明 Python 点版本单独致因；三题脚本替身 Runner 结果也不构成模型修复能力证据。
+
+最终交接：[`handoffs/2026-09-27-container-qualification-final.md`](handoffs/2026-09-27-container-qualification-final.md)。主要原始证据仍保存在 `E:\TraceFixRunsActive\goal-container-qualification-20260927` 与既有 `environment-recovery-*` 目录；审计不覆盖此前现场。

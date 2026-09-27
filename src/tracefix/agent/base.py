@@ -61,6 +61,7 @@ class AgentConfig(BaseModel):
     max_search_calls: int = Field(default=4, ge=1)
     max_file_reads_before_patch: int = Field(default=8, ge=1)
     repo_map_reads_before_patch: int = Field(default=2, ge=1)
+    skills_enabled: bool = False
     token_optimization_enabled: bool = True
     # Optional per-feature overrides preserve the legacy master switch when unset.
     tool_result_presentation_enabled: bool | None = None
@@ -88,6 +89,7 @@ class AgentState(BaseModel):
     cost_usd: float = Field(default=0.0, ge=0)
     cost_complete: bool = True
     test_runs: int = Field(default=0, ge=0)
+    rejected_test_calls: int = Field(default=0, ge=0)
     search_calls: int = Field(default=0, ge=0)
     file_read_calls: int = Field(default=0, ge=0)
     cached_tool_calls: int = Field(default=0, ge=0)

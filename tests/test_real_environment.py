@@ -319,6 +319,25 @@ def test_recipe_loader_rejects_duplicate_task_ids(tmp_path) -> None:
         load_environment_recipes(tmp_path)
 
 
+def test_frozen_recipe_fingerprints_survive_optional_pythonpath_field() -> None:
+    """A new empty recipe option must not invalidate existing frozen inputs."""
+    root = (
+        Path(__file__).resolve().parents[1]
+        / "runs"
+        / "docker-foundation-20260926-v1"
+        / "inputs-v2"
+    )
+    for task_id in (
+        "pytest-dev__pytest-10081",
+        "psf__requests-1766",
+        "sphinx-doc__sphinx-10449",
+    ):
+        stage = root / task_id
+        manifest = json.loads((stage / "input-manifest.json").read_text(encoding="utf-8"))
+        recipe = load_environment_recipes(stage / "recipes")[task_id]
+        assert recipe.fingerprint == manifest["recipe_fingerprint"]
+
+
 def test_preparer_preserves_unregistered_or_unhealthy_environment(tmp_path, monkeypatch) -> None:
     """旧目录缺少 TraceFix 所有权或健康标记时必须保留，并改用新目录。"""
     task, source = _task(tmp_path)

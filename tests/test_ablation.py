@@ -153,6 +153,11 @@ def test_formal_ablation_mock_provider_runs_agent_verification_ledger_and_resume
         def count_input_tokens(self, messages, tools=()):
             return 1000
 
+        def count_input_bound(self, messages, tools=()):
+            from tracefix.models.input_bounds import InputBound
+
+            return InputBound(1000, "verified_upper_bound", "fixture", "mock-provider")
+
         def complete(self, messages, tools=()):
             provider_calls.append(1)
             response = super().complete(messages, tools)
@@ -174,6 +179,7 @@ def test_formal_ablation_mock_provider_runs_agent_verification_ledger_and_resume
             return response
 
     monkeypatch.setattr(p2, "LiteLLMAdapter", FakeProvider)
+    monkeypatch.setattr(p2, "deepseek_flash_capability", lambda *_: (1_048_576, 393_216))
     formal = p2.P2FormalRunRequirements(
         model_name="fixture/offline",
         provider="injected-test-provider",
@@ -199,6 +205,7 @@ def test_formal_ablation_mock_provider_runs_agent_verification_ledger_and_resume
     # qualification evidence and its structured audit artifacts.
     config = P2ProtocolConfig(
         design="ablation",
+        per_request_input_tokens=128_000,
         source_root=sources,
         formal=formal,
         p1_evidence_path=qualification_path,
