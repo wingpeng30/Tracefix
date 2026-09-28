@@ -60,3 +60,14 @@ GitHub Actions run [36411826884](https://github.com/wingpeng30/Tracefix/actions/
 - artifact：Windows 3.11 ID `10969475060`（zip SHA256 `6fb0c080b019e8e19608162a5aadb89f42721d953827e4bfaad5d5adf3ff2650`），Windows 3.12 ID `10968717714`（`544478aaeb79d4edd5ca069fb77c3d44d1bb6631937bc3dcf27545eaa6e78f62`），Docker ID `10968841539`（`b30af3a30e4e1e8297a7d54b277fc68c89adad96c7b6b7da3a00d54bfbe13db5`）。完整下载内容尚未成功本地读取；以上摘要来自 Actions job 输出与 artifact 元数据。
 
 run 16 后的未提交修正包括：Docker 审计改读 `content_sha256` 并更新回归夹具；新增 `export_evidence()` 无容器、成功复制（含可选服务日志）、Docker cp 失败三项行为测试；工程摘要将未覆盖最多的文件、行号和分支输出到 CI 日志，帮助下一次按具体路径补测。本地 Python 3.12.5 对这些定向测试得到 63 passed，Ruff 通过。pytest 报告一条本地 cache 路径权限警告，不影响这 63 项的测试结果；这不是 Windows 双版本工程门槛证据。尚需推送候选并由全新 CI 运行提供完整判定。
+
+## GitHub CI run 17：候选完整通过（2026-09-28）
+
+候选分支提交 `1882cc92ce2218a254665e5210cb4fe0a77ebe95`；PR #1 的 [GitHub Actions run 36420487054](https://github.com/wingpeng30/Tracefix/actions/runs/36420487054) 对该 SHA 完成，整体 `success`。PR base 是 `main` 的 `2c81ea1567d37e543e30d44dc1a0ea1dd587258b`。
+
+- Windows x64 Python 3.11.16 与 3.12.5 各运行 646 项 pytest，0 failed、0 errors、0 skipped；pytest-only coverage 都是语句 `8678/9392`、分支 `2480/2996`，精确合计 `11158/12388 = 90.07103648692282%`，达到 90% 门槛。两个版本的 Ruff、compileall、Diff（解析基准为 `origin/main`，commit `2c81ea1567d37e543e30d44dc1a0ea1dd587258b`）均通过，engineering summary `accepted=true`。
+- 两个版本的 editable smoke 与 wheel 构建、隔离环境安装、仓库外 baseline/Skills-only 流程均通过。实际导入路径位于新建 venv 的 `site-packages`，并验证 wheel 含 reproduce 入口、bridge 和 Skills 资源。3.11 wheel SHA256 `a0072d6dff21ff5a6f7c9c98be95847c817984425387477c847bb7ac6e277e75`；3.12 wheel SHA256 `9b60a7a1563a8886e1ed43732542fabacdc3ab34dbbd45f070a7aea6de96f5a5`。两种安装的 baseline / Skills-only 脚本模型请求数均为 6 / 7，pytest return code 为 0，供应商客户端构造、请求发送及网络连接尝试均为 0；Skills-only 激活版本 `1.0.0`，内容 SHA256 `2275795589fa8bfc5fbad4f8d1666e2d3af95ad85413921ac788a52d39169551`。
+- Linux Docker 两臂都使用完整镜像 ID `sha256:ced19b43e55e9e124b61f40b801d8a4173544f9fdab8ee421680325a8fd31882`，容器网络为 `none`、挂载列表为空；baseline 与 Skills-only 的 pytest 均返回 0，供应商构造、请求和网络尝试均为 0。审计 `accepted=true`，两个容器都验证已删除；Docker artifact 同时记录源码和 Skills 身份。
+- 原始 artifacts：engineering 3.11 ID `10969064961`，zip SHA256 `4bdeda75ad00879afbc909f37cc1b71da4defde4df5ee4c904d8c651812402d2`；engineering 3.12 ID `10969492061`，zip SHA256 `abd775ae4eaef3fc4012f207e65959d142a3fe162bfefa831357cb8a1b326811`；Docker ID `10969108622`，zip SHA256 `41864ac5d55aed4db0b61edd931bde1da6f364096967df1cfa60bddde3dd62a9`。pytest JUnit、coverage JSON/XML、缺口清单、Ruff 和 compile 日志及 smoke 原始轨迹均在对应 artifact；工程 summary 中记录各原始文件哈希。
+
+本次通过证明候选版本在锁定的 Windows 双版本工程门槛、editable/wheel 仓库外合成运行和 Linux Docker bridge 隔离 smoke 上可复现；合成修复流程不构成离线定位效果证据，也不证明真实独立修复成功率提升。下一批仍按既定顺序处理 Requests 历史 TLS 复验、pytest-10081 点版本诊断、Sphinx recipe 重建及 Token 计数契约。
