@@ -39,11 +39,27 @@ Docker 审计及 CI 工件路径；README 和复现文档加入最短运行命�
   覆盖率 `11379/12650 = 89.95256916996047%`，工程门槛失败。
   Windows 3.12 的覆盖率及安装检查以该 run 原始工件为准。新增报告错误路径测试后
   已定向验证 7 项通过，新的完整 CI 待记录。
+- GitHub [CI #20](https://github.com/wingpeng30/Tracefix/actions/runs/36428036476)
+  对应分支提交 `b5456fb212961835134790db7a34395d477346c6`，PR 检出合并提交
+  `65f9c3823ff30f13f76a005287b6c9d27a66d261`，全部三个作业通过。
+  Windows Python 3.11.9 和 3.12.10 均为 654 passed、0 skipped，纯 pytest
+  `11408/12650 = 90.18181818181819%`；Ruff、compileall、Diff 检查通过。
+  editable 与仓库外 wheel 的 smoke、分页 baseline 和 Skills-only 均通过。
+  Linux Docker 原 smoke 与分页两臂、隔离/清理审计通过。原始工件：
+  [3.11](https://github.com/wingpeng30/Tracefix/actions/runs/36428036476/artifacts/10972482328)、
+  [3.12](https://github.com/wingpeng30/Tracefix/actions/runs/36428036476/artifacts/10971753047)、
+  [Docker](https://github.com/wingpeng30/Tracefix/actions/runs/36428036476/artifacts/10972177406)。
+  三份 ZIP 的 SHA-256 依次为
+  `9d35dec4bba0b1978a2561869591da4c0eb9f6dd6a680bb7a15eee6baa7c7ce5`、
+  `f1b479f3d311fcac34b80d289bcf8c77d9be83c4ba7ba5dc47fd1f92170f4f4c`、
+  `2915a8e303c3717c9dccbea4d66238b39c160dd02a0231a13deaba3349ad773c`。
+  截图为本地 Skills-only 报告的真实首屏，存于 `docs/assets/pagination-report.png`。
 
 ## 限制与下一步
 
 本地 Docker daemon 不可用；真实 bridge 与 Windows 双版本门槛由候选
-GitHub CI 验证。Codex 浏览器安全策略拒绝 `file://` 页面，不能在本会话
-用浏览器完成视觉截图；需在允许离线本地文件的浏览器中人工打开后补图。
+GitHub CI 验证。Codex 浏览器安全策略拒绝 `file://` 页面；用户在本地浏览器
+打开报告并提供了真实首屏截图，已加入 README。折叠面板、长日志和 Diff 的
+浏览器交互未由本会话直接观察；自动化证据读取测试覆盖其内容与转义。
 该演示只证明合成控制流和工程可检查性，未运行真实模型，也没有独立验收；
 不据此声称真实修复成功率提高。

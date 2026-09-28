@@ -16,6 +16,10 @@ tracefix report --run runs/demo-skills --output runs/demo-skills/report.html
 页面标注“脚本模型演示”，不代表真实模型修复成功率。完整说明与两分钟讲稿见
 [演示指南](docs/demo-pagination.md)。
 
+![分页修复演示的离线报告首屏](docs/assets/pagination-report.png)
+
+截图来自本地 Skills-only 合成运行；完整时间线、测试和 Diff 可在生成的 HTML 中展开。
+
 TraceFix 是一个面向真实 GitHub Issue 的单 Agent Coding 系统。项目计划在固定模型和
 Token 预算下，通过仓库结构检索、动态上下文和测试驱动的补丁验证，提高 Bug 修复成功率
 与成本效率。
