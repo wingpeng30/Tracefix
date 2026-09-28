@@ -23,6 +23,16 @@ tracefix-reproduce 是包内入口。用固定脚本模型修复独立生成的�
 
 两次运行只切换 Skills；检查 reproduction.json、result.json、patch.diff 和 trajectory.jsonl。scripts/reproduce_zero_call.py 是兼容包装，和已安装命令使用同一实现。
 
+多文件分页演示使用同一入口，固定脚本模型先看到失败再跨文件定位，最终生成离线 HTML：
+
+    tracefix-reproduce --scenario pagination --output runs/demo-baseline
+    tracefix-reproduce --scenario pagination --skills-enabled --output runs/demo-skills
+    tracefix report --run runs/demo-skills --output runs/demo-skills/report.html
+
+可直接用浏览器打开 `report.html`。报告可从复制后的运行目录重新生成；缺失结果或
+轨迹时明确失败，未配对调用和截断尾事件会标记证据不完整。两分钟讲稿见
+[demo-pagination.md](demo-pagination.md)。
+
 ## Wheel 安装流程
 
 在 checkout 根目录构建 wheel：
@@ -30,7 +40,7 @@ tracefix-reproduce 是包内入口。用固定脚本模型修复独立生成的�
     New-Item -ItemType Directory -Force .artifacts\wheel
     .\.venv\Scripts\python.exe -m pip wheel --no-deps --no-build-isolation . -w .artifacts\wheel
 
-CI 在新虚拟环境里先按锁安装依赖，再以 --no-deps 安装 wheel；验证 tracefix 实际导入自该环境的 site-packages，核对 tracefix.reproduction、tracefix.agent_bridge 和 Skills Markdown 均在 wheel 内，并从 checkout 外运行 baseline 与 Skills-only。此 wheel smoke 不读取仓库目录或开发机 PYTHONPATH。
+CI 在新虚拟环境里先按锁安装依赖，再以 --no-deps 安装 wheel；验证 tracefix 实际导入自该环境的 site-packages，核对 tracefix.reproduction、tracefix.agent_bridge、tracefix.report 和 Skills Markdown 均在 wheel 内，并从 checkout 外运行 smoke 与分页演示的 baseline、Skills-only。此 wheel smoke 不读取仓库目录或开发机 PYTHONPATH。
 
 ## 真实 Docker bridge 合成流程
 
@@ -43,7 +53,7 @@ CI 在新虚拟环境里先按锁安装依赖，再以 --no-deps 安装 wheel；
 
 宿主 TraceFix Runner 编排合成容器，通过 Docker backend、既有 JSONL bridge 与 ToolRegistry 执行；合成 profile 只接受固定任务身份和空环境变量配方，不接受任意 shell。容器使用 --network none，宿主源码、Docker socket、历史题目材料均不挂载。bridge 验证源 commit、包源码和技能目录身份；报告保留镜像 ID、fixture 源 commit、包树哈希、网络/挂载检查、轨迹与结果。CI 运行结束后由 `scripts/audit_docker_smoke.py` 核对两臂身份、供应商零调用和容器已清理。每个输出目录须为新路径。PR、main、手动入口都运行 Linux Docker baseline/Skills 两臂并上传证据。
 
-Docker 构建需要联网取得固定基础镜像与锁内 PyPI wheel；任务运行阶段断网。新派生镜像 ID 由 CI 输出，不能替代或冒充历史镜像身份。当前本机 Docker daemon 未启动，因此本地真实 bridge 尚未验收；以推送提交的 Linux CI smoke 结果为准。
+Docker 构建需要联网取得固定基础镜像与锁内 PyPI wheel；任务运行阶段断网。新派生镜像 ID 由 CI 输出，不能替代或冒充历史镜像身份。CI 另运行分页案例两臂并保存 `runs/<run-id>/` 下的轨迹、结果、测试证据、Diff 与 HTML；以候选提交的 Linux CI 结果为准。
 
 ## 文件与材料清单
 
@@ -56,7 +66,7 @@ Docker 构建需要联网取得固定基础镜像与锁内 PyPI wheel；任务�
 | 受控外部材料 | 历史源 checkout、patch、image、隐藏测试、tokenizer 缓存 | 不含在公开 GitHub 流程；按单独授权、哈希和外部获取说明复验 |
 | 禁止发布的本地状态 | runs/、临时证据、密钥、受控验收输入、候选留出题 | 不批量 stage，不加入 wheel 或 Docker context |
 
-当前候选的 Windows 双版本门槛、仓库外 wheel smoke 与新增 Docker 清理审计正在通过下一次 GitHub CI 复验；以候选 SHA 对应的 Actions 报告为准。pytest-10081 Python 点版本对照、Requests 历史 TLS 容器复验、Sphinx 基线 recipe 重建及完整 Token 契约不在本批。它们不能由本合成 smoke 推断通过。
+当前分页演示候选的 Windows 双版本门槛、仓库外 wheel smoke 与 Docker 分页审计须以对应提交的 Actions 报告为准。pytest-10081 Python 点版本对照、Requests 历史 TLS 容器复验、Sphinx 基线 recipe 重建及完整 Token 契约不在本批。它们不能由本合成演示推断通过。
 
 ## 启停和回退
 

@@ -1,5 +1,15 @@
 # TraceFix 路线图
 
+## 当前最高优先级（2026-09-28 用户重新确定）
+
+尽快交付**可用、可演示、能形成简历亮点的 Coding Agent 项目**。当前工程底座已通过 CI，
+下一步按“可视化修复报告与公开 demo → 真实案例与最短使用路径 → README/演示及候选包”推进。
+算法收益与全部历史环境资格不再作为首版交付前置条件。pytest-10081 点版本诊断、Sphinx 历史配方重建、
+Requests 整批历史复验及完整 Token 契约移出当前交付主线；已有正式请求保护仍保留。
+完整优先级、完成标准、时间盒和停止规则见
+[`tasks/2026-09-28-portfolio-release-plan.md`](tasks/2026-09-28-portfolio-release-plan.md)。
+下文保留历史路线与证据；旧记录中的“下一步”与本计划冲突时，以本节为准。
+
 2026-09-27 容器资格与恢复闭环 Goal 已完成 G0–G7。pytest-10081 官方 issue 节点资格通过，但公开整文件仍因可重复的 async/unraisable-warning 交互不合格；Requests-1766、Sphinx-10449 的固定镜像目标与保存补丁验收通过。Sphinx G5 重跑的 manifest 与基线不同，差别仅在 recipe：执行仍使用相同冻结 Linux 镜像、相同源码和其余相同输入；因此此证据支持该固定镜像上的运行，不证明从 G5 recipe 重建环境。真实容器故障复现、fail-closed 分类与恢复重复检查完成。G6 最终全量 pytest 543 passed，精确合并 coverage 90.00863557858376% 通过既有 90% 门槛；pytest-only coverage 85.77720207253886% 单列，Ruff、129 个跟踪 Python 文件 compileall、diff 检查通过。全程零供应商调用；脚本替身贯通不表示模型修复成功率提升；付费实验、留出题、账本与历史评分保持冻结。
 
 2026-09-27 Skills/MCP 接入：TraceFix 内置 `tracefix-debugging` skill 已完成默认关闭的按需加载实现，含运行轨迹、哈希身份和压缩后 system 锚点；fixture 与全量测试通过。MCP 单独评估后暂不接入 Serena：其语义引用能力有潜在补充价值，但当前源码/容器与异步会话生命周期、工具白名单和冻结依赖尚未完成零费用端到端验证，故不引入空壳适配器或依赖。没有离线定位或真实独立修复收益结论。配置与证据见 [`experiments/2026-09-27-skills-mcp-integration.md`](experiments/2026-09-27-skills-mcp-integration.md)。

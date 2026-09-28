@@ -73,6 +73,10 @@ jobs:
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
             python -m tracefix.reproduction --backend local --skills-enabled --output (Join-Path $smokeRoot "skills")
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            python -m tracefix.reproduction --scenario pagination --backend local --output (Join-Path $smokeRoot "pagination-baseline")
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            python -m tracefix.reproduction --scenario pagination --backend local --skills-enabled --output (Join-Path $smokeRoot "pagination-skills")
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           } finally { Pop-Location }
 
       - name: 构建并独立安装 wheel
@@ -88,6 +92,8 @@ jobs:
           $wheel = (Get-ChildItem -LiteralPath $wheelRoot -Filter "*.whl" | Select-Object -First 1).FullName
           if (-not $wheel) { throw "wheel build produced no wheel" }
           python -c "import sys,zipfile; z=zipfile.ZipFile(sys.argv[1]); n=set(z.namelist()); assert 'tracefix/reproduction.py' in n; assert 'tracefix/agent_bridge.py' in n; assert any(p.startswith('tracefix/skills/') and p.endswith('/SKILL.md') for p in n)" $wheel
+          python -c "import sys,zipfile; z=zipfile.ZipFile(sys.argv[1]); assert 'tracefix/report.py' in set(z.namelist())" $wheel
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python -m venv $wheelEnv
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $wheelPython = Join-Path $wheelEnv "Scripts/python.exe"
@@ -106,6 +112,10 @@ jobs:
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
             & (Join-Path $wheelEnv "Scripts/tracefix-reproduce.exe") --backend local --skills-enabled --output (Join-Path $wheelSmoke "skills")
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            & (Join-Path $wheelEnv "Scripts/tracefix-reproduce.exe") --scenario pagination --output (Join-Path $wheelSmoke "pagination-baseline")
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            & (Join-Path $wheelEnv "Scripts/tracefix-reproduce.exe") --scenario pagination --skills-enabled --output (Join-Path $wheelSmoke "pagination-skills")
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           } finally { Pop-Location }
 
       - name: 保存工程与 wheel 验证结果
@@ -123,10 +133,12 @@ jobs:
             ${{ runner.temp }}/tracefix-editable-smoke/**/*.json
             ${{ runner.temp }}/tracefix-editable-smoke/**/*.jsonl
             ${{ runner.temp }}/tracefix-editable-smoke/**/*.diff
+            ${{ runner.temp }}/tracefix-editable-smoke/**/*.html
             ${{ runner.temp }}/tracefix-wheel/*.whl
             ${{ runner.temp }}/tracefix-wheel-smoke/**/*.json
             ${{ runner.temp }}/tracefix-wheel-smoke/**/*.jsonl
             ${{ runner.temp }}/tracefix-wheel-smoke/**/*.diff
+            ${{ runner.temp }}/tracefix-wheel-smoke/**/*.html
           if-no-files-found: warn
 
   docker-zero-call:
@@ -158,12 +170,17 @@ jobs:
           image_id="$(cat "$RUNNER_TEMP/tracefix-image-id.txt")"
           python -m tracefix.reproduction --backend docker --image-id "$image_id" --output "$RUNNER_TEMP/tracefix-smoke/baseline"
           python -m tracefix.reproduction --backend docker --image-id "$image_id" --skills-enabled --output "$RUNNER_TEMP/tracefix-smoke/skills"
+          python -m tracefix.reproduction --backend docker --image-id "$image_id" --scenario pagination --output "$RUNNER_TEMP/tracefix-pagination/baseline"
+          python -m tracefix.reproduction --backend docker --image-id "$image_id" --scenario pagination --skills-enabled --output "$RUNNER_TEMP/tracefix-pagination/skills"
 
       - name: 核对容器隔离、供应商零调用与清理
         if: always()
         run: |
           image_id="$(cat "$RUNNER_TEMP/tracefix-image-id.txt")"
           python scripts/audit_docker_smoke.py --root "$RUNNER_TEMP/tracefix-smoke" --image-id "$image_id" --output "$RUNNER_TEMP/tracefix-smoke/docker-audit.json"
+          python scripts/audit_docker_smoke.py --root "$RUNNER_TEMP/tracefix-pagination" --scenario pagination --image-id "$image_id" --output "$RUNNER_TEMP/tracefix-pagination/docker-audit.json"
+          test -f "$RUNNER_TEMP/tracefix-pagination/baseline/report.html"
+          test -f "$RUNNER_TEMP/tracefix-pagination/skills/report.html"
 
       - name: 保存 smoke 摘要
         if: always()
@@ -173,8 +190,15 @@ jobs:
           path: |
             ${{ runner.temp }}/tracefix-image-id.txt
             ${{ runner.temp }}/tracefix-smoke/*/reproduction.json
-            ${{ runner.temp }}/tracefix-smoke/*/result.json
-            ${{ runner.temp }}/tracefix-smoke/*/*.jsonl
-            ${{ runner.temp }}/tracefix-smoke/*/*.diff
+            ${{ runner.temp }}/tracefix-smoke/*/runs/*/result.json
+            ${{ runner.temp }}/tracefix-smoke/*/runs/*/trajectory.jsonl
+            ${{ runner.temp }}/tracefix-smoke/*/runs/*/patch.diff
             ${{ runner.temp }}/tracefix-smoke/docker-audit.json
+            ${{ runner.temp }}/tracefix-pagination/*/reproduction.json
+            ${{ runner.temp }}/tracefix-pagination/*/report.html
+            ${{ runner.temp }}/tracefix-pagination/*/runs/*/result.json
+            ${{ runner.temp }}/tracefix-pagination/*/runs/*/trajectory.jsonl
+            ${{ runner.temp }}/tracefix-pagination/*/runs/*/patch.diff
+            ${{ runner.temp }}/tracefix-pagination/*/runs/*/test-evidence/*.json
+            ${{ runner.temp }}/tracefix-pagination/docker-audit.json
           if-no-files-found: warn

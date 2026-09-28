@@ -170,10 +170,12 @@ def _python_files(root: Path) -> list[str]:
         "scripts/reproduce_zero_call.py",
         "src/tracefix/agent_bridge.py",
         "src/tracefix/reproduction.py",
+        "src/tracefix/report.py",
         "tests/test_audit_docker_smoke.py",
         "tests/test_engineering_check.py",
         "tests/test_agent_bridge.py",
         "tests/test_reproduction.py",
+        "tests/test_report.py",
     }
     paths = set(tracked)
     paths.update(path for path in expected_new if (root / path).is_file())

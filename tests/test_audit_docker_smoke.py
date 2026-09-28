@@ -98,3 +98,44 @@ def test_audit_rejects_docker_daemon_failure_as_cleanup_evidence(tmp_path):
                 [], 1, b"", b"daemon unavailable"
             ),
         )
+
+
+def test_pagination_audit_checks_saved_evidence_and_patch_identity(tmp_path):
+    image = "sha256:" + "a" * 64
+    names = [
+        "run_tests",
+        "search_code",
+        "read_file",
+        "read_file",
+        "apply_patch",
+        "run_tests",
+        "get_git_diff",
+    ]
+    for arm, skills in (("baseline", False), ("skills", True)):
+        _write_arm(tmp_path, arm, skills=skills)
+        root = tmp_path / arm
+        report_path = root / "reproduction.json"
+        report = json.loads(report_path.read_text(encoding="utf-8"))
+        report.update(scenario="pagination", test_runs=2, changed_files=["catalog/pagination.py"])
+        report["trajectory_validation"].update(
+            tool_results=8 if skills else 7,
+            tool_names=(["load_skill"] if skills else []) + names,
+            initial_pytest_returncode=1,
+        )
+        report_path.write_text(json.dumps(report), encoding="utf-8")
+        run = root / "runs" / "run-1"
+        run.mkdir(parents=True)
+        for filename in ("result.json", "trajectory.jsonl", "patch.diff"):
+            (run / filename).write_text("evidence", encoding="utf-8")
+        (root / "report.html").write_text("<html></html>", encoding="utf-8")
+
+    def removed(container_id: str) -> subprocess.CompletedProcess[bytes]:
+        return subprocess.CompletedProcess([], 1, b"", b"No such object")
+
+    assert audit(tmp_path, image, scenario="pagination", inspect=removed)["accepted"]
+    report_path = tmp_path / "baseline" / "reproduction.json"
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    report["trajectory_validation"]["initial_pytest_returncode"] = 0
+    report_path.write_text(json.dumps(report), encoding="utf-8")
+    with pytest.raises(ValueError, match="initial failing test"):
+        audit(tmp_path, image, scenario="pagination", inspect=removed)

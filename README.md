@@ -1,5 +1,21 @@
 # TraceFix
 
+## 两分钟修复演示（零供应商调用）
+
+从干净 checkout 按[冻结依赖说明](docs/reproduction.md)安装后，在 PowerShell 运行：
+
+```powershell
+tracefix-reproduce --scenario pagination --output runs/demo-baseline
+tracefix-reproduce --scenario pagination --skills-enabled --output runs/demo-skills
+tracefix report --run runs/demo-skills --output runs/demo-skills/report.html
+```
+
+用浏览器打开 `runs/demo-skills/report.html`：第一页测试失败，Agent 搜索并读取
+`catalog/api.py` 和 `catalog/pagination.py`，只修改分页偏移量，复测通过，最后展示 Diff。
+两臂运行在独立的合成仓库，核心步骤及补丁相同；Skills-only 额外按需加载调试技能。
+页面标注“脚本模型演示”，不代表真实模型修复成功率。完整说明与两分钟讲稿见
+[演示指南](docs/demo-pagination.md)。
+
 TraceFix 是一个面向真实 GitHub Issue 的单 Agent Coding 系统。项目计划在固定模型和
 Token 预算下，通过仓库结构检索、动态上下文和测试驱动的补丁验证，提高 Bug 修复成功率
 与成本效率。

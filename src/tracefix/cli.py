@@ -51,6 +51,7 @@ from tracefix.real_experiment import (
     validate_real_task_behavior,
 )
 from tracefix.real_recipes import load_environment_recipes
+from tracefix.report import render_report
 from tracefix.repository import RepoMapConfig
 from tracefix.retrieval_eval import RetrievalEvaluationConfig, RetrievalEvaluator
 from tracefix.runtime import (
@@ -195,6 +196,12 @@ def build_parser() -> argparse.ArgumentParser:
         description="在隔离 Git 克隆中运行 TraceFix Coding Agent。",
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
+
+    report_parser = subparsers.add_parser("report", help="将已保存的运行渲染为离线 HTML 报告")
+    report_parser.add_argument("--run", type=Path, required=True, help="运行目录或单臂复现目录")
+    report_parser.add_argument(
+        "--output", type=Path, help="HTML 输出路径，默认运行目录/report.html"
+    )
 
     run_parser = subparsers.add_parser("run", help="运行一个仓库修复任务")
     run_parser.add_argument("--repo", type=Path, required=True, help="干净的本地 Git 仓库")
@@ -636,7 +643,9 @@ def _resolve_shared(args: argparse.Namespace, *, real_issue_budget: bool = False
                 ),
                 max_reference_bytes=_number_or_default(
                     args.skills_max_reference_bytes,
-                    "TRACEFIX_SKILLS_MAX_REFERENCE_BYTES", int, 8 * 1024
+                    "TRACEFIX_SKILLS_MAX_REFERENCE_BYTES",
+                    int,
+                    8 * 1024,
                 ),
                 max_total_bytes=_number_or_default(
                     args.skills_max_total_bytes, "TRACEFIX_SKILLS_MAX_TOTAL_BYTES", int, 32 * 1024
@@ -790,6 +799,9 @@ def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
     try:
+        if args.command == "report":
+            print(render_report(args.run, args.output))
+            return 0
         if args.command == "validate-real-tasks":
             tasks = load_real_issue_tasks(args.tasks, task_ids=tuple(args.task_id))
             validations = []

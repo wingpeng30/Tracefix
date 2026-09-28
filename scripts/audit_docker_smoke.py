@@ -14,14 +14,17 @@ def audit(
     root: Path,
     expected_image_id: str,
     *,
+    scenario: str = "smoke",
     inspect: Callable[[str], subprocess.CompletedProcess[bytes]] | None = None,
 ) -> dict[str, Any]:
     """Check both smoke arms against recorded container identity and live cleanup."""
     if inspect is None:
+
         def inspect(container_id: str) -> subprocess.CompletedProcess[bytes]:
             return subprocess.run(
                 ["docker", "inspect", container_id], capture_output=True, check=False
             )
+
     arms: dict[str, Any] = {}
     source_commits: set[str] = set()
     package_hashes: set[str] = set()
@@ -30,6 +33,8 @@ def audit(
         if not report_path.is_file():
             raise ValueError(f"missing Docker smoke report: {report_path}")
         report = json.loads(report_path.read_text(encoding="utf-8"))
+        if report.get("scenario", "smoke") != scenario:
+            raise ValueError(f"{name} arm used the wrong scenario")
         prep = report.get("workspace_preparation") or {}
         container_id = prep.get("container_id")
         source_commit = prep.get("source_commit")
@@ -58,7 +63,11 @@ def audit(
         if report.get("network_connect_attempts") != 0:
             raise ValueError(f"{name} arm attempted a network connection")
         trajectory = report.get("trajectory_validation") or {}
-        expected_tool_results = 6 if skills_enabled else 5
+        expected_tool_results = (
+            (8 if skills_enabled else 7)
+            if scenario == "pagination"
+            else (6 if skills_enabled else 5)
+        )
         if (
             trajectory.get("model_requests", 0) <= 0
             or trajectory.get("tool_results") != expected_tool_results
@@ -66,6 +75,35 @@ def audit(
             or not trajectory.get("diff_sha256")
         ):
             raise ValueError(f"{name} arm trajectory or test evidence is incomplete")
+        if scenario == "pagination":
+            if trajectory.get("initial_pytest_returncode") in (None, 0):
+                raise ValueError(f"{name} arm has no initial failing test")
+            expected_names = [
+                "run_tests",
+                "search_code",
+                "read_file",
+                "read_file",
+                "apply_patch",
+                "run_tests",
+                "get_git_diff",
+            ]
+            if trajectory.get("tool_names", [])[-7:] != expected_names:
+                raise ValueError(f"{name} arm did not follow the pagination repair sequence")
+            if report.get("test_runs") != 2 or report.get("changed_files") != [
+                "catalog/pagination.py"
+            ]:
+                raise ValueError(f"{name} arm has an unexpected test or patch scope")
+            run_root = root / name / "runs"
+            run_dirs = list(run_root.iterdir()) if run_root.is_dir() else []
+            if (
+                len(run_dirs) != 1
+                or not all(
+                    (run_dirs[0] / filename).is_file()
+                    for filename in ("result.json", "trajectory.jsonl", "patch.diff")
+                )
+                or not (root / name / "report.html").is_file()
+            ):
+                raise ValueError(f"{name} arm is missing saved report evidence")
         package_hash = report.get("tracefix_source_tree_sha256")
         if not isinstance(package_hash, str) or len(package_hash) != 64:
             raise ValueError(f"{name} arm has no TraceFix package tree hash")
@@ -73,8 +111,7 @@ def audit(
         activations = report.get("skill_activations") or []
         if skills_enabled:
             if not activations or any(
-                not isinstance(item.get("content_sha256"), str)
-                or len(item["content_sha256"]) != 64
+                not isinstance(item.get("content_sha256"), str) or len(item["content_sha256"]) != 64
                 for item in activations
             ):
                 raise ValueError("Skills arm has no valid activated skill identity")
@@ -98,16 +135,24 @@ def audit(
         raise ValueError("Docker smoke arms used different source commits")
     if len(package_hashes) != 1:
         raise ValueError("Docker smoke arms used different TraceFix package trees")
-    return {"accepted": True, "image_id": expected_image_id, "arms": arms}
+    if scenario == "pagination":
+        reports = [
+            json.loads((root / name / "reproduction.json").read_text(encoding="utf-8"))
+            for name in ("baseline", "skills")
+        ]
+        if len({r["trajectory_validation"]["diff_sha256"] for r in reports}) != 1:
+            raise ValueError("pagination arms produced different patches")
+    return {"accepted": True, "image_id": expected_image_id, "scenario": scenario, "arms": arms}
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", type=Path, required=True)
     parser.add_argument("--image-id", required=True)
+    parser.add_argument("--scenario", choices=("smoke", "pagination"), default="smoke")
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
-    report = audit(args.root, args.image_id)
+    report = audit(args.root, args.image_id, scenario=args.scenario)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
     print(json.dumps(report, indent=2))
