@@ -23,7 +23,11 @@ from tracefix.docker_backend import (
 )
 from tracefix.exceptions import RunConfigurationError, ToolValidationError, WorkspaceError
 from tracefix.messages import ToolCall
+from tracefix.repository import RepoMapConfig
+from tracefix.reproduction import _make_docker_inputs, _make_source
+from tracefix.tools import SkillCatalogEntry
 from tracefix.tools.base import ToolResult, ToolSpec
+from tracefix.tools.skills import SkillLimits
 
 
 def _git(repo: Path, *args: str) -> str:
@@ -104,6 +108,99 @@ def test_synthetic_profile_accepts_only_the_fixed_recipe_shape() -> None:
             {**recipe, "environment_variables": {"PYTHONPATH": "/host"}},
             manifest,
         )
+
+
+def test_synthetic_backend_prepare_builds_skills_bridge_and_owned_state(tmp_path, monkeypatch):
+    import tracefix.docker_backend as docker_module
+
+    source = _make_source(tmp_path / "fixture")
+    input_root = _make_docker_inputs(tmp_path / "inputs", source)
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    package_root = tmp_path / "tracefix"
+    package_root.mkdir()
+    image_id = "sha256:" + "a" * 64
+    docker_calls: list[list[str]] = []
+    bridge_calls = []
+    run_id = "smoke-run"
+    original_run = docker_module._run
+
+    def docker_run(command, **kwargs):
+        docker_calls.append(command)
+        if command[0] == "git" and "archive" in command:
+            return original_run(command, **kwargs)
+        if command[0] == "git" and "describe" in command:
+            return subprocess.CompletedProcess(command, 0, b"tracefix-synthetic-v1\n", b"")
+        if command[:3] == ["docker", "image", "inspect"]:
+            return subprocess.CompletedProcess(command, 0, image_id.encode(), b"")
+        if command[:2] == ["docker", "inspect"] and "{{.Id}}" in command:
+            return subprocess.CompletedProcess(command, 0, b"container-id\n", b"")
+        if command[:2] == ["docker", "inspect"]:
+            return subprocess.CompletedProcess(command, 0, f"{run_id}\n".encode(), b"")
+        return subprocess.CompletedProcess(command, 0, b"", b"")
+
+    catalog = SkillCatalogEntry(
+        name="demo", description="demo skill", version="1", sha256="a" * 64
+    )
+    load_skill = ToolSpec(
+        name="load_skill",
+        description="Load approved skill text",
+        input_schema={
+            "type": "object",
+            "properties": {"name": {"type": "string", "enum": ["demo"]}},
+            "required": ["name"],
+            "additionalProperties": False,
+        },
+    )
+
+    class Bridge:
+        def __init__(self, command, _timeout, _journal_path, *, skills_enabled=False):
+            bridge_calls.append((command, skills_enabled))
+            self.run_id = run_id
+            self.tools = (load_skill,)
+            self.skill_catalog = (catalog,)
+            self.repo_map = {"text": "synthetic map"}
+            self.closed = False
+
+        def close(self):
+            self.closed = True
+
+    monkeypatch.setattr(docker_module, "_run", docker_run)
+    monkeypatch.setattr(docker_module.DockerToolBackend, "_check_storage", lambda _self: None)
+    monkeypatch.setattr(docker_module, "_BridgeSession", Bridge)
+    backend = DockerToolBackend(
+        task_id="tracefix-synthetic",
+        input_root=input_root,
+        run_dir=run_dir,
+        run_id=run_id,
+        profile="synthetic",
+        image_id=image_id,
+    )
+    registry = backend.prepare(
+        subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=source, text=True).strip(),
+        source,
+        package_root,
+        repo_map_task="locate value failure",
+        repo_map_config=RepoMapConfig(max_candidate_files=2),
+        skills_enabled=True,
+        skill_limits=SkillLimits(max_active_skills=2),
+    )
+    try:
+        assert registry.skill_catalog == (catalog,)
+        assert backend.repo_map == {"text": "synthetic map"}
+        assert backend.workspace_preparation["image_id"] == image_id
+        assert backend.workspace_preparation["source_version_tag"] == "tracefix-synthetic-v1"
+        command, enabled = bridge_calls[0]
+        assert enabled is True
+        assert "--skills-enabled" in command
+        assert "--repo-map-task" in command
+        create = next(call for call in docker_calls if call[:2] == ["docker", "create"])
+        assert create[create.index("--network") + 1] == "none"
+        assert "-v" not in create
+        assert json.loads((run_dir / "docker-run-state.json").read_text())["phase"] == "agent_ready"
+    finally:
+        backend.close(remove=True)
+    assert any(call[:3] == ["docker", "rm", "-f"] for call in docker_calls)
 def test_bridge_correlates_events_and_tool_results(tmp_path: Path) -> None:
     code = """
 import json, sys
