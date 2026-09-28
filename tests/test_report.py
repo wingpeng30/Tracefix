@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from tracefix.report import main as report_main
 from tracefix.report import render_report
 from tracefix.reproduction import run_smoke
 
@@ -135,3 +136,49 @@ def test_pagination_demo_records_expected_failure_and_same_patch(tmp_path):
         baseline["trajectory_validation"]["diff_sha256"]
         == skills["trajectory_validation"]["diff_sha256"]
     )
+
+
+def test_report_cli_and_required_evidence_errors(tmp_path, capsys):
+    run = _saved_run(tmp_path)
+    target = tmp_path / "export" / "report.html"
+    assert report_main(["--run", str(run), "--output", str(target)]) == 0
+    assert target.is_file()
+    assert str(target) in capsys.readouterr().out
+
+    (run / "result.json").write_text("[]", encoding="utf-8")
+    with pytest.raises(ValueError, match="must be a JSON object"):
+        render_report(run)
+    (run / "result.json").write_text("{broken", encoding="utf-8")
+    with pytest.raises(SystemExit) as exit_info:
+        report_main(["--run", str(run)])
+    assert exit_info.value.code == 2
+    assert "result.json" in capsys.readouterr().err
+
+
+def test_report_marks_missing_patch_and_other_trajectory_errors(tmp_path):
+    run = _saved_run(tmp_path)
+    (run / "patch.diff").unlink()
+    trace_path = run / "trajectory.jsonl"
+    valid = trace_path.read_text(encoding="utf-8").removesuffix("{broken")
+    additions = [
+        {"event_type": "context_compacted", "payload": {}},
+        {"event_type": "tool_returned", "payload": {"result": {"tool_name": "run_tests"}}},
+        {"event_type": "error", "payload": {"message": "budget exceeded"}},
+        {"event_type": "unknown", "payload": "invalid payload"},
+    ]
+    trace_path.write_text(
+        valid + "".join(json.dumps(event) + "\n" for event in additions), encoding="utf-8"
+    )
+    html = render_report(run).read_text(encoding="utf-8")
+    assert "缺少 patch.diff" in html
+    assert "工具 run_tests 有返回但没有配对调用" in html
+    assert "budget exceeded" in html
+    assert "上下文折叠：1 次" in html
+    assert "公开测试未得到退出码" in html
+
+    trace_path.write_text(valid + "{invalid\n" + json.dumps(additions[0]), encoding="utf-8")
+    with pytest.raises(ValueError, match="invalid trajectory event on line"):
+        render_report(run)
+    trace_path.write_text(valid + "[]\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="invalid trajectory event on line"):
+        render_report(run)
