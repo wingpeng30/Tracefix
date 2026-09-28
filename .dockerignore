@@ -3,5 +3,6 @@
 !README.md
 !src/
 !src/**
-!scripts/
-!scripts/reproduce_zero_call.py
+!requirements/
+!requirements/locks/
+!requirements/locks/reproduction-py311.txt

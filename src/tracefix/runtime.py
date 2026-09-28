@@ -103,6 +103,8 @@ class RunConfig(BaseModel):
     execution_backend: Literal["local", "docker"] = "local"
     docker_task_id: str | None = None
     docker_input_root: Path | None = None
+    docker_profile: Literal["frozen", "synthetic"] = "frozen"
+    docker_image_id: str | None = None
     agent_config: AgentConfig = Field(default_factory=AgentConfig)
 
     @model_validator(mode="after")
@@ -118,7 +120,15 @@ class RunConfig(BaseModel):
         if self.execution_backend == "docker" and (
             not self.docker_task_id or not self.docker_input_root
         ):
-            raise ValueError("Docker execution requires a frozen task ID and input root")
+            raise ValueError("Docker execution requires a task ID and input root")
+        if self.execution_backend != "docker" and (
+            self.docker_profile != "frozen" or self.docker_image_id is not None
+        ):
+            raise ValueError("Docker profile and image identity require the Docker backend")
+        if self.docker_profile == "synthetic" and not self.docker_image_id:
+            raise ValueError("synthetic Docker execution requires a frozen image ID")
+        if self.docker_profile == "frozen" and self.docker_image_id is not None:
+            raise ValueError("frozen pilot image identities cannot be overridden")
         return self
 
 
@@ -267,6 +277,8 @@ class TraceFixRunner:
                     run_dir=run_dir,
                     run_id=run_id,
                     timeout_seconds=min(120, int(config.agent_config.wall_time_seconds)),
+                    profile=config.docker_profile,
+                    image_id=config.docker_image_id,
                 )
                 tools = docker_backend.prepare(
                     source_commit,

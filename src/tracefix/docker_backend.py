@@ -10,6 +10,7 @@ import hashlib
 import json
 import os
 import queue
+import re
 import shutil
 import subprocess
 import tarfile
@@ -44,6 +45,20 @@ _IMAGES: dict[str, tuple[str, str]] = {
     ),
 }
 _MAX_FRAME = 64 * 1024 * 1024
+
+
+def _validate_synthetic_profile(
+    task_id: str, recipe: dict[str, Any], manifest: dict[str, Any]
+) -> None:
+    allowed = {"task_id", "environment_variables"}
+    if (
+        task_id != "tracefix-synthetic"
+        or set(recipe) - allowed
+        or recipe.get("task_id") != task_id
+        or recipe.get("environment_variables", {}) != {}
+        or manifest.get("files", {}).keys() != {"source.bundle"}
+    ):
+        raise WorkspaceError("synthetic Docker recipe exceeds the fixed smoke profile")
 
 
 def _run(
@@ -355,9 +370,23 @@ class DockerToolBackend:
         run_dir: Path,
         run_id: str,
         timeout_seconds: int = 120,
+        profile: str = "frozen",
+        image_id: str | None = None,
     ) -> None:
-        if task_id not in _IMAGES:
+        if profile == "frozen" and (task_id not in _IMAGES or image_id is not None):
             raise RunConfigurationError("Docker backend supports only frozen pilot task IDs")
+        if profile == "synthetic" and (
+            task_id != "tracefix-synthetic"
+            or image_id is None
+            or re.fullmatch(r"sha256:[0-9a-f]{64}", image_id) is None
+        ):
+            raise RunConfigurationError(
+                "synthetic Docker runs require their fixed task ID and image ID"
+            )
+        if profile not in {"frozen", "synthetic"}:
+            raise RunConfigurationError("unknown Docker execution profile")
+        self.profile = profile
+        self.requested_image_id = image_id
         self.task_id = task_id
         self.input_root = input_root.expanduser().resolve(strict=True)
         self.run_dir = run_dir
@@ -398,6 +427,8 @@ class DockerToolBackend:
             or manifest.get("source_commit") != source_commit
         ):
             raise WorkspaceError("frozen Docker input identity mismatch")
+        if self.profile == "synthetic":
+            _validate_synthetic_profile(self.task_id, self.recipe, manifest)
         for relative, expected in manifest.get("files", {}).items():
             path = (stage / relative).resolve(strict=True)
             if stage.resolve() not in path.parents or not path.is_file():
@@ -407,7 +438,11 @@ class DockerToolBackend:
                     "frozen Docker input hash mismatch", context={"path": relative}
                 )
         source = self._source_archive(source_repo, source_commit)
-        expected_image, self.python = _IMAGES[self.task_id]
+        if self.profile == "synthetic":
+            assert self.requested_image_id is not None
+            expected_image, self.python = self.requested_image_id, "/usr/local/bin/python"
+        else:
+            expected_image, self.python = _IMAGES[self.task_id]
         actual_image = _run(
             [self.docker, "image", "inspect", "--format", "{{.Id}}", expected_image]
         )
@@ -484,15 +519,14 @@ class DockerToolBackend:
             ]
         )
         _run([self.docker, "cp", str(source), f"{self.container_name}:/input/source.tar"])
-        _run(
-            [self.docker, "cp", str(tracefix_root / "src"), f"{self.container_name}:/opt/tracefix"]
-        )
+        _run([self.docker, "exec", self.container_name, "mkdir", "-p", "/opt/tracefix/src"])
+        package_root = Path(__file__).resolve().parent
         _run(
             [
                 self.docker,
                 "cp",
-                str(tracefix_root / "docker" / "agent-bridge.py"),
-                f"{self.container_name}:/opt/tracefix/agent-bridge.py",
+                str(package_root),
+                f"{self.container_name}:/opt/tracefix/src/tracefix",
             ]
         )
         tls_certificate_sha256 = None
@@ -761,8 +795,9 @@ class DockerToolBackend:
             self.container_name,
             "env",
             "PYTHONPATH=/opt/tracefix/src:/work/agent/src:/work/agent",
-            "python",
-            "/opt/tracefix/agent-bridge.py",
+            self.python,
+            "-m",
+            "tracefix.agent_bridge",
             "--workspace",
             "/work/agent",
             "--evidence",
@@ -832,6 +867,7 @@ class DockerToolBackend:
             "schema_version": 1,
             "run_id": self.run_id,
             "task_id": self.task_id,
+            "profile": self.profile,
             "phase": phase,
             "container_id": self.container_id,
             "container_name": self.container_name,

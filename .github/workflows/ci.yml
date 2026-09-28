@@ -15,7 +15,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.11", "3.12"]
+        include:
+          - python-version: "3.11"
+            lock-file: requirements/locks/engineering-py311.txt
+          - python-version: "3.12"
+            lock-file: requirements/locks/engineering-py312.txt
 
     steps:
       - name: 检出代码
@@ -28,38 +32,96 @@ jobs:
           cache: pip
 
       - name: 安装项目与测试依赖
-        env:
-          PIP_INDEX_URL: https://pypi.tuna.tsinghua.edu.cn/simple
-        run: python -m pip install -e ".[dev,llm,docker]"
+        run: |
+          python -m pip install --require-hashes -r requirements/locks/build-tools.txt
+          python -m pip install --require-hashes -r ${{ matrix.lock-file }}
+          python -m pip install --no-deps --no-build-isolation -e .
 
-      - name: 运行测试与覆盖率检查
-        run: python -m pytest --cov=tracefix --cov-report=term-missing
+      - name: 运行统一工程检查并保存原始结果
+        run: python scripts/check_engineering.py --output "$env:RUNNER_TEMP/tracefix-engineering" --python python
 
-      - name: 运行 Ruff 静态检查
-        run: python -m ruff check .
+      - name: 从 checkout 执行 editable 零调用 smoke
+        shell: pwsh
+        run: |
+          Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue
+          $smokeRoot = Join-Path $env:RUNNER_TEMP "tracefix-editable-smoke"
+          New-Item -ItemType Directory -Path $smokeRoot | Out-Null
+          Push-Location $env:RUNNER_TEMP
+          try {
+            python -m tracefix.reproduction --backend local --output (Join-Path $smokeRoot "baseline")
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            python -m tracefix.reproduction --backend local --skills-enabled --output (Join-Path $smokeRoot "skills")
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          } finally { Pop-Location }
 
-      - name: 检查 Python 文件可编译性
-        run: python -m compileall -q src tests
+      - name: 构建并独立安装 wheel
+        shell: pwsh
+        run: |
+          $wheelRoot = Join-Path $env:RUNNER_TEMP "tracefix-wheel"
+          $wheelSmoke = Join-Path $env:RUNNER_TEMP "tracefix-wheel-smoke"
+          $wheelEnv = Join-Path $env:RUNNER_TEMP "tracefix-wheel-env"
+          New-Item -ItemType Directory -Path $wheelRoot -Force | Out-Null
+          python -m pip wheel --no-deps --no-build-isolation . --wheel-dir $wheelRoot
+          $wheel = (Get-ChildItem -LiteralPath $wheelRoot -Filter "*.whl" | Select-Object -First 1).FullName
+          if (-not $wheel) { throw "wheel build produced no wheel" }
+          python -c "import sys,zipfile; z=zipfile.ZipFile(sys.argv[1]); n=set(z.namelist()); assert 'tracefix/reproduction.py' in n; assert 'tracefix/agent_bridge.py' in n; assert any(p.startswith('tracefix/skills/') and p.endswith('/SKILL.md') for p in n)" $wheel
+          python -m venv $wheelEnv
+          $wheelPython = Join-Path $wheelEnv "Scripts/python.exe"
+          & $wheelPython -m pip install --require-hashes -r requirements/locks/build-tools.txt
+          & $wheelPython -m pip install --require-hashes -r ${{ matrix.lock-file }}
+          & $wheelPython -m pip install --no-deps $wheel
+          Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue
+          Push-Location $env:RUNNER_TEMP
+          try {
+            & $wheelPython -c "import pathlib,tracefix; p=pathlib.Path(tracefix.__file__).resolve(); assert 'site-packages' in str(p).lower(), p; print(p)"
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            & (Join-Path $wheelEnv "Scripts/tracefix-reproduce.exe") --backend local --output (Join-Path $wheelSmoke "baseline")
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            & (Join-Path $wheelEnv "Scripts/tracefix-reproduce.exe") --backend local --skills-enabled --output (Join-Path $wheelSmoke "skills")
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          } finally { Pop-Location }
+
+      - name: 保存工程与 wheel 验证结果
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: engineering-${{ matrix.python-version }}-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/tracefix-engineering
+            ${{ runner.temp }}/tracefix-editable-smoke
+            ${{ runner.temp }}/tracefix-wheel
+            ${{ runner.temp }}/tracefix-wheel-smoke
+          if-no-files-found: warn
 
   docker-zero-call:
-    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
       - name: 检出代码
         uses: actions/checkout@v4
 
-      - name: 构建隔离的零模型调用镜像
-        run: docker build --pull=false -f docker/zero-call-smoke.Dockerfile -t tracefix-zero-call-smoke:${{ github.sha }} .
+      - name: 配置 Linux Python 与宿主 Runner 依赖
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: 安装 TraceFix 宿主 Runner
+        run: |
+          python -m pip install --require-hashes -r requirements/locks/build-tools.txt
+          python -m pip install --require-hashes -r requirements/locks/engineering-py311.txt
+          python -m pip install --no-deps --no-build-isolation -e .
+
+      - name: 构建隔离的合成任务镜像
+        run: |
+          docker build --pull=true -f docker/zero-call-smoke.Dockerfile -t tracefix-zero-call-smoke:${{ github.sha }} .
+          docker image inspect --format '{{.Id}}' tracefix-zero-call-smoke:${{ github.sha }} > "$RUNNER_TEMP/tracefix-image-id.txt"
 
       - name: 运行 baseline 和 Skills 合成闭环
         run: |
           mkdir -p "$RUNNER_TEMP/tracefix-smoke"
-          docker run --network none --rm \
-            --mount "type=bind,source=$RUNNER_TEMP/tracefix-smoke,target=/output" \
-            tracefix-zero-call-smoke:${{ github.sha }} --output /output/baseline
-          docker run --network none --rm \
-            --mount "type=bind,source=$RUNNER_TEMP/tracefix-smoke,target=/output" \
-            tracefix-zero-call-smoke:${{ github.sha }} --skills-enabled --output /output/skills
+          image_id="$(cat "$RUNNER_TEMP/tracefix-image-id.txt")"
+          python -m tracefix.reproduction --backend docker --image-id "$image_id" --output "$RUNNER_TEMP/tracefix-smoke/baseline"
+          python -m tracefix.reproduction --backend docker --image-id "$image_id" --skills-enabled --output "$RUNNER_TEMP/tracefix-smoke/skills"
 
       - name: 保存 smoke 摘要
         if: always()

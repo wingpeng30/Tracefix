@@ -12,8 +12,15 @@ from scripts.inspect_docker_run import (
     persisted_tool_call_ids,
     unresolved_tool_calls,
 )
-from tracefix.docker_backend import _IMAGES, DockerToolBackend, _BridgeSession, _RemoteTool, _run
-from tracefix.exceptions import ToolValidationError, WorkspaceError
+from tracefix.docker_backend import (
+    _IMAGES,
+    DockerToolBackend,
+    _BridgeSession,
+    _RemoteTool,
+    _run,
+    _validate_synthetic_profile,
+)
+from tracefix.exceptions import RunConfigurationError, ToolValidationError, WorkspaceError
 from tracefix.messages import ToolCall
 from tracefix.tools.base import ToolResult, ToolSpec
 
@@ -48,6 +55,54 @@ def test_source_archive_exposes_only_requested_commit(tmp_path: Path) -> None:
     assert all(".git" not in name.split("/") for name in names)
 
 
+def test_synthetic_profile_requires_fixed_task_and_full_image_id(tmp_path: Path) -> None:
+    image = "sha256:" + "a" * 64
+    backend = DockerToolBackend(
+        task_id="tracefix-synthetic",
+        input_root=tmp_path,
+        run_dir=tmp_path,
+        run_id="smoke",
+        profile="synthetic",
+        image_id=image,
+    )
+    assert backend.profile == "synthetic"
+    assert backend.requested_image_id == image
+    with pytest.raises(RunConfigurationError, match="fixed task ID and image ID"):
+        DockerToolBackend(
+            task_id="psf__requests-1766",
+            input_root=tmp_path,
+            run_dir=tmp_path,
+            run_id="bad-profile",
+            profile="synthetic",
+            image_id=image,
+        )
+    with pytest.raises(RunConfigurationError, match="fixed task ID and image ID"):
+        DockerToolBackend(
+            task_id="tracefix-synthetic",
+            input_root=tmp_path,
+            run_dir=tmp_path,
+            run_id="short-image",
+            profile="synthetic",
+            image_id="sha256:abcd",
+        )
+
+
+def test_synthetic_profile_accepts_only_the_fixed_recipe_shape() -> None:
+    manifest = {"files": {"source.bundle": "a" * 64}}
+    recipe = {"task_id": "tracefix-synthetic", "environment_variables": {}}
+    _validate_synthetic_profile("tracefix-synthetic", recipe, manifest)
+    with pytest.raises(WorkspaceError, match="fixed smoke profile"):
+        _validate_synthetic_profile(
+            "tracefix-synthetic",
+            {**recipe, "build_commands": ["arbitrary command"]},
+            manifest,
+        )
+    with pytest.raises(WorkspaceError, match="fixed smoke profile"):
+        _validate_synthetic_profile(
+            "tracefix-synthetic",
+            {**recipe, "environment_variables": {"PYTHONPATH": "/host"}},
+            manifest,
+        )
 def test_bridge_correlates_events_and_tool_results(tmp_path: Path) -> None:
     code = """
 import json, sys

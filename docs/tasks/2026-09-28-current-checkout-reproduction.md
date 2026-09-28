@@ -24,7 +24,7 @@
 
 本地与 Docker baseline/Skills-only 零调用合成闭环、Requests-1766 实际 Requests HTTPS 和 CA/hostname 检查通过。运行路径及证据目录列在 `docs/reproduction.md`。合成 fixture 证明控制流和隔离属性，不提供离线定位指标或真实修复率证据。
 
-最终 Python 3.12.5 全量 pytest-only 为 602 passed、0 failed、681.40 秒；精确 coverage 89.62%（8392/9128 语句，2415/2926 分支），因此 pytest 命令退出 1，仅 coverage gate 未达 90%。JUnit、coverage JSON/XML、命令日志和退出码位于 `E:\TraceFixRunsActive\reproduce-zero-call-20260928\pytest-only-final-v2`。Ruff、compileall 和 diff 检查单独通过，不能替代该门槛。
+最终 Python 3.12.5 全量 pytest-only 为 602 passed、0 failed、681.40 秒；coverage JSON 为 8389/9128 语句、2414/2926 分支，精确合计 10803/12054 = 89.62170233947238%，未达到 90%。pytest 日志报告 coverage gate 失败，但保存的 `exit-code.txt` 是 0，因此旧证据无法可靠确定 pytest 子进程退出码。Ruff、compileall 和 diff 检查单独通过，不能替代该门槛。原始证据目录为 `E:\TraceFixRunsActive\reproduce-zero-call-20260928\pytest-only-final-v2`；更正见 [`experiments/2026-09-28-engineering-evidence-correction.md`](../experiments/2026-09-28-engineering-evidence-correction.md)。
 
 Requests Docker Skills/TLS E2E 在最终生产源码树哈希 `430f586726f58f102e4abaac14429be95c861cb7c1c731bf7771d09c4b448020` 上通过；摘要与独立容器报告位于 `E:\TraceFixRunsActive\reproduce-zero-call-20260928\docker-requests-skills-tls-release-candidate`。pytest-10081 的前一个 Python 3.10 点版本对照未做。Sphinx 的基线 `inputs-v4` staging 不在公开 checkout，准确的独立输入缺项是重建输入/recipe 与相关来源 manifest；G5 的旧固定镜像执行不能证明 recipe 可重建。20 道留出题、付费模型和历史评分/账本未触碰。
 

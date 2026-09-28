@@ -1,150 +1,65 @@
 # 当前源码的安装与零模型调用复现
 
-本文区分公开合成控制流、容器复现与受控历史材料。成功运行这些流程只证明工程路径可用，不代表模型离线定位效果或真实独立修复成功率提高。
+本文描述当前提交的公开复现入口。合成流程只验证安装、Agent 控制流、工具桥接和隔离，不证明离线定位质量或真实独立修复成功率提高。历史 G5–G7、Requests TLS 和其他旧运行记录保留作历史证据，不代表当前候选提交已通过本批门槛。
 
-## 从 checkout 安装
+## 哈希锁定安装
 
-需要 Python 3.11 或 3.12、Git，以及 pip 可访问的包源。基础安装和开发检查：
+支持 Windows x64 Python 3.11/3.12 及 Linux amd64 Python 3.11（容器 smoke）。Windows 3.12 示例：
 
-```powershell
-python -m venv .venv
-.\.venv\Scripts\python.exe -m pip install --upgrade pip
-.\.venv\Scripts\python.exe -m pip install -e ".[dev]"
-```
+    python -m venv .venv
+    .\.venv\Scripts\python.exe -m pip install --require-hashes -r requirements/locks/build-tools.txt
+    .\.venv\Scripts\python.exe -m pip install --require-hashes -r requirements/locks/engineering-py312.txt
+    .\.venv\Scripts\python.exe -m pip install --no-deps --no-build-isolation -e .
+    .\.venv\Scripts\python.exe scripts/check_engineering.py --output runs/engineering-py312 --python .venv\Scripts\python.exe
 
-若测试 HTTPS 的 Docker backend，再安装 `.[dev,llm,docker]`。`docker` extra 固定
-`cryptography==48.0.0`，用于运行时生成临时测试证书；真实产品源码不包含测试私钥。
-项目直接运行依赖见 `pyproject.toml`。目前仓库**没有跨平台、哈希锁定的完整传递依赖锁文件**；
-所以这段流程可重跑，但尚不能声称 pip 从任意空缓存环境解析出逐字节相同的环境。CI 使用其
-配置的 Windows/Python 3.11、3.12 矩阵并执行 pytest-only 90% 覆盖率门槛。
+Python 3.11 改用 engineering-py311.txt。工程检查入口会保存 pytest 日志、JUnit、coverage JSON/XML、每个子进程的返回码和独立验收结论；覆盖率按语句及分支的整数计数判断 90% 门槛。每轮使用全新输出目录和 coverage 数据。文件哈希与依赖许可证摘要见 [dependency-locks.md](dependency-locks.md)。
 
-构建和安装 wheel（技能 Markdown 应出现在 wheel 内）：
+## 公开本地合成流程
 
-```powershell
-New-Item -ItemType Directory -Force .artifacts\wheel
-.\.venv\Scripts\python.exe -m pip wheel --no-deps --no-build-isolation . -w .artifacts\wheel
-.\.venv\Scripts\python.exe -m zipfile -l .artifacts\wheel\tracefix_agent-0.8.4-py3-none-any.whl
-```
+tracefix-reproduce 是包内入口。用固定脚本模型修复独立生成的合成 Git 仓库，并经过正式 Runner、工具、pytest、Diff 和 JSONL 轨迹。宿主 Runner 阻止供应商客户端构造、供应商请求及网络连接；脚本模型请求单独计数。输出路径必须不存在。
 
-另建干净虚拟环境安装生成的 wheel，再运行下一节的合成 smoke。输出目录必须是新的空目录。
-本轮新建独立 wheel `tracefix_agent-0.8.4-py3-none-any.whl`（SHA-256
-`d694f0f56e2c0c1309bc2d9c69fc63cd2d27f279ebdc486120f5bca0d322f1b4`），在全新 E 盘 venv
-通过 pip 安装，并从安装目录发现 `tracefix-debugging` 1.0.0（技能全文 SHA-256
-`2275795589fa8bfc5fbad4f8d1666e2d3af95ad85413921ac788a52d39169551`）。这验证当前 Windows 3.12
-wheel 的分发，不提供其他 Python/平台的锁定证明。
+    .\.venv\Scripts\tracefix-reproduce.exe --backend local --output runs/reproduction-baseline
+    .\.venv\Scripts\tracefix-reproduce.exe --backend local --skills-enabled --output runs/reproduction-skills
 
-## 公开合成闭环
+两次运行只切换 Skills；检查 reproduction.json、result.json、patch.diff 和 trajectory.jsonl。scripts/reproduce_zero_call.py 是兼容包装，和已安装命令使用同一实现。
 
-该入口用固定脚本模型替身，经过真实 `TraceFixRunner`、隔离 Git clone、工具注册表、pytest、Diff 和 JSONL 轨迹。替身创建时不加载 LiteLLM；供应商调用计数应为 0。
+## Wheel 安装流程
 
-```powershell
-.\.venv\Scripts\python.exe scripts/reproduce_zero_call.py --output runs/reproduction-baseline
-.\.venv\Scripts\python.exe scripts/reproduce_zero_call.py --skills-enabled --output runs/reproduction-skills
-```
+在 checkout 根目录构建 wheel：
 
-首个输出记录 baseline，第二个只改变 Skills 开关。两边都应完成同一个合成修复并运行一次测试；
-检查 `reproduction.json`、`result.json`、`patch.diff` 和 `trajectory.jsonl`。这不是定位质量或真实修复能力实验。
+    New-Item -ItemType Directory -Force .artifacts\wheel
+    .\.venv\Scripts\python.exe -m pip wheel --no-deps --no-build-isolation . -w .artifacts\wheel
 
-## Docker 容器 smoke
+CI 在新虚拟环境里先按锁安装依赖，再以 --no-deps 安装 wheel；验证 tracefix 实际导入自该环境的 site-packages，核对 tracefix.reproduction、tracefix.agent_bridge 和 Skills Markdown 均在 wheel 内，并从 checkout 外运行 baseline 与 Skills-only。此 wheel smoke 不读取仓库目录或开发机 PYTHONPATH。
 
-手动触发 `.github/workflows/ci.yml` 的 **Docker zero-call smoke** job。容器基础镜像固定为
-`python:3.11-slim@sha256:e41613d42d4891e4930f79523f93f81bbc7632584ec65e36ab055f41a800b41e`；构建时安装
-`.[dev]` 并通过 apt 安装 Git。构建工具与 apt 仓库当前未完全锁定，因此新构建得到的是新镜像，
-不冒充历史镜像 digest。容器运行时用 `--network none`，仅挂载独立输出目录。严格 `.dockerignore`
-只把 `pyproject.toml`、README、`src/` 和该 smoke 脚本送入构建上下文，排除 runs、benchmarks、
-本机 `.env` 与验收输入。
+## 真实 Docker bridge 合成流程
 
-等价的本地 Linux 命令：
+需要 Linux Docker daemon。docker/zero-call-smoke.Dockerfile 固定 Python 3.11.16-bookworm 基础镜像 digest，以哈希锁安装隔离 smoke 依赖；任务镜像含 Git。先构建并读取本次构建的完整镜像 ID，再运行两臂：
 
-```sh
-docker build --pull=false -f docker/zero-call-smoke.Dockerfile -t tracefix-zero-call-smoke:local .
-mkdir -p /tmp/tracefix-zero-call
-docker run --network none --rm -v /tmp/tracefix-zero-call:/output \
-  tracefix-zero-call-smoke:local --output /output/baseline
-docker run --network none --rm -v /tmp/tracefix-zero-call:/output \
-  tracefix-zero-call-smoke:local --skills-enabled --output /output/skills
-```
+    docker build --pull=true -f docker/zero-call-smoke.Dockerfile -t tracefix-zero-call-smoke:local .
+    $imageId = docker image inspect --format '{{.Id}}' tracefix-zero-call-smoke:local
+    .\.venv\Scripts\tracefix-reproduce.exe --backend docker --image-id $imageId --output runs/docker-baseline
+    .\.venv\Scripts\tracefix-reproduce.exe --backend docker --image-id $imageId --skills-enabled --output runs/docker-skills
 
-这是在 Docker 内运行 TraceFix 的零调用合成流程；它不代表冻结 SWE-bench 任务容器的桥接验收。
-冻结 Requests/pytest/Sphinx 镜像仍需各自的本地输入 manifest 和受控材料，不能由公开 smoke 替代。
+宿主 TraceFix Runner 编排合成容器，通过 Docker backend、既有 JSONL bridge 与 ToolRegistry 执行；合成 profile 只接受固定任务身份和空环境变量配方，不接受任意 shell。容器使用 --network none，宿主源码、Docker socket、历史题目材料均不挂载。bridge 验证源 commit、包源码和技能目录身份；报告保留镜像 ID、fixture 源 commit、包树哈希、轨迹与结果。每个输出目录须为新路径。PR、main、手动入口都运行 Linux Docker baseline/Skills 两臂并上传证据。
+
+Docker 构建需要联网取得固定基础镜像与锁内 PyPI wheel；任务运行阶段断网。新派生镜像 ID 由 CI 输出，不能替代或冒充历史镜像身份。当前本机 Docker daemon 未启动，因此本地真实 bridge 尚未验收；以推送提交的 Linux CI smoke 结果为准。
 
 ## 文件与材料清单
 
-| 项目 | 分类 | 发布/复现边界 |
+| 分类 | 文件/材料 | 复现边界 |
 |---|---|---|
-| `src/tracefix/`、`pyproject.toml`、`scripts/reproduce_zero_call.py` | 当前公开运行必需 | wheel 包含 TraceFix debugging skill 文件；复现 fixture 在脚本内 |
-| `docker/agent-bridge.py`、冻结配方与审核脚本 | Docker/历史复现代码 | 使用时必须配套相同任务身份、manifest、镜像和外部 checkout |
-| `docker/reverify-pilot/Dockerfile` | 历史 pytest 试点构建 recipe | 仅重建 2026-09-26 pilot；不是当前通用 smoke 配方 |
-| `scripts/pytest10081_diagnostic_matrix.py` | 冻结任务诊断入口 | 需要受控 pytest-10081 输入、独立产品补丁和 Docker image，公开 checkout 不含这些受控材料 |
-| `runs/` 下的 task source、gold/test patch、独立验收和原始轨迹 | 外部/本机运行材料 | 被 Git 忽略，不是 GitHub 发布内容；缺少原始材料时无法重建对应历史证据 |
-| `docker/requests-test-tls/test-key.pem` | 本地临时测试材料 | 被 `.gitignore` 排除；实际复验在临时目录生成密钥，源码分发不需要此文件 |
-| DeepSeek V4.1 tokenizer 与 `deepseek-recipe` wheel | 可选外部计数材料 | wheel hash 在 `docker/token-counter/Dockerfile`；tokenizer hash/recipe 版本在 `src/tracefix/models/input_bounds.py`。原始 wheel/tokenizer 未随 checkout 提供，独立计数镜像需外部获取；当前计数仍是 `estimate` |
-| `.venv/`、`.env`、`.pytest_cache/`、临时 coverage/JUnit 与 Docker 构建缓存 | 本机临时状态 | 不作为发布输入 |
+| 当前运行与发布必需 | src/tracefix/、pyproject.toml、package 内 reproduction.py、agent_bridge.py、skills/ | wheel 内含 bridge 和技能文本；依赖见哈希锁 |
+| 检查与安装 | scripts/check_engineering.py、requirements/locks/、.github/workflows/ci.yml | 工程入口和 CI 使用同一覆盖门槛；外部结果需另存 |
+| Docker bridge | docker/zero-call-smoke.Dockerfile、docker/agent-bridge.py | 历史 wrapper 保留；容器调用包内 bridge |
+| 历史 recipe | docker/reverify-pilot/Dockerfile、scripts/pytest10081_diagnostic_matrix.py | 历史构建/受控诊断，不属于公开合成 smoke 必需输入 |
+| 受控外部材料 | 历史源 checkout、patch、image、隐藏测试、tokenizer 缓存 | 不含在公开 GitHub 流程；按单独授权、哈希和外部获取说明复验 |
+| 禁止发布的本地状态 | runs/、临时证据、密钥、受控验收输入、候选留出题 | 不批量 stage，不加入 wheel 或 Docker context |
 
-`docker/reverify-pilot/Dockerfile` 和诊断脚本作为历史配方与受控诊断入口纳入交付。禁止批量添加 `runs/`、候选留出题或未审查的历史结果。
-
-## Requests TLS 受控复验
-
-TLS 集成检查从冻结 Requests 输入复制出**新的派生输入目录**，只把本地测试服务 URL 改为
-`https://localhost`，并写入新的配方及 manifest 哈希；Agent 容器的 HTTP health check 仍走
-localhost 服务。运行时通过 `TRACEFIX_TEST_CA_BUNDLE=/opt/tracefix/request-test/test-ca.pem`
-将临时 CA 路径传给容器，并由 `sitecustomize.py` 配置 Requests 的默认 CA；握手日志和临时证书
-SHA-256 在新输出中记录。Agent 容器与 qualification/patch
-验收容器各自生成密钥；TLS 测试材料在容器运行目录创建并在清理时移除。
-
-从当前 checkout 复跑需先取得被授权的冻结 Requests `inputs-v2`、其匹配的源 checkout 和固定
-Docker 镜像，再运行：
-
-```powershell
-python scripts/docker_runner_e2e.py --task-id psf__requests-1766 --skills-enabled --requests-tls `
-  --output-root E:\TraceFixRunsActive\reproduction-requests-tls-<new-id>
-```
-
-当前本机结果保存在 `E:\TraceFixRunsActive\reproduce-zero-call-20260928\docker-requests-skills-tls-verified`；
-记录只用于本轮验证，不随 GitHub checkout 分发。
-
-## 本轮验证证据（2026-09-28）
-
-- 本地零调用合成 baseline 与 Skills-only 均完成，分别 6 与 7 次 fixture 请求，1 项 pytest 通过；
-  Skills-only 加载去重并保留压缩锚点。Docker `--network none` 同样完成两臂，镜像 ID 为
-  `sha256:1b9173d675c3214aecebc6f687736ab9401e06a2915f33cd4b190820c595b911`。摘要位于
-  `E:\TraceFixRunsActive\reproduce-zero-call-20260928\local-final-baseline`、`local-final-skills`
-  与 `docker-container-smoke-final`。
-- Requests-1766 正式 Runner Skills/TLS 复验为零供应商请求，触发 7 次上下文压缩，验证真实
-  Requests 测试进程的 CA 信任/主机名校验；Agent 与四个新独立验收容器各用不同临时证书身份，
-  所有隔离检查通过。摘要在 `E:\TraceFixRunsActive\reproduce-zero-call-20260928\docker-requests-skills-tls-verified`。
-- 最终代码 pytest-only 全量运行：Python 3.12.5，602 passed、0 failed，681.40 秒；精确
-  Coverage.py 为 89.62%（JSON `covered_lines=8392/9128`，分支覆盖 82.54%），退出码 1 仅因现有
-  90% 门槛。JUnit、日志及 coverage 文件位于
-  `E:\TraceFixRunsActive\reproduce-zero-call-20260928\pytest-only-final-v2`。终端整数显示的“90%”
-  不能当作通过。
-- 同版本覆盖率不代表真实修复成功率。pytest-10081 的 Python 点版本对照、Sphinx 基线 recipe
-  重建与全平台哈希依赖锁仍未完成；它们的精确材料缺口见下节及交付清单。
-
-## 历史环境复验限制
-
-- pytest-10081 的已记录 18 格矩阵中，官方目标节点资格通过；async warning 节点与公开整文件仍因
-  `PytestUnraisableExceptionWarning` 失败。当前冻结环境前一 Python 3.10 点版本单变量对照尚未完成，
-  所以不将公开整文件标记合格。
-- 当前 checkout 下 `runs/docker-foundation-20260926-v1/inputs-v2` 的 Sphinx recipe 是
-  Python 3.11/Windows，不能当作基线 Python 3.10/Linux 的 `inputs-v4`。被审计的 inputs-v4
-  staging 在本机输出盘而非公开仓库；新配方重建需重新获得并哈希校验该独立输入，不能用旧 G5
-  固定镜像运行追认可重建。
-- 历史 patch、精确容器依赖快照、Token counter tokenizer 和外部源码若未公开重新取得，应报告缺项；
-  不从旧摘要推断当前代码的全量验证结果。
+pytest-10081 Python 点版本对照、Requests 历史 TLS 容器复验、Sphinx 基线 recipe 重建及完整 Token 契约不在本批。它们不能由本合成 smoke 推断通过。
 
 ## 启停和回退
 
-- Skills：默认关闭。使用 `--skills` / `TRACEFIX_SKILLS_ENABLED=true` 开启；移除开关或设环境变量为
-  `false` 回到原始工具注册和提示。超限或目录不合法时，技能启用的运行会报错并关闭，不静默回退。
-- Docker Skills：与本地共用启停开关和字节上限；bridge handshake 必须返回有效的目录身份，否则
-  运行失败关闭。可用同一固定任务分别跑 baseline 与 Skills-only。
-- Docker smoke：运行可删容器使用 `--rm`；复现文件是输出证据，不覆盖已有路径。
-- MCP/Serena：本轮未接入。后续单独评估，不影响 Skills 开关和内置工具基线。
+Skills 默认关闭。baseline 命令不加 --skills-enabled；只需停用时移除该 flag。Docker 也复用相同 Skills 开关；bridge identity 或目录错误时 fail closed。恢复代码可回退本批 Git 提交；保持基线运行时仍可仅关闭 Skills。Context7、GitHub MCP 和 Serena 本批均未接入。
 
-## 后续比较方案
-
-先冻结当前开发集任务、补丁、容器输入与产品提交，使用相同脚本模型或另行批准的固定模型预算，
-仅比较 baseline 与 Skills-only；随机化/交替顺序并记录请求字节与 Token 估算、耗时、搜索/读取次数、
-重复操作、无效补丁、独立验收和失败分类。只有经授权的真实模型对照和独立复验支持时，才报告真实
-修复成功率；合成控制流、离线定位指标和模型修复成功率分开报告。
+下一步效果比较先用冻结开发集做 baseline 对 Skills-only 单变量对照，固定任务、源码、镜像和预算，并记录 Token 估算、耗时、搜索/读取、重复工具操作、无效补丁与独立验收。没有真实对照和独立资格证据时，只报告工程能力及合成控制流，不报告真实修复成功率提升。

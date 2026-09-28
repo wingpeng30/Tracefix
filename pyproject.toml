@@ -37,6 +37,7 @@ tracefix = ["skills/*/SKILL.md", "skills/*/references/*.md"]
 
 [project.scripts]
 tracefix = "tracefix.cli:main"
+tracefix-reproduce = "tracefix.reproduction:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
