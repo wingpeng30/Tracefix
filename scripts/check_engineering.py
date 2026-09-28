@@ -100,6 +100,38 @@ def _run(
     }
 
 
+def _resolve_diff_base(root: Path, requested: str) -> tuple[str | None, str | None]:
+    """Resolve a caller-supplied Git commit without silently choosing a fallback."""
+    completed = subprocess.run(
+        ["git", "rev-parse", "--verify", "--end-of-options", f"{requested}^{{commit}}"],
+        cwd=root,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        check=False,
+    )
+    if completed.returncode != 0:
+        return None, completed.stdout.strip() or f"cannot resolve diff base {requested!r}"
+    return completed.stdout.strip(), None
+
+
+def _coverage_gaps(coverage: dict[str, Any]) -> list[dict[str, Any]]:
+    """Return line and branch gaps so CI artifacts can direct follow-up tests."""
+    gaps = []
+    for filename, report in sorted(coverage.get("files", {}).items()):
+        missing_lines = report.get("missing_lines", [])
+        missing_branches = report.get("missing_branches", [])
+        if missing_lines or missing_branches:
+            gaps.append(
+                {
+                    "file": filename,
+                    "missing_lines": missing_lines,
+                    "missing_branches": missing_branches,
+                }
+            )
+    return gaps
+
+
 def _python_files(root: Path) -> list[str]:
     """Return repository source, collected tests, and the supported CLI scripts.
 
@@ -112,10 +144,12 @@ def _python_files(root: Path) -> list[str]:
         text=True,
     ).splitlines()
     expected_new = {
+        "scripts/audit_docker_smoke.py",
         "scripts/check_engineering.py",
         "scripts/reproduce_zero_call.py",
         "src/tracefix/agent_bridge.py",
         "src/tracefix/reproduction.py",
+        "tests/test_audit_docker_smoke.py",
         "tests/test_engineering_check.py",
         "tests/test_agent_bridge.py",
         "tests/test_reproduction.py",
@@ -133,7 +167,7 @@ def _python_files(root: Path) -> list[str]:
     )
 
 
-def run(output: Path, root: Path, python: str) -> dict[str, Any]:
+def run(output: Path, root: Path, python: str, diff_base: str = "HEAD^") -> dict[str, Any]:
     output.mkdir(parents=True, exist_ok=False)
     started_at = datetime.now(UTC)
     coverage_json = output / "coverage.json"
@@ -193,6 +227,15 @@ def run(output: Path, root: Path, python: str) -> dict[str, Any]:
                 junit_xml,
                 pytest_run["process_return_code"],
             )
+            (output / "coverage-gaps.json").write_text(
+                json.dumps(
+                    _coverage_gaps(json.loads(coverage_json.read_text(encoding="utf-8"))),
+                    ensure_ascii=False,
+                    indent=2,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
         except (ValueError, OSError, ET.ParseError, TypeError) as exc:
             checks["pytest_acceptance"] = {
                 "accepted": False,
@@ -206,9 +249,27 @@ def run(output: Path, root: Path, python: str) -> dict[str, Any]:
     checks["checks"]["compileall"] = _run(
         "compileall", [python, "-m", "py_compile", *source_files], root, output
     )
-    checks["checks"]["diff_check"] = _run(
-        "diff-check", ["git", "diff", "--check", "HEAD^"], root, output
-    )
+    resolved_diff_base, diff_base_error = _resolve_diff_base(root, diff_base)
+    checks["diff_base"] = {
+        "requested": diff_base,
+        "resolved_commit": resolved_diff_base,
+        "error": diff_base_error,
+    }
+    if resolved_diff_base is None:
+        (output / "diff-check.log").write_text(diff_base_error + "\n", encoding="utf-8")
+        checks["checks"]["diff_check"] = {
+            "command": ["git", "rev-parse", "--verify", diff_base],
+            "process_return_code": 128,
+            "duration_seconds": 0.0,
+            "log": "diff-check.log",
+        }
+    else:
+        checks["checks"]["diff_check"] = _run(
+            "diff-check",
+            ["git", "diff", "--check", f"{resolved_diff_base}...HEAD"],
+            root,
+            output,
+        )
     checks["accepted"] = bool(checks["pytest_acceptance"].get("accepted")) and all(
         item["process_return_code"] == 0 for item in checks["checks"].values()
     )
@@ -229,8 +290,13 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--root", type=Path, default=Path.cwd())
     parser.add_argument("--python", default=sys.executable)
+    parser.add_argument(
+        "--diff-base",
+        default="HEAD^",
+        help="Git commit/ref used as the left side of the whitespace diff check",
+    )
     args = parser.parse_args(argv)
-    report = run(args.output.resolve(), args.root.resolve(), args.python)
+    report = run(args.output.resolve(), args.root.resolve(), args.python, args.diff_base)
     print(json.dumps(report, ensure_ascii=False, indent=2))
     return 0 if report["accepted"] else 1
 

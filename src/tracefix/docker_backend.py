@@ -502,6 +502,38 @@ class DockerToolBackend:
         )
         inspect = _run([self.docker, "inspect", "--format", "{{.Id}}", self.container_name])
         self.container_id = inspect.stdout.decode().strip()
+        try:
+            network_mode = json.loads(
+                _run(
+                    [
+                        self.docker,
+                        "inspect",
+                        "--format",
+                        "{{json .HostConfig.NetworkMode}}",
+                        self.container_id,
+                    ]
+                ).stdout.decode("utf-8", "strict")
+            )
+            mounts = json.loads(
+                _run(
+                    [self.docker, "inspect", "--format", "{{json .Mounts}}", self.container_id]
+                ).stdout.decode("utf-8", "strict")
+            )
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise WorkspaceError(
+                "could not verify Docker container network and mounts",
+                context={"detail": str(exc)},
+            ) from exc
+        if network_mode != "none":
+            raise WorkspaceError(
+                "synthetic Docker container must have networking disabled",
+                context={"network_mode": network_mode},
+            )
+        if mounts != []:
+            raise WorkspaceError(
+                "synthetic Docker container must not have host mounts",
+                context={"mounts": mounts},
+            )
         self._write_run_state("container_created")
         _run([self.docker, "start", self.container_name])
         _run(
@@ -844,6 +876,8 @@ class DockerToolBackend:
             "backend": "docker",
             "image_id": actual_id,
             "container_id": self.container_id,
+            "container_network_mode": network_mode,
+            "container_mounts": mounts,
             "source_commit": source_commit,
             "source_version_tag": self.source_tag,
             "agent_only_sentinel_sha256": hashlib.sha256(sentinel.read_bytes()).hexdigest(),

@@ -39,3 +39,13 @@ Docker backend 的公开合成 prepare 测试以 mock Docker CLI 和 bridge 响�
 ## 验收结论
 
 本次工程门槛和公开本地零调用控制流通过；wheel smoke 与源码版本关系按上文说明。Docker 流程已接入 CI，但远端 smoke 待验证。没有获得离线定位效果或独立真实修复成功率的对照证据，不对成功率作提升结论。
+
+## 后续 GitHub CI 复核（2026-09-28）
+
+GitHub Actions run [36411826884](https://github.com/wingpeng30/Tracefix/actions/runs/36411826884) 对 PR #1 执行了 `b7addcb28dc269344da96b87e6b6003a011f304b`；PR runner 实际检出的合并提交为 `b7f4990abd8bc3b32eaa16bb663d791205663616`。该合并提交相对分支没有额外文件差异。
+
+- Linux Docker baseline/Skills 两臂通过；镜像 ID 为 `sha256:71f996647b24844e6bffa6366e3f73de41e3726242f421718025a4b10012df29`，两臂供应商构造、供应商请求和网络连接尝试均为 0。此 run 的 artifact 尚未完整证明删除后容器不存在，因此只确认 smoke 成功，不把清理审计记为通过。
+- Windows Python 3.11.9/3.12.10 各为 632 passed、0 failed、0 errors、0 skipped；pytest 子进程返回 0，Ruff 与编译检查也返回 0。两版精确 pytest-only coverage 均为 `89.91515151515152%`，未达 90%，工程验收因此失败。
+- Diff check 两版均返回 128：actions/checkout 的浅克隆没有 `HEAD^`。因质量检查失败，原 workflow 随后的 editable/wheel smoke 被跳过。pytest coverage artifact 获取遇到 HTTP 403，具体代码缺口尚无法从 run 15 的远端 JSON 还原。
+
+上述 run 15 原始结果保留在 GitHub Actions，不覆盖或改写。当前修订为 diff 检查显式解析比较提交、保存 coverage 缺口列表、让安装 smoke 在工程门槛失败时仍运行，并在真实 Docker 运行报告中保存隔离配置及清理核查。修订代码的候选 SHA 和新 run 结果应在推送后追加；在此之前不声称当前候选达到覆盖率门槛或已完成复现验收。

@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import subprocess
 import xml.etree.ElementTree as ET
 
-from scripts.check_engineering import _pytest_acceptance
+from scripts.check_engineering import _coverage_gaps, _pytest_acceptance, _resolve_diff_base
 
 
 def _reports(tmp_path, *, tests: int, failures: int = 0, errors: int = 0):
@@ -77,3 +78,36 @@ def test_missing_or_zero_coverage_denominator_is_rejected(tmp_path):
         assert "no measurable" in str(exc)
     else:
         raise AssertionError("empty coverage was accepted")
+
+
+def test_diff_base_resolves_commit_and_rejects_missing_history(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init", "--quiet"], cwd=repo, check=True)
+    subprocess.run(
+        ["git", "-c", "user.name=TraceFix", "-c", "user.email=tracefix@example.invalid",
+         "commit", "--allow-empty", "-m", "base"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+    )
+    resolved, error = _resolve_diff_base(repo, "HEAD")
+    head = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=repo, text=True).strip()
+    assert resolved == head
+    assert error is None
+
+    missing, error = _resolve_diff_base(repo, "origin/missing")
+    assert missing is None
+    assert error
+
+
+def test_coverage_gaps_include_uncovered_lines_and_branches():
+    report = {
+        "files": {
+            "src/a.py": {"missing_lines": [12], "missing_branches": [[10, 12]]},
+            "src/b.py": {"missing_lines": [], "missing_branches": []},
+        }
+    }
+    assert _coverage_gaps(report) == [
+        {"file": "src/a.py", "missing_lines": [12], "missing_branches": [[10, 12]]}
+    ]

@@ -24,6 +24,8 @@ jobs:
     steps:
       - name: 检出代码
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: 配置 Python
         uses: actions/setup-python@v5
@@ -34,13 +36,32 @@ jobs:
       - name: 安装项目与测试依赖
         run: |
           python -m pip install --require-hashes -r requirements/locks/build-tools.txt
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python -m pip install --require-hashes -r ${{ matrix.lock-file }}
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python -m pip install --no-deps --no-build-isolation -e .
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: 运行统一工程检查并保存原始结果
-        run: python scripts/check_engineering.py --output "$env:RUNNER_TEMP/tracefix-engineering" --python python
+        env:
+          TRACEFIX_EVENT_BEFORE: ${{ github.event.before }}
+          TRACEFIX_DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        shell: pwsh
+        run: |
+          switch ($env:GITHUB_EVENT_NAME) {
+            "pull_request" { $diffBase = "origin/$env:GITHUB_BASE_REF" }
+            "push" {
+              if ($env:TRACEFIX_EVENT_BEFORE -match '^0+$') { $diffBase = "HEAD^" }
+              else { $diffBase = $env:TRACEFIX_EVENT_BEFORE }
+            }
+            "workflow_dispatch" { $diffBase = "origin/$env:TRACEFIX_DEFAULT_BRANCH" }
+            default { throw "Unsupported event for diff check: $env:GITHUB_EVENT_NAME" }
+          }
+          python scripts/check_engineering.py --output "$env:RUNNER_TEMP/tracefix-engineering" --python python --diff-base $diffBase
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: 从 checkout 执行 editable 零调用 smoke
+        if: always()
         shell: pwsh
         run: |
           Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue
@@ -55,6 +76,7 @@ jobs:
           } finally { Pop-Location }
 
       - name: 构建并独立安装 wheel
+        if: always()
         shell: pwsh
         run: |
           $wheelRoot = Join-Path $env:RUNNER_TEMP "tracefix-wheel"
@@ -62,14 +84,19 @@ jobs:
           $wheelEnv = Join-Path $env:RUNNER_TEMP "tracefix-wheel-env"
           New-Item -ItemType Directory -Path $wheelRoot -Force | Out-Null
           python -m pip wheel --no-deps --no-build-isolation . --wheel-dir $wheelRoot
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $wheel = (Get-ChildItem -LiteralPath $wheelRoot -Filter "*.whl" | Select-Object -First 1).FullName
           if (-not $wheel) { throw "wheel build produced no wheel" }
           python -c "import sys,zipfile; z=zipfile.ZipFile(sys.argv[1]); n=set(z.namelist()); assert 'tracefix/reproduction.py' in n; assert 'tracefix/agent_bridge.py' in n; assert any(p.startswith('tracefix/skills/') and p.endswith('/SKILL.md') for p in n)" $wheel
           python -m venv $wheelEnv
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $wheelPython = Join-Path $wheelEnv "Scripts/python.exe"
           & $wheelPython -m pip install --require-hashes -r requirements/locks/build-tools.txt
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           & $wheelPython -m pip install --require-hashes -r ${{ matrix.lock-file }}
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           & $wheelPython -m pip install --no-deps $wheel
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue
           Push-Location $env:RUNNER_TEMP
           try {
@@ -87,10 +114,19 @@ jobs:
         with:
           name: engineering-${{ matrix.python-version }}-${{ github.sha }}
           path: |
-            ${{ runner.temp }}/tracefix-engineering
-            ${{ runner.temp }}/tracefix-editable-smoke
-            ${{ runner.temp }}/tracefix-wheel
-            ${{ runner.temp }}/tracefix-wheel-smoke
+            ${{ runner.temp }}/tracefix-engineering/summary.json
+            ${{ runner.temp }}/tracefix-engineering/*.log
+            ${{ runner.temp }}/tracefix-engineering/pytest.junit.xml
+            ${{ runner.temp }}/tracefix-engineering/coverage.json
+            ${{ runner.temp }}/tracefix-engineering/coverage.xml
+            ${{ runner.temp }}/tracefix-engineering/coverage-gaps.json
+            ${{ runner.temp }}/tracefix-editable-smoke/**/*.json
+            ${{ runner.temp }}/tracefix-editable-smoke/**/*.jsonl
+            ${{ runner.temp }}/tracefix-editable-smoke/**/*.diff
+            ${{ runner.temp }}/tracefix-wheel/*.whl
+            ${{ runner.temp }}/tracefix-wheel-smoke/**/*.json
+            ${{ runner.temp }}/tracefix-wheel-smoke/**/*.jsonl
+            ${{ runner.temp }}/tracefix-wheel-smoke/**/*.diff
           if-no-files-found: warn
 
   docker-zero-call:
@@ -123,10 +159,22 @@ jobs:
           python -m tracefix.reproduction --backend docker --image-id "$image_id" --output "$RUNNER_TEMP/tracefix-smoke/baseline"
           python -m tracefix.reproduction --backend docker --image-id "$image_id" --skills-enabled --output "$RUNNER_TEMP/tracefix-smoke/skills"
 
+      - name: 核对容器隔离、供应商零调用与清理
+        if: always()
+        run: |
+          image_id="$(cat "$RUNNER_TEMP/tracefix-image-id.txt")"
+          python scripts/audit_docker_smoke.py --root "$RUNNER_TEMP/tracefix-smoke" --image-id "$image_id" --output "$RUNNER_TEMP/tracefix-smoke/docker-audit.json"
+
       - name: 保存 smoke 摘要
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: docker-zero-call-smoke-${{ github.sha }}
-          path: ${{ runner.temp }}/tracefix-smoke
+          path: |
+            ${{ runner.temp }}/tracefix-image-id.txt
+            ${{ runner.temp }}/tracefix-smoke/*/reproduction.json
+            ${{ runner.temp }}/tracefix-smoke/*/result.json
+            ${{ runner.temp }}/tracefix-smoke/*/*.jsonl
+            ${{ runner.temp }}/tracefix-smoke/*/*.diff
+            ${{ runner.temp }}/tracefix-smoke/docker-audit.json
           if-no-files-found: warn
