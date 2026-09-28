@@ -3,7 +3,12 @@ from __future__ import annotations
 import subprocess
 import xml.etree.ElementTree as ET
 
-from scripts.check_engineering import _coverage_gaps, _pytest_acceptance, _resolve_diff_base
+from scripts.check_engineering import (
+    _coverage_gap_summary,
+    _coverage_gaps,
+    _pytest_acceptance,
+    _resolve_diff_base,
+)
 
 
 def _reports(tmp_path, *, tests: int, failures: int = 0, errors: int = 0):
@@ -110,4 +115,21 @@ def test_coverage_gaps_include_uncovered_lines_and_branches():
     }
     assert _coverage_gaps(report) == [
         {"file": "src/a.py", "missing_lines": [12], "missing_branches": [[10, 12]]}
+    ]
+
+
+def test_coverage_gap_summary_ranks_largest_uncovered_files():
+    gaps = [
+        {"file": "src/a.py", "missing_lines": [1], "missing_branches": []},
+        {"file": "src/b.py", "missing_lines": [2, 3], "missing_branches": [[4, 5]]},
+    ]
+    summary = _coverage_gap_summary(gaps, limit=1)
+    assert summary == [
+        {
+            "file": "src/b.py",
+            "missing_line_count": 2,
+            "missing_branch_count": 1,
+            "missing_lines": [2, 3],
+            "missing_branches": [[4, 5]],
+        }
     ]

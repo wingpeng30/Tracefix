@@ -132,6 +132,27 @@ def _coverage_gaps(coverage: dict[str, Any]) -> list[dict[str, Any]]:
     return gaps
 
 
+def _coverage_gap_summary(gaps: list[dict[str, Any]], limit: int = 20) -> list[dict[str, Any]]:
+    """Keep the largest uncovered paths visible in CI logs as well as artifacts."""
+    ranked = [
+        {
+            "file": item["file"],
+            "missing_line_count": len(item["missing_lines"]),
+            "missing_branch_count": len(item["missing_branches"]),
+            "missing_lines": item["missing_lines"],
+            "missing_branches": item["missing_branches"],
+        }
+        for item in gaps
+    ]
+    ranked.sort(
+        key=lambda item: (
+            -(item["missing_line_count"] + item["missing_branch_count"]),
+            item["file"],
+        )
+    )
+    return ranked[:limit]
+
+
 def _python_files(root: Path) -> list[str]:
     """Return repository source, collected tests, and the supported CLI scripts.
 
@@ -227,15 +248,14 @@ def run(output: Path, root: Path, python: str, diff_base: str = "HEAD^") -> dict
                 junit_xml,
                 pytest_run["process_return_code"],
             )
+            coverage_gaps = _coverage_gaps(
+                json.loads(coverage_json.read_text(encoding="utf-8"))
+            )
             (output / "coverage-gaps.json").write_text(
-                json.dumps(
-                    _coverage_gaps(json.loads(coverage_json.read_text(encoding="utf-8"))),
-                    ensure_ascii=False,
-                    indent=2,
-                )
-                + "\n",
+                json.dumps(coverage_gaps, ensure_ascii=False, indent=2) + "\n",
                 encoding="utf-8",
             )
+            checks["coverage_gap_summary"] = _coverage_gap_summary(coverage_gaps)
         except (ValueError, OSError, ET.ParseError, TypeError) as exc:
             checks["pytest_acceptance"] = {
                 "accepted": False,

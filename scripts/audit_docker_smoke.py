@@ -73,7 +73,8 @@ def audit(
         activations = report.get("skill_activations") or []
         if skills_enabled:
             if not activations or any(
-                not isinstance(item.get("sha256"), str) or len(item["sha256"]) != 64
+                not isinstance(item.get("content_sha256"), str)
+                or len(item["content_sha256"]) != 64
                 for item in activations
             ):
                 raise ValueError("Skills arm has no valid activated skill identity")

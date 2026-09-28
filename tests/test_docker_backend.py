@@ -275,6 +275,53 @@ def test_synthetic_prepare_rejects_inspected_network_or_mounts(
         )
     backend.close(remove=True)
     assert any(call[:3] == ["docker", "rm", "-f"] for call in calls)
+
+
+def test_export_evidence_without_container_is_a_noop(tmp_path):
+    backend = object.__new__(DockerToolBackend)
+    backend.container_id = None
+    backend.run_dir = tmp_path
+    backend.docker = "docker"
+    backend.recipe = {}
+    backend.export_evidence()
+    assert not (tmp_path / "test-evidence").exists()
+
+
+def test_export_evidence_copies_test_files_and_optional_service_log(tmp_path, monkeypatch):
+    backend = object.__new__(DockerToolBackend)
+    backend.container_id = "container-id"
+    backend.run_dir = tmp_path
+    backend.docker = "docker"
+    backend.recipe = {"service_health_url": "https://127.0.0.1/health"}
+    calls = []
+
+    def fake_run(command, **kwargs):
+        calls.append(command)
+        if command[1] == "cp":
+            target = Path(command[-1])
+            (target / "agent-audit.json").write_text('{"exitstatus": 0}', encoding="utf-8")
+            return subprocess.CompletedProcess(command, 0, b"", b"")
+        return subprocess.CompletedProcess(command, 0, b"service log", b"")
+
+    monkeypatch.setattr("tracefix.docker_backend.subprocess.run", fake_run)
+    backend.export_evidence()
+    assert (tmp_path / "test-evidence" / "agent-audit.json").is_file()
+    assert (tmp_path / "httpbin-service.log").read_bytes() == b"service log"
+    assert calls[0][1] == "cp" and calls[1][-1] == "/work/httpbin.log"
+
+
+def test_export_evidence_reports_container_copy_failure(tmp_path, monkeypatch):
+    backend = object.__new__(DockerToolBackend)
+    backend.container_id = "container-id"
+    backend.run_dir = tmp_path
+    backend.docker = "docker"
+    backend.recipe = {}
+    monkeypatch.setattr(
+        "tracefix.docker_backend.subprocess.run",
+        lambda command, **kwargs: subprocess.CompletedProcess(command, 1, b"", b"copy denied"),
+    )
+    with pytest.raises(WorkspaceError, match="could not export container test evidence"):
+        backend.export_evidence()
 def test_bridge_correlates_events_and_tool_results(tmp_path: Path) -> None:
     code = """
 import json, sys

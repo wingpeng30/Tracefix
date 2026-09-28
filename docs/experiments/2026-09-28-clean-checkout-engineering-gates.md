@@ -49,3 +49,14 @@ GitHub Actions run [36411826884](https://github.com/wingpeng30/Tracefix/actions/
 - Diff check 两版均返回 128：actions/checkout 的浅克隆没有 `HEAD^`。因质量检查失败，原 workflow 随后的 editable/wheel smoke 被跳过。pytest coverage artifact 获取遇到 HTTP 403，具体代码缺口尚无法从 run 15 的远端 JSON 还原。
 
 上述 run 15 原始结果保留在 GitHub Actions，不覆盖或改写。当前修订为 diff 检查显式解析比较提交、保存 coverage 缺口列表、让安装 smoke 在工程门槛失败时仍运行，并在真实 Docker 运行报告中保存隔离配置及清理核查。修订代码的候选 SHA 和新 run 结果应在推送后追加；在此之前不声称当前候选达到覆盖率门槛或已完成复现验收。
+
+## GitHub CI run 16 与后续修正（2026-09-28）
+
+候选分支提交 `2edb4b6544590dde2f2c171d0885e886de430448`，GitHub Actions [run 36419210411](https://github.com/wingpeng30/Tracefix/actions/runs/36419210411) 的 PR checkout 合并提交为 `4b1af7b42e9a44495496129aaf89c877abaeabe3`。该运行整体失败，原始 Actions job 日志和 artifacts 保留于 GitHub，不覆盖 run 15。
+
+- Windows Python 3.11、3.12 各 642 passed、0 failed、0 errors、0 skipped，Ruff、compileall 和 Diff 检查通过。pytest-only coverage 均为 `11140/12388 = 89.9257345818534%`，离 90% 需再覆盖 10 个语句或分支项目；因此两个工程门槛均失败。此次 workflow 尚未包含 coverage gap 摘要输出，需在下一次 CI 日志定位具体未覆盖路径。
+- 两个 Windows 版本的 editable smoke 与 wheel 构建、仓库外 wheel 安装及 baseline/Skills-only smoke 均通过。3.11 wheel SHA256 为 `f734a442a4d49c06db484df70750c6fba2ff17a4975a2c59ee8a446d4d4bdbbd`；安装导入自临时环境的 `site-packages`。这些安装结果不使整体工程门槛变为通过。
+- Linux Docker 镜像构建、baseline/Skills-only 两臂运行均完成，报告显示脚本模型请求 7 次、工具结果 6 个、测试退出码 0，供应商客户端构造、请求发送及网络连接尝试均为 0。审计阶段因代码读取 `sha256`、实际 Skills 事件字段为 `content_sha256` 而失败；因此该运行的 Docker 清理审计未通过，不能把它记作完整 Docker 验收。
+- artifact：Windows 3.11 ID `10969475060`（zip SHA256 `6fb0c080b019e8e19608162a5aadb89f42721d953827e4bfaad5d5adf3ff2650`），Windows 3.12 ID `10968717714`（`544478aaeb79d4edd5ca069fb77c3d44d1bb6631937bc3dcf27545eaa6e78f62`），Docker ID `10968841539`（`b30af3a30e4e1e8297a7d54b277fc68c89adad96c7b6b7da3a00d54bfbe13db5`）。完整下载内容尚未成功本地读取；以上摘要来自 Actions job 输出与 artifact 元数据。
+
+run 16 后的未提交修正包括：Docker 审计改读 `content_sha256` 并更新回归夹具；新增 `export_evidence()` 无容器、成功复制（含可选服务日志）、Docker cp 失败三项行为测试；工程摘要将未覆盖最多的文件、行号和分支输出到 CI 日志，帮助下一次按具体路径补测。本地 Python 3.12.5 对这些定向测试得到 63 passed，Ruff 通过。pytest 报告一条本地 cache 路径权限警告，不影响这 63 项的测试结果；这不是 Windows 双版本工程门槛证据。尚需推送候选并由全新 CI 运行提供完整判定。

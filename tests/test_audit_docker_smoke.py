@@ -21,7 +21,7 @@ def _write_arm(root: Path, arm: str, *, skills: bool, commit: str = "abc123") ->
         "provider_client_constructions": 0,
         "provider_request_attempts": 0,
         "network_connect_attempts": 0,
-        "skill_activations": ([{"sha256": "c" * 64}] if skills else []),
+        "skill_activations": ([{"content_sha256": "c" * 64}] if skills else []),
         "trajectory_validation": {
             "model_requests": 6 if skills else 5,
             "tool_results": 6 if skills else 5,
