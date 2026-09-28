@@ -164,9 +164,16 @@ def render_report(run: Path, output: Path | None = None) -> Path:
     if calls:
         warnings.append(f"{len(calls)} 个工具调用没有已保存的返回结果；执行状态未知。")
 
-    offline = result.get("model_name") == "offline/scripted"
-    mode = "脚本模型演示 · 无供应商调用" if offline else "已保存的模型运行回放"
-    if offline and reproduction.get("provider_request_attempts") != 0:
+    offline = str(result.get("model_name", "")).startswith("offline/")
+    zero_provider_verified = offline and reproduction.get("provider_request_attempts") == 0
+    mode = (
+        "脚本模型演示 · 已记录零供应商请求"
+        if zero_provider_verified
+        else "离线响应回放 · 供应商请求未由报告独立核验"
+        if offline
+        else "已保存的模型运行回放"
+    )
+    if offline and reproduction and reproduction.get("provider_request_attempts") != 0:
         warnings.append("离线模式的供应商请求证据缺失或不为零。")
     result_status = str(result.get("status") or "未知")
     validation = str(result.get("agent_validation_status") or "unverified")
@@ -175,8 +182,8 @@ def render_report(run: Path, output: Path | None = None) -> Path:
     cost = (
         "脚本运行，不适用"
         if offline
-        else f"${result.get('cost_usd', 0):.6f}"
-        if result.get("cost_complete") is True
+        else f"${result['cost_usd']:.6f}"
+        if result.get("cost_complete") is True and isinstance(result.get("cost_usd"), (int, float))
         else "未记录"
     )
     usage = (
@@ -195,6 +202,13 @@ def render_report(run: Path, output: Path | None = None) -> Path:
         else "脚本模型不提供可信 Token 估算"
         if offline
         else "未记录"
+    )
+    independent_text = "未记录"
+    agent_config = result.get("agent_config")
+    request_view_text = (
+        "配置开启；实际内容请核对轨迹"
+        if isinstance(agent_config, dict) and agent_config.get("record_request_views") is True
+        else "未记录实际模型请求视图"
     )
     rows = "".join(
         f'<li><span class="dot"></span><div><strong>{_clean(title)}</strong>'
@@ -262,10 +276,13 @@ ul{{padding-left:20px}}footer{{color:var(--muted);font-size:13px}}
 后端：{_label(reproduction.get("execution_backend"))} ·
 源码提交：{_label(result.get("source_commit"))}</p>
 <p>停止原因：{_label(result.get("stop_reason"))}</p>
+<p>测试解释器及环境：{_label(result.get("workspace_preparation"))}</p>
+<p>模型请求视图：{_clean(request_view_text)}</p>
+<p>运行错误：{_label(result.get("error"))}</p>
 <p>Agent 结束表示控制流结束；公开测试结果和独立验收分别列示，
 不由结束状态推断修复成功。</p></section>
 <section><h2>修复时间线</h2><ol class="timeline">{rows}</ol></section>
-<section><h2>测试与补丁</h2><ul>{test_html}</ul><p>独立验收：未记录</p>{_diff(patch)}</section>
+<section><h2>测试与补丁</h2><ul>{test_html}</ul><p>独立验收：{independent_text}</p>{_diff(patch)}</section>
 <section><h2>资源与 Skills</h2>
 <p>模型 usage：{usage} · 费用：{cost} · 上下文折叠：{compacted} 次</p>
 <p>上下文成本：{context_text}</p>

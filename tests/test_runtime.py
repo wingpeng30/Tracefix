@@ -22,6 +22,7 @@ from tracefix import (
     TraceFixRunner,
     WorkspaceError,
 )
+from tracefix.exceptions import RunConfigurationError
 from tracefix.real_recipes import EnvironmentRecipe
 
 
@@ -89,10 +90,120 @@ def test_run_config_uses_tracefix_runs_root_environment(tmp_path, monkeypatch) -
     assert config.output_dir == output_root
 
 
-def test_run_config_defaults_to_external_windows_output_root(monkeypatch) -> None:
+def test_run_config_defaults_to_local_runs_root(monkeypatch) -> None:
     monkeypatch.delenv("TRACEFIX_RUNS_ROOT", raising=False)
-    expected = Path(r"E:\TraceFixRunsActive") if os.name == "nt" else Path("runs")
-    assert RunConfig(repo=Path("."), task="platform default").output_dir == expected
+    assert RunConfig(repo=Path("."), task="platform default").output_dir == Path("runs")
+
+
+@pytest.mark.parametrize("module", ["absent_module", "json"])
+def test_ordinary_source_probe_rejects_wrong_import_before_model(tmp_path, module) -> None:
+    repo = _make_repo(tmp_path)
+
+    def no_model(_config):
+        raise AssertionError("model must not be constructed")
+
+    result = TraceFixRunner(llm_factory=no_model).run(
+        RunConfig(
+            repo=repo,
+            task="fix",
+            model_name="offline/scripted",
+            output_dir=tmp_path / "runs",
+            env_file=None,
+            test_python_executable=Path(sys.executable),
+            source_import=module,
+        )
+    )
+    assert result.status is AgentStatus.FAILED
+    probe = result.workspace_preparation.get("source_import_probe", {})
+    assert probe.get("valid") is False, result.error
+    assert Path(result.result_path).is_file()
+
+
+def test_run_rejects_output_inside_source_before_creating_artifacts(tmp_path) -> None:
+    repo = _make_repo(tmp_path)
+    with pytest.raises(RunConfigurationError, match="output directory must be outside"):
+        TraceFixRunner().run(
+            RunConfig(
+                repo=repo, task="fix", output_dir=repo / "runs", model_name="offline/scripted"
+            )
+        )
+    assert not (repo / "runs").exists()
+
+
+@pytest.mark.parametrize(
+    "field,value,expected",
+    [
+        ("source_import", "bad-name", "source_import"),
+        ("test_target", "../outside.py", "test_target"),
+        ("test_target", "tests/test.py\nignore", "test_target"),
+    ],
+)
+def test_ordinary_configuration_rejects_unsafe_inputs(field, value, expected) -> None:
+    with pytest.raises(ValueError, match=expected):
+        RunConfig(repo=Path("."), task="fix", **{field: value})
+
+
+@pytest.mark.parametrize(
+    "python_name,test_target,expected",
+    [
+        ("missing-python", None, "test Python executable does not exist"),
+        (None, "tests/missing.py", "test target must be an existing file"),
+    ],
+)
+def test_ordinary_preflight_stops_before_model_for_missing_environment(
+    tmp_path, python_name, test_target, expected
+) -> None:
+    repo = _make_repo(tmp_path)
+
+    def no_model(_config):
+        raise AssertionError("model must not be constructed")
+
+    result = TraceFixRunner(llm_factory=no_model).run(
+        RunConfig(
+            repo=repo,
+            task="fix",
+            model_name="offline/scripted",
+            env_file=None,
+            output_dir=tmp_path / "runs",
+            source_import="sample",
+            test_target=test_target,
+            test_python_executable=(
+                tmp_path / python_name if python_name else Path(sys.executable)
+            ),
+        )
+    )
+    assert result.status is AgentStatus.FAILED
+    assert expected in str(result.error)
+    assert Path(result.result_path).is_file()
+
+
+def test_ordinary_preflight_rejects_missing_pytest_before_model(tmp_path, monkeypatch) -> None:
+    repo = _make_repo(tmp_path)
+    original_run = subprocess.run
+
+    def without_pytest(command, *args, **kwargs):
+        if len(command) >= 3 and command[1:3] == ["-c", "import pytest"]:
+            return subprocess.CompletedProcess(command, 1, "", "No module named pytest")
+        return original_run(command, *args, **kwargs)
+
+    monkeypatch.setattr("tracefix.runtime.subprocess.run", without_pytest)
+
+    def no_model(_config):
+        raise AssertionError("model must not be constructed")
+
+    result = TraceFixRunner(llm_factory=no_model).run(
+        RunConfig(
+            repo=repo,
+            task="fix",
+            model_name="offline/scripted",
+            env_file=None,
+            output_dir=tmp_path / "runs",
+            source_import="sample",
+            test_python_executable=Path(sys.executable),
+        )
+    )
+    assert result.status is AgentStatus.FAILED
+    assert "pytest is unavailable" in str(result.error)
 
 
 class ScriptedLLM(BaseLLM):
@@ -622,6 +733,7 @@ def test_docker_runner_preserves_prepare_error_when_export_also_fails(
 ) -> None:
     """A secondary finalization failure must not replace the original prepare error."""
     from tracefix import runtime
+
     repo = _make_repo(tmp_path)
     input_root = tmp_path / "frozen-input"
     input_root.mkdir()

@@ -111,6 +111,9 @@ def test_report_shows_budget_stop_and_skill_activation_without_usage(tmp_path):
     assert "tracefix-debugging" in html
     assert "费用：未记录" in html
     assert "模型 usage：输入 未记录 / 输出 未记录" in html
+    result["cost_complete"] = True
+    result_path.write_text(json.dumps(result), encoding="utf-8")
+    assert "费用：未记录" in render_report(run).read_text(encoding="utf-8")
 
 
 def test_pagination_demo_records_expected_failure_and_same_patch(tmp_path):

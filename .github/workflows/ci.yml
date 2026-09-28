@@ -116,6 +116,14 @@ jobs:
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
             & (Join-Path $wheelEnv "Scripts/tracefix-reproduce.exe") --scenario pagination --skills-enabled --output (Join-Path $wheelSmoke "pagination-skills")
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            $ordinary = Join-Path $wheelSmoke "ordinary"
+            & $wheelPython (Join-Path $env:GITHUB_WORKSPACE "examples/replay_ordinary.py") --output $ordinary
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            & (Join-Path $wheelEnv "Scripts/tracefix.exe") doctor --repo (Join-Path $ordinary "source") --test-python $wheelPython --test-target tests/test_widget.py --source-import widget --model offline/replay --json
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            $ordinaryRun = (Get-ChildItem -LiteralPath (Join-Path $ordinary "runs") -Directory | Select-Object -First 1).FullName
+            & (Join-Path $wheelEnv "Scripts/tracefix.exe") export --run $ordinaryRun --output (Join-Path $ordinary "export.patch")
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           } finally { Pop-Location }
 
       - name: 保存工程与 wheel 验证结果
@@ -139,6 +147,8 @@ jobs:
             ${{ runner.temp }}/tracefix-wheel-smoke/**/*.jsonl
             ${{ runner.temp }}/tracefix-wheel-smoke/**/*.diff
             ${{ runner.temp }}/tracefix-wheel-smoke/**/*.html
+            ${{ runner.temp }}/tracefix-wheel-smoke/**/*.patch
+            ${{ runner.temp }}/tracefix-wheel-smoke/**/*.sha256
           if-no-files-found: warn
 
   docker-zero-call:

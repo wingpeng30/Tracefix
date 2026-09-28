@@ -26,6 +26,37 @@ def _run_result(status: AgentStatus = AgentStatus.COMPLETED):
     )
 
 
+def test_run_reads_toml_and_passes_ordinary_fields(tmp_path, monkeypatch, capsys) -> None:
+    config = tmp_path / "config.toml"
+    config.write_text(
+        '[run]\nrepo = "source"\ntask = "fix"\nmodel = "offline/replay"\n'
+        'test_target = "tests/test_sample.py"\nsource_import = "sample"\n'
+        'output_dir = "saved"\n',
+        encoding="utf-8",
+    )
+    seen = []
+
+    class Runner:
+        def run(self, value):
+            seen.append(value)
+            return _run_result()
+
+    monkeypatch.setattr("tracefix.cli.TraceFixRunner", Runner)
+    assert main(["run", "--config", str(config)]) == 0
+    assert seen[0].repo == tmp_path / "source"
+    assert seen[0].test_target == "tests/test_sample.py"
+    assert seen[0].source_import == "sample"
+    assert seen[0].output_dir == tmp_path / "saved"
+    assert "报告命令" in capsys.readouterr().out
+
+
+def test_run_rejects_missing_repo_or_task_without_model(tmp_path, capsys) -> None:
+    assert main(["run", "--task", "fix", "--model", "offline/replay"]) == 2
+    assert "--repo" in capsys.readouterr().err
+    assert main(["run", "--repo", str(tmp_path), "--model", "offline/replay"]) == 2
+    assert "--task" in capsys.readouterr().err
+
+
 def test_cli_p2_summarize_is_read_only(tmp_path, monkeypatch, capsys) -> None:
     expected = tmp_path / "p2-summary.json"
     monkeypatch.setattr("tracefix.cli.write_p2_summary", lambda root: expected)
@@ -44,8 +75,12 @@ def test_cli_p2_formal_freezes_cny_cache_pricing(tmp_path, monkeypatch, capsys) 
     """正式入口必须把人民币缓存价格和上限原样交给冻结协议。"""
     captured = []
     summary = SimpleNamespace(
-        completed_count=0, trial_count=60, planned_count=60, resumed_count=0,
-        campaign_stop_reason=None, summary_path="p2.json"
+        completed_count=0,
+        trial_count=60,
+        planned_count=60,
+        resumed_count=0,
+        campaign_stop_reason=None,
+        summary_path="p2.json",
     )
     monkeypatch.setattr(
         "tracefix.cli.run_p2_formal",

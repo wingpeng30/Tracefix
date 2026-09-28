@@ -79,7 +79,7 @@ def default_output_root() -> Path:
     configured = os.environ.get("TRACEFIX_RUNS_ROOT")
     if configured:
         return Path(configured)
-    return Path(r"E:\TraceFixRunsActive") if os.name == "nt" else Path("runs")
+    return Path("runs")
 
 
 class RunConfig(BaseModel):
@@ -98,6 +98,8 @@ class RunConfig(BaseModel):
     per_request_output_tokens: int = Field(default=4_096, ge=1)
     test_python_executable: Path | None = None
     test_pythonpath_entries: tuple[Path, ...] = ()
+    test_target: str | None = None
+    source_import: str | None = None
     environment_recipe: EnvironmentRecipe | None = None
     test_environment_variables: dict[str, str] = Field(default_factory=dict)
     execution_backend: Literal["local", "docker"] = "local"
@@ -117,6 +119,20 @@ class RunConfig(BaseModel):
             raise ValueError("task cannot be empty")
         if not self.model_name:
             raise ValueError("model_name cannot be empty")
+        if self.source_import is not None and not all(
+            segment.isidentifier() for segment in self.source_import.split(".")
+        ):
+            raise ValueError("source_import must be a dotted Python module name")
+        if self.test_target is not None:
+            target_path = Path(self.test_target.split("::", 1)[0])
+            if (
+                not str(target_path).strip()
+                or target_path.is_absolute()
+                or ".." in target_path.parts
+                or "\n" in self.test_target
+                or "\r" in self.test_target
+            ):
+                raise ValueError("test_target must be a relative pytest path or node ID")
         if self.execution_backend == "docker" and (
             not self.docker_task_id or not self.docker_input_root
         ):
@@ -167,6 +183,7 @@ class RunResult(BaseModel):
     changed_files: tuple[str, ...] = ()
     trace_path: str
     diff_path: str
+    patch_sha256: str | None = None
     result_path: str
     agent_config: AgentConfig
     context_metrics: ContextMetrics = Field(default_factory=ContextMetrics)
@@ -198,10 +215,17 @@ class TraceFixRunner:
 
     def run(self, config: RunConfig) -> RunResult:
         """执行任务并保证成功、预算终止或异常时都保存结构化结果。"""
+        source_path = config.repo.expanduser().resolve()
+        output_root = config.output_dir.expanduser().resolve()
+        if output_root.is_relative_to(source_path):
+            raise RunConfigurationError(
+                "output directory must be outside the source repository",
+                context={"repo": str(source_path), "output_dir": str(output_root)},
+            )
         run_id = self._new_run_id()
         started_at = datetime.now(UTC)
         started_monotonic = time.monotonic()
-        run_dir = config.output_dir.expanduser().resolve() / run_id
+        run_dir = output_root / run_id
         run_dir.mkdir(parents=True, exist_ok=False)
         trace_path = run_dir / "trajectory.jsonl"
         diff_path = run_dir / "patch.diff"
@@ -373,7 +397,13 @@ class TraceFixRunner:
             )
             if docker_backend is not None:
                 docker_backend.set_phase("agent_running")
-            state = agent.run(config.task)
+            agent_task = config.task
+            if config.test_target:
+                agent_task += (
+                    f"\n\n指定公开测试：pytest -q {config.test_target}。"
+                    "请先运行，修改后重跑并检查 Diff。"
+                )
+            state = agent.run(agent_task)
         except KeyboardInterrupt:
             state = agent.state if agent is not None else state
             state.status = AgentStatus.INTERRUPTED
@@ -483,6 +513,7 @@ class TraceFixRunner:
             changed_files=changed_files,
             trace_path=str(trace_path),
             diff_path=str(diff_path),
+            patch_sha256=hashlib.sha256(diff_path.read_bytes()).hexdigest(),
             result_path=str(result_path),
             agent_config=config.agent_config.model_copy(deep=True),
             context_metrics=state.context_metrics.model_copy(deep=True),
@@ -620,8 +651,34 @@ class TraceFixRunner:
                 }
 
         probe: dict[str, JsonValue] | None = None
-        if recipe is not None and recipe.source_import_probe:
-            probe_name = recipe.source_import_probe
+        if config.source_import or config.test_target:
+            test_python = Path(python)
+            if not test_python.is_file():
+                raise WorkspaceError(f"test Python executable does not exist: {test_python}")
+            try:
+                pytest_check = subprocess.run(
+                    [python, "-c", "import pytest"],
+                    cwd=workspace,
+                    env=environment,
+                    capture_output=True,
+                    text=True,
+                    timeout=15,
+                    check=False,
+                )
+            except (OSError, subprocess.SubprocessError) as exc:
+                raise WorkspaceError(f"cannot check pytest: {exc}") from exc
+            if pytest_check.returncode != 0:
+                raise WorkspaceError("pytest is unavailable in the selected test Python")
+        if config.test_target:
+            target_path = Path(config.test_target.split("::", 1)[0])
+            if (
+                target_path.is_absolute()
+                or ".." in target_path.parts
+                or not (workspace / target_path).is_file()
+            ):
+                raise WorkspaceError("test target must be an existing file inside the checkout")
+        if config.source_import or (recipe is not None and recipe.source_import_probe):
+            probe_name = config.source_import or recipe.source_import_probe
             roots = [str(workspace / "src"), str(workspace)]
             roots.extend(str(path.resolve()) for path in config.test_pythonpath_entries)
             probe_environment = dict(environment)
@@ -670,7 +727,7 @@ class TraceFixRunner:
             if probe.get("valid") is not True:
                 return {
                     "success": False,
-                    "recipe_fingerprint": recipe.fingerprint,
+                    "recipe_fingerprint": recipe.fingerprint if recipe else None,
                     "build_steps": steps,
                     "source_import_probe": probe,
                     "failure": "source import probe did not resolve to the agent checkout",

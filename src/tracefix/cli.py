@@ -7,6 +7,7 @@ import json
 import os
 import subprocess
 import sys
+import tomllib
 from pathlib import Path
 from typing import Any
 
@@ -18,6 +19,7 @@ from tracefix.context import ContextConfig
 from tracefix.detailed_ablation import write_detailed_ablation_diagnostic
 from tracefix.exceptions import BenchmarkError, TraceFixError
 from tracefix.holdout import freeze_holdout, freeze_long_context_mechanism
+from tracefix.onboarding import doctor, export_patch
 from tracefix.p2_protocol import (
     P2FormalRunRequirements,
     P2ProtocolConfig,
@@ -164,7 +166,9 @@ def _add_shared_options(parser: argparse.ArgumentParser) -> None:
         default=None,
         help="关闭工具结果裁剪和历史折叠，用于运行未压缩对照组",
     )
-    parser.add_argument("--context-window-tokens", type=int, help="模型单次请求硬窗口")
+    parser.add_argument(
+        "--context-window-tokens", type=int, help="模型单次请求的估算上限；不保证供应商硬边界"
+    )
     parser.add_argument("--context-trigger-tokens", type=int, help="历史折叠软阈值")
     parser.add_argument("--context-retain-ratio", type=float, help="折叠后保留近期轮次的比例")
     parser.add_argument(
@@ -204,7 +208,10 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     run_parser = subparsers.add_parser("run", help="运行一个仓库修复任务")
-    run_parser.add_argument("--repo", type=Path, required=True, help="干净的本地 Git 仓库")
+    run_parser.add_argument("--config", type=Path, help="普通本地运行的 TOML 配置")
+    run_parser.add_argument("--repo", type=Path, help="干净的本地 Git 仓库")
+    run_parser.add_argument("--test-target", help="pytest 相对测试路径或 node ID")
+    run_parser.add_argument("--source-import", help="必须从隔离 checkout 导入的 Python 模块")
     run_parser.add_argument(
         "--execution-backend",
         choices=("local", "docker"),
@@ -222,10 +229,26 @@ def build_parser() -> argparse.ArgumentParser:
         default=Path("runs/docker-foundation-20260926-v1/inputs-v2"),
         help="只读冻结 Docker 输入根目录",
     )
-    task_group = run_parser.add_mutually_exclusive_group(required=True)
+    task_group = run_parser.add_mutually_exclusive_group()
     task_group.add_argument("--task", help="直接传入 Bug 描述")
     task_group.add_argument("--task-file", type=Path, help="从 UTF-8 文件读取 Bug 描述")
     _add_shared_options(run_parser)
+    run_parser.set_defaults(env_file=None)
+
+    doctor_parser = subparsers.add_parser("doctor", help="零模型调用检查普通本地运行配置")
+    doctor_parser.add_argument("--config", type=Path)
+    doctor_parser.add_argument("--repo", type=Path)
+    doctor_parser.add_argument("--test-python", type=Path)
+    doctor_parser.add_argument("--source-import")
+    doctor_parser.add_argument("--test-target")
+    doctor_parser.add_argument("--model")
+    doctor_parser.add_argument("--env-file", type=Path)
+    doctor_parser.add_argument("--output-dir", type=Path)
+    doctor_parser.add_argument("--json", action="store_true")
+
+    export_parser = subparsers.add_parser("export", help="校验并导出已保存的补丁")
+    export_parser.add_argument("--run", type=Path, required=True)
+    export_parser.add_argument("--output", type=Path, required=True)
 
     eval_parser = subparsers.add_parser("eval", help="串行运行合成基准任务")
     eval_parser.add_argument(
@@ -585,8 +608,7 @@ def _resolve_shared(args: argparse.Namespace, *, real_issue_budget: bool = False
             _first(
                 args.output_dir,
                 "TRACEFIX_OUTPUT_DIR",
-                os.getenv("TRACEFIX_RUNS_ROOT")
-                or (r"E:\TraceFixRunsActive" if os.name == "nt" else "runs"),
+                os.getenv("TRACEFIX_RUNS_ROOT") or "runs",
             )
         ),
         "env_file": args.env_file,
@@ -739,6 +761,8 @@ def _read_task(args: argparse.Namespace) -> str:
     """从互斥的文本参数或 UTF-8 文件获得任务描述。"""
     if args.task is not None:
         return args.task
+    if args.task_file is None:
+        raise ValueError("必须通过 --task、--task-file 或配置文件提供任务")
     try:
         return args.task_file.expanduser().read_text(encoding="utf-8")
     except OSError as exc:
@@ -785,6 +809,7 @@ def _print_run_result(result: Any) -> None:
         print(f"费用: 已知部分 ${result.cost_usd:.8f}，供应商费用数据不完整")
     print(f"结果文件: {result.result_path}")
     print(f"补丁文件: {result.diff_path}")
+    print(f"报告命令: tracefix report --run {Path(result.result_path).parent}")
     if result.final_output:
         print(f"Agent: {result.final_output}")
     error = getattr(result, "error", None)
@@ -792,6 +817,70 @@ def _print_run_result(result: Any) -> None:
         code = error.get("code", "run_error")
         message = error.get("message", "运行失败，请检查 result.json 和 trajectory.jsonl")
         print(f"错误: [{code}] {message}", file=sys.stderr)
+
+
+def _ordinary_settings(args: argparse.Namespace) -> dict[str, Any]:
+    """Resolve the small, documented TOML surface for local repository runs."""
+    values: dict[str, Any] = {}
+    config_path = getattr(args, "config", None)
+    if config_path is not None:
+        path = config_path.expanduser().resolve()
+        try:
+            data = tomllib.loads(path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeError, tomllib.TOMLDecodeError) as exc:
+            raise ValueError(f"无法读取 TOML 配置: {exc}") from exc
+        if set(data) != {"run"} or not isinstance(data["run"], dict):
+            raise ValueError("TOML 仅支持 [run] 表")
+        allowed = {
+            "repo",
+            "task",
+            "test_python",
+            "test_target",
+            "source_import",
+            "output_dir",
+            "model",
+            "env_file",
+        }
+        unknown = set(data["run"]) - allowed
+        if unknown:
+            raise ValueError(f"未知配置字段: {', '.join(sorted(unknown))}")
+        values = data["run"]
+
+    def choose(key: str, cli: Any, env: str | None = None) -> Any:
+        if cli is not None:
+            return cli
+        if env and os.getenv(env):
+            return os.environ[env]
+        return values.get(key)
+
+    def path_value(key: str, cli: Any, env: str | None = None) -> Path | None:
+        value = choose(key, cli, env)
+        if value is None:
+            return None
+        if not isinstance(value, (str, Path)) or not str(value).strip():
+            raise ValueError(f"配置字段 {key} 必须是非空路径")
+        candidate = Path(value).expanduser()
+        if (
+            key in values
+            and cli is None
+            and not (env and os.getenv(env))
+            and not candidate.is_absolute()
+        ):
+            candidate = config_path.expanduser().resolve().parent / candidate
+        return candidate
+
+    return {
+        "repo": path_value("repo", args.repo, "TRACEFIX_REPO"),
+        "task": values.get("task"),
+        "test_python_executable": path_value(
+            "test_python", args.test_python, "TRACEFIX_TEST_PYTHON"
+        ),
+        "test_target": choose("test_target", args.test_target, "TRACEFIX_TEST_TARGET"),
+        "source_import": choose("source_import", args.source_import, "TRACEFIX_SOURCE_IMPORT"),
+        "output_dir": path_value("output_dir", args.output_dir, "TRACEFIX_OUTPUT_DIR"),
+        "model_name": choose("model", args.model, "TRACEFIX_MODEL") or DEFAULT_MODEL_NAME,
+        "env_file": path_value("env_file", args.env_file, "TRACEFIX_ENV_FILE") or Path(".env"),
+    }
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -802,6 +891,20 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "report":
             print(render_report(args.run, args.output))
             return 0
+        if args.command == "export":
+            print(export_patch(args.run, args.output))
+            return 0
+        if args.command == "doctor":
+            settings = _ordinary_settings(args)
+            checks = doctor(settings)
+            if args.json:
+                _print_json(checks)
+            else:
+                for check in checks["checks"]:
+                    print(f"{'OK' if check['ok'] else 'FAIL'} {check['name']}: {check['detail']}")
+                    if not check["ok"] and check["fix"]:
+                        print(f"  修复建议: {check['fix']}")
+            return 0 if checks["ok"] else 2
         if args.command == "validate-real-tasks":
             tasks = load_real_issue_tasks(args.tasks, task_ids=tuple(args.task_id))
             validations = []
@@ -1167,12 +1270,32 @@ def main(argv: list[str] | None = None) -> int:
             print(f"汇总文件: {summary.summary_path}")
             return 0
 
+        if args.command == "run":
+            settings = _ordinary_settings(args)
+            for field, value in (
+                ("model", settings["model_name"]),
+                ("env_file", settings["env_file"]),
+            ):
+                if getattr(args, field) is None and value is not None:
+                    setattr(args, field, value)
         shared = _resolve_shared(
             args,
             real_issue_budget=args.command
             in {"real-prescreen", "real-repo-map-prescreen", "real-paired-eval"},
         )
         if args.command == "run":
+            settings = _ordinary_settings(args)
+            if settings["repo"] is None:
+                raise ValueError("必须通过 --repo 或配置文件指定仓库")
+            if args.task is None and args.task_file is None and settings["task"] is None:
+                raise ValueError("必须通过 --task、--task-file 或配置文件提供任务")
+            shared.update(
+                {
+                    key: settings[key]
+                    for key in ("test_python_executable", "output_dir")
+                    if settings[key] is not None
+                }
+            )
             shared.update(
                 {
                     "execution_backend": args.execution_backend,
@@ -1183,7 +1306,15 @@ def main(argv: list[str] | None = None) -> int:
                 }
             )
             result = TraceFixRunner().run(
-                RunConfig(repo=args.repo, task=_read_task(args), **shared)
+                RunConfig(
+                    repo=settings["repo"],
+                    task=_read_task(args)
+                    if args.task is not None or args.task_file is not None
+                    else settings["task"],
+                    test_target=settings["test_target"],
+                    source_import=settings["source_import"],
+                    **shared,
+                )
             )
             _print_run_result(result)
             if result.status is AgentStatus.COMPLETED:

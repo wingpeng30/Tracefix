@@ -1,6 +1,10 @@
 # TraceFix 路线图
 
-## 当前最高优先级（2026-09-28 用户重新确定）
+## 2026-09-28 当前执行顺序
+
+用户已将重点转为系统本身：首先交付普通受信任 Python/pytest 仓库的安装、配置、预检、运行、报告与补丁导出；随后完成任务事实与 checkpoint/恢复；再评估可选只读 MCP 和普通仓库 Docker 执行契约。此前作品集优先的条目保留为历史状态。当前能力边界见 [`reviews/2026-09-28-system-review.md`](reviews/2026-09-28-system-review.md)，入门流程见 [`ordinary-repository.md`](ordinary-repository.md)。
+
+## 历史优先级（2026-09-28 较早版本）
 
 尽快交付**可用、可演示、能形成简历亮点的 Coding Agent 项目**。当前工程底座已通过 CI，
 下一步按“可视化修复报告与公开 demo → 真实案例与最短使用路径 → README/演示及候选包”推进。

@@ -1,5 +1,7 @@
 # TraceFix
 
+想在自己的受信任 Python/pytest 仓库运行？先看[普通仓库安装与使用指南](docs/ordinary-repository.md)：配置、零调用预检、隔离运行、HTML 报告和补丁导出均有可复制命令。[系统审查](docs/reviews/2026-09-28-system-review.md)列出已贯通能力和限制。当前仍无可恢复的 Agent 会话；通用仓库 Docker 与 MCP 属于后续批次。
+
 ## 两分钟修复演示（零供应商调用）
 
 从干净 checkout 按[冻结依赖说明](docs/reproduction.md)安装后，在 PowerShell 运行：
