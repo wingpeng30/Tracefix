@@ -117,6 +117,7 @@ def _python_files(root: Path) -> list[str]:
         "src/tracefix/agent_bridge.py",
         "src/tracefix/reproduction.py",
         "tests/test_engineering_check.py",
+        "tests/test_agent_bridge.py",
         "tests/test_reproduction.py",
     }
     paths = set(tracked)

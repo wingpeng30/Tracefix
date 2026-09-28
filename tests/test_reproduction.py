@@ -8,12 +8,15 @@ import subprocess
 import pytest
 
 import tracefix.runtime
+from tracefix import LLMConfig, Message, MessageRole
 from tracefix.models.litellm_adapter import LiteLLMAdapter
 from tracefix.reproduction import (
     _forbid_provider_access,
     _make_docker_inputs,
     _make_source,
+    _ScriptedLLM,
     _source_sha256,
+    main,
     run_smoke,
 )
 
@@ -82,3 +85,42 @@ def test_provider_and_network_fault_injection_is_blocked():
             socket.create_connection(("example.invalid", 443), timeout=0.1)
     assert provider_attempts == ["attempt"]
     assert network_attempts == ["attempt"]
+
+
+def test_cli_requires_image_id_for_docker_backend(tmp_path):
+    with pytest.raises(SystemExit) as exit_info:
+        main(["--backend", "docker", "--output", str(tmp_path / "run")])
+    assert exit_info.value.code == 2
+
+
+def test_cli_forwards_selected_run_options_and_prints_report(tmp_path, monkeypatch, capsys):
+    calls = []
+    report = {"status": "completed", "skills_enabled": True}
+    monkeypatch.setattr(
+        "tracefix.reproduction.run_smoke",
+        lambda output, **kwargs: calls.append((output, kwargs)) or report,
+    )
+    output = tmp_path / "run"
+    assert main(
+        [
+            "--backend", "docker", "--image-id", "sha256:" + "a" * 64,
+            "--skills-enabled", "--output", str(output),
+        ]
+    ) == 0
+    assert calls == [
+        (output, {"skills_enabled": True, "backend": "docker", "image_id": "sha256:" + "a" * 64})
+    ]
+    assert json.loads(capsys.readouterr().out) == report
+
+
+def test_scripted_model_fails_when_skill_catalog_or_loaded_text_is_missing():
+    system = Message(role=MessageRole.SYSTEM, content="tools")
+    user = Message(role=MessageRole.USER, content="fix the failure")
+    catalog_model = _ScriptedLLM(LLMConfig(model_name="offline/scripted"), True)
+    with pytest.raises(AssertionError, match="catalog was not provided"):
+        catalog_model.complete([system, user], tools=())
+
+    instruction_model = _ScriptedLLM(LLMConfig(model_name="offline/scripted"), True)
+    instruction_model.turn = 1
+    with pytest.raises(AssertionError, match="instructions did not enter"):
+        instruction_model.complete([system, user], tools=())

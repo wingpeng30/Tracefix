@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import subprocess
 import sys
 import tarfile
@@ -301,6 +302,85 @@ def test_bridge_transfers_path_free_skill_catalog_and_rejects_mismatch(tmp_path:
         _BridgeSession(
             [sys.executable, "-u", "-c", bad_code], 2,
             tmp_path / "skill-catalog-mismatch.jsonl", skills_enabled=True,
+        )
+
+
+@pytest.mark.parametrize(
+        ("payload_update", "skills_enabled", "message"),
+    [
+        ({"skill_catalog": "invalid"}, False, "catalog is malformed"),
+        (
+            {
+                "skill_catalog": [
+                    {"name": "bad", "description": "x", "version": "1", "sha256": "bad"}
+                ]
+            },
+            False,
+            "catalog identity is invalid",
+        ),
+        (
+            {
+                "skill_catalog": [
+                    {"name": "demo", "description": "x", "version": "1", "sha256": "a" * 64},
+                    {"name": "demo", "description": "y", "version": "1", "sha256": "b" * 64},
+                ]
+            },
+            False,
+            "duplicate names",
+        ),
+        (
+            {"tools": [{"name": "broken", "description": "x", "input_schema": {"type": "array"}}]},
+            False,
+            "tool schema is invalid",
+        ),
+        (
+            {"tools": [{"name": "search_code", "description": "x"}] * 2},
+            False,
+            "duplicate tool names",
+        ),
+        ({}, True, "does not match the load_skill tool"),
+        (
+            {
+                "skill_catalog": [
+                    {"name": "demo", "description": "x", "version": "1", "sha256": "a" * 64}
+                ],
+                "tools": [{
+                    "name": "load_skill",
+                    "description": "Load",
+                    "input_schema": {"type": "object", "properties": {"name": {"enum": ["other"]}}},
+                }],
+            },
+            True,
+            "does not match the load_skill tool",
+        ),
+        (
+            {
+                "skill_catalog": [
+                    {"name": "demo", "description": "x", "version": "1", "sha256": "a" * 64}
+                ]
+            },
+            False,
+            "exposed skills while skills are disabled",
+        ),
+        (
+            {"tools": [{"name": "load_skill", "description": "Load"}]},
+            False,
+            "exposed skills while skills are disabled",
+        ),
+    ],
+)
+def test_bridge_rejects_malformed_or_inconsistent_handshakes(
+    payload_update: dict[str, object], skills_enabled: bool, message: str, tmp_path: Path
+) -> None:
+    payload: dict[str, object] = {
+        "type": "hello", "protocol": 1, "run_id": "run-1", "tools": [],
+    }
+    payload.update(payload_update)
+    code = f"import json; print({json.dumps(payload)!r}, flush=True)"
+    with pytest.raises(WorkspaceError, match=message):
+        _BridgeSession(
+            [sys.executable, "-u", "-c", code], 2,
+            tmp_path / "invalid-handshake.jsonl", skills_enabled=skills_enabled,
         )
 
 

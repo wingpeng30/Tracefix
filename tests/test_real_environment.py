@@ -129,7 +129,10 @@ def test_recipe_hash_invalidates_reuse_and_storage_ignores_unmanaged_paths(
     task, source = _task(tmp_path)
     recipes = tmp_path / "recipes"
     recipes.mkdir()
-    recipe = EnvironmentRecipe(task_id=task.id, python_versions=("3.12",))
+    recipe = EnvironmentRecipe(
+        task_id=task.id,
+        python_versions=(f"{sys.version_info.major}.{sys.version_info.minor}",),
+    )
     (recipes / "fixture.json").write_text(recipe.model_dump_json(), encoding="utf-8")
     config = EnvironmentPreparationConfig(
         tasks_dir=task.task_dir.parent,
@@ -319,23 +322,21 @@ def test_recipe_loader_rejects_duplicate_task_ids(tmp_path) -> None:
         load_environment_recipes(tmp_path)
 
 
-def test_frozen_recipe_fingerprints_survive_optional_pythonpath_field() -> None:
-    """A new empty recipe option must not invalidate existing frozen inputs."""
-    root = (
-        Path(__file__).resolve().parents[1]
-        / "runs"
-        / "docker-foundation-20260926-v1"
-        / "inputs-v2"
-    )
-    for task_id in (
-        "pytest-dev__pytest-10081",
-        "psf__requests-1766",
-        "sphinx-doc__sphinx-10449",
-    ):
-        stage = root / task_id
-        manifest = json.loads((stage / "input-manifest.json").read_text(encoding="utf-8"))
-        recipe = load_environment_recipes(stage / "recipes")[task_id]
-        assert recipe.fingerprint == manifest["recipe_fingerprint"]
+def test_frozen_recipe_fingerprints_survive_optional_pythonpath_field(tmp_path) -> None:
+    """An empty optional field preserves a legacy fingerprint without task data."""
+    recipes = tmp_path / "recipes"
+    recipes.mkdir()
+    legacy = EnvironmentRecipe(task_id="fixture__repo-1")
+    legacy_fingerprint = legacy.fingerprint
+    recipe_payload = legacy.model_dump(mode="json")
+    recipe_payload.pop("test_pythonpath_entries")
+    (recipes / "fixture.json").write_text(json.dumps(recipe_payload), encoding="utf-8")
+    manifest = {"task_id": legacy.task_id, "recipe_fingerprint": legacy_fingerprint}
+    (tmp_path / "input-manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+
+    loaded = load_environment_recipes(recipes)[legacy.task_id]
+    saved = json.loads((tmp_path / "input-manifest.json").read_text(encoding="utf-8"))
+    assert loaded.fingerprint == saved["recipe_fingerprint"]
 
 
 def test_preparer_preserves_unregistered_or_unhealthy_environment(tmp_path, monkeypatch) -> None:

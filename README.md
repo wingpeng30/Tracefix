@@ -83,6 +83,11 @@ python -m pip install -i https://pypi.tuna.tsinghua.edu.cn/simple -e ".[dev,llm,
 核心数据模型仍然只依赖 Pydantic；LiteLLM 和 `.env` 加载器位于 `llm` 可选依赖中。
 项目固定使用已验证的 `litellm==1.75.5.post2`，保证本阶段的适配行为可复现。
 
+从干净 checkout 复现工程门槛时，使用 [`docs/reproduction.md`](docs/reproduction.md) 里的哈希锁，
+不要用上述范围依赖命令代替验收环境。Windows x64 Python 3.11/3.12 分别使用
+`requirements/locks/engineering-py311.txt` 或 `engineering-py312.txt`；TraceFix 包本身以
+`--no-deps --no-build-isolation` 安装。
+
 ## 配置 DeepSeek
 
 复制示例文件：
@@ -174,13 +179,12 @@ CLI 参数优先于 `TRACEFIX_*` 环境变量，环境变量优先于代码默�
 
 ## 零模型调用复现
 
-从干净 checkout 安装后，可用固定模型替身走一次真实 `TraceFixRunner` 控制流：搜索、读取、
-应用补丁、执行 pytest、读取 Diff 并保存轨迹。替身不会构造供应商客户端或发送网络请求：
+可用固定模型替身走一次真实 `TraceFixRunner` 控制流：搜索、读取、应用补丁、执行 pytest、读取
+Diff 并保存轨迹。替身会阻止供应商客户端构造、请求发送和宿主 Runner 网络连接：
 
 ```powershell
-python -m pip install -e ".[dev]"
-python scripts/reproduce_zero_call.py --output runs/reproduction-baseline
-python scripts/reproduce_zero_call.py --skills-enabled --output runs/reproduction-skills
+tracefix-reproduce --backend local --output runs/reproduction-baseline
+tracefix-reproduce --backend local --skills-enabled --output runs/reproduction-skills
 ```
 
 该合成流程验证的是安装和工程控制流，不是离线定位效果或真实独立修复成功率。Docker 容器
