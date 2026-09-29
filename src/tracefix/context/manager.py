@@ -120,7 +120,12 @@ class ContextManager:
 
         anchors, batches = self._split_batches(pruned)
         retained, compacted_batches = self._select_recent_batches(batches, tools)
-        if not compacted_batches:
+        failed_index = self._latest_failed_test_batch(compacted_batches)
+        compactable: list[tuple[Message, ...]] = list(compacted_batches)
+        pinned: tuple[Message, ...] = ()
+        if failed_index is not None:
+            pinned = compactable.pop(failed_index)
+        if not compactable:
             self._ensure_hard_limit(pruned_tokens)
             return self._view(
                 pruned,
@@ -130,8 +135,18 @@ class ContextManager:
                 original_message_count=len(original),
             )
 
-        summary = self._summarize_batches(compacted_batches)
-        request = (*anchors, summary, *(message for batch in retained for message in batch))
+        request_prefix: list[Message] = list(anchors)
+        if pinned:
+            before_failed = compacted_batches[:failed_index]
+            after_failed = compacted_batches[failed_index + 1:]
+            if before_failed:
+                request_prefix.append(self._summarize_batches(before_failed))
+            request_prefix.extend(pinned)
+            if after_failed:
+                request_prefix.append(self._summarize_batches(after_failed))
+        else:
+            request_prefix.append(self._summarize_batches(compacted_batches))
+        request = (*request_prefix, *(message for batch in retained for message in batch))
         after = self.estimate_tokens(request, tools)
         if after >= pruned_tokens:
             # 确定性摘要也必须真正缩小请求；否则保留裁剪视图更安全。
@@ -143,14 +158,14 @@ class ContextManager:
                 original_message_count=len(original),
             )
         self._ensure_hard_limit(after)
-        compacted_messages = sum(len(batch) for batch in compacted_batches)
+        compacted_messages = sum(len(batch) for batch in compactable)
         return self._view(
             request,
             before,
             after,
             tool_results_pruned=prune_count,
             messages_compacted=compacted_messages,
-            batches_compacted=len(compacted_batches),
+            batches_compacted=len(compactable),
             compacted=True,
             original_message_count=len(original),
         )
@@ -229,10 +244,6 @@ class ContextManager:
             used += batch_tokens
         retained_count = len(retained_reversed)
         retained_start = len(batches) - retained_count
-        failed_test_index = self._latest_failed_test_batch(batches)
-        if failed_test_index is not None:
-            # 最新失败测试是下一步修复最重要的证据，即使超出软保留量也原样保留。
-            retained_start = min(retained_start, failed_test_index)
         retained = batches[retained_start:]
         compacted_count = retained_start
         return retained, batches[:compacted_count]

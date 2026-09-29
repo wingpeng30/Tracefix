@@ -178,6 +178,33 @@ def test_latest_failed_test_is_kept_verbatim_and_old_tools_are_summarized() -> N
     )
 
 
+def test_early_failed_test_stays_verbatim_without_pin_all_later_batches() -> None:
+    test_call = ToolCall(id="early-failure", name="run_tests", arguments={"command": "pytest -q"})
+    messages = (
+        Message(role=MessageRole.SYSTEM, content="system"),
+        Message(role=MessageRole.USER, content="fix"),
+        Message(role=MessageRole.ASSISTANT, tool_calls=(test_call,)),
+        Message(
+            role=MessageRole.TOOL, tool_call_id=test_call.id,
+            content=ToolResult(
+                call_id=test_call.id, tool_name="run_tests", success=False,
+                error="assertion failed", output={"stderr": "early failure"},
+            ).model_dump_json(),
+        ),
+        *_tool_pair(1, "old evidence " * 200),
+        *_tool_pair(2, "latest evidence " * 200),
+    )
+    view = ContextManager(ContextConfig(
+        compaction_trigger_tokens=300, context_window_tokens=10_000,
+        retain_ratio=0.1, tool_result_threshold_chars=10_000,
+    )).prepare(messages)
+    assert view.compacted
+    assert view.batches_compacted >= 1
+    assert any(message.tool_call_id == "early-failure" for message in view.messages)
+    assert "early failure" in "\n".join(message.content or "" for message in view.messages)
+    assert any(message.metadata.get("tracefix_context_summary") for message in view.messages)
+
+
 def test_hard_limit_and_invalid_configuration() -> None:
     messages = _history(_tool_pair(1, "x" * 200))
     manager = ContextManager(
