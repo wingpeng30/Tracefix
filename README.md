@@ -58,13 +58,17 @@ Token 预算下，通过仓库结构检索、动态上下文和测试驱动的�
 ```text
 tracefix CLI
     │
-    ├── TraceFixRunner ── 干净源仓库 → 独立 Git 克隆
-    │       ├── LiteLLMAdapter → DeepSeek API
+    ├── doctor / docker-prepare / inspect / resume / verify / report / export
+    ├── TraceFixRunner ── 干净源仓库及提交身份
+    │       ├── 本地独立 Git checkout 或普通仓库 Docker 容器
+    │       ├── LiteLLMAdapter → 配置的模型供应商
     │       ├── RepositoryIndexer → Repo Map（候选文件/符号）
     │       ├── MinimalAgent → MessageHistory（完整历史）
-    │       │                    └── ContextManager（模型请求视图）
-    │       ├── ToolRegistry → 五个基础工具
-    │       └── JSONLTraceSink
+    │       │                    ├── ContextManager（模型请求视图）
+    │       │                    └── 已验证任务事实、预算和确定性失败恢复
+    │       ├── ToolRegistry → 五个基础工具、可选 Skills、可选只读 Serena MCP
+    │       ├── 本地 checkpoint（仅在确定完成的批次恢复）
+    │       └── JSONLTraceSink → result.json / patch.diff / HTML 报告
     │
     └── BenchmarkRunner
             ├── 合成任务准备
@@ -427,8 +431,8 @@ print(result.cost_usd, result.cost_cny_estimate)
 - `apply_patch` 支持 Git unified diff 和 `*** Begin Patch` 更新块；会重算错误的 hunk 行数，
   但仍要求上下文匹配，并先执行 `git apply --check`，通过后才真正修改文件。
 - `run_tests` 使用 `shell=False`，只允许 `pytest` 或 `python -m pytest`。
-- Agent 仍然在本机执行 pytest，不是操作系统级沙箱。不要用于运行不可信仓库；Docker
-  隔离将在后续版本加入。
+- 本地后端在本机执行 pytest，适用于受信任仓库；普通仓库的 Docker 后端见
+  [执行契约](docs/ordinary-docker.md)，目前由 Linux CI 验证，Windows Docker Desktop 未实测。
 
 ## 测试
 
@@ -442,12 +446,14 @@ python -m compileall -q src tests
 
 真实 API 冒烟测试由使用者显式执行，不进入 pytest 或 CI。
 
-## 后续版本
+## 历史实验计划（旧顺序）
+
+以下记录对应较早阶段；当前产品顺序和完成状态见[路线图](docs/roadmap.md)。
 
 当前阶段先做三题各一次的 32k 触发预筛选。只有至少三题真实折叠、请求达到 32k、读取五个
 业务相关文件并形成补丁测试闭环时，才执行每题每组 3 次的正式配对实验。否则按失败归因选择
 摘要、Repository Indexer/AST Repo Map、Patch Verifier 或工具去重。Docker 可用后仍需补跑
-官方 PASS_TO_PASS。本版本不包含 LLM 摘要、RAG、多 Agent、Docker 或前端。
+官方 PASS_TO_PASS。当时的版本不包含 LLM 摘要、RAG、多 Agent、普通仓库 Docker 或前端。
 
 用于该 A/B 的可复现压力任务、设计边界和命令见
 [`benchmarks/long_context_tasks/README.md`](benchmarks/long_context_tasks/README.md)。
