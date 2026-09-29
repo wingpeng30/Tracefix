@@ -207,6 +207,12 @@ def build_parser() -> argparse.ArgumentParser:
         "--output", type=Path, help="HTML 输出路径，默认运行目录/report.html"
     )
 
+    inspect_parser = subparsers.add_parser("inspect", help="检查本地任务恢复资格")
+    inspect_parser.add_argument("--run", type=Path, required=True)
+    inspect_parser.add_argument("--json", action="store_true")
+    resume_parser = subparsers.add_parser("resume", help="从安全 checkpoint 继续本地任务")
+    resume_parser.add_argument("--run", type=Path, required=True)
+
     run_parser = subparsers.add_parser("run", help="运行一个仓库修复任务")
     run_parser.add_argument("--config", type=Path, help="普通本地运行的 TOML 配置")
     run_parser.add_argument("--repo", type=Path, help="干净的本地 Git 仓库")
@@ -894,6 +900,19 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "export":
             print(export_patch(args.run, args.output))
             return 0
+        if args.command == "inspect":
+            inspection = TraceFixRunner.inspect(args.run)
+            if args.json:
+                _print_json(inspection)
+            else:
+                print("可恢复" if inspection["resumable"] else "不可恢复")
+                for reason in inspection["reasons"]:
+                    print(f"原因: {reason}")
+            return 0 if inspection["resumable"] else 2
+        if args.command == "resume":
+            result = TraceFixRunner().resume(args.run)
+            _print_run_result(result)
+            return 0 if result.status is AgentStatus.COMPLETED else 2
         if args.command == "doctor":
             settings = _ordinary_settings(args)
             checks = doctor(settings)

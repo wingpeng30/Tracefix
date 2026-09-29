@@ -1,5 +1,7 @@
 # 在自己的 Python 仓库运行 TraceFix
 
+同机原 checkout 的任务检查和安全恢复见 [`recovery.md`](recovery.md)。
+
 此路径支持**受信任、干净的 Git 仓库**，使用本地 Python 3.11/3.12、pytest 和调用者预先安装的项目依赖。TraceFix 克隆源提交，在独立 checkout 修改及测试；本地工具和 pytest 会执行项目代码，本地后端不是安全沙箱。含编译步骤、特殊构建流程、必须自动加载的 pytest 插件或外部服务的仓库，需要自行验证环境配方。本机 Windows Docker Desktop 尚未通过验证；现有 Docker 后端只支持冻结任务和公开合成案例。
 
 ## 安装和配置

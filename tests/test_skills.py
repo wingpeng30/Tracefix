@@ -379,3 +379,54 @@ def test_skill_reference_budget_and_duplicate_identity_are_checked(tmp_path):
     generous._loaded[("demo", "references/guide.md")] = ("1.0", "different-hash")
     with pytest.raises(ToolExecutionError, match="changed after it was loaded"):
         generous.execute(reference.model_copy(update={"id": "changed"}))
+
+
+def test_skill_recovery_restores_reference_budget_and_identity(tmp_path: Path) -> None:
+    root = tmp_path / "skills"
+    root.mkdir()
+    _write_skill(root, "demo", "instructions", reference="reference text")
+    original = SkillActivationTool(root)
+    activation = ToolCall(id="main", name="load_skill", arguments={"name": "demo"})
+    reference = ToolCall(
+        id="reference", name="load_skill",
+        arguments={"name": "demo", "reference": "references/guide.md"},
+    )
+    original.execute(activation)
+    original.execute(reference)
+    state = original.recovery_state()
+
+    restored = SkillActivationTool(root)
+    restored.restore_recovery_state(state)
+    assert restored.recovery_state() == state
+    assert restored.execute(reference.model_copy(update={"id": "again"})).output["already_loaded"]
+    assert restored.recovery_state()["loaded_bytes"] == state["loaded_bytes"]
+
+    (root / "demo" / "references" / "guide.md").write_text("changed", encoding="utf-8")
+    with pytest.raises(ToolExecutionError, match="content changed"):
+        SkillActivationTool(root).restore_recovery_state(state)
+
+
+@pytest.mark.parametrize(
+    ("mutation", "message"),
+    [
+        ({"catalog": []}, "catalog changed"),
+        ({"loaded": "bad"}, "state is invalid"),
+        ({"activated": "bad"}, "state is invalid"),
+        ({"loaded": ["bad"]}, "entry is invalid"),
+        ({"loaded": [{"name": "unknown", "path": "SKILL.md"}]}, "identity is invalid"),
+        ({"loaded": [{"name": "demo", "path": "../../outside"}]}, "path changed"),
+        ({"loaded_bytes": 9999}, "byte usage is invalid"),
+        ({"activated": []}, "activation set is invalid"),
+    ],
+)
+def test_skill_recovery_rejects_corrupt_state(
+    tmp_path: Path, mutation: dict, message: str
+) -> None:
+    root = tmp_path / "skills"
+    root.mkdir()
+    _write_skill(root, "demo", "instructions")
+    original = SkillActivationTool(root)
+    original.execute(ToolCall(id="main", name="load_skill", arguments={"name": "demo"}))
+    state = {**original.recovery_state(), **mutation}
+    with pytest.raises(ToolExecutionError, match=message):
+        SkillActivationTool(root).restore_recovery_state(state)
