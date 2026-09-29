@@ -112,6 +112,31 @@ def test_image_preparation_keeps_build_failure_log(tmp_path, monkeypatch):
     assert "dependency hash mismatch" in manifest.with_suffix(".build.log").read_text()
 
 
+@pytest.mark.parametrize("failure", ["missing_cli", "invalid_image", "failed_probe"])
+def test_image_preparation_blocks_unusable_runtime(tmp_path, monkeypatch, failure):
+    monkeypatch.setattr("tracefix.ordinary_docker.shutil.which", lambda _name: (
+        None if failure == "missing_cli" else "docker"
+    ))
+
+    def fake_run(command, **_kwargs):
+        if command[1] == "build":
+            return SimpleNamespace(returncode=0, stdout="built", stderr="")
+        if command[1] == "image":
+            return SimpleNamespace(returncode=0, stdout=(
+                "mutable-tag" if failure == "invalid_image" else _IMAGE_ID
+            ), stderr="")
+        return SimpleNamespace(returncode=1, stdout="", stderr="pytest unavailable")
+
+    monkeypatch.setattr("tracefix.ordinary_docker.subprocess.run", fake_run)
+    manifest = tmp_path / "unusable.json"
+    with pytest.raises(ValueError, match={
+        "missing_cli": "Docker CLI", "invalid_image": "image inspection",
+        "failed_probe": "image preflight",
+    }[failure]):
+        prepare_image(None, manifest)
+    assert not manifest.exists()
+
+
 def test_ordinary_docker_refuses_wrong_image_and_reports_cleanup_failure(tmp_path, monkeypatch):
     with pytest.raises(Exception, match="fixed image ID"):
         DockerToolBackend(
@@ -183,6 +208,7 @@ def test_independent_docker_validation_binds_patch_source_image_and_test(
         },
     }
     calls = []
+    failure = {"apply": False}
 
     class FakeTool:
         def __init__(self, name):
@@ -190,6 +216,11 @@ def test_independent_docker_validation_binds_patch_source_image_and_test(
 
         def execute(self, call):
             calls.append(call.name)
+            if call.name == "apply_patch" and failure["apply"]:
+                return ToolResult(
+                    call_id=call.id, tool_name=call.name,
+                    success=False, error="patch rejected",
+                )
             return ToolResult(
                 call_id=call.id, tool_name=call.name, success=True,
                 output={"test_status": "passed"} if call.name == "run_tests" else {},
@@ -230,6 +261,21 @@ def test_independent_docker_validation_binds_patch_source_image_and_test(
         }, patch)
     with pytest.raises(ValueError, match="patch is empty"):
         verify_docker_patch(run_dir, config, manifest, result, b"")
+    with pytest.raises(ValueError, match="test target changed"):
+        verify_docker_patch(run_dir, config, manifest, {
+            **result, "workspace_preparation": {
+                **result["workspace_preparation"], "test_target": "tests/other.py",
+            },
+        }, patch)
+    with pytest.raises(ValueError, match="source commit"):
+        verify_docker_patch(run_dir, config, manifest, {
+            **result, "source_commit": "0" * 40,
+        }, patch)
+    failure["apply"] = True
+    with pytest.raises(ValueError, match="patch could not be applied"):
+        verify_docker_patch(run_dir, config, manifest, result, patch)
+    assert not (run_dir / "independent-validation.json").exists()
+    assert calls[-1] == "close"
 
 
 def test_ordinary_backend_prepares_isolated_bridge_and_source_probe(tmp_path, monkeypatch):
