@@ -401,3 +401,18 @@ def test_ordinary_doctor_uses_image_and_disposable_container(tmp_path, monkeypat
     assert outcome["ok"] is True
     assert closed == [True]
     assert not any(item["name"] == "test_python" for item in outcome["checks"])
+
+    def missing_import(*_args, **_kwargs):
+        raise WorkspaceError(
+            "Docker backend command failed",
+            context={"stderr": "ModuleNotFoundError: No module named 'widget'"},
+        )
+
+    monkeypatch.setattr(Backend, "prepare", missing_import)
+    failed = doctor(settings, prepare=True)
+    assert failed["ok"] is False
+    assert closed == [True, True]
+    assert any(
+        "ModuleNotFoundError" in item["detail"]
+        for item in failed["checks"] if item["name"] == "prepared_checkout"
+    )

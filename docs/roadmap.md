@@ -4,7 +4,7 @@
 
 普通受信任 Python/pytest 仓库的本地安装、预检、运行、报告与补丁导出已在 PR #1 保存并通过 CI。后续按 A 任务事实与安全恢复、B 普通用户和真实模型验收、C 可选只读 MCP、D 普通仓库 Docker 顺序执行；每批独立验收并保留零供应商调用基线。具体入口、验收和边界见 [`tasks/2026-09-29-agent-harness-completion.md`](tasks/2026-09-29-agent-harness-completion.md)。真实模型请求仍需先冻结付费方案并取得授权。
 
-进展更新：A 的安全 checkpoint／恢复见 PR #2，B 的预检与独立公开测试复跑见 PR #3，均有通过的 Windows 双版本与 Linux Docker CI。C 的只读 Serena MCP 在 PR #4；Linux 零调用隔离服务与两个真实符号工具已通过，证据见 [`experiments/2026-09-29-serena-mcp-zero-call.md`](experiments/2026-09-29-serena-mcp-zero-call.md)。C 的最终全门槛仍以 PR 当前提交 CI 为准。D 普通仓库 Docker 尚未实现。付费真实模型验收仍待授权，不能由离线回放替代。
+进展更新：A 的安全 checkpoint／恢复见 PR #2，B 的预检与独立公开测试复跑见 PR #3，均有通过的 Windows 双版本与 Linux Docker CI。C 的只读 Serena MCP 在 PR #4，[CI #33](https://github.com/wingpeng30/Tracefix/actions/runs/36545042878) 全部通过；真实隔离服务证据见 [`experiments/2026-09-29-serena-mcp-zero-call.md`](experiments/2026-09-29-serena-mcp-zero-call.md)。D 普通仓库 Docker 在草稿 PR #5 中；[CI #38](https://github.com/wingpeng30/Tracefix/actions/runs/36549319954) 的 Linux 普通仓库 job 已通过两次运行、新容器复验、故障路径与清理，原始证据见 [`experiments/2026-09-29-ordinary-docker-zero-call.md`](experiments/2026-09-29-ordinary-docker-zero-call.md)；最终双版本工程门槛仍以 PR 最新提交 CI 为准。付费真实模型验收仍待授权，不能由离线回放替代。
 
 ## 2026-09-28 当前执行顺序
 

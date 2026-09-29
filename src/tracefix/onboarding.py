@@ -176,7 +176,10 @@ def doctor(settings: dict[str, Any], *, prepare: bool = False) -> dict[str, Any]
                         json.dumps(probe or result, ensure_ascii=False),
                         "检查任务镜像、pytest 和源码导入位置")
             except Exception as exc:
-                add("prepared_checkout", False, str(exc), "检查仓库、解释器和项目依赖")
+                context = getattr(exc, "context", {})
+                stderr = context.get("stderr") if isinstance(context, dict) else None
+                detail = str(exc) + (f": {str(stderr)[-500:]}" if stderr else "")
+                add("prepared_checkout", False, detail, "检查仓库、解释器和项目依赖")
         else:
             add("prepared_checkout", False, "基础预检未通过，未创建临时 checkout")
     return {"ok": all(item["ok"] for item in checks), "checks": checks}
