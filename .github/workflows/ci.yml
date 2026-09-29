@@ -254,3 +254,62 @@ jobs:
             ${{ runner.temp }}/tracefix-mcp-replay/runs/*/trajectory.jsonl
             ${{ runner.temp }}/tracefix-mcp-replay/runs/*/patch.diff
           if-no-files-found: warn
+
+  docker-ordinary-zero-call:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install pinned host and wheel dependencies
+        run: |
+          set -euo pipefail
+          python -m pip install --require-hashes -r requirements/locks/build-tools.txt
+          python -m pip install --require-hashes -r requirements/locks/engineering-py311.txt
+          python -m pip wheel --no-deps --no-build-isolation . --wheel-dir "$RUNNER_TEMP/wheel"
+          python -c "import glob,zipfile; z=zipfile.ZipFile(glob.glob('$RUNNER_TEMP/wheel/*.whl')[0]); assert {'tracefix/docker/ordinary.Dockerfile','tracefix/docker/ordinary-base.lock'} <= set(z.namelist())"
+          python -m pip install --no-deps "$RUNNER_TEMP"/wheel/*.whl
+      - name: Build ordinary task image and replay twice
+        run: |
+          set -euo pipefail
+          tracefix docker-prepare --output "$RUNNER_TEMP/ordinary-image.json"
+          image_id="$(python -c 'import json,os; print(json.load(open(os.environ["RUNNER_TEMP"]+"/ordinary-image.json"))["image_id"])')"
+          python examples/replay_ordinary.py --output "$RUNNER_TEMP/ordinary-one" --docker-ordinary-image-id "$image_id" | tee "$RUNNER_TEMP/ordinary-one-summary.json"
+          python -c 'import json,pathlib,sys; p=pathlib.Path(sys.argv[1]); p.write_text(p.read_text()+"\nexecution_backend = \"docker\"\ndocker_profile = \"ordinary\"\ndocker_image_id = \""+sys.argv[2]+"\"\n")' "$RUNNER_TEMP/ordinary-one/config.toml" "$image_id"
+          tracefix doctor --config "$RUNNER_TEMP/ordinary-one/config.toml" --prepare --json | tee "$RUNNER_TEMP/ordinary-doctor.json"
+          python examples/replay_ordinary.py --output "$RUNNER_TEMP/ordinary-two" --docker-ordinary-image-id "$image_id" | tee "$RUNNER_TEMP/ordinary-two-summary.json"
+          first_run="$(find "$RUNNER_TEMP/ordinary-one/runs" -mindepth 1 -maxdepth 1 -type d | head -n 1)"
+          tracefix verify --run "$first_run" | tee "$RUNNER_TEMP/ordinary-verification.json"
+          tracefix report --run "$first_run"
+          tracefix export --run "$first_run" --output "$RUNNER_TEMP/ordinary-export.patch"
+          python -c 'import json,sys; d=json.load(open(sys.argv[1])); assert d["passed"] and d["image_id"].startswith("sha256:")' "$RUNNER_TEMP/ordinary-verification.json"
+          python scripts/test_ordinary_docker_failures.py --image-id "$image_id" --output "$RUNNER_TEMP/ordinary-failures"
+          test -z "$(docker ps -a --filter 'name=tracefix-' --format '{{.ID}}')"
+      - name: Preserve ordinary Docker evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: docker-ordinary-zero-call-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/ordinary-image.json
+            ${{ runner.temp }}/ordinary-image.build.log
+            ${{ runner.temp }}/ordinary-*summary.json
+            ${{ runner.temp }}/ordinary-verification.json
+            ${{ runner.temp }}/ordinary-doctor.json
+            ${{ runner.temp }}/ordinary-failures/failure-audit.json
+            ${{ runner.temp }}/ordinary-failures/ordinary-timeout-disconnect/tool-events.jsonl
+            ${{ runner.temp }}/ordinary-failures/ordinary-import-error/docker-run-state.json
+            ${{ runner.temp }}/ordinary-export.patch
+            ${{ runner.temp }}/ordinary-one/runs/*/result.json
+            ${{ runner.temp }}/ordinary-one/runs/*/session.json
+            ${{ runner.temp }}/ordinary-one/runs/*/trajectory.jsonl
+            ${{ runner.temp }}/ordinary-one/runs/*/patch.diff
+            ${{ runner.temp }}/ordinary-one/runs/*/report.html
+            ${{ runner.temp }}/ordinary-one/runs/*/independent-validation.json
+            ${{ runner.temp }}/ordinary-one/runs/*/docker-run-state.json
+            ${{ runner.temp }}/ordinary-two/runs/*/result.json
+            ${{ runner.temp }}/ordinary-two/runs/*/trajectory.jsonl
+            ${{ runner.temp }}/ordinary-two/runs/*/patch.diff
+          if-no-files-found: warn

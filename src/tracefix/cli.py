@@ -20,6 +20,7 @@ from tracefix.detailed_ablation import write_detailed_ablation_diagnostic
 from tracefix.exceptions import BenchmarkError, TraceFixError
 from tracefix.holdout import freeze_holdout, freeze_long_context_mechanism
 from tracefix.onboarding import doctor, export_patch, verify_patch
+from tracefix.ordinary_docker import prepare_image
 from tracefix.p2_protocol import (
     P2FormalRunRequirements,
     P2ProtocolConfig,
@@ -225,9 +226,13 @@ def build_parser() -> argparse.ArgumentParser:
     run_parser.add_argument(
         "--execution-backend",
         choices=("local", "docker"),
-        default="local",
-        help="工具执行后端；Docker 仅接受冻结试点任务",
+        help="工具执行后端；普通仓库 Docker 需配合 --docker-profile ordinary",
     )
+    run_parser.add_argument(
+        "--docker-profile", choices=("frozen", "synthetic", "ordinary"),
+        help="Docker 契约；ordinary 使用预构建镜像而非冻结任务输入",
+    )
+    run_parser.add_argument("--docker-image-id", help="Docker 镜像不可变 sha256 ID")
     run_parser.add_argument(
         "--docker-task-id",
         choices=("pytest-dev__pytest-10081", "psf__requests-1766", "sphinx-doc__sphinx-10449"),
@@ -267,6 +272,14 @@ def build_parser() -> argparse.ArgumentParser:
         "verify", help="在新 checkout 中应用补丁并独立复跑记录的公开测试"
     )
     verify_parser.add_argument("--run", type=Path, required=True)
+
+    docker_prepare = subparsers.add_parser(
+        "docker-prepare", help="显式构建普通 Python 仓库的无运行期联网镜像"
+    )
+    docker_prepare.add_argument(
+        "--requirements", type=Path, help="经审核的、带哈希的项目依赖锁；纯标准库仓库可省略"
+    )
+    docker_prepare.add_argument("--output", type=Path, required=True)
 
     eval_parser = subparsers.add_parser("eval", help="串行运行合成基准任务")
     eval_parser.add_argument(
@@ -860,6 +873,7 @@ def _ordinary_settings(args: argparse.Namespace) -> dict[str, Any]:
             "env_file",
             "skills_dir",
             "mcp_serena_image_id",
+            "execution_backend", "docker_profile", "docker_image_id",
             "max_steps", "max_input_tokens", "max_output_tokens", "wall_time_seconds",
             "max_test_runs", "context_window_tokens", "context_trigger_tokens",
             "context_retain_ratio", "record_request_views", "no_context_compaction",
@@ -913,12 +927,24 @@ def _ordinary_settings(args: argparse.Namespace) -> dict[str, Any]:
             "mcp_serena_image_id", getattr(args, "mcp_serena_image_id", None),
             "TRACEFIX_MCP_SERENA_IMAGE_ID",
         ),
+        "execution_backend": choose(
+            "execution_backend", getattr(args, "execution_backend", None),
+            "TRACEFIX_EXECUTION_BACKEND",
+        ),
+        "docker_profile": choose(
+            "docker_profile", getattr(args, "docker_profile", None), "TRACEFIX_DOCKER_PROFILE",
+        ),
+        "docker_image_id": choose(
+            "docker_image_id", getattr(args, "docker_image_id", None),
+            "TRACEFIX_DOCKER_IMAGE_ID",
+        ),
         "shared_toml": {
             key: value for key, value in values.items()
             if key in allowed - {
                 "repo", "task", "test_python", "test_target", "source_import",
                 "output_dir", "model", "env_file", "skills_dir",
                 "mcp_serena_image_id",
+                "execution_backend", "docker_profile", "docker_image_id",
             }
         },
     }
@@ -963,6 +989,9 @@ def main(argv: list[str] | None = None) -> int:
             verification = verify_patch(args.run)
             _print_json(verification)
             return 0 if verification["passed"] else 2
+        if args.command == "docker-prepare":
+            _print_json(prepare_image(args.requirements, args.output))
+            return 0
         if args.command == "validate-real-tasks":
             tasks = load_real_issue_tasks(args.tasks, task_ids=tuple(args.task_id))
             validations = []
@@ -1366,10 +1395,13 @@ def main(argv: list[str] | None = None) -> int:
             )
             shared.update(
                 {
-                    "execution_backend": args.execution_backend,
+                    "execution_backend": settings["execution_backend"] or "local",
+                    "docker_profile": settings["docker_profile"] or "frozen",
+                    "docker_image_id": settings["docker_image_id"],
                     "docker_task_id": args.docker_task_id,
                     "docker_input_root": args.docker_input_root
-                    if args.execution_backend == "docker"
+                    if settings["execution_backend"] == "docker"
+                    and settings["docker_profile"] != "ordinary"
                     else None,
                 }
             )

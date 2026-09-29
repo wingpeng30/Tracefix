@@ -47,7 +47,7 @@ from tracefix.repository import RepoMap, RepositoryIndexer
 from tracefix.tools import GetGitDiffTool, create_default_tool_registry
 from tracefix.tracing import JSONLTraceSink, TraceEvent, TraceEventType
 
-DEFAULT_MODEL_NAME = "deepseek/deepseek-v4-flash"
+DEFAULT_MODEL_NAME = "deepseek/deepseek-flash"
 DEFAULT_USD_CNY_RATE = 7.20
 DEFAULT_DEEPSEEK_API_BASE = "https://api.deepseek.com"
 
@@ -109,7 +109,7 @@ class RunConfig(BaseModel):
     execution_backend: Literal["local", "docker"] = "local"
     docker_task_id: str | None = None
     docker_input_root: Path | None = None
-    docker_profile: Literal["frozen", "synthetic"] = "frozen"
+    docker_profile: Literal["frozen", "synthetic", "ordinary"] = "frozen"
     docker_image_id: str | None = None
     agent_config: AgentConfig = Field(default_factory=AgentConfig)
 
@@ -137,10 +137,19 @@ class RunConfig(BaseModel):
                 or "\r" in self.test_target
             ):
                 raise ValueError("test_target must be a relative pytest path or node ID")
-        if self.execution_backend == "docker" and (
+        if self.execution_backend == "docker" and self.docker_profile != "ordinary" and (
             not self.docker_task_id or not self.docker_input_root
         ):
             raise ValueError("Docker execution requires a task ID and input root")
+        if self.execution_backend == "docker" and self.docker_profile == "ordinary":
+            if not self.docker_image_id or not self.test_target or not self.source_import:
+                raise ValueError(
+                    "ordinary Docker requires an immutable image ID, test target, and source import"
+                )
+            if self.docker_task_id not in (None, "tracefix-ordinary"):
+                raise ValueError("ordinary Docker does not accept a frozen task ID")
+            if self.docker_input_root is not None:
+                raise ValueError("ordinary Docker does not accept frozen task inputs")
         if self.execution_backend == "docker" and self.skills_root is not None:
             raise ValueError("custom Skills directories are supported only by local execution")
         if self.execution_backend == "docker" and self.mcp_serena_image_id is not None:
@@ -626,9 +635,13 @@ class TraceFixRunner:
             provenance = provenance.model_copy(
                 update={
                     "model_parameters": model_parameters,
-                    "test_environment": inspect_test_environment(
-                        config.test_python_executable or sys.executable,
-                        pythonpath_entries=config.test_pythonpath_entries,
+                    "test_environment": (
+                        None if config.docker_profile == "ordinary"
+                        and config.execution_backend == "docker"
+                        else inspect_test_environment(
+                            config.test_python_executable or sys.executable,
+                            pythonpath_entries=config.test_pythonpath_entries,
+                        )
                     ),
                 }
             )
@@ -644,15 +657,21 @@ class TraceFixRunner:
             source, source_commit = self._validate_source_repository(config.repo)
             source_repo = str(source)
             if config.execution_backend == "docker":
-                assert config.docker_task_id and config.docker_input_root
+                assert config.docker_profile == "ordinary" or (
+                    config.docker_task_id and config.docker_input_root
+                )
                 docker_backend = DockerToolBackend(
-                    task_id=config.docker_task_id,
-                    input_root=config.docker_input_root,
+                    task_id=config.docker_task_id or "tracefix-ordinary",
+                    input_root=config.docker_input_root or run_dir,
                     run_dir=run_dir,
                     run_id=run_id,
                     timeout_seconds=min(120, int(config.agent_config.wall_time_seconds)),
                     profile=config.docker_profile,
                     image_id=config.docker_image_id,
+                )
+                docker_prepare_options = (
+                    {"source_import_probe": config.source_import}
+                    if config.docker_profile == "ordinary" else {}
                 )
                 tools = docker_backend.prepare(
                     source_commit,
@@ -662,8 +681,11 @@ class TraceFixRunner:
                     repo_map_config=config.agent_config.repo_map,
                     skills_enabled=config.agent_config.skills_enabled,
                     skill_limits=config.agent_config.skill_limits,
+                    **docker_prepare_options,
                 )
                 workspace_preparation = docker_backend.workspace_preparation
+                if config.docker_profile == "ordinary":
+                    workspace_preparation["test_target"] = config.test_target
                 repository_map = docker_backend.repo_map
                 if repository_map is not None:
                     repo_map_path.write_text(
@@ -752,6 +774,25 @@ class TraceFixRunner:
                 repository_map=repository_map.text if repository_map else None,
                 repository_candidates=(repository_map.candidate_files if repository_map else ()),
             )
+            if config.execution_backend == "docker" and config.docker_profile == "ordinary":
+                (run_dir / "session.json").write_text(
+                    json.dumps(
+                        {
+                            "schema_version": 1,
+                            "checkpoint_supported": False,
+                            "config": config.model_dump(mode="json"),
+                            "identity": {
+                                "source_commit": source_commit,
+                                "config_sha256": hashlib.sha256(
+                                    config.model_dump_json().encode("utf-8")
+                                ).hexdigest(),
+                                "image_id": config.docker_image_id,
+                            },
+                            "workspace_preparation": workspace_preparation,
+                        },
+                        ensure_ascii=False, indent=2,
+                    ), encoding="utf-8",
+                )
             if (
                 config.execution_backend == "local"
                 and config.environment_recipe is None
@@ -964,11 +1005,27 @@ class TraceFixRunner:
             except Exception:
                 pass
         if docker_backend is not None:
-            docker_backend.close(
-                remove=(
-                    state.status is AgentStatus.COMPLETED and error is None and bool(changed_files)
+            try:
+                docker_backend.close(
+                    remove=(
+                        config.docker_profile == "ordinary"
+                        or (
+                            state.status is AgentStatus.COMPLETED
+                            and error is None and bool(changed_files)
+                        )
+                    )
                 )
-            )
+            except Exception as exc:
+                try:
+                    docker_backend.set_phase("cleanup_failed")
+                except Exception:
+                    pass
+                result = result.model_copy(update={
+                    "status": AgentStatus.FAILED,
+                    "stop_reason": "container_cleanup_failed",
+                    "error": self._serialize_error(exc),
+                })
+                result_path.write_text(result.model_dump_json(indent=2), encoding="utf-8")
         return result
 
     @staticmethod
