@@ -2,7 +2,7 @@
 
 普通 Python 仓库的任务检查与恢复说明见 [docs/recovery.md](docs/recovery.md)。
 
-想在自己的受信任 Python/pytest 仓库运行？先看[普通仓库安装与使用指南](docs/ordinary-repository.md)：配置、零调用预检、隔离运行、HTML 报告和补丁导出均有可复制命令。[系统审查](docs/reviews/2026-09-28-system-review.md)列出首批能力边界。本地运行现提供确定边界的 `inspect`／`resume` 和独立公开测试复跑；[可选 Serena MCP 指南](docs/mcp-serena.md)说明隔离的只读符号查询。普通仓库 Docker 执行仍属下一批；真实模型当前版本的付费端到端验收尚未完成。
+想在自己的受信任 Python/pytest 仓库运行？先看[普通仓库安装与使用指南](docs/ordinary-repository.md)：配置、零调用预检、隔离运行、HTML 报告和补丁导出均有可复制命令。[系统审查](docs/reviews/2026-09-28-system-review.md)列出首批能力边界。本地运行现提供确定边界的 `inspect`／`resume` 和独立公开测试复跑；[可选 Serena MCP 指南](docs/mcp-serena.md)说明隔离的只读符号查询。[普通仓库 Docker 指南](docs/ordinary-docker.md)提供预构建镜像与独立容器验证路径，其实测范围以最新 CI 证据为准；真实模型当前版本的付费端到端验收尚未完成。
 
 ## 两分钟修复演示（零供应商调用）
 

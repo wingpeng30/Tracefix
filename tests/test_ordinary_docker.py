@@ -130,3 +130,22 @@ def test_ordinary_docker_refuses_wrong_image_and_reports_cleanup_failure(tmp_pat
     with pytest.raises(WorkspaceError, match="cleanup was incomplete") as error:
         backend.close(remove=True)
     assert error.value.context["container_id"] == "owned-container"
+
+
+def test_read_only_container_uses_exec_stream_for_input(tmp_path, monkeypatch):
+    backend = DockerToolBackend(
+        task_id="tracefix-ordinary", input_root=tmp_path, run_dir=tmp_path,
+        run_id="run", profile="ordinary", image_id=_IMAGE_ID,
+    )
+    source = tmp_path / "source.tar"
+    source.write_bytes(b"source archive")
+    calls = []
+    monkeypatch.setattr("tracefix.docker_backend._run", lambda *args, **kwargs: calls.append(
+        (args[0], kwargs)
+    ))
+    backend._copy_file_into(source, "/input/source.tar")
+    assert calls == [
+        (["docker", "exec", "-i", backend.container_name, "sh", "-c",
+          "cat > /input/source.tar"],
+         {"input_data": b"source archive", "timeout": 120}),
+    ]

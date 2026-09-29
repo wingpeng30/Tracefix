@@ -7,6 +7,7 @@ It never mounts the host repository or forwards the host environment to Docker.
 from __future__ import annotations
 
 import hashlib
+import io
 import json
 import os
 import queue
@@ -602,17 +603,23 @@ class DockerToolBackend:
                 "/work/evidence",
             ]
         )
-        _run([self.docker, "cp", str(source), f"{self.container_name}:/input/source.tar"])
+        self._copy_file_into(source, "/input/source.tar")
         _run([self.docker, "exec", self.container_name, "mkdir", "-p", "/opt/tracefix/src"])
         package_root = Path(__file__).resolve().parent
-        _run(
-            [
-                self.docker,
-                "cp",
-                str(package_root),
-                f"{self.container_name}:/opt/tracefix/src/tracefix",
-            ]
-        )
+        if self.profile == "ordinary":
+            buffer = io.BytesIO()
+            with tarfile.open(fileobj=buffer, mode="w") as package_archive:
+                package_archive.add(package_root, arcname="tracefix")
+            _run(
+                [self.docker, "exec", "-i", self.container_name, "tar", "-xf", "-",
+                 "-C", "/opt/tracefix/src"],
+                input_data=buffer.getvalue(), timeout=120,
+            )
+        else:
+            _run(
+                [self.docker, "cp", str(package_root),
+                 f"{self.container_name}:/opt/tracefix/src/tracefix"]
+            )
         tls_certificate_sha256 = None
         if self.recipe.get("test_pythonpath_entries"):
             _run(
@@ -677,13 +684,8 @@ class DockerToolBackend:
             ]
         )
         _run([self.docker, "exec", self.container_name, "mkdir", "/work/agent/.tracefix-build-tmp"])
-        _run(
-            [
-                self.docker,
-                "cp",
-                str(sentinel),
-                f"{self.container_name}:/work/agent/.tracefix-build-tmp/agent-only-sentinel",
-            ]
+        self._copy_file_into(
+            sentinel, "/work/agent/.tracefix-build-tmp/agent-only-sentinel"
         )
         _run(
             [
@@ -871,7 +873,7 @@ class DockerToolBackend:
         environment = self.recipe.get("environment_variables", {})
         env_file = self.run_dir / "container-environment.json"
         env_file.write_text(json.dumps(environment, ensure_ascii=False), encoding="utf-8")
-        _run([self.docker, "cp", str(env_file), f"{self.container_name}:/input/environment.json"])
+        self._copy_file_into(env_file, "/input/environment.json")
         command = [
             self.docker,
             "exec",
@@ -1009,6 +1011,16 @@ class DockerToolBackend:
                     "frozen source conflicts with reserved TraceFix evidence paths"
                 )
         return temporary
+
+    def _copy_file_into(self, source: Path, destination: str) -> None:
+        if self.profile == "ordinary":
+            _run(
+                [self.docker, "exec", "-i", self.container_name,
+                 "sh", "-c", f"cat > {destination}"],
+                input_data=source.read_bytes(), timeout=120,
+            )
+        else:
+            _run([self.docker, "cp", str(source), f"{self.container_name}:{destination}"])
 
     def _check_storage(self) -> None:
         if os.name == "nt":
