@@ -129,6 +129,9 @@ class SerenaMCP:
         with tempfile.TemporaryDirectory(prefix="mcp-source-", dir=self.run_dir) as temporary:
             snapshot = Path(temporary)
             source_hash = self._snapshot(snapshot)
+            # Docker's fixed unprivileged UID must be able to traverse the
+            # short-lived read-only bind source created with mkdtemp mode 0700.
+            snapshot.chmod(0o755)
             self._active.add(name)
             try:
                 bounded = {**arguments, "max_answer_chars": self.max_output_chars * 2}

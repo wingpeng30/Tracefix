@@ -1,5 +1,9 @@
 FROM python:3.13.11-slim-bookworm
 
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends libatomic1 \
+    && rm -rf /var/lib/apt/lists/*
+
 COPY requirements/locks/mcp-serena-image-py313.txt /tmp/mcp-requirements.txt
 RUN python -m pip install --no-cache-dir --require-hashes -r /tmp/mcp-requirements.txt \
     && pyright --version
