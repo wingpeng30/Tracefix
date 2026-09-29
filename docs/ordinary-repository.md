@@ -8,12 +8,12 @@
 
 从 GitHub 获取本仓库后，使用独立虚拟环境安装。PowerShell 示例：
 
-当前 A–D 功能仍在堆叠 PR 中，下面临时使用最新 `codex/ordinary-docker` 分支；各 PR 进入主线后改从稳定标签安装。
+以下命令面向本轮合并后的 `main`；合并完成前，请使用 `codex/live-model-acceptance` 分支验证最新功能。本项目尚未发布稳定版本。
 
 ```powershell
 git clone https://github.com/wingpeng30/Tracefix.git
 cd Tracefix
-git switch codex/ordinary-docker
+git switch main
 py -3.12 -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -e '.[llm]'
 .\.venv\Scripts\tracefix.exe --help
@@ -33,7 +33,7 @@ model = "deepseek/deepseek-flash"
 env_file = "./.env"
 ```
 
-`repo` 必须是 Git 根目录且工作树干净。**输出目录必须位于源仓库之外**；如果在目标仓库内启动命令，请显式设置仓库外的 `--output-dir`。`source_import` 是安装后应从 TraceFix 新 checkout 导入的模块名；探针在构造模型客户端之前执行。`test_target` 是该 checkout 中已有的相对测试文件或 pytest node ID。目标虚拟环境如安装了旧版项目，必须先排除路径冲突；探针会拒绝导入来源落在 checkout 外的结果。配置示例使用 DeepSeek [当前官方模型名 `deepseek-flash`](https://api-docs.deepseek.com/quick_start/pricing/)；本版本尚未完成该模型的付费端到端验收。运行 `doctor` 不会发送供应商请求。
+`repo` 必须是 Git 根目录且工作树干净。**输出目录必须位于源仓库之外**；如果在目标仓库内启动命令，请显式设置仓库外的 `--output-dir`。`source_import` 是安装后应从 TraceFix 新 checkout 导入的模块名；探针在构造模型客户端之前执行。`test_target` 是该 checkout 中已有的相对测试文件或 pytest node ID。目标虚拟环境如安装了旧版项目，必须先排除路径冲突；探针会拒绝导入来源落在 checkout 外的结果。配置示例使用 DeepSeek [官方模型名 `deepseek-flash`](https://api-docs.deepseek.com/quick_start/pricing/)；本版本已有小批真实模型闭环证据，范围与限制见 [`experiments/2026-09-29-live-model-acceptance.md`](experiments/2026-09-29-live-model-acceptance.md)。运行 `doctor` 不会发送供应商请求。
 
 本地受审核的技能目录可在仓库外设置为 `[run].skills_dir = "./approved-skills"`，并通过 `tracefix run --skills` 显式启用。TraceFix 不会自动信任目标仓库里的技能；恢复时逐份复核已加载正文和参考文本的身份与累计字节数。
 

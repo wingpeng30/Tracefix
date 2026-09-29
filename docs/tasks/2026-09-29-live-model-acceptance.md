@@ -1,6 +1,6 @@
 # 当前版本真实模型最小验收预案
 
-状态：**未授权、未运行**。此预案只规定一次公开 fixture 的付费调用边界；离线回放及 CI 不能替代真实模型验收。执行前重新确认模型可用性、单价、测试命令和工作树提交身份，并取得用户对费用的明确授权。不得访问冻结留出题。
+状态更新（2026-09-29）：用户已授权人民币 20 元、最多 8 次逻辑 Agent run；本预案后由实际小批协议替代，8/8 次已运行。原始预案保留为历史，实际执行、提交、费用、失败与限制见 [`../experiments/2026-09-29-live-model-acceptance.md`](../experiments/2026-09-29-live-model-acceptance.md)。未访问冻结留出题。
 
 - 任务：使用 `examples/replay_ordinary.py` 生成的公开 `widget.py` 分页 fixture；`source` 为干净 Git 仓库，公开测试为 `tests/test_widget.py`。以新运行目录执行，原仓库保持不变。第一次仅用本地受信任后端，禁用 MCP 与 Docker，以隔离模型链路。对照同 fixture 的离线回放结果，二者分别标注。
 - 模型：`deepseek/deepseek-flash`。官方当前 API 名称为 [`deepseek-flash`](https://api-docs.deepseek.com/guides/harness)；本地 LiteLLM 解析返回 provider `deepseek`、model `deepseek-flash`，尚未构造供应商客户端或发送请求。
