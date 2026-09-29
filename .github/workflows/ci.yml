@@ -238,6 +238,7 @@ jobs:
           docker image inspect --format '{{.Id}}' tracefix-serena-mcp:${{ github.sha }} > "$RUNNER_TEMP/tracefix-serena-image-id.txt"
       - name: Replay a full Agent repair with real MCP symbol queries
         run: |
+          set -euo pipefail
           image_id="$(cat "$RUNNER_TEMP/tracefix-serena-image-id.txt")"
           python examples/replay_ordinary.py --output "$RUNNER_TEMP/tracefix-mcp-replay" --mcp-serena-image-id "$image_id" | tee "$RUNNER_TEMP/tracefix-mcp-summary.json"
           test -z "$(docker ps -a --filter 'name=tracefix-mcp-' --format '{{.ID}}')"

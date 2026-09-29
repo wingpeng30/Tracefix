@@ -141,7 +141,8 @@ class SerenaMCP:
             if not cleaned:
                 raise RuntimeError(f"Serena MCP container cleanup failed: {name}")
         if response.isError:
-            raise RuntimeError("Serena MCP service rejected the query: " + _content_text(response))
+            detail = _content_text(response)[: self.max_output_chars]
+            raise RuntimeError("Serena MCP service rejected the query (untrusted data): " + detail)
         output = _content_text(response)
         if len(output) > self.max_output_chars:
             output = output[: self.max_output_chars] + "\n[TraceFix MCP output truncated]"

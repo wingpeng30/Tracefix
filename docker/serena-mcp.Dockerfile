@@ -1,12 +1,13 @@
 FROM python:3.13.11-slim-bookworm
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends libatomic1 \
+    && apt-get install -y --no-install-recommends libatomic1 nodejs \
     && rm -rf /var/lib/apt/lists/*
 
+ENV PYRIGHT_PYTHON_GLOBAL_NODE=on
 COPY requirements/locks/mcp-serena-image-py313.txt /tmp/mcp-requirements.txt
 RUN python -m pip install --no-cache-dir --require-hashes -r /tmp/mcp-requirements.txt \
-    && pyright --version
+    && node --version && pyright --version
 
 # Serena's Python language server launcher normally invokes uvx. This wrapper
 # admits only the pinned, already installed Pyright entrypoint at runtime.
