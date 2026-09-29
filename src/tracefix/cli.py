@@ -220,6 +220,9 @@ def build_parser() -> argparse.ArgumentParser:
     run_parser.add_argument("--test-target", help="pytest 相对测试路径或 node ID")
     run_parser.add_argument("--source-import", help="必须从隔离 checkout 导入的 Python 模块")
     run_parser.add_argument(
+        "--mcp-serena-image-id", help="可选只读 Serena MCP 镜像的不可变 sha256 ID"
+    )
+    run_parser.add_argument(
         "--execution-backend",
         choices=("local", "docker"),
         default="local",
@@ -856,6 +859,7 @@ def _ordinary_settings(args: argparse.Namespace) -> dict[str, Any]:
             "model",
             "env_file",
             "skills_dir",
+            "mcp_serena_image_id",
             "max_steps", "max_input_tokens", "max_output_tokens", "wall_time_seconds",
             "max_test_runs", "context_window_tokens", "context_trigger_tokens",
             "context_retain_ratio", "record_request_views", "no_context_compaction",
@@ -905,11 +909,16 @@ def _ordinary_settings(args: argparse.Namespace) -> dict[str, Any]:
         "skills_root": path_value(
             "skills_dir", getattr(args, "skills_dir", None), "TRACEFIX_SKILLS_DIR"
         ),
+        "mcp_serena_image_id": choose(
+            "mcp_serena_image_id", getattr(args, "mcp_serena_image_id", None),
+            "TRACEFIX_MCP_SERENA_IMAGE_ID",
+        ),
         "shared_toml": {
             key: value for key, value in values.items()
             if key in allowed - {
                 "repo", "task", "test_python", "test_target", "source_import",
                 "output_dir", "model", "env_file", "skills_dir",
+                "mcp_serena_image_id",
             }
         },
     }
@@ -1348,7 +1357,10 @@ def main(argv: list[str] | None = None) -> int:
             shared.update(
                 {
                     key: settings[key]
-                    for key in ("test_python_executable", "output_dir", "skills_root")
+                    for key in (
+                        "test_python_executable", "output_dir", "skills_root",
+                        "mcp_serena_image_id",
+                    )
                     if settings[key] is not None
                 }
             )

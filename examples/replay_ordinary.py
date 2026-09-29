@@ -28,9 +28,17 @@ PATCH = """diff --git a/widget.py b/widget.py
 
 
 class ReplayClient:
-    def __init__(self) -> None:
+    def __init__(self, *, mcp_enabled: bool = False) -> None:
         self.calls = 0
-        self.sequence = [
+        self.mcp_enabled = mcp_enabled
+        self.sequence = (
+            [
+                ("mcp_serena_symbols", {"relative_path": "widget.py"}),
+                ("mcp_serena_find_symbol", {
+                    "name_path_pattern": "next_page", "relative_path": "widget.py",
+                }),
+            ] if mcp_enabled else []
+        ) + [
             ("run_tests", {"command": "pytest -q tests/test_widget.py"}),
             ("read_file", {"path": "widget.py"}),
             ("apply_patch", {"patch": PATCH}),
@@ -45,6 +53,9 @@ class ReplayClient:
         self.calls += 1
         if not kwargs.get("tools") or not kwargs.get("messages"):
             raise AssertionError("real tool schema and messages were not sent to adapter")
+        if self.mcp_enabled and self.calls >= 2:
+            if not any("next_page" in str(message) for message in kwargs["messages"]):
+                raise AssertionError("Serena result did not enter the model request")
         call = self.sequence[self.calls - 1] if self.calls <= len(self.sequence) else None
         tool_calls = (
             []
@@ -84,6 +95,7 @@ def _git(repo: Path, *args: str) -> None:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--mcp-serena-image-id")
     args = parser.parse_args()
     output = args.output.expanduser().resolve()
     if output.exists():
@@ -140,7 +152,7 @@ def main() -> int:
             ]
         )
     )
-    client = ReplayClient()
+    client = ReplayClient(mcp_enabled=args.mcp_serena_image_id is not None)
     result = TraceFixRunner(llm_factory=lambda config: LiteLLMAdapter(config, client=client)).run(
         RunConfig(
             repo=settings["repo"],
@@ -151,14 +163,31 @@ def main() -> int:
             test_python_executable=Path(sys.executable),
             test_target=settings["test_target"],
             source_import=settings["source_import"],
+            mcp_serena_image_id=args.mcp_serena_image_id,
         )
     )
+    mcp_queries = []
+    if args.mcp_serena_image_id is not None:
+        trace_lines = Path(result.trace_path).read_text(encoding="utf-8").splitlines()
+        events = [json.loads(line) for line in trace_lines]
+        mcp_queries = [
+            event["payload"]["result"] for event in events
+            if event.get("event_type") == "tool_returned"
+            and event.get("payload", {}).get("result", {}).get("tool_name", "").startswith(
+                "mcp_serena_"
+            )
+        ]
+        if len(mcp_queries) != 2 or not all(
+            item["success"] and item["output"].get("source_sha256") for item in mcp_queries
+        ):
+            raise AssertionError("isolated Serena queries did not both succeed")
     report = render_report(Path(result.result_path).parent)
     print(
         json.dumps(
             {
                 "status": result.status.value,
                 "model_requests": client.calls,
+                "mcp_queries": len(mcp_queries),
                 "result": result.result_path,
                 "report": str(report),
             },
