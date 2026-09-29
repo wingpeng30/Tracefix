@@ -2,14 +2,17 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import os
+import shutil
 import subprocess
 import sys
 import time
 from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, model_validator
@@ -22,6 +25,7 @@ from tracefix.agent import (
     ToolPresentationMetrics,
 )
 from tracefix.context import ContextMetrics
+from tracefix.docker_backend import DockerToolBackend
 from tracefix.exceptions import (
     RunConfigurationError,
     TraceFixError,
@@ -36,6 +40,7 @@ from tracefix.provenance import (
     collect_run_provenance,
     inspect_test_environment,
 )
+from tracefix.real_recipes import EnvironmentRecipe
 from tracefix.repository import RepoMap, RepositoryIndexer
 from tracefix.tools import GetGitDiffTool, create_default_tool_registry
 from tracefix.tracing import JSONLTraceSink, TraceEvent, TraceEventType
@@ -69,6 +74,14 @@ def load_environment_file(env_file: str | Path | None) -> None:
     load_dotenv(path, override=False)
 
 
+def default_output_root() -> Path:
+    """Allow the user to move new Agent run artifacts off the source drive."""
+    configured = os.environ.get("TRACEFIX_RUNS_ROOT")
+    if configured:
+        return Path(configured)
+    return Path("runs")
+
+
 class RunConfig(BaseModel):
     """运行一个真实 TraceFix 任务需要的完整、可序列化配置。"""
 
@@ -77,7 +90,7 @@ class RunConfig(BaseModel):
     repo: Path
     task: str = Field(min_length=1)
     model_name: str = Field(default=DEFAULT_MODEL_NAME, min_length=1)
-    output_dir: Path = Path("runs")
+    output_dir: Path = Field(default_factory=default_output_root)
     env_file: Path | None = Path(".env")
     usd_cny_rate: float = Field(default=DEFAULT_USD_CNY_RATE, gt=0)
     llm_timeout_seconds: float = Field(default=120.0, gt=0)
@@ -85,6 +98,15 @@ class RunConfig(BaseModel):
     per_request_output_tokens: int = Field(default=4_096, ge=1)
     test_python_executable: Path | None = None
     test_pythonpath_entries: tuple[Path, ...] = ()
+    test_target: str | None = None
+    source_import: str | None = None
+    environment_recipe: EnvironmentRecipe | None = None
+    test_environment_variables: dict[str, str] = Field(default_factory=dict)
+    execution_backend: Literal["local", "docker"] = "local"
+    docker_task_id: str | None = None
+    docker_input_root: Path | None = None
+    docker_profile: Literal["frozen", "synthetic"] = "frozen"
+    docker_image_id: str | None = None
     agent_config: AgentConfig = Field(default_factory=AgentConfig)
 
     @model_validator(mode="after")
@@ -97,6 +119,32 @@ class RunConfig(BaseModel):
             raise ValueError("task cannot be empty")
         if not self.model_name:
             raise ValueError("model_name cannot be empty")
+        if self.source_import is not None and not all(
+            segment.isidentifier() for segment in self.source_import.split(".")
+        ):
+            raise ValueError("source_import must be a dotted Python module name")
+        if self.test_target is not None:
+            target_path = Path(self.test_target.split("::", 1)[0])
+            if (
+                not str(target_path).strip()
+                or target_path.is_absolute()
+                or ".." in target_path.parts
+                or "\n" in self.test_target
+                or "\r" in self.test_target
+            ):
+                raise ValueError("test_target must be a relative pytest path or node ID")
+        if self.execution_backend == "docker" and (
+            not self.docker_task_id or not self.docker_input_root
+        ):
+            raise ValueError("Docker execution requires a task ID and input root")
+        if self.execution_backend != "docker" and (
+            self.docker_profile != "frozen" or self.docker_image_id is not None
+        ):
+            raise ValueError("Docker profile and image identity require the Docker backend")
+        if self.docker_profile == "synthetic" and not self.docker_image_id:
+            raise ValueError("synthetic Docker execution requires a frozen image ID")
+        if self.docker_profile == "frozen" and self.docker_image_id is not None:
+            raise ValueError("frozen pilot image identities cannot be overridden")
         return self
 
 
@@ -112,6 +160,7 @@ class RunResult(BaseModel):
     model_name: str
     status: AgentStatus
     stop_reason: str | None = None
+    agent_validation_status: Literal["unverified", "verified"] = "unverified"
     final_output: str | None = None
     step_count: int = Field(default=0, ge=0)
     input_tokens: int = Field(default=0, ge=0)
@@ -134,6 +183,7 @@ class RunResult(BaseModel):
     changed_files: tuple[str, ...] = ()
     trace_path: str
     diff_path: str
+    patch_sha256: str | None = None
     result_path: str
     agent_config: AgentConfig
     context_metrics: ContextMetrics = Field(default_factory=ContextMetrics)
@@ -141,6 +191,7 @@ class RunResult(BaseModel):
     repo_map: RepoMap | None = None
     repo_map_path: str | None = None
     provenance: RunProvenance
+    workspace_preparation: dict[str, JsonValue] = Field(default_factory=dict)
     error: dict[str, JsonValue] | None = None
 
     @model_validator(mode="after")
@@ -164,10 +215,17 @@ class TraceFixRunner:
 
     def run(self, config: RunConfig) -> RunResult:
         """执行任务并保证成功、预算终止或异常时都保存结构化结果。"""
+        source_path = config.repo.expanduser().resolve()
+        output_root = config.output_dir.expanduser().resolve()
+        if output_root.is_relative_to(source_path):
+            raise RunConfigurationError(
+                "output directory must be outside the source repository",
+                context={"repo": str(source_path), "output_dir": str(output_root)},
+            )
         run_id = self._new_run_id()
         started_at = datetime.now(UTC)
         started_monotonic = time.monotonic()
-        run_dir = config.output_dir.expanduser().resolve() / run_id
+        run_dir = output_root / run_id
         run_dir.mkdir(parents=True, exist_ok=False)
         trace_path = run_dir / "trajectory.jsonl"
         diff_path = run_dir / "patch.diff"
@@ -178,6 +236,9 @@ class TraceFixRunner:
         source_repo = str(config.repo.expanduser().resolve())
         source_commit: str | None = None
         workspace: Path | None = None
+        docker_backend: DockerToolBackend | None = None
+        tools = None
+        workspace_preparation: dict[str, JsonValue] = {}
         state = AgentState(
             status=AgentStatus.FAILED,
             task=config.task,
@@ -188,6 +249,7 @@ class TraceFixRunner:
         error: dict[str, JsonValue] | None = None
         changed_files: tuple[str, ...] = ()
         patch = ""
+        internal_artifacts: set[str] = set()
         sink: JSONLTraceSink | None = None
         agent: MinimalAgent | None = None
         repository_map: RepoMap | None = None
@@ -231,9 +293,57 @@ class TraceFixRunner:
             self._validate_credentials(config.model_name)
             source, source_commit = self._validate_source_repository(config.repo)
             source_repo = str(source)
-            workspace = self._clone_repository(source, workspace_path)
+            if config.execution_backend == "docker":
+                assert config.docker_task_id and config.docker_input_root
+                docker_backend = DockerToolBackend(
+                    task_id=config.docker_task_id,
+                    input_root=config.docker_input_root,
+                    run_dir=run_dir,
+                    run_id=run_id,
+                    timeout_seconds=min(120, int(config.agent_config.wall_time_seconds)),
+                    profile=config.docker_profile,
+                    image_id=config.docker_image_id,
+                )
+                tools = docker_backend.prepare(
+                    source_commit,
+                    source,
+                    Path(__file__).resolve().parents[2],
+                    repo_map_task=config.task,
+                    repo_map_config=config.agent_config.repo_map,
+                    skills_enabled=config.agent_config.skills_enabled,
+                    skill_limits=config.agent_config.skill_limits,
+                )
+                workspace_preparation = docker_backend.workspace_preparation
+                repository_map = docker_backend.repo_map
+                if repository_map is not None:
+                    repo_map_path.write_text(
+                        repository_map.model_dump_json(indent=2), encoding="utf-8"
+                    )
+                    repository_index_seconds = float(
+                        docker_backend.workspace_preparation.get("repo_map_seconds", 0.0)
+                    )
+                internal_artifacts.add(".tracefix-build-tmp")
+            else:
+                workspace = self._clone_repository(source, workspace_path)
+                build_root = workspace / ".tracefix-build-tmp"
+                if not build_root.exists() and not build_root.is_symlink():
+                    internal_artifacts.add(build_root.name)
+                workspace_preparation = self._prepare_workspace(config, workspace, run_dir)
+                if workspace_preparation.get("success") is not True:
+                    raise WorkspaceError(
+                        "agent workspace preparation failed",
+                        context={"workspace_preparation": workspace_preparation},
+                    )
+            sink.write(
+                TraceEvent(
+                    event_type=TraceEventType.WORKSPACE_PREPARED,
+                    task_id=run_id,
+                    step=0,
+                    payload=workspace_preparation,
+                )
+            )
 
-            if config.agent_config.repo_map.enabled:
+            if config.agent_config.repo_map.enabled and config.execution_backend == "local":
                 # 索引失败不应被静默吞掉：它会导致模型少看到本应稳定提供的定位信息。
                 # 但 AST 解析失败的单个文件由 RepositoryIndexer 自己作为 skipped 记录。
                 index_started = time.monotonic()
@@ -259,12 +369,24 @@ class TraceFixRunner:
                 )
 
             llm = self._llm_factory(llm_config)
-            tools = create_default_tool_registry(
-                workspace,
-                test_timeout_seconds=min(120.0, float(config.agent_config.wall_time_seconds)),
-                test_python_executable=config.test_python_executable,
-                test_pythonpath_entries=config.test_pythonpath_entries,
-            )
+            if tools is None:
+                assert workspace is not None
+                tools = create_default_tool_registry(
+                    workspace,
+                    evidence_dir=run_dir / "test-evidence",
+                    protected_dirs=internal_artifacts,
+                    skills_enabled=config.agent_config.skills_enabled,
+                    skill_limits=config.agent_config.skill_limits,
+                    test_timeout_seconds=min(120.0, float(config.agent_config.wall_time_seconds)),
+                    test_python_executable=config.test_python_executable,
+                    test_pythonpath_entries=config.test_pythonpath_entries,
+                    pytest_config=(
+                        config.environment_recipe.pytest_config
+                        if config.environment_recipe is not None
+                        else None
+                    ),
+                    test_environment_variables=config.test_environment_variables,
+                )
             agent = MinimalAgent(
                 llm,
                 tools,
@@ -273,7 +395,15 @@ class TraceFixRunner:
                 repository_map=repository_map.text if repository_map else None,
                 repository_candidates=(repository_map.candidate_files if repository_map else ()),
             )
-            state = agent.run(config.task)
+            if docker_backend is not None:
+                docker_backend.set_phase("agent_running")
+            agent_task = config.task
+            if config.test_target:
+                agent_task += (
+                    f"\n\n指定公开测试：pytest -q {config.test_target}。"
+                    "请先运行，修改后重跑并检查 Diff。"
+                )
+            state = agent.run(agent_task)
         except KeyboardInterrupt:
             state = agent.state if agent is not None else state
             state.status = AgentStatus.INTERRUPTED
@@ -289,9 +419,44 @@ class TraceFixRunner:
             error = self._serialize_error(exc)
             self._write_runner_error(sink, run_id, error)
         finally:
-            if workspace is not None:
+            if docker_backend is not None:
                 try:
-                    patch, changed_files = self._collect_diff(workspace)
+                    if docker_backend.session is None:
+                        raise WorkspaceError("Docker tool session was not initialized")
+                    remote_diff = docker_backend.session.call("get_git_diff", {"context_lines": 3})
+                    if not remote_diff.success or not isinstance(remote_diff.output, dict):
+                        raise WorkspaceError(
+                            "cannot collect final container product diff",
+                            context={"error": remote_diff.error},
+                        )
+                    if remote_diff.output.get("truncated"):
+                        raise WorkspaceError("container product diff exceeds export limit")
+                    patch = str(remote_diff.output.get("diff", ""))
+                    changed_files = tuple(
+                        str(item) for item in remote_diff.output.get("changed_files", [])
+                    )
+                    docker_backend.export_evidence()
+                    identity_path = run_dir / "container-identity.json"
+                    identity_path.write_text(
+                        json.dumps(
+                            docker_backend.workspace_preparation,
+                            ensure_ascii=False,
+                            indent=2,
+                        ),
+                        encoding="utf-8",
+                    )
+                except Exception as exc:
+                    if error is None:
+                        error = self._serialize_error(exc)
+                        state.status = AgentStatus.FAILED
+                        state.stop_reason = getattr(exc, "code", "container_export_error")
+                    try:
+                        docker_backend.export_evidence()
+                    except Exception:
+                        pass
+            elif workspace is not None:
+                try:
+                    patch, changed_files = self._collect_diff(workspace, internal_artifacts)
                 except Exception as exc:
                     # Diff 收集失败不应覆盖更早的根因，但必须在结果中可见。
                     if error is None:
@@ -315,10 +480,17 @@ class TraceFixRunner:
             run_id=run_id,
             source_repo=source_repo,
             source_commit=source_commit,
-            workspace=str(workspace) if workspace is not None else None,
+            workspace=(
+                str(workspace)
+                if workspace is not None
+                else f"docker://{docker_backend.container_id}/work/agent"
+                if docker_backend and docker_backend.container_id
+                else None
+            ),
             model_name=config.model_name,
             status=state.status,
             stop_reason=state.stop_reason,
+            agent_validation_status=state.validation_status,
             final_output=state.final_output,
             step_count=state.step_count,
             input_tokens=state.input_tokens,
@@ -341,6 +513,7 @@ class TraceFixRunner:
             changed_files=changed_files,
             trace_path=str(trace_path),
             diff_path=str(diff_path),
+            patch_sha256=hashlib.sha256(diff_path.read_bytes()).hexdigest(),
             result_path=str(result_path),
             agent_config=config.agent_config.model_copy(deep=True),
             context_metrics=state.context_metrics.model_copy(deep=True),
@@ -348,9 +521,28 @@ class TraceFixRunner:
             repo_map=repository_map,
             repo_map_path=str(repo_map_path) if repository_map is not None else None,
             provenance=provenance,
+            workspace_preparation=workspace_preparation,
             error=error,
         )
         result_path.write_text(result.model_dump_json(indent=2), encoding="utf-8")
+        # Do not advertise a terminal container phase until the run result is durable.
+        if docker_backend is not None:
+            try:
+                docker_backend.set_phase(
+                    "interrupted"
+                    if state.status is AgentStatus.INTERRUPTED
+                    else "failed"
+                    if state.status is AgentStatus.FAILED or error is not None
+                    else "completed"
+                )
+            except Exception:
+                pass
+        if docker_backend is not None:
+            docker_backend.close(
+                remove=(
+                    state.status is AgentStatus.COMPLETED and error is None and bool(changed_files)
+                )
+            )
         return result
 
     @staticmethod
@@ -380,6 +572,172 @@ class TraceFixRunner:
         return {
             "api_base": api_base,
             "extra_body": {"thinking": {"type": "disabled"}},
+        }
+
+    @staticmethod
+    def _prepare_workspace(
+        config: RunConfig, workspace: Path, run_dir: Path
+    ) -> dict[str, JsonValue]:
+        """Apply only the frozen task build recipe and prove its source import."""
+        recipe = config.environment_recipe
+        python = str((config.test_python_executable or Path(sys.executable)).resolve())
+        build_root = workspace / ".tracefix-build-tmp"
+        if build_root.exists() or build_root.is_symlink():
+            raise WorkspaceError("TraceFix build temporary path already exists")
+        build_root.mkdir(parents=True)
+        environment = dict(os.environ)
+        for name in tuple(environment):
+            normalized = name.upper()
+            if any(
+                marker in normalized
+                for marker in ("API_KEY", "ACCESS_TOKEN", "PASSWORD", "SECRET", "CREDENTIAL")
+            ):
+                environment.pop(name, None)
+        environment["TMP"] = str(build_root)
+        environment["TEMP"] = str(build_root)
+        environment["PIP_CACHE_DIR"] = str(build_root / "pip-cache")
+        environment["PIP_NO_CACHE_DIR"] = "1"
+        environment.pop("PYTEST_ADDOPTS", None)
+        environment.pop("PYTEST_PLUGINS", None)
+        environment["PYTEST_DISABLE_PLUGIN_AUTOLOAD"] = "1"
+        import_roots = [str(workspace / "src"), str(workspace)]
+        import_roots.extend(str(path.resolve()) for path in config.test_pythonpath_entries)
+        environment["PYTHONPATH"] = os.pathsep.join(import_roots)
+
+        steps: list[dict[str, JsonValue]] = []
+        for index, template in enumerate(recipe.build_commands if recipe else ()):
+            command = [python if value == "{python}" else value for value in template]
+            started = time.monotonic()
+            try:
+                completed = subprocess.run(
+                    command,
+                    cwd=workspace,
+                    env=environment,
+                    capture_output=True,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    timeout=300,
+                    check=False,
+                    shell=False,
+                )
+                returncode = completed.returncode
+                stdout, stderr = completed.stdout, completed.stderr
+            except (OSError, subprocess.SubprocessError) as exc:
+                returncode = None
+                stdout, stderr = "", str(exc)
+            stdout_path = run_dir / f"workspace-build-{index:02d}.stdout.txt"
+            stderr_path = run_dir / f"workspace-build-{index:02d}.stderr.txt"
+            stdout_path.write_text(stdout, encoding="utf-8")
+            stderr_path.write_text(stderr, encoding="utf-8")
+            steps.append(
+                {
+                    "command": command,
+                    "returncode": returncode,
+                    "duration_seconds": max(0.0, time.monotonic() - started),
+                    "stdout_path": str(stdout_path),
+                    "stderr_path": str(stderr_path),
+                    "stdout_sha256": hashlib.sha256(stdout.encode("utf-8")).hexdigest(),
+                    "stderr_sha256": hashlib.sha256(stderr.encode("utf-8")).hexdigest(),
+                }
+            )
+            if returncode != 0:
+                return {
+                    "success": False,
+                    "recipe_fingerprint": recipe.fingerprint if recipe else None,
+                    "build_steps": steps,
+                    "source_import_probe": None,
+                    "failure": "recipe build command failed",
+                }
+
+        probe: dict[str, JsonValue] | None = None
+        if config.source_import or config.test_target:
+            test_python = Path(python)
+            if not test_python.is_file():
+                raise WorkspaceError(f"test Python executable does not exist: {test_python}")
+            try:
+                pytest_check = subprocess.run(
+                    [python, "-c", "import pytest"],
+                    cwd=workspace,
+                    env=environment,
+                    capture_output=True,
+                    text=True,
+                    timeout=15,
+                    check=False,
+                )
+            except (OSError, subprocess.SubprocessError) as exc:
+                raise WorkspaceError(f"cannot check pytest: {exc}") from exc
+            if pytest_check.returncode != 0:
+                raise WorkspaceError("pytest is unavailable in the selected test Python")
+        if config.test_target:
+            target_path = Path(config.test_target.split("::", 1)[0])
+            if (
+                target_path.is_absolute()
+                or ".." in target_path.parts
+                or not (workspace / target_path).is_file()
+            ):
+                raise WorkspaceError("test target must be an existing file inside the checkout")
+        if config.source_import or (recipe is not None and recipe.source_import_probe):
+            probe_name = config.source_import or recipe.source_import_probe
+            roots = [str(workspace / "src"), str(workspace)]
+            roots.extend(str(path.resolve()) for path in config.test_pythonpath_entries)
+            probe_environment = dict(environment)
+            probe_environment["PYTHONPATH"] = os.pathsep.join(roots)
+            probe_environment["TRACEFIX_IMPORT_PROBE"] = probe_name
+            script = (
+                "import importlib, json, os, sys; "
+                "name=os.environ['TRACEFIX_IMPORT_PROBE']; "
+                "importlib.import_module(name); "
+                "print(json.dumps({n:getattr(m,'__file__',None) for n,m in sys.modules.items() "
+                "if n==name or n.startswith(name+'.')}))"
+            )
+            try:
+                completed = subprocess.run(
+                    [python, "-c", script],
+                    cwd=workspace,
+                    env=probe_environment,
+                    capture_output=True,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    timeout=60,
+                    check=False,
+                    shell=False,
+                )
+                probe_lines = completed.stdout.strip().splitlines()
+                imported = (
+                    json.loads(probe_lines[-1]) if completed.returncode == 0 and probe_lines else {}
+                )
+                workspace_resolved = workspace.resolve()
+                paths = [
+                    Path(path).resolve() for path in imported.values() if isinstance(path, str)
+                ]
+                valid = bool(paths) and all(
+                    path.is_relative_to(workspace_resolved) for path in paths
+                )
+                probe = {
+                    "module": probe_name,
+                    "returncode": completed.returncode,
+                    "paths": {str(key): value for key, value in imported.items()},
+                    "valid": valid,
+                    "stderr": completed.stderr[-4000:],
+                }
+            except (OSError, subprocess.SubprocessError, json.JSONDecodeError, ValueError) as exc:
+                probe = {"module": probe_name, "valid": False, "error": str(exc)}
+            if probe.get("valid") is not True:
+                return {
+                    "success": False,
+                    "recipe_fingerprint": recipe.fingerprint if recipe else None,
+                    "build_steps": steps,
+                    "source_import_probe": probe,
+                    "failure": "source import probe did not resolve to the agent checkout",
+                }
+
+        return {
+            "success": True,
+            "recipe_fingerprint": recipe.fingerprint if recipe else None,
+            "build_steps": steps,
+            "source_import_probe": probe,
         }
 
     @classmethod
@@ -419,14 +777,67 @@ class TraceFixRunner:
 
     @classmethod
     def _clone_repository(cls, source: Path, destination: Path) -> Path:
-        """从已验证 HEAD 建立无硬链接的本地克隆，并保留完整 Git 元数据。"""
+        """从已验证 HEAD 建立隔离源码副本，并保留完整 Git 元数据。"""
         destination.parent.mkdir(parents=True, exist_ok=True)
-        cls._run_git(
-            ["clone", "--quiet", "--no-hardlinks", str(source), str(destination)],
-            cwd=destination.parent,
-            purpose="clone isolated workspace",
-        )
+        if destination.exists() or destination.is_symlink() or cls._is_junction(destination):
+            raise WorkspaceError(
+                "isolated workspace destination already exists",
+                context={"destination": str(destination)},
+            )
+        try:
+            cls._run_git(
+                ["clone", "--quiet", "--no-hardlinks", str(source), str(destination)],
+                cwd=destination.parent,
+                purpose="clone isolated workspace",
+            )
+        except WorkspaceError as clone_error:
+            cls._discard_partial_clone(destination)
+            # Git for Windows may start MSYS sh.exe for a local file clone;
+            # restricted Windows workers can deny its signal-pipe setup. A
+            # detached worktree gives the run its own files and index while
+            # retaining the verified HEAD, without invoking upload-pack.
+            try:
+                cls._run_git(
+                    ["worktree", "add", "--detach", str(destination), "HEAD"],
+                    cwd=source,
+                    purpose="create isolated workspace worktree",
+                )
+            except WorkspaceError as worktree_error:
+                raise WorkspaceError(
+                    "cannot create isolated workspace by clone or worktree",
+                    context={
+                        "cwd": str(destination.parent),
+                        "clone_error": clone_error.context,
+                        "worktree_error": worktree_error.context,
+                    },
+                ) from worktree_error
         return destination.resolve()
+
+    @staticmethod
+    def _is_junction(path: Path) -> bool:
+        """检测 Windows junction，同时兼容没有 Path.is_junction 的解释器。"""
+        checker = getattr(path, "is_junction", None)
+        return bool(checker and checker())
+
+    @staticmethod
+    def _discard_partial_clone(destination: Path) -> None:
+        """只删除本次从空目标创建、且仍位于原父目录内的失败 clone。"""
+        if destination.is_symlink() or TraceFixRunner._is_junction(destination):
+            raise WorkspaceError(
+                "refusing to remove a linked partial clone",
+                context={"destination": str(destination)},
+            )
+        try:
+            parent = destination.parent.resolve(strict=True)
+            resolved = destination.resolve(strict=True)
+        except FileNotFoundError:
+            return
+        if resolved.parent != parent or not resolved.is_dir():
+            raise WorkspaceError(
+                "refusing to remove an unexpected partial clone path",
+                context={"destination": str(destination), "resolved": str(resolved)},
+            )
+        shutil.rmtree(resolved)
 
     @staticmethod
     def _run_git(
@@ -461,9 +872,11 @@ class TraceFixRunner:
         return result
 
     @staticmethod
-    def _collect_diff(workspace: Path) -> tuple[str, tuple[str, ...]]:
+    def _collect_diff(
+        workspace: Path, protected_dirs: set[str] | None = None
+    ) -> tuple[str, tuple[str, ...]]:
         """复用公开 diff 工具收集 tracked 与 untracked 修改。"""
-        tool = GetGitDiffTool(workspace, max_output_chars=10_000_000)
+        tool = GetGitDiffTool(workspace, max_output_chars=10_000_000, protected_dirs=protected_dirs)
         result = tool.execute(ToolCall(id="runner-final-diff", name=tool.spec.name))
         if not result.success or not isinstance(result.output, dict):
             raise WorkspaceError(

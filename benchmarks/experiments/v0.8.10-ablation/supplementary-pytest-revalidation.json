@@ -1,0 +1,115 @@
+{
+  "kind": "supplementary_configuration_behavior_equivalence",
+  "created_at": "2026-09-22T07:34:50.251257+00:00",
+  "code_commit": "f352e4b309ff43fe2bd564b421ff1cfbb5c47141",
+  "report_path": "runs\\ablation-additional-config-checks-20260922\\behavior-validation\\behavior-validation.json",
+  "report_sha256": "0a5355a55f7cfc125673a0877f240de79a3e63ada200331a4ad8233f69bd9c0e",
+  "original_p1_sha256": "8c6649e8e470a104a56c5ce9b48d88809eef066947984ae650df9ad3945a7812",
+  "entries": [
+    {
+      "task_id": "pytest-dev__pytest-10051",
+      "base_commit": "aa55975c7d3f6c9f6d7f68accc41bb7cadf0eb9a",
+      "current_pytest_config": "tox.ini",
+      "previous_pytest_config": "pyproject.toml",
+      "test_nodes": [
+        "testing/logging/test_fixture.py::test_clear_for_call_stage"
+      ],
+      "initial_status": "assertion_failed",
+      "gold_status": "passed",
+      "environment": {
+        "python_version": "3.11.16",
+        "executable_name": "python.exe",
+        "dependency_versions": {
+          "atomicwrites": "1.4.1",
+          "attrs": "26.1.0",
+          "colorama": "0.4.6",
+          "iniconfig": "2.3.0",
+          "packaging": "26.3",
+          "pip": "26.2.1",
+          "pluggy": "1.6.0",
+          "py": "1.11.0",
+          "pytest": "7.2.0.dev157+gaa55975c7",
+          "setuptools": "79.0.1",
+          "setuptools-scm": "6.4.2",
+          "tomli": "2.4.1"
+        },
+        "pythonpath_artifacts": {},
+        "fingerprint_sha256": "1958f58475dd3d4e92c6f2c795000f96c5e0fe7499c75093d132135ead491a2e"
+      },
+      "recipe_path": "benchmarks\\real_recipes\\pytest-dev__pytest-10051.json",
+      "recipe_sha256": "45a6a8a8dddaf506456fb6dc50750eeab75dd97ab0014a8990660ea78c2e9357",
+      "raw_artifact_sha256": {
+        "runs/ablation-additional-config-checks-20260922/behavior-validation/pytest-dev__pytest-10051-initial/.tracefix-validation/execution.audit.json": "fd11284a1f7c7d586f7cf8fff39db286c907e94251219b206f0d0e49ca1ad177",
+        "runs/ablation-additional-config-checks-20260922/behavior-validation/pytest-dev__pytest-10051-initial/.tracefix-validation/collection.audit.json": "0f6dcd9eb907d20ae9cff94b22528de336e5cd856c578df99dda6cf997bba41d",
+        "runs/ablation-additional-config-checks-20260922/behavior-validation/pytest-dev__pytest-10051-initial/.tracefix-validation/junit.xml": "086f627f5b8069ae461372feed3617decd57a76253bea8557c3533c8197c6568",
+        "runs/ablation-additional-config-checks-20260922/behavior-validation/pytest-dev__pytest-10051-initial/.tracefix-validation/collection.stdout.txt": "828c8145cb04435b9f19a950509e4796520df2d7247456841befdeced06bd476",
+        "runs/ablation-additional-config-checks-20260922/behavior-validation/pytest-dev__pytest-10051-initial/.tracefix-validation/collection.stderr.txt": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "runs/ablation-additional-config-checks-20260922/behavior-validation/pytest-dev__pytest-10051-initial/.tracefix-validation/execution.stdout.txt": "228d558f6cd874b7d1ddb8e775adc16614ca0bd3c91b7eaf2ad40dea1b4909bf",
+        "runs/ablation-additional-config-checks-20260922/behavior-validation/pytest-dev__pytest-10051-initial/.tracefix-validation/execution.stderr.txt": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "runs/ablation-additional-config-checks-20260922/behavior-validation/pytest-dev__pytest-10051-gold/.tracefix-validation/execution.audit.json": "279259de88c8985bd6e57e3020a3154e475365040176ca5522a024548b8f8ac1",
+        "runs/ablation-additional-config-checks-20260922/behavior-validation/pytest-dev__pytest-10051-gold/.tracefix-validation/collection.audit.json": "e42f53387151c46ff274ca93b87094c8eda3ed7dfb23747d63f8211a0be93f8e",
+        "runs/ablation-additional-config-checks-20260922/behavior-validation/pytest-dev__pytest-10051-gold/.tracefix-validation/junit.xml": "1e8faa656f966cc6f874aaf659ee0a3bff3ae2908fca9ee3224dc19f808170eb",
+        "runs/ablation-additional-config-checks-20260922/behavior-validation/pytest-dev__pytest-10051-gold/.tracefix-validation/collection.stdout.txt": "61d3edc4ff5cd3e003aa5edb148a6c6375270f9b748de58aee01c245958bc366",
+        "runs/ablation-additional-config-checks-20260922/behavior-validation/pytest-dev__pytest-10051-gold/.tracefix-validation/collection.stderr.txt": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "runs/ablation-additional-config-checks-20260922/behavior-validation/pytest-dev__pytest-10051-gold/.tracefix-validation/execution.stdout.txt": "c0f319a29b4cf0d2cad11b1cc1a0d8ee932cf705b607dbcdb53ecdd7b72201c8",
+        "runs/ablation-additional-config-checks-20260922/behavior-validation/pytest-dev__pytest-10051-gold/.tracefix-validation/execution.stderr.txt": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "same_fixed_target_behavior": true
+    },
+    {
+      "task_id": "pytest-dev__pytest-10356",
+      "base_commit": "3c1534944cbd34e8a41bc9e76818018fadefc9a1",
+      "current_pytest_config": "tox.ini",
+      "previous_pytest_config": "pyproject.toml",
+      "test_nodes": [
+        "testing/test_mark.py::test_mark_mro"
+      ],
+      "initial_status": "assertion_failed",
+      "gold_status": "passed",
+      "environment": {
+        "python_version": "3.11.16",
+        "executable_name": "python.exe",
+        "dependency_versions": {
+          "atomicwrites": "1.4.1",
+          "attrs": "26.1.0",
+          "colorama": "0.4.6",
+          "iniconfig": "2.3.0",
+          "packaging": "26.3",
+          "pip": "26.2.1",
+          "pluggy": "1.6.0",
+          "py": "1.11.0",
+          "pytest": "7.2.0.dev312+g3c1534944",
+          "setuptools": "79.0.1",
+          "setuptools-scm": "6.4.2",
+          "tomli": "2.4.1"
+        },
+        "pythonpath_artifacts": {},
+        "fingerprint_sha256": "7eca2236950b34f56293fdbf555ebe39c3ad9820b831954c12e33547b4236027"
+      },
+      "recipe_path": "benchmarks\\real_recipes\\pytest-dev__pytest-10356.json",
+      "recipe_sha256": "5ca8dac3729589cac2462b5b6cf34b82e8a92a2d023e04cbedec2364d92c2a01",
+      "raw_artifact_sha256": {
+        "runs/ablation-additional-config-checks-20260922/behavior-validation/pytest-dev__pytest-10356-initial/.tracefix-validation/execution.audit.json": "88a8824a3e9259494f6564fafec8df44334224a49f179d2e6a300c36e8d8a296",
+        "runs/ablation-additional-config-checks-20260922/behavior-validation/pytest-dev__pytest-10356-initial/.tracefix-validation/collection.audit.json": "ba696db93aef4476a9daf88b13fd6d2d43592435ddd3bd11388cc4c021b142cb",
+        "runs/ablation-additional-config-checks-20260922/behavior-validation/pytest-dev__pytest-10356-initial/.tracefix-validation/junit.xml": "63344f90021ef03ee97e652fcb3f564ef228d39cfde4ed767392f8989221fb39",
+        "runs/ablation-additional-config-checks-20260922/behavior-validation/pytest-dev__pytest-10356-initial/.tracefix-validation/collection.stdout.txt": "56b5775af9c0afaa07eca1699292e45cbc576299c6cc8e5178e6e22ddadd98d4",
+        "runs/ablation-additional-config-checks-20260922/behavior-validation/pytest-dev__pytest-10356-initial/.tracefix-validation/collection.stderr.txt": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "runs/ablation-additional-config-checks-20260922/behavior-validation/pytest-dev__pytest-10356-initial/.tracefix-validation/execution.stdout.txt": "519079b743f0b61a63bcc43001831325bf3e6907a978d1bd0a570ae18f9e7c65",
+        "runs/ablation-additional-config-checks-20260922/behavior-validation/pytest-dev__pytest-10356-initial/.tracefix-validation/execution.stderr.txt": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "runs/ablation-additional-config-checks-20260922/behavior-validation/pytest-dev__pytest-10356-gold/.tracefix-validation/execution.audit.json": "b767d1d6aeb684fdc64f040e09e82c041d5af97e20266146bcf5dfb120cd1aae",
+        "runs/ablation-additional-config-checks-20260922/behavior-validation/pytest-dev__pytest-10356-gold/.tracefix-validation/collection.audit.json": "2425e773f497921ba00aef30698381364df62793527e08c229fd93d94694c7d0",
+        "runs/ablation-additional-config-checks-20260922/behavior-validation/pytest-dev__pytest-10356-gold/.tracefix-validation/junit.xml": "95eeeff0d6caea3d68cf1de05881342840e10195ecf9f1fe5015df2077afcbdd",
+        "runs/ablation-additional-config-checks-20260922/behavior-validation/pytest-dev__pytest-10356-gold/.tracefix-validation/collection.stdout.txt": "a0d9a2d0061472e9b146ee4b3777ffdda5ac09f0617fe58a4ebfa1401cbde11e",
+        "runs/ablation-additional-config-checks-20260922/behavior-validation/pytest-dev__pytest-10356-gold/.tracefix-validation/collection.stderr.txt": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "runs/ablation-additional-config-checks-20260922/behavior-validation/pytest-dev__pytest-10356-gold/.tracefix-validation/execution.stdout.txt": "6fcf802056f7312ad26097adc4493e2bfa08ffa580dc93fb7fe76c1dc18f36f1",
+        "runs/ablation-additional-config-checks-20260922/behavior-validation/pytest-dev__pytest-10356-gold/.tracefix-validation/execution.stderr.txt": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "same_fixed_target_behavior": true
+    }
+  ],
+  "paid_requests": 0,
+  "agent_runs": 0,
+  "restrictions": "No source/recipe/environment/combined-P1/protocol changes; only isolated base/gold checkouts.",
+  "interpretation": "Same fixed target assertion-failure/gold-pass behavior under current config; not equivalence of every upstream pytest setting and not agent repair success.",
+  "source_index_sha256": "e9ac3025e3548425044ed1ce553f10d48ee14c5738f38ff4cbdb7a2e8e90b487"
+}

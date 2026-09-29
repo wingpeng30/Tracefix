@@ -1,0 +1,29 @@
+{
+  "kind": "offline_real_task_environment_validation",
+  "version": "0.8.2",
+  "llm_called": false,
+  "cost_usd": 0.0,
+  "eligibility_rule": "base assertion_failed and gold passed using the same fully collected selectors",
+  "task_count": 12,
+  "eligible_count": 2,
+  "tasks": [
+    {"task_id": "pylint-dev__pylint-4551", "python": "3.10", "base": "selector_mismatch", "gold": "selector_mismatch", "eligible": false},
+    {"task_id": "pylint-dev__pylint-4604", "python": "3.10", "base": "selector_mismatch", "gold": "passed", "eligible": false},
+    {"task_id": "pylint-dev__pylint-4661", "python": "3.10", "base": "assertion_failed", "gold": "passed", "eligible": true},
+    {"task_id": "pytest-dev__pytest-10051", "python": "3.12", "base": "build_error", "gold": "build_error", "eligible": false},
+    {"task_id": "pytest-dev__pytest-10081", "python": "3.12", "base": "build_error", "gold": "build_error", "eligible": false},
+    {"task_id": "pytest-dev__pytest-10356", "python": "3.12", "base": "build_error", "gold": "build_error", "eligible": false},
+    {"task_id": "sphinx-doc__sphinx-10323", "platform": "linux_only", "base": "platform_unsupported", "gold": "platform_unsupported", "eligible": false},
+    {"task_id": "sphinx-doc__sphinx-10435", "platform": "linux_only", "base": "platform_unsupported", "gold": "platform_unsupported", "eligible": false},
+    {"task_id": "sphinx-doc__sphinx-10449", "platform": "linux_only", "base": "platform_unsupported", "gold": "platform_unsupported", "eligible": false},
+    {"task_id": "psf__requests-1142", "python": "3.9", "base": "assertion_failed", "gold": "passed", "eligible": true},
+    {"task_id": "psf__requests-1724", "python": "3.9", "base": "assertion_failed", "gold": "assertion_failed", "eligible": false},
+    {"task_id": "psf__requests-1766", "python": "3.9", "base": "assertion_failed", "gold": "assertion_failed", "eligible": false}
+  ],
+  "raw_result_locations": [
+    "runs/real-candidate-environment-preparation-v082b",
+    "runs/real-candidate-environment-preparation-v082d",
+    "runs/real-candidate-behavior-validation-v082c",
+    "runs/real-candidate-behavior-validation-v082d"
+  ]
+}

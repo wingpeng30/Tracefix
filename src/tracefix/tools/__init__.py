@@ -4,6 +4,7 @@ from tracefix.tools.base import (
     RESERVED_TOOL_NAMES,
     BaseTool,
     ReservedToolName,
+    SkillCatalogEntry,
     ToolRegistry,
     ToolResult,
     ToolSpec,
@@ -16,6 +17,7 @@ from tracefix.tools.builtin import (
     SearchCodeTool,
     create_default_tool_registry,
 )
+from tracefix.tools.skills import SkillActivationTool, SkillLimits
 
 __all__ = [
     "RESERVED_TOOL_NAMES",
@@ -26,6 +28,9 @@ __all__ = [
     "ReservedToolName",
     "RunTestsTool",
     "SearchCodeTool",
+    "SkillCatalogEntry",
+    "SkillActivationTool",
+    "SkillLimits",
     "ToolRegistry",
     "ToolResult",
     "ToolSpec",

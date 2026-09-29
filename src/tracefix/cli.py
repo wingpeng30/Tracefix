@@ -5,7 +5,9 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import subprocess
 import sys
+import tomllib
 from pathlib import Path
 from typing import Any
 
@@ -14,10 +16,34 @@ from pydantic import ValidationError
 from tracefix.agent import AgentConfig, AgentStatus
 from tracefix.benchmark import BenchmarkConfig, BenchmarkRunner
 from tracefix.context import ContextConfig
-from tracefix.exceptions import TraceFixError
+from tracefix.detailed_ablation import write_detailed_ablation_diagnostic
+from tracefix.exceptions import BenchmarkError, TraceFixError
+from tracefix.holdout import freeze_holdout, freeze_long_context_mechanism
+from tracefix.onboarding import doctor, export_patch
+from tracefix.p2_protocol import (
+    P2FormalRunRequirements,
+    P2ProtocolConfig,
+    run_p2_formal,
+    run_p2_simulation,
+    write_p2_check,
+    write_p2_diagnostic,
+    write_p2_dry_run,
+    write_p2_followup_plan,
+    write_p2_reconciliation,
+    write_p2_summary,
+)
 from tracefix.paired import PairedExperimentConfig, PairedExperimentRunner
 from tracefix.real_benchmark import load_real_issue_tasks
 from tracefix.real_candidates import CandidateCollectionConfig, collect_candidates
+from tracefix.real_environment import (
+    EnvironmentPreparationConfig,
+    RealEnvironmentPreparer,
+    apply_cleanup,
+    discover_interpreters,
+    inspect_storage,
+    preview_cleanup,
+    resolve_managed_environment_python,
+)
 from tracefix.real_experiment import (
     RealExperimentConfig,
     RealPairedExperimentRunner,
@@ -26,6 +52,8 @@ from tracefix.real_experiment import (
     RealRepoMapPrescreenRunner,
     validate_real_task_behavior,
 )
+from tracefix.real_recipes import load_environment_recipes
+from tracefix.report import render_report
 from tracefix.repository import RepoMapConfig
 from tracefix.retrieval_eval import RetrievalEvaluationConfig, RetrievalEvaluator
 from tracefix.runtime import (
@@ -35,6 +63,8 @@ from tracefix.runtime import (
     TraceFixRunner,
     load_environment_file,
 )
+from tracefix.tools.skills import SkillLimits
+from tracefix.validation_feedback import write_validation_feedback_diagnostic
 
 
 def _env_number(name: str, converter: type[int] | type[float]) -> int | float | None:
@@ -86,7 +116,9 @@ def _add_shared_options(parser: argparse.ArgumentParser) -> None:
     """为 run 与 eval 添加完全一致的模型、费用和预算参数。"""
     parser.add_argument("--model", help=f"LiteLLM 模型名，默认 {DEFAULT_MODEL_NAME}")
     parser.add_argument("--env-file", type=Path, default=Path(".env"), help="密钥环境文件")
-    parser.add_argument("--output-dir", type=Path, help="运行产物根目录，默认 runs")
+    parser.add_argument(
+        "--output-dir", type=Path, help="运行产物根目录，默认由 TRACEFIX_RUNS_ROOT 决定"
+    )
     parser.add_argument("--usd-cny-rate", type=float, help="美元兑人民币估算汇率")
     parser.add_argument("--max-steps", type=int, help="最大模型请求次数")
     parser.add_argument("--max-input-tokens", type=int, help="累计输入 Token 上限")
@@ -107,6 +139,16 @@ def _add_shared_options(parser: argparse.ArgumentParser) -> None:
         help="单次模型响应的最大输出 Token",
     )
     parser.add_argument(
+        "--skills",
+        action="store_true",
+        default=None,
+        help="启用按需加载 TraceFix 内置 skills",
+    )
+    parser.add_argument("--skills-max-active", type=int, help="最多激活的技能数（默认 4）")
+    parser.add_argument("--skills-max-bytes", type=int, help="单个技能正文 UTF-8 字节上限")
+    parser.add_argument("--skills-max-reference-bytes", type=int, help="单份参考文本字节上限")
+    parser.add_argument("--skills-max-total-bytes", type=int, help="技能与参考文本累计字节上限")
+    parser.add_argument(
         "--test-python",
         type=Path,
         help="运行被测仓库 pytest 的独立 Python 解释器",
@@ -124,7 +166,9 @@ def _add_shared_options(parser: argparse.ArgumentParser) -> None:
         default=None,
         help="关闭工具结果裁剪和历史折叠，用于运行未压缩对照组",
     )
-    parser.add_argument("--context-window-tokens", type=int, help="模型单次请求硬窗口")
+    parser.add_argument(
+        "--context-window-tokens", type=int, help="模型单次请求的估算上限；不保证供应商硬边界"
+    )
     parser.add_argument("--context-trigger-tokens", type=int, help="历史折叠软阈值")
     parser.add_argument("--context-retain-ratio", type=float, help="折叠后保留近期轮次的比例")
     parser.add_argument(
@@ -157,12 +201,54 @@ def build_parser() -> argparse.ArgumentParser:
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
+    report_parser = subparsers.add_parser("report", help="将已保存的运行渲染为离线 HTML 报告")
+    report_parser.add_argument("--run", type=Path, required=True, help="运行目录或单臂复现目录")
+    report_parser.add_argument(
+        "--output", type=Path, help="HTML 输出路径，默认运行目录/report.html"
+    )
+
     run_parser = subparsers.add_parser("run", help="运行一个仓库修复任务")
-    run_parser.add_argument("--repo", type=Path, required=True, help="干净的本地 Git 仓库")
-    task_group = run_parser.add_mutually_exclusive_group(required=True)
+    run_parser.add_argument("--config", type=Path, help="普通本地运行的 TOML 配置")
+    run_parser.add_argument("--repo", type=Path, help="干净的本地 Git 仓库")
+    run_parser.add_argument("--test-target", help="pytest 相对测试路径或 node ID")
+    run_parser.add_argument("--source-import", help="必须从隔离 checkout 导入的 Python 模块")
+    run_parser.add_argument(
+        "--execution-backend",
+        choices=("local", "docker"),
+        default="local",
+        help="工具执行后端；Docker 仅接受冻结试点任务",
+    )
+    run_parser.add_argument(
+        "--docker-task-id",
+        choices=("pytest-dev__pytest-10081", "psf__requests-1766", "sphinx-doc__sphinx-10449"),
+        help="匹配冻结 Docker 任务身份",
+    )
+    run_parser.add_argument(
+        "--docker-input-root",
+        type=Path,
+        default=Path("runs/docker-foundation-20260926-v1/inputs-v2"),
+        help="只读冻结 Docker 输入根目录",
+    )
+    task_group = run_parser.add_mutually_exclusive_group()
     task_group.add_argument("--task", help="直接传入 Bug 描述")
     task_group.add_argument("--task-file", type=Path, help="从 UTF-8 文件读取 Bug 描述")
     _add_shared_options(run_parser)
+    run_parser.set_defaults(env_file=None)
+
+    doctor_parser = subparsers.add_parser("doctor", help="零模型调用检查普通本地运行配置")
+    doctor_parser.add_argument("--config", type=Path)
+    doctor_parser.add_argument("--repo", type=Path)
+    doctor_parser.add_argument("--test-python", type=Path)
+    doctor_parser.add_argument("--source-import")
+    doctor_parser.add_argument("--test-target")
+    doctor_parser.add_argument("--model")
+    doctor_parser.add_argument("--env-file", type=Path)
+    doctor_parser.add_argument("--output-dir", type=Path)
+    doctor_parser.add_argument("--json", action="store_true")
+
+    export_parser = subparsers.add_parser("export", help="校验并导出已保存的补丁")
+    export_parser.add_argument("--run", type=Path, required=True)
+    export_parser.add_argument("--output", type=Path, required=True)
 
     eval_parser = subparsers.add_parser("eval", help="串行运行合成基准任务")
     eval_parser.add_argument(
@@ -220,6 +306,43 @@ def build_parser() -> argparse.ArgumentParser:
         default=Path("runs/real-task-behavior-validation"),
         help="一次性验收副本目录",
     )
+    behavior_parser.add_argument("--recipes", type=Path, default=Path("benchmarks/real_recipes"))
+    behavior_parser.add_argument(
+        "--test-python",
+        type=Path,
+        help="显式复用已准备的兼容测试解释器；仍由配方校验版本，仅适合单题诊断",
+    )
+
+    environment_parser = subparsers.add_parser(
+        "prepare-real-environments", help="为真实任务创建或复用独立 Python 测试环境"
+    )
+    _add_real_task_locations(environment_parser)
+    environment_parser.add_argument(
+        "--output-dir", type=Path, default=Path("runs/real-task-environment-preparation")
+    )
+    environment_parser.add_argument(
+        "--python", type=Path, help="显式指定兼容 Python；省略时自动发现"
+    )
+    environment_parser.add_argument(
+        "--index-url", default="https://pypi.tuna.tsinghua.edu.cn/simple"
+    )
+    environment_parser.add_argument("--recipes", type=Path, default=Path("benchmarks/real_recipes"))
+    environment_parser.add_argument("--min-free-gib", type=int, default=10)
+    environment_parser.add_argument("--no-create-interpreter", action="store_true")
+
+    inventory_parser = subparsers.add_parser(
+        "inspect-real-environments", help="盘点 TraceFix 解释器与空间"
+    )
+    inventory_parser.add_argument(
+        "--environment-root", type=Path, default=Path("runs/real-task-envs-v2")
+    )
+    cleanup_parser = subparsers.add_parser(
+        "clean-real-artifacts", help="预览或清理 TraceFix 登记的环境"
+    )
+    cleanup_parser.add_argument(
+        "--environment-root", type=Path, default=Path("runs/real-task-envs-v2")
+    )
+    cleanup_parser.add_argument("--apply", action="store_true", help="实际删除预览中的已登记目录")
 
     prescreen_parser = subparsers.add_parser(
         "real-prescreen", help="真实 Issue 的单次 32k 压缩触发预筛选"
@@ -243,6 +366,131 @@ def build_parser() -> argparse.ArgumentParser:
     )
     real_paired_parser.add_argument("--repetitions", type=int, default=3)
     _add_shared_options(real_paired_parser)
+
+    p2_parser = subparsers.add_parser(
+        "p2-dry-run", help="生成 P2 整体优化 C/T 协议与零费用演练记录，不调用 LLM"
+    )
+    p2_parser.add_argument("--tasks", type=Path, default=Path("benchmarks/real_candidates"))
+    p2_parser.add_argument("--recipes", type=Path, default=Path("benchmarks/real_recipes"))
+    p2_parser.add_argument(
+        "--source-root", type=Path, default=Path("runs/real-candidate-validation-v080b")
+    )
+    p2_parser.add_argument(
+        "--test-env-root", type=Path, default=Path("runs/p1-revalidation-20260917/environments")
+    )
+    p2_parser.add_argument(
+        "--p1-evidence",
+        type=Path,
+        default=Path("runs/p1-revalidation-20260917/behavior-validation/behavior-validation.json"),
+    )
+    p2_parser.add_argument("--output-dir", type=Path, default=Path("runs"))
+    p2_parser.add_argument(
+        "--design",
+        choices=(
+            "whole_system",
+            "ablation",
+            "presentation_only",
+            "validation_closure",
+            "no_effect_recovery",
+        ),
+        default="whole_system",
+    )
+    p2_run = subparsers.add_parser("p2-run", help="执行或恢复 P2 零费用工程演练")
+    p2_run.add_argument("--mode", choices=("simulation", "formal"), default="simulation")
+    p2_run.add_argument(
+        "--design",
+        choices=(
+            "whole_system",
+            "ablation",
+            "presentation_only",
+            "validation_closure",
+            "no_effect_recovery",
+        ),
+        default="whole_system",
+    )
+    p2_run.add_argument("--experiment-dir", type=Path, required=True)
+    p2_run.add_argument(
+        "--input-budget-profile", choices=("standard", "long-context"), default="standard"
+    )
+    p2_run.add_argument("--max-input-tokens", type=int)
+    p2_run.add_argument("--per-request-input-tokens", type=int)
+    p2_run.add_argument("--tasks", type=Path, default=Path("benchmarks/real_candidates"))
+    p2_run.add_argument("--recipes", type=Path, default=Path("benchmarks/real_recipes"))
+    p2_run.add_argument("--source-root", type=Path, required=True)
+    p2_run.add_argument(
+        "--test-env-root",
+        type=Path,
+        default=Path("runs/p1-revalidation-20260917/environments"),
+    )
+    p2_run.add_argument(
+        "--p1-evidence",
+        type=Path,
+        default=Path("runs/p1-revalidation-20260917/behavior-validation/behavior-validation.json"),
+    )
+    p2_run.add_argument("--model-name")
+    p2_run.add_argument("--provider")
+    p2_run.add_argument("--pricing-source")
+    p2_run.add_argument("--total-cost-cap-usd", type=float)
+    p2_run.add_argument("--total-cost-cap-cny", type=float)
+    p2_run.add_argument("--stage-cost-cap-cny", type=float)
+    p2_run.add_argument("--stage-budget-baseline-cny", type=float)
+    p2_run.add_argument("--input-cost-per-million-usd", type=float)
+    p2_run.add_argument("--output-cost-per-million-usd", type=float)
+    p2_run.add_argument("--currency", choices=("USD", "CNY"), default="USD")
+    p2_run.add_argument("--input-cache-hit-cost-per-million", type=float)
+    p2_run.add_argument("--input-cache-miss-cost-per-million", type=float)
+    p2_run.add_argument("--output-cost-per-million", type=float)
+    p2_run.add_argument("--prior-calculated-amount", type=float, default=0)
+    p2_run.add_argument("--prior-unsettled-reservation", type=float, default=0)
+    p2_run.add_argument("--campaign-ledger", type=Path)
+    p2_check = subparsers.add_parser("p2-check", help="检查并冻结 P2 的源码、配方和受管环境")
+    p2_check.add_argument("--tasks", type=Path, default=Path("benchmarks/real_candidates"))
+    p2_check.add_argument("--recipes", type=Path, default=Path("benchmarks/real_recipes"))
+    p2_check.add_argument("--source-root", type=Path, required=True)
+    p2_check.add_argument(
+        "--test-env-root",
+        type=Path,
+        default=Path("runs/p1-revalidation-20260917/environments"),
+    )
+    p2_check.add_argument(
+        "--p1-evidence",
+        type=Path,
+        default=Path("runs/p1-revalidation-20260917/behavior-validation/behavior-validation.json"),
+    )
+    p2_check.add_argument("--output-dir", type=Path, default=Path("runs"))
+    p2_check.add_argument(
+        "--design",
+        choices=(
+            "whole_system",
+            "ablation",
+            "presentation_only",
+            "validation_closure",
+            "no_effect_recovery",
+        ),
+        default="whole_system",
+    )
+    p2_summary = subparsers.add_parser("p2-summarize", help="汇总已保存的 P2 试次，不执行 Agent")
+    p2_summary.add_argument("--experiment-dir", type=Path, required=True)
+    p2_diagnostic = subparsers.add_parser("p2-diagnose", help="只读诊断已有 P2 轨迹")
+    p2_diagnostic.add_argument("--experiment-dir", type=Path, required=True)
+    p2_diagnostic.add_argument("--output-dir", type=Path)
+    p2_diagnostic.add_argument(
+        "--detailed-ablation", action="store_true", help="生成冻结四组消融的脱敏配对诊断"
+    )
+    p2_diagnostic.add_argument(
+        "--validation-feedback", action="store_true", help="离线核对验证闭环的测试与补丁反馈"
+    )
+    p2_diagnostic.add_argument("--ledger", type=Path)
+    p2_diagnostic.add_argument("--campaign-before", type=Path)
+    p2_diagnostic.add_argument("--trace-hash-lock", type=Path)
+    p2_followup = subparsers.add_parser("p2-plan-followup", help="只读生成 P2 消融与留出集方案")
+    p2_followup.add_argument("--experiment-dir", type=Path, required=True)
+    p2_followup.add_argument("--candidates", type=Path, default=Path("benchmarks/real_candidates"))
+    p2_followup.add_argument("--output-dir", type=Path, default=Path("benchmarks/experiments"))
+    p2_reconcile = subparsers.add_parser("p2-reconcile", help="只读核对 P2 账本与响应证据")
+    p2_reconcile.add_argument("--experiment-dir", type=Path, required=True)
+    p2_reconcile.add_argument("--bill", type=Path)
+    p2_reconcile.add_argument("--api-key-name", default="Tracefix")
 
     retrieval_parser = subparsers.add_parser(
         "retrieval-eval", help="离线比较文件名关键词基线与 Repo Map 的文件定位能力"
@@ -283,6 +531,30 @@ def build_parser() -> argparse.ArgumentParser:
         help="gold patch 至少修改的非测试 Python 文件数，默认 1",
     )
     collect_parser.add_argument("--repository", action="append", dest="repositories")
+    collect_parser.add_argument(
+        "--holdout", action="store_true", help="冻结全部合格候选的固定种子顺序"
+    )
+    collect_parser.add_argument("--selection-seed", type=int, default=20260921)
+    collect_parser.add_argument(
+        "--exclude-task", action="append", default=[], help="排除已审查任务，可重复传入"
+    )
+
+    freeze_parser = subparsers.add_parser(
+        "freeze-holdout", help="按冻结顺序从行为资格证据生成留出集"
+    )
+    freeze_parser.add_argument("--candidate-pool", type=Path, required=True)
+    freeze_parser.add_argument("--behavior-report", type=Path, required=True)
+    freeze_parser.add_argument("--output", type=Path, required=True)
+    freeze_parser.add_argument("--per-repository", type=int, default=5)
+
+    mechanism_parser = subparsers.add_parser(
+        "freeze-long-context", help="确定性回放并冻结长上下文机制集合"
+    )
+    mechanism_parser.add_argument(
+        "--tasks", type=Path, default=Path("benchmarks/long_context_tasks")
+    )
+    mechanism_parser.add_argument("--work-dir", type=Path, required=True)
+    mechanism_parser.add_argument("--output", type=Path, required=True)
 
     screen_parser = subparsers.add_parser(
         "screen-real-candidates", help="对固定源码候选执行离线 Repo Map 结构筛选"
@@ -332,7 +604,13 @@ def _resolve_shared(args: argparse.Namespace, *, real_issue_budget: bool = False
     load_environment_file(args.env_file)
     return {
         "model_name": _first(args.model, "TRACEFIX_MODEL", DEFAULT_MODEL_NAME),
-        "output_dir": Path(_first(args.output_dir, "TRACEFIX_OUTPUT_DIR", "runs")),
+        "output_dir": Path(
+            _first(
+                args.output_dir,
+                "TRACEFIX_OUTPUT_DIR",
+                os.getenv("TRACEFIX_RUNS_ROOT") or "runs",
+            )
+        ),
         "env_file": args.env_file,
         "usd_cny_rate": _number_or_default(
             args.usd_cny_rate,
@@ -373,6 +651,28 @@ def _resolve_shared(args: argparse.Namespace, *, real_issue_budget: bool = False
             )
         ),
         "agent_config": AgentConfig(
+            skills_enabled=(
+                args.skills
+                if args.skills is not None
+                else _env_bool("TRACEFIX_SKILLS_ENABLED", False)
+            ),
+            skill_limits=SkillLimits(
+                max_active_skills=_number_or_default(
+                    args.skills_max_active, "TRACEFIX_SKILLS_MAX_ACTIVE", int, 4
+                ),
+                max_skill_bytes=_number_or_default(
+                    args.skills_max_bytes, "TRACEFIX_SKILLS_MAX_BYTES", int, 16 * 1024
+                ),
+                max_reference_bytes=_number_or_default(
+                    args.skills_max_reference_bytes,
+                    "TRACEFIX_SKILLS_MAX_REFERENCE_BYTES",
+                    int,
+                    8 * 1024,
+                ),
+                max_total_bytes=_number_or_default(
+                    args.skills_max_total_bytes, "TRACEFIX_SKILLS_MAX_TOTAL_BYTES", int, 32 * 1024
+                ),
+            ),
             max_steps=_number_or_default(args.max_steps, "TRACEFIX_MAX_STEPS", int, 30),
             max_input_tokens=_number_or_default(
                 args.max_input_tokens,
@@ -461,10 +761,17 @@ def _read_task(args: argparse.Namespace) -> str:
     """从互斥的文本参数或 UTF-8 文件获得任务描述。"""
     if args.task is not None:
         return args.task
+    if args.task_file is None:
+        raise ValueError("必须通过 --task、--task-file 或配置文件提供任务")
     try:
         return args.task_file.expanduser().read_text(encoding="utf-8")
     except OSError as exc:
         raise ValueError(f"无法读取任务文件：{exc}") from exc
+
+
+def _print_json(value: Any) -> None:
+    """以 ASCII 安全 JSON 输出，避免 Windows 非 UTF-8 控制台因测试日志而中断。"""
+    print(json.dumps(value, ensure_ascii=True, indent=2))
 
 
 def _print_run_result(result: Any) -> None:
@@ -502,6 +809,7 @@ def _print_run_result(result: Any) -> None:
         print(f"费用: 已知部分 ${result.cost_usd:.8f}，供应商费用数据不完整")
     print(f"结果文件: {result.result_path}")
     print(f"补丁文件: {result.diff_path}")
+    print(f"报告命令: tracefix report --run {Path(result.result_path).parent}")
     if result.final_output:
         print(f"Agent: {result.final_output}")
     error = getattr(result, "error", None)
@@ -511,41 +819,375 @@ def _print_run_result(result: Any) -> None:
         print(f"错误: [{code}] {message}", file=sys.stderr)
 
 
+def _ordinary_settings(args: argparse.Namespace) -> dict[str, Any]:
+    """Resolve the small, documented TOML surface for local repository runs."""
+    values: dict[str, Any] = {}
+    config_path = getattr(args, "config", None)
+    if config_path is not None:
+        path = config_path.expanduser().resolve()
+        try:
+            data = tomllib.loads(path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeError, tomllib.TOMLDecodeError) as exc:
+            raise ValueError(f"无法读取 TOML 配置: {exc}") from exc
+        if set(data) != {"run"} or not isinstance(data["run"], dict):
+            raise ValueError("TOML 仅支持 [run] 表")
+        allowed = {
+            "repo",
+            "task",
+            "test_python",
+            "test_target",
+            "source_import",
+            "output_dir",
+            "model",
+            "env_file",
+        }
+        unknown = set(data["run"]) - allowed
+        if unknown:
+            raise ValueError(f"未知配置字段: {', '.join(sorted(unknown))}")
+        values = data["run"]
+
+    def choose(key: str, cli: Any, env: str | None = None) -> Any:
+        if cli is not None:
+            return cli
+        if env and os.getenv(env):
+            return os.environ[env]
+        return values.get(key)
+
+    def path_value(key: str, cli: Any, env: str | None = None) -> Path | None:
+        value = choose(key, cli, env)
+        if value is None:
+            return None
+        if not isinstance(value, (str, Path)) or not str(value).strip():
+            raise ValueError(f"配置字段 {key} 必须是非空路径")
+        candidate = Path(value).expanduser()
+        if (
+            key in values
+            and cli is None
+            and not (env and os.getenv(env))
+            and not candidate.is_absolute()
+        ):
+            candidate = config_path.expanduser().resolve().parent / candidate
+        return candidate
+
+    return {
+        "repo": path_value("repo", args.repo, "TRACEFIX_REPO"),
+        "task": values.get("task"),
+        "test_python_executable": path_value(
+            "test_python", args.test_python, "TRACEFIX_TEST_PYTHON"
+        ),
+        "test_target": choose("test_target", args.test_target, "TRACEFIX_TEST_TARGET"),
+        "source_import": choose("source_import", args.source_import, "TRACEFIX_SOURCE_IMPORT"),
+        "output_dir": path_value("output_dir", args.output_dir, "TRACEFIX_OUTPUT_DIR"),
+        "model_name": choose("model", args.model, "TRACEFIX_MODEL") or DEFAULT_MODEL_NAME,
+        "env_file": path_value("env_file", args.env_file, "TRACEFIX_ENV_FILE") or Path(".env"),
+    }
+
+
 def main(argv: list[str] | None = None) -> int:
     """执行 CLI 并使用稳定退出码区分成功、失败和预算中断。"""
     parser = build_parser()
     args = parser.parse_args(argv)
     try:
+        if args.command == "report":
+            print(render_report(args.run, args.output))
+            return 0
+        if args.command == "export":
+            print(export_patch(args.run, args.output))
+            return 0
+        if args.command == "doctor":
+            settings = _ordinary_settings(args)
+            checks = doctor(settings)
+            if args.json:
+                _print_json(checks)
+            else:
+                for check in checks["checks"]:
+                    print(f"{'OK' if check['ok'] else 'FAIL'} {check['name']}: {check['detail']}")
+                    if not check["ok"] and check["fix"]:
+                        print(f"  修复建议: {check['fix']}")
+            return 0 if checks["ok"] else 2
         if args.command == "validate-real-tasks":
             tasks = load_real_issue_tasks(args.tasks, task_ids=tuple(args.task_id))
             validations = []
             for task in tasks:
                 validation = task.validate_artifacts()
                 if args.with_checkout:
-                    checkout = task.prepare_checkout(args.checkout_dir / task.id)
+                    checkout = (args.checkout_dir / task.id).resolve()
+                    # 联网检出可能在中途被终端中断。若目录已经存在，先严格验证
+                    # 它是否仍是该任务的固定 commit，而不是要求用户改用新目录。
+                    if not checkout.exists():
+                        checkout = task.prepare_checkout(checkout)
                     validation = task.validate_checkout(checkout)
                 validations.append(validation.model_dump(mode="json"))
             # 输出结构化 JSON，便于把一次联网校验的结果直接归档。
-            print(json.dumps(validations, ensure_ascii=False, indent=2))
+            _print_json(validations)
             return 0
 
         if args.command == "validate-real-behavior":
             tasks = load_real_issue_tasks(args.tasks, task_ids=tuple(args.task_id))
+            recipes = load_environment_recipes(args.recipes)
             validations = []
-            for task in tasks:
-                validation = validate_real_task_behavior(
-                    task,
-                    source=(args.source_root / task.id).resolve(),
-                    test_python=_real_task_python(args.test_env_root, task.id),
-                    output_dir=args.output_dir.resolve(),
-                )
-                validations.append(validation.model_dump(mode="json"))
             result_path = args.output_dir.resolve() / "behavior-validation.json"
-            result_path.write_text(
-                json.dumps(validations, ensure_ascii=False, indent=2), encoding="utf-8"
-            )
-            print(json.dumps(validations, ensure_ascii=False, indent=2))
+            result_path.parent.mkdir(parents=True, exist_ok=True)
+
+            def persist_partial_results() -> None:
+                """每题完成即写入汇总，意外中断时仍保留已获得的验收证据。"""
+                result_path.write_text(
+                    json.dumps(validations, ensure_ascii=False, indent=2), encoding="utf-8"
+                )
+
+            for task in tasks:
+                recipe = recipes.get(task.id)
+                if recipe is not None and not recipe.supports_current_platform():
+                    validations.append(
+                        {
+                            "task_id": task.id,
+                            "eligible_for_llm_prescreen": False,
+                            "environment_or_execution_error": (
+                                "platform is unsupported by task recipe"
+                            ),
+                        }
+                    )
+                    persist_partial_results()
+                    continue
+                try:
+                    test_python = (
+                        args.test_python.expanduser().resolve()
+                        if args.test_python is not None
+                        else _real_task_python(args.test_env_root, task.id)
+                    )
+                    if not test_python.is_file():
+                        raise BenchmarkError(
+                            "explicit test Python executable does not exist",
+                            context={"path": str(test_python)},
+                        )
+                    if recipe is not None:
+                        version_command = (
+                            "import sys; "
+                            "print(f'{sys.version_info.major}.{sys.version_info.minor}')"
+                        )
+                        version_result = subprocess.run(
+                            [str(test_python), "-c", version_command],
+                            capture_output=True,
+                            text=True,
+                            encoding="utf-8",
+                            errors="replace",
+                            timeout=20,
+                            check=False,
+                            shell=False,
+                        )
+                        compatible = recipe.supports_python(version_result.stdout.strip())
+                        if version_result.returncode != 0 or not compatible:
+                            raise BenchmarkError(
+                                "explicit test Python is incompatible with task recipe"
+                            )
+                    validation = validate_real_task_behavior(
+                        task,
+                        source=(args.source_root / task.id).resolve(),
+                        test_python=test_python,
+                        output_dir=args.output_dir.resolve(),
+                        recipe=recipe,
+                    )
+                    validations.append(validation.model_dump(mode="json"))
+                except (BenchmarkError, ValueError) as exc:
+                    # 一个历史仓库的依赖问题不能阻断其他候选的资格判断。
+                    validations.append(
+                        {
+                            "task_id": task.id,
+                            "eligible_for_llm_prescreen": False,
+                            "environment_or_execution_error": str(exc),
+                        }
+                    )
+                persist_partial_results()
+            persist_partial_results()
+            _print_json(validations)
             print(f"验收记录: {result_path}", file=sys.stderr)
+            return 0
+
+        if args.command == "prepare-real-environments":
+            summary = RealEnvironmentPreparer().prepare(
+                EnvironmentPreparationConfig(
+                    tasks_dir=args.tasks,
+                    source_root=args.source_root,
+                    environment_root=args.test_env_root,
+                    output_dir=args.output_dir,
+                    task_ids=tuple(args.task_id),
+                    python_executable=args.python,
+                    index_url=args.index_url,
+                    recipes_dir=args.recipes,
+                    min_free_gib=args.min_free_gib,
+                    allow_create_interpreter=not args.no_create_interpreter,
+                )
+            )
+            ready = sum(item.status in {"ready", "reused"} for item in summary.results)
+            print(f"真实任务环境准备完成: {ready}/{len(summary.results)} 可用")
+            print(f"汇总文件: {summary.summary_path}")
+            return 0
+
+        if args.command == "inspect-real-environments":
+            report = inspect_storage(args.environment_root)
+            interpreters = discover_interpreters(args.environment_root)
+            _print_json(
+                {
+                    "storage": report.model_dump(mode="json"),
+                    "interpreters": [item.model_dump() for item in interpreters],
+                }
+            )
+            return 0
+
+        if args.command == "p2-dry-run":
+            path = write_p2_dry_run(
+                P2ProtocolConfig(
+                    design=args.design,
+                    tasks_dir=args.tasks,
+                    recipes_dir=args.recipes,
+                    source_root=args.source_root,
+                    test_env_root=args.test_env_root,
+                    p1_evidence_path=args.p1_evidence,
+                    output_dir=args.output_dir,
+                )
+            )
+            print("P2 零费用演练完成：未初始化供应商客户端，正式实验参数仍缺失。")
+            print(f"协议文件: {path}")
+            return 0
+
+        if args.command == "p2-run":
+            formal = None
+            if args.mode == "formal":
+                cap = args.total_cost_cap_cny if args.currency == "CNY" else args.total_cost_cap_usd
+                input_price = (
+                    args.input_cache_miss_cost_per_million
+                    if args.currency == "CNY"
+                    else args.input_cost_per_million_usd
+                )
+                output_price = (
+                    args.output_cost_per_million
+                    if args.currency == "CNY"
+                    else args.output_cost_per_million_usd
+                )
+                formal = P2FormalRunRequirements(
+                    model_name=args.model_name,
+                    provider=args.provider,
+                    pricing_source=args.pricing_source,
+                    total_cost_cap_usd=cap,
+                    input_cost_per_million_usd=input_price,
+                    output_cost_per_million_usd=output_price,
+                    currency=args.currency,
+                    input_cache_hit_cost_per_million=args.input_cache_hit_cost_per_million,
+                    input_cache_miss_cost_per_million=args.input_cache_miss_cost_per_million,
+                    output_cost_per_million=args.output_cost_per_million,
+                    stage_cost_cap_amount=args.stage_cost_cap_cny,
+                    stage_budget_baseline_amount=args.stage_budget_baseline_cny,
+                    prior_calculated_amount=args.prior_calculated_amount,
+                    prior_unsettled_reservation=args.prior_unsettled_reservation,
+                    campaign_ledger_path=args.campaign_ledger,
+                )
+            budget_options = {
+                "input_budget_profile": args.input_budget_profile,
+                "per_request_input_tokens": args.per_request_input_tokens,
+            }
+            if args.max_input_tokens is not None:
+                budget_options["max_input_tokens"] = args.max_input_tokens
+            config = P2ProtocolConfig(
+                **budget_options,
+                design=args.design,
+                tasks_dir=args.tasks,
+                recipes_dir=args.recipes,
+                source_root=args.source_root,
+                test_env_root=args.test_env_root,
+                p1_evidence_path=args.p1_evidence,
+                formal=formal,
+            )
+            run = run_p2_formal if args.mode == "formal" else run_p2_simulation
+            summary = run(config, experiment_dir=args.experiment_dir)
+            label = "P2 正式实验" if args.mode == "formal" else "P2 零费用工程演练"
+            planned = summary.planned_count or summary.trial_count
+            print(f"{label}: {summary.completed_count}/{planned}")
+            if summary.campaign_stop_reason:
+                print(f"停止原因: {summary.campaign_stop_reason}")
+            print(f"恢复复用: {summary.resumed_count}; 汇总: {summary.summary_path}")
+            return 0
+
+        if args.command == "p2-check":
+            path = write_p2_check(
+                P2ProtocolConfig(
+                    design=args.design,
+                    tasks_dir=args.tasks,
+                    recipes_dir=args.recipes,
+                    source_root=args.source_root,
+                    test_env_root=args.test_env_root,
+                    p1_evidence_path=args.p1_evidence,
+                    output_dir=args.output_dir,
+                )
+            )
+            print(f"P2 输入检查通过：{path}")
+            return 0
+
+        if args.command == "p2-summarize":
+            path = write_p2_summary(args.experiment_dir)
+            print(f"P2 汇总: {path}")
+            return 0
+
+        if args.command == "p2-diagnose":
+            if args.validation_feedback:
+                if args.detailed_ablation or args.output_dir is None:
+                    parser.error(
+                        "--validation-feedback requires --output-dir "
+                        "and excludes --detailed-ablation"
+                    )
+                outputs = write_validation_feedback_diagnostic(
+                    args.experiment_dir, output_dir=args.output_dir
+                )
+                print("P2 验证反馈诊断: " + ", ".join(str(path) for path in outputs))
+                return 0
+            if args.detailed_ablation:
+                missing = [
+                    name
+                    for name, value in (
+                        ("--output-dir", args.output_dir),
+                        ("--ledger", args.ledger),
+                        ("--campaign-before", args.campaign_before),
+                        ("--trace-hash-lock", args.trace_hash_lock),
+                    )
+                    if value is None
+                ]
+                if missing:
+                    parser.error("--detailed-ablation requires " + ", ".join(missing))
+                outputs = write_detailed_ablation_diagnostic(
+                    args.experiment_dir,
+                    output_dir=args.output_dir,
+                    ledger_path=args.ledger,
+                    campaign_before_path=args.campaign_before,
+                    trace_hash_lock_path=args.trace_hash_lock,
+                )
+                print("P2 脱敏详细诊断: " + ", ".join(str(path) for path in outputs))
+                return 0
+            path = write_p2_diagnostic(args.experiment_dir, output_dir=args.output_dir)
+            print(f"P2 诊断: {path}")
+            return 0
+
+        if args.command == "p2-plan-followup":
+            path = write_p2_followup_plan(
+                args.experiment_dir,
+                candidates_dir=args.candidates,
+                output_dir=args.output_dir,
+            )
+            print(f"P2 后续实验方案: {path}")
+            return 0
+
+        if args.command == "p2-reconcile":
+            path = write_p2_reconciliation(
+                args.experiment_dir, bill_path=args.bill, api_key_name=args.api_key_name
+            )
+            print(f"P2 对账记录: {path}")
+            return 0
+
+        if args.command == "clean-real-artifacts":
+            preview = (
+                apply_cleanup(args.environment_root)
+                if args.apply
+                else preview_cleanup(args.environment_root)
+            )
+            _print_json({"applied": args.apply, **preview.model_dump(mode="json")})
             return 0
 
         if args.command == "retrieval-eval":
@@ -578,11 +1220,31 @@ def main(argv: list[str] | None = None) -> int:
                 repositories=tuple(args.repositories)
                 if args.repositories
                 else CandidateCollectionConfig().repositories,
+                holdout_mode=args.holdout,
+                selection_seed=args.selection_seed,
+                excluded_task_ids=tuple(args.exclude_task),
             )
             result = collect_candidates(config)
             print(f"候选池生成完成: {len(result.selected)} 题")
             print(f"清单文件: {result.output_path}")
             return 0
+
+        if args.command == "freeze-holdout":
+            result = freeze_holdout(
+                args.candidate_pool,
+                args.behavior_report,
+                args.output,
+                per_repository=args.per_repository,
+            )
+            print(f"留出集冻结完成: {result['qualified_count']}/{result['target_count']}")
+            print(f"冻结文件: {args.output.resolve()}")
+            return 0 if result["deficit"] == 0 else 3
+
+        if args.command == "freeze-long-context":
+            result = freeze_long_context_mechanism(args.tasks, args.work_dir, args.output)
+            print(f"长上下文机制集合: {len(result['tasks'])} 题；有效={result['valid']}")
+            print(f"冻结文件: {args.output.resolve()}")
+            return 0 if result["valid"] else 3
 
         if args.command == "screen-real-candidates":
             task_ids = list(args.task_id)
@@ -608,14 +1270,51 @@ def main(argv: list[str] | None = None) -> int:
             print(f"汇总文件: {summary.summary_path}")
             return 0
 
+        if args.command == "run":
+            settings = _ordinary_settings(args)
+            for field, value in (
+                ("model", settings["model_name"]),
+                ("env_file", settings["env_file"]),
+            ):
+                if getattr(args, field) is None and value is not None:
+                    setattr(args, field, value)
         shared = _resolve_shared(
             args,
             real_issue_budget=args.command
             in {"real-prescreen", "real-repo-map-prescreen", "real-paired-eval"},
         )
         if args.command == "run":
+            settings = _ordinary_settings(args)
+            if settings["repo"] is None:
+                raise ValueError("必须通过 --repo 或配置文件指定仓库")
+            if args.task is None and args.task_file is None and settings["task"] is None:
+                raise ValueError("必须通过 --task、--task-file 或配置文件提供任务")
+            shared.update(
+                {
+                    key: settings[key]
+                    for key in ("test_python_executable", "output_dir")
+                    if settings[key] is not None
+                }
+            )
+            shared.update(
+                {
+                    "execution_backend": args.execution_backend,
+                    "docker_task_id": args.docker_task_id,
+                    "docker_input_root": args.docker_input_root
+                    if args.execution_backend == "docker"
+                    else None,
+                }
+            )
             result = TraceFixRunner().run(
-                RunConfig(repo=args.repo, task=_read_task(args), **shared)
+                RunConfig(
+                    repo=settings["repo"],
+                    task=_read_task(args)
+                    if args.task is not None or args.task_file is not None
+                    else settings["task"],
+                    test_target=settings["test_target"],
+                    source_import=settings["source_import"],
+                    **shared,
+                )
             )
             _print_run_result(result)
             if result.status is AgentStatus.COMPLETED:
@@ -709,15 +1408,10 @@ def main(argv: list[str] | None = None) -> int:
 
 def _real_task_python(root: Path, task_id: str) -> Path:
     """按平台定位一个真实任务的独立虚拟环境解释器。"""
-    environment = root.expanduser().resolve() / task_id
-    candidates = (
-        environment / "Scripts" / "python.exe",
-        environment / "bin" / "python",
-    )
-    for candidate in candidates:
-        if candidate.is_file():
-            return candidate
-    raise ValueError(f"找不到任务 {task_id} 的测试解释器：{environment}")
+    try:
+        return resolve_managed_environment_python(root, task_id)
+    except BenchmarkError as exc:
+        raise ValueError(str(exc)) from exc
 
 
 if __name__ == "__main__":

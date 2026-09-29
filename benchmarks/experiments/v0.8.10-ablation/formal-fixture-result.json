@@ -1,0 +1,27 @@
+{
+  "completed_at": "2026-09-22T07:12:34.791739+00:00",
+  "synthetic_task_ids": [
+    "synthetic__flags-00",
+    "synthetic__flags-01",
+    "synthetic__flags-02",
+    "synthetic__flags-03",
+    "synthetic__flags-04",
+    "synthetic__flags-05",
+    "synthetic__flags-06",
+    "synthetic__flags-07",
+    "synthetic__flags-08",
+    "synthetic__flags-09"
+  ],
+  "interpretation": "Ten identities of one synthetic flags fixture; engineering only, not repair effectiveness.",
+  "qualification": "Synthetic test-helper qualification inputs; actual strict pytest verification per trial.",
+  "completed": 120,
+  "strict_verification_passed": 120,
+  "resumed": 120,
+  "provider_requests": 240,
+  "resume_added_requests": 0,
+  "paid_requests": 0,
+  "virtual_usd_amount": 0.0024,
+  "reserved_amount": 0,
+  "shared_campaign_cap_blocks_new_experiment": true,
+  "execution_snapshot_unchanged": true
+}

@@ -1,0 +1,10 @@
+{
+  "schema_version": 1,
+  "task_id": "psf__requests-1142",
+  "python_versions": ["3.9"],
+  "extra_dependencies": [],
+  "build_commands": [],
+  "selector_overrides": [],
+  "supported_platforms": ["windows"],
+  "source_import_probe": "requests"
+}

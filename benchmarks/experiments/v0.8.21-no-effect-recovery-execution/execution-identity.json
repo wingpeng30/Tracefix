@@ -1,0 +1,184 @@
+{
+  "schema_version": 1,
+  "kind": "p2_no_effect_recovery_execution_identity",
+  "status": "offline_precheck_passed_paid_run_not_started",
+  "execution_commit": "adc8658ddf0425f8e88058203126536f093b38e1",
+  "tracked_worktree_dirty": false,
+  "tracked_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "p2_check_report_sha256": "5d5ae0f03205024e9737aa309ab51f505d11304edb278fd7717863fdd8a0e221",
+  "protocol_sha256": "7a95d3988f2463fcb0cf12caaa44533efe499aa375759d7cb06680235da0b290",
+  "schedule_sha256": "a591cd45f206d8a6d2c9f0f7f5695c9ac85868640d346115032254d0218fe9c5",
+  "code_file_count": 38,
+  "code_hashes": {
+    "src/tracefix/__init__.py": "2e6ba81db95d0c1ba8871f380ef837db65329c0b50659ab4bd1319db1201ef0e",
+    "src/tracefix/_version.py": "eaea906988db2301bac1bcabe89dd5660ef685cdac7475ae3c08b12743a7ffb6",
+    "src/tracefix/ablation.py": "62124412b56ebef79c3f7c3f5ed4f7116f47ce43bbbe2698b41f6e239360e6d1",
+    "src/tracefix/agent/__init__.py": "1a99a4cc224bdfe95c0e5ebec90fc4f12858ed7eeb4d9f9629e8d7f0ac23ab15",
+    "src/tracefix/agent/base.py": "c185202366b17ca9c5d0bf421ef5cabb3bf28ccb9490da551eb94463dab16751",
+    "src/tracefix/agent/minimal.py": "0bfb82d1ae92debf971168f9a9c6d178050a2d2f82b0c759ab858719c252adff",
+    "src/tracefix/agent/presentation.py": "c30644713cd618b082d5fceef64b72c80efa07860a1fbd8ed50640008b03ba96",
+    "src/tracefix/benchmark.py": "73681666f740ffb9f7d7e73c96ddfe94695abd87d960fea0e64ed013fe75fb86",
+    "src/tracefix/cli.py": "53e47a70aed9292a441689d2c3969a971fd183761b80b38e5a02837773ea34a2",
+    "src/tracefix/context/__init__.py": "59c77135f1348b9a0dfcc6a883a5a8abdfb221e0049bced7dc2455a2367bfb59",
+    "src/tracefix/context/manager.py": "18126146d77e7eefad8e6c504feaf36d3c8c33290f2f6864a81f64c81ee27fc7",
+    "src/tracefix/detailed_ablation.py": "27eb14e664cad9e23d48140a2f8bed6bcb227babdd9c6c473afb3dfda8d4f0f4",
+    "src/tracefix/exceptions.py": "2f419e498417191d4582e65045ff22f2cca7cb1843489515cd992b35970b9a4f",
+    "src/tracefix/formal_guards.py": "ab5972eaa028472556d20f064187c6b133b9affd8ab7c801c61c2f9523f7f2f4",
+    "src/tracefix/holdout.py": "e128e82b41ffdfb95f83c3a40d340b15a797bd394ba1942d72bbe0684b26db03",
+    "src/tracefix/messages.py": "d1ab34a8d78747472330706e6ee0b434c09d22613c6b1842faf74a5ca7bc148b",
+    "src/tracefix/models/__init__.py": "e38f4de5e92f51e9642ee31cbd4134abda162e6c1037e048252ddd93f0aa65fd",
+    "src/tracefix/models/base.py": "06c5065bb393a5b892d50de32e4c9998d2397ca9952061ce56b508f1fdf5f4ab",
+    "src/tracefix/models/litellm_adapter.py": "de145a92c2c32d0d924b7ecfc2ac6e4cf1ee559695d3997f11f62983285cd2e3",
+    "src/tracefix/p2_protocol.py": "f4b037c6e2d2f4660e1cbb2130207a5ac1a20304b5668176b54f27840dfcc4aa",
+    "src/tracefix/paired.py": "43c898c55471e809e7b6b1f1155617035a676724bddbbcc787cf1942857d5d24",
+    "src/tracefix/provenance.py": "714d5be21186ba7eb529541dd3f0918aeec8c22afb3a7dbf8ccf770c23db95c5",
+    "src/tracefix/real_benchmark.py": "f4aff5f6cf34f81eef8802750ad0336a235de9e544a16af137be987244294cef",
+    "src/tracefix/real_candidates.py": "81e1ec5540d1991c461318ff4a2a509f238654a97038a69c6c4fe594bcf056d0",
+    "src/tracefix/real_environment.py": "94b78e4e808df239c02cdc7753d9eebb302b6054407bcb3b1dea3ace20157ed1",
+    "src/tracefix/real_experiment.py": "4598cbc33ace4b16e6f6fd7793e533cabeb4d3576ebca31566302adac29bfd6e",
+    "src/tracefix/real_recipes.py": "b0ab192b644e55bf15713d1c5563094e915f88dd26f9f94e3efa5d171127d629",
+    "src/tracefix/repository/__init__.py": "a5eeaff32e0e83cb6b9e7a06a76b8540cd36f9a3892a1343baced4086ec9fae4",
+    "src/tracefix/repository/indexer.py": "263dcacf1ff9d66d0d4c01e7110f196d4168487e0e10c97b9c96919f6f5ad2b7",
+    "src/tracefix/retrieval_eval.py": "456deb6e9c1ecd59e842a0def07008a66faa8b89622eaeffaab88efa98a8ecbb",
+    "src/tracefix/runtime.py": "4be1924416f6578fb998838b8822bcfe1d9755190062c76fe980d1216dcfb484",
+    "src/tracefix/tools/__init__.py": "6aaad9c74b097b2555ab7b4bcda3867401966bcf18ff4af20c87baef5a7d1a0f",
+    "src/tracefix/tools/base.py": "a2dd31135349b57cf9b73b517e9c54ddd42e7652991829bcd32f2919be18ec2c",
+    "src/tracefix/tools/builtin.py": "33e878d1b4eaf91e523b295b95fc6cdd73dbefaed0426e539bf2db58971e4a69",
+    "src/tracefix/tracing/__init__.py": "28fc1f7857b98c9a4d7046d0ce5ba94273624c2be42d8f4213b1a52d24d851c4",
+    "src/tracefix/tracing/base.py": "6438a20928c87e5371db67e89f9c8a4b2ec13870c3cf4a045e0b2f77f87975e7",
+    "src/tracefix/tracing/jsonl.py": "a88ea770ef347573eb13b02e06be2c4320fd0efd53696e835a1777afee1983bf",
+    "src/tracefix/validation_feedback.py": "9524055dfade13df3738c25311feba0b3710b320c474a7ca4369fae665e726db"
+  },
+  "p1_evidence_sha256": "8c6649e8e470a104a56c5ce9b48d88809eef066947984ae650df9ad3945a7812",
+  "qualified_task_ids": [
+    "psf__requests-1142",
+    "psf__requests-1766",
+    "pylint-dev__pylint-4551",
+    "pylint-dev__pylint-4604",
+    "pylint-dev__pylint-4661",
+    "pytest-dev__pytest-10051",
+    "pytest-dev__pytest-10081",
+    "pytest-dev__pytest-10356",
+    "sphinx-doc__sphinx-10435",
+    "sphinx-doc__sphinx-10449"
+  ],
+  "primary_task_ids": [
+    "psf__requests-1142",
+    "psf__requests-1766",
+    "pylint-dev__pylint-4661",
+    "pytest-dev__pytest-10051",
+    "pytest-dev__pytest-10081",
+    "pytest-dev__pytest-10356",
+    "sphinx-doc__sphinx-10435",
+    "sphinx-doc__sphinx-10449"
+  ],
+  "collection_failure_task_ids": [
+    "pylint-dev__pylint-4551",
+    "pylint-dev__pylint-4604"
+  ],
+  "schedule_count": 48,
+  "recipe_hashes": {
+    "psf__requests-1142": "13574fccef5ac3797f50218b1fff74b1e983f991f4e339e4cf1659d4f3b561bf",
+    "psf__requests-1766": "93a0e23c8f439163da0735ecef672e03b8e72805729ee49a7acc8d42ba37b0f7",
+    "pylint-dev__pylint-4551": "08690276c153a6ee7425351ff86f31b83ee46aaab285d30690ccec92611f0bb2",
+    "pylint-dev__pylint-4604": "e40ebe7bcbb449f8f7cb8a550bfbb455ce3ebe805817b6455a5118628482e81a",
+    "pylint-dev__pylint-4661": "c8ff7e0dd97ebde905929f605e71d1b6e33481e2c88ca2a1266016930970a310",
+    "pytest-dev__pytest-10051": "7cb3f47c2ce9e7aae119f7d5855c76b98c4a5ffce2fb9660cbfa407e367a1275",
+    "pytest-dev__pytest-10081": "bef9f30d722265b8ef3a54700943a6a768ba75559147f1c3e6460802d319686c",
+    "pytest-dev__pytest-10356": "30ea5d56193bed7418b861615b49249058d7360138c1d2c735497fbc7ce01032",
+    "sphinx-doc__sphinx-10435": "66762b2204cda583931b5510e862cdebcff35d2e9fdbc4d0675a1c87ec37fbe6",
+    "sphinx-doc__sphinx-10449": "f0da0b25c53446cf892dc5c7fcdbf31c85e26319d0321a4f3fe916f786ca559e"
+  },
+  "environment_evidence": [
+    {
+      "task_id": "psf__requests-1142",
+      "source_commit": "22623bd8c265b78b161542663ee980738441c307",
+      "source_clean": true,
+      "recipe_fingerprint": "13574fccef5ac3797f50218b1fff74b1e983f991f4e339e4cf1659d4f3b561bf",
+      "dependency_fingerprint": "7e1d467a3118d23b64e55d3e116ed58e751a01337dd35b2f38ced0225769b109"
+    },
+    {
+      "task_id": "psf__requests-1766",
+      "source_commit": "847735553aeda6e6633f2b32e14ba14ba86887a4",
+      "source_clean": true,
+      "recipe_fingerprint": "93a0e23c8f439163da0735ecef672e03b8e72805729ee49a7acc8d42ba37b0f7",
+      "dependency_fingerprint": "3b6cfd0cf615015a61392c75af9c90817ccbfccd27e3817a634559b4e4a20185"
+    },
+    {
+      "task_id": "pylint-dev__pylint-4551",
+      "source_commit": "99589b08de8c5a2c6cc61e13a37420a868c80599",
+      "source_clean": true,
+      "recipe_fingerprint": "08690276c153a6ee7425351ff86f31b83ee46aaab285d30690ccec92611f0bb2",
+      "dependency_fingerprint": "ee7beb0d4e236690d5361f8a24b3d15aaca6556e3ee20743ea093e7ec2f1f3dd"
+    },
+    {
+      "task_id": "pylint-dev__pylint-4604",
+      "source_commit": "1e55ae64624d28c5fe8b63ad7979880ee2e6ef3f",
+      "source_clean": true,
+      "recipe_fingerprint": "e40ebe7bcbb449f8f7cb8a550bfbb455ce3ebe805817b6455a5118628482e81a",
+      "dependency_fingerprint": "ee7beb0d4e236690d5361f8a24b3d15aaca6556e3ee20743ea093e7ec2f1f3dd"
+    },
+    {
+      "task_id": "pylint-dev__pylint-4661",
+      "source_commit": "1d1619ef913b99b06647d2030bddff4800abdf63",
+      "source_clean": true,
+      "recipe_fingerprint": "c8ff7e0dd97ebde905929f605e71d1b6e33481e2c88ca2a1266016930970a310",
+      "dependency_fingerprint": "6c8012ea3e0b0796447599c5b57c80ce7dcaa3b35f8d7c6bd2ea6bd5fc9143c7"
+    },
+    {
+      "task_id": "pytest-dev__pytest-10051",
+      "source_commit": "aa55975c7d3f6c9f6d7f68accc41bb7cadf0eb9a",
+      "source_clean": true,
+      "recipe_fingerprint": "7cb3f47c2ce9e7aae119f7d5855c76b98c4a5ffce2fb9660cbfa407e367a1275",
+      "dependency_fingerprint": "1958f58475dd3d4e92c6f2c795000f96c5e0fe7499c75093d132135ead491a2e"
+    },
+    {
+      "task_id": "pytest-dev__pytest-10081",
+      "source_commit": "da9a2b584eb7a6c7e924b2621ed0ddaeca0a7bea",
+      "source_clean": true,
+      "recipe_fingerprint": "bef9f30d722265b8ef3a54700943a6a768ba75559147f1c3e6460802d319686c",
+      "dependency_fingerprint": "1586c22a191bde2d3c1b142328c4de5091ebdade37d3ea84a4cf95cab93da5df"
+    },
+    {
+      "task_id": "pytest-dev__pytest-10356",
+      "source_commit": "3c1534944cbd34e8a41bc9e76818018fadefc9a1",
+      "source_clean": true,
+      "recipe_fingerprint": "30ea5d56193bed7418b861615b49249058d7360138c1d2c735497fbc7ce01032",
+      "dependency_fingerprint": "7eca2236950b34f56293fdbf555ebe39c3ad9820b831954c12e33547b4236027"
+    },
+    {
+      "task_id": "sphinx-doc__sphinx-10435",
+      "source_commit": "f1061c012e214f16fd8790dec3c283d787e3daa8",
+      "source_clean": true,
+      "recipe_fingerprint": "66762b2204cda583931b5510e862cdebcff35d2e9fdbc4d0675a1c87ec37fbe6",
+      "dependency_fingerprint": "d2950f940df34532b959f9d187c3e950bf234e30f53d595220a4fbfd45178d2b"
+    },
+    {
+      "task_id": "sphinx-doc__sphinx-10449",
+      "source_commit": "36367765fe780f962bba861bf368a765380bbc68",
+      "source_clean": true,
+      "recipe_fingerprint": "f0da0b25c53446cf892dc5c7fcdbf31c85e26319d0321a4f3fe916f786ca559e",
+      "dependency_fingerprint": "5d08b8ec31d21300aae21c3a971d5407a9507cc82555fe20a8dfbe570b56acc5"
+    }
+  ],
+  "requests_1766_service_health_url": "http://127.0.0.1:8765/get",
+  "cost_ledger": {
+    "currency": "CNY",
+    "cap_amount": 150.0,
+    "calculated_spent_amount": 60.21126508000015,
+    "reserved_amount": 0.0,
+    "calculated_balance_amount": 89.78873491999985,
+    "request_count": 5847,
+    "uncertain_request": false,
+    "ledger_sha256": "f0f1be69c2911ee01a853ff65f7a62fabe331e0da33045cf86f0926164ac74fc",
+    "amounts_are_provider_invoice": false
+  },
+  "requests_1766_service_health": {
+    "base_url": "http://127.0.0.1:8765/",
+    "health_url": "http://127.0.0.1:8765/get",
+    "service_identity_sha256": "8738dbdecead582b4875f35bf9e7ccac5635a0bb78b9ce01e3eb4c3dbc0c0626",
+    "service_script_sha256": "709633021ab70d9f55dd24071ef815065a6507540537a32d0cf7683aab0ae5aa",
+    "dependency_versions_sha256": "ed75c85ef20235d38c9b64c8d99849322dd73dfc1010004a15c4bf17cd4fa578",
+    "health_validated_by_p2_check": true
+  }
+}

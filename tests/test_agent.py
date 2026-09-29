@@ -78,3 +78,20 @@ def test_agents_have_isolated_state() -> None:
 def test_agent_state_requires_consistent_aware_timestamps() -> None:
     with pytest.raises(ValidationError):
         AgentState(started_at=datetime(2026, 1, 1))
+
+
+def test_agent_state_rejects_finish_before_start() -> None:
+    with pytest.raises(ValidationError, match="finished_at cannot be earlier"):
+        AgentState(
+            started_at=datetime.fromisoformat("2026-01-02T00:00:00+00:00"),
+            finished_at=datetime.fromisoformat("2026-01-01T00:00:00+00:00"),
+        )
+
+
+def test_agent_state_accepts_ordered_aware_timestamps() -> None:
+    state = AgentState(
+        started_at=datetime.fromisoformat("2026-01-01T00:00:00+00:00"),
+        finished_at=datetime.fromisoformat("2026-01-02T00:00:00+00:00"),
+    )
+    assert state.finished_at is not None and state.started_at is not None
+    assert state.finished_at > state.started_at

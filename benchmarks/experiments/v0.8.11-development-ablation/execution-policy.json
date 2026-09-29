@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "kind": "development_ablation_budget_execution_addendum",
+  "base_design_path": "benchmarks/experiments/v0.8.10-ablation/development-design.json",
+  "base_design_sha256": "5b4ea48866688ffc2e8e2ae88b1da5a5face08912c3cca6d70480234df25218b",
+  "planned_trials": 120,
+  "campaign_currency": "CNY",
+  "campaign_cap": "100",
+  "campaign_ledger_path": "runs/p2-formal-campaign-20260921/cost-ledger.json",
+  "ledger_before_sha256": "306ab2203e80ec919f1a4bc7a6781a101b845fc725221e071228f44d88d39fba",
+  "calculated_spent_before": "29.2955412",
+  "remaining_before": "70.7044588",
+  "policy": "Keep all scheduled positions and trial budgets; stop when another request cannot be reserved. Verify saved patch; no configuration selection from an incomplete batch.",
+  "holdout_execution_enabled": false,
+  "optimization_behavior_changed": false,
+  "selection_rule_changed": false,
+  "commercial_identity_reused_from": "runs/p2-formal-deepseek-rerun-20260921/protocol.json",
+  "pricing_identity_note": "Fresh unchanged pricing evidence is separate; do not reset the shared ledger or rewrite its pricing identity."
+}

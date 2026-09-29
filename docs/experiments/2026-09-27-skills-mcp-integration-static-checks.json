@@ -1,0 +1,44 @@
+{
+  "head": "5258dc44e324626cc9ab5345d5f7b68cc5d47613",
+  "pytest": {
+    "command": "python -m pytest (full suite)",
+    "exit_code": 0,
+    "summary": "550 passed in 678.59s (0:11:18)",
+    "raw_log": "E:\\TraceFixRunsActive\\skills-mcp-integration-final-20260927\\pytest-full.log"
+  },
+  "ruff": {
+    "command": "python -m ruff check [changed Python files]",
+    "exit_code": 0
+  },
+  "compileall": {
+    "command": "python -m compileall -q src/tracefix tests/test_skills.py",
+    "exit_code": 0
+  },
+  "git_diff_check": {
+    "command": "git diff --check",
+    "exit_code": 0,
+    "notes": "Git emitted LF-to-CRLF working-copy notices."
+  },
+  "fixture": {
+    "command": "python -m pytest tests/test_skills.py -q -p no:cacheprovider -p no:tmpdir",
+    "exit_code": 0,
+    "summary": "7 passed"
+  },
+  "skill_creator_validator": {
+    "exit_code": 0
+  },
+  "post_redaction_targeted": {
+    "command": "python -m pytest tests/test_docker_tls.py tests/test_docker_backend.py tests/test_skills.py",
+    "exit_code": 0,
+    "summary": "40 passed in 5.15s; includes verified localhost TLS handshake",
+    "full_suite_repeated": false,
+    "tested_head": "14b477e (pre-rewrite local commit; test sources were modified in working tree)",
+    "tested_source_sha256": {
+      "pyproject.toml": "c7c7cd28223c713d814299117ff1f7461f188a9362604ce5ca1b857f7d26d247",
+      "src/tracefix/docker_backend.py": "6a4164dbdea748fe3d4e0a91ac3d35f0c08052cadda663313e1287159b326cf2",
+      "src/tracefix/docker_tls.py": "db72700c625299e175a9f85a8ec11697435977bcb9431b2c36cd090b7c2fe82c",
+      "scripts/docker_runner_e2e.py": "c3fec6af05f2adaba7e8b162d43d137c3773d42c66d0871068e8d32514232b8b",
+      "tests/test_docker_tls.py": "5ffb2b2ce6a4b9c658b1f24fcb2c56644f4ef071d0e851cfb1e564d5ac369b8d"
+    }
+  }
+}

@@ -14,8 +14,7 @@
   ],
   "related_files": [
     "pylint/config/__init__.py",
-    "tests/lint/unittest_lint.py",
-    "pylint/config/__init__.pyi"
+    "tests/lint/unittest_lint.py"
   ],
   "source_file_count": 1,
   "test_file_count": 1,

@@ -16,9 +16,7 @@
   "related_files": [
     "pylint/checkers/variables.py",
     "pylint/constants.py",
-    "tests/checkers/unittest_variables.py",
-    "pylint/checkers/__init__.py",
-    "pylint/checkers/__init__.pyi"
+    "tests/checkers/unittest_variables.py"
   ],
   "source_file_count": 2,
   "test_file_count": 1,

@@ -18,7 +18,7 @@
   "fail_to_pass": [
     "test_requests.py::RequestsTestCase::test_no_content_length"
   ],
-  "test_command": "pytest -q",
+  "test_command": "pytest -q test_requests.py::RequestsTestCase::test_no_content_length",
   "pass_to_pass_count": 5,
   "expected_source_files": [
     "requests/models.py"
@@ -28,9 +28,7 @@
   ],
   "related_context_files": [
     "requests/models.py",
-    "test_requests.py",
-    "requests/__init__.py",
-    "requests/__init__.pyi"
+    "test_requests.py"
   ],
   "hashes": {
     "problem_statement": "0192533ff2ef0c53a600b3ef02cb9dc20bf0998d56eeaee80ca1a76c46758eec",

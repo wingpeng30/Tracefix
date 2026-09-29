@@ -1,7 +1,7 @@
 # TraceFix 实验索引与结论
 
-本页用于快速找到每次实验的结构化数据、解释和正确结论边界。所有人民币金额使用实验记录中
-保存的固定汇率估算，不代表结算金额。
+本页用于快速找到每次实验的结构化数据、解释和正确结论边界。早期美元费用按记录中的固定汇率
+估算人民币；新 CNY 账本直接使用人民币单价，不进行隐式换汇。计算费用不代表供应商实际扣费。
 
 ## 实验总览
 
@@ -15,6 +15,8 @@
 | V0.3.2 夹具验收 | 4 个多文件任务 | 4/4 gold | 0 | 0 | ¥0 | 仅验证任务定义自洽 |
 | V0.4.0 配对对照组 | 4 题 × 3 次 | 12/12 | 254,975 | 68 | ¥0.37364763 | 关闭压缩 |
 | V0.4.0 配对 32k 组 | 相同 4 题 × 3 次 | 12/12 | 265,145 | 70 | ¥0.38225877 | 0 次折叠，不构成压缩证据 |
+| V0.8.2 环境资格验收 | 12 个真实候选 | 2/12 合格 | 0 | 0 | ¥0 | 仅环境/base-gold 资格，不是 Agent 实验 |
+| V0.8.3 环境资格重验 | 12 个真实候选 | 7/12 合格 | 0 | 0 | ¥0 | 审计 node ID 与环境版本后得到的任务资格 |
 
 ## V0.2.0 Baseline
 
@@ -60,6 +62,15 @@
 
 ## 指标解释注意事项
 
+V0.8.2 的真实候选环境与行为资格审查见
+[`v0.8.2-real-environment-validation.md`](v0.8.2-real-environment-validation.md)。其中 2/12
+表示“base 断言失败且 gold 同入口通过”的离线任务资格数；它不等于模型 resolved rate，也没有
+调用 LLM。
+
+V0.8.3 的重验结果见
+[`v0.8.3-real-environment-validation.md`](v0.8.3-real-environment-validation.md)。7/12 表示可进入
+未来付费实验的任务数，不表示 Agent 已解决 7 道真实 Issue。
+
 V0.4.0 的 24 次交替配对实验见
 [`v0.4.0-paired-context-32k.md`](v0.4.0-paired-context-32k.md)。两组均 12/12，但所有任务
 都未达到 32k，必须作为“未触发机制”的否定性结果报告，不能用于宣传压缩收益。
@@ -75,3 +86,101 @@ V0.3.2 多文件任务的离线验收数据见
 - Token 降幅不一定与费用同比；现有记录不能分解缓存命中、缓存未命中和不同 Token 类型价格。
 - `resolved` 来自 Agent 外独立 pytest；Agent 的 `completed` 状态应单独观察。
 - 所有当前任务均为合成任务，不能表述为真实 GitHub Issue 或 SWE-bench 解决率。
+
+## P2 正式重跑准备（2026-09-21）
+
+- 执行代码：`e464f9b`。
+- 账单：仅筛选 `Tracefix`，历史供应商账单合计人民币 3.24553320 元；原始账单不提交。
+- 真实探测：`deepseek-flash`，20 输入、4 输出 Token；共享账本累计人民币 3.24560520 元。
+- 工程门槛：276 passed，综合覆盖率 90.06228373702422%；Ruff、compileall 通过。
+- 正式 60 项尚未启动。自动审批要求用户明确授权将任务、源码片段与工具输出发送给 DeepSeek。
+
+用户授权后正式重跑已完成。脱敏结果见
+[`../../benchmarks/experiments/v0.8.6-p2-formal-rerun.json`](../../benchmarks/experiments/v0.8.6-p2-formal-rerun.json)，
+解释见 [`v0.8.6-p2-formal-rerun.md`](v0.8.6-p2-formal-rerun.md)。C 成功 8/30、T 成功 7/30；
+T 输入 -2.73%、Agent 用时 -6.14%，但成功率 -3.33pp，因此尚未达到长期目标中的成功率约束。
+
+## 四组消融零费用预检（2026-09-22）
+
+[`v0.8.10-ablation-preflight.md`](v0.8.10-ablation-preflight.md) 记录四组开发集 120 项确定性日程、
+20 题留出证据复核、完整依赖锁及预算。真实任务无答案模拟 120/120 证据有效，正式入口合成模拟
+120/120 fixture 通过，两类恢复均不新增调用；全部仅作为工程验证。首批配置错误和更正记录保留。
+最终 335 passed、综合覆盖率 90.98527475158626%，Ruff/compileall 通过。共享原 ¥100 预算剩余
+¥70.70445880，无法覆盖开发集固定预算的 ¥103.20 保守上界；付费阶段尚未启动。
+
+## V0.8.11：开发集四组正式消融
+
+- 解释：[`v0.8.11-development-ablation.md`](v0.8.11-development-ablation.md)。
+- 数据：[`../../benchmarks/experiments/v0.8.11-development-ablation/formal-results.json`](../../benchmarks/experiments/v0.8.11-development-ablation/formal-results.json)。
+- 执行代码 `a8309eb`，120/120 完成且证据有效，48 成功、72 失败，基础设施与证据异常均零；恢复零新调用。
+- 普通资格 8 题：基线 13/24、Repo Map 10/24、行动 11/24、上下文 14/24；特殊资格 2 题各组 0/6。
+- 行动输入 -35.77%，但成功率 -8.33 个百分点，Agent 用时 +0.50%。无组满足预定规则，保留基线。
+- 历史折叠 0；上下文工具裁剪在 18/30 项发生，不能将两个机制混为“未触发”。20 题留出集未评测。
+- 本轮保守计算 ¥51.073224，共享累计 ¥80.3687652/100；不是供应商实际账单，未新增预算。
+- 最终代码全量 391 passed，综合覆盖率 91.00807867931155%，Ruff/compileall 通过。下一步优先离线
+  检查配对失败和上下文阶段，不直接从小样本开发结果宣称泛化或非劣。
+
+## V0.8.12：开发集离线详细诊断
+
+- 报告：[`v0.8.12-offline-detailed-ablation-diagnostic.md`](v0.8.12-offline-detailed-ablation-diagnostic.md)。
+- 脱敏机器结果：[`../../benchmarks/experiments/v0.8.11-development-ablation/detailed-diagnostic-20260923-final-v4/detailed-diagnostic.json`](../../benchmarks/experiments/v0.8.11-development-ablation/detailed-diagnostic-20260923-final-v4/detailed-diagnostic.json)。
+- 配对索引：[`../../benchmarks/experiments/v0.8.11-development-ablation/detailed-diagnostic-20260923-final-v4/paired-cases.json`](../../benchmarks/experiments/v0.8.11-development-ablation/detailed-diagnostic-20260923-final-v4/paired-cases.json)。
+- 120/120 试次、2,094 响应、120 轨迹和 480 试次工件哈希通过复核；普通集 24 对为 5 退步、3 反向、16 同结果。
+- 未证明可复现实现缺陷；不改算法。下一开发集仅验证工具输出呈现的单变量假设，20 题留出集未使用。
+- 全量 401 passed；综合覆盖率 90.22915340547422%（语句 92.5399889685604%、分支 82.52069917203312%），Ruff/compileall 通过。原始日志、JUnit 与 coverage JSON/XML 留在本机 `runs/detailed-ablation-verification-20260923/`。
+
+
+## V0.8.13：工具输出呈现单变量预检与诊断更正
+
+- 报告：[`v0.8.13-presentation-only-preflight.md`](v0.8.13-presentation-only-preflight.md)。
+- 脱敏协议、完整 60 位置日程、校正后的诊断和哈希索引：`../../benchmarks/experiments/v0.8.13-presentation-only-preflight/`。
+- 单变量 C/T 配置冻结于提交 `8954d77860aa17dfdc579c40ed14f50ef7fb2021`；仅工具输出呈现开关不同，未执行付费批次。
+- 合成 fixture Agent/独立验收 6/6 通过并完成无调用恢复；这仅是工程证据。20 题留出评测未运行。
+- 共享余额 ¥19.63123480，完整 60 位置的保守上界 ¥51.60；预算不足，继续暂停付费运行。
+
+## V0.8.14：工具输出呈现单变量开发集正式比较
+
+- 报告：[`v0.8.14-presentation-only-paid-development.md`](v0.8.14-presentation-only-paid-development.md)。
+- 脱敏 60 项汇总、逐位置指标及工件哈希：[`report.json`](../../benchmarks/experiments/v0.8.14-presentation-only-paid-development/report.json) 与 [`sha256-manifest.json`](../../benchmarks/experiments/v0.8.14-presentation-only-paid-development/sha256-manifest.json)。
+- 用户授权将共享累计上限提高至 ¥150、本阶段上限设为 ¥55；同一账本下完成 60/60 个试次记录，阶段保守计算 ¥26.177326，共享累计 ¥106.54609120。以上金额不是供应商账单。
+- 8 道普通题 C/T 均 12/24；T 输入 Token −10.51%，Agent 时间 +18.83%。2 道特殊资格任务两组均 0/6。证据审计仅 58/60 有效，2 项复验仍不完整；不采纳 T，保留基线。
+- 同目录恢复复用 60/60；留出集未运行。全量工程门槛引用运行前执行代码 `e5ab04b` 的验证证据；本轮未改运行代码。
+
+## V0.8.18：验证闭环修正后的 48 项同期比较
+
+- 报告：[`v0.8.18-validation-closure-comparison.md`](v0.8.18-validation-closure-comparison.md)。
+- 脱敏逐项结果与工件哈希：[`report.json`](../../benchmarks/experiments/v0.8.18-validation-closure-comparison/report.json)、[`evidence-manifest.json`](../../benchmarks/experiments/v0.8.18-validation-closure-comparison/evidence-manifest.json)。
+- 账单 TraceFix 项按日期及费率去重后为 ¥41.74029308；新批阶段计算 ¥18.470972，共享计算累计 ¥60.21126508，均非供应商实际账单。
+- 48/48 完成并通过工件哈希核验；同目录恢复复用 48/48，账本请求数与 Agent 目录数不变。
+- 普通题 C 16/24，T 13/24；T 输入减少约 6.0%、用时减少约 0.4%，但成功率降低，不采纳 T，保留 C。20 道留出题未运行。
+
+## V0.8.19：验证闭环失败复盘及 V0.8.18 证据更正
+
+- 报告：[`v0.8.19-validation-closure-failure-review.md`](v0.8.19-validation-closure-failure-review.md)；脱敏事件与哈希索引：[`review.json`](../../benchmarks/experiments/v0.8.19-closure-failure-review/review.json)。
+- 共享审计证据有效 46/48；第 19 项网络错误、第 39 项执行错误。复验分别超时和再次执行错误，原始评分不改。V0.8.18 的“48/48 证据有效”已更正。
+- pytest-10081 的两次 T 空补丁来自重复无效果补丁直到预算终止，闭环提醒未触发；没有证据证明闭环造成该题退步。全批 T 提醒仅在 2/24 项触发。
+- 决定先做重复无效果补丁恢复的单变量零费用 fixture 预检；本轮没有代码修改、付费调用或留出集使用。
+
+## V0.8.20：重复无效果补丁恢复门槛零费用预检
+
+- 报告：[`v0.8.20-no-effect-recovery-preflight.md`](v0.8.20-no-effect-recovery-preflight.md)。
+- 新增默认关闭的 Agent 配置门槛：重复无效果补丁后要求成功重读目标文件，再允许不同补丁。
+- 独立 fixture 证明未重读换补丁会被拦截；重读后脚本化 Agent 循环可应用修复并通过 pytest/Diff。最终定向回归 3 passed；全量 pytest 457 passed、0 failed，623.41 秒。
+- pytest-only 综合覆盖率 86.073278% 未达 90%，追加真实只读诊断入口后综合 90.149626% 通过；语句 92.377358%、分支 82.996769%。Ruff 与 129 个受跟踪 Python 文件 compileall 退出 0。日志及工件保存在本机 `tracefix-noeffect-full-short-20260925/`。
+- 同期比较的 48 位置 C/T 草案及固定采纳规则见 [`next-comparison.json`](../../benchmarks/experiments/v0.8.20-no-effect-recovery-preflight/next-comparison.json)，SHA-256 `7ce63dffc045e97299cfb4d857200d94cb8657d08d07625394175ac1f389de41`。共享余额最近记录 ¥23.12462080，不足以覆盖 ¥41.28 完整上界；新恢复开关尚未接入正式执行器。本轮不付费、不使用 20 题留出集，合成流程不构成修复成功率证据。
+- 指标和本机工件 SHA 清单：[`engineering-verification.json`](../../benchmarks/experiments/v0.8.20-no-effect-recovery-preflight/engineering-verification.json)，SHA-256 `bf84212b2c98f6006ab42f8d8cd3919854762b87fde44980e97bc595fb3f05a8`。
+
+## V0.8.21：重复无效果补丁恢复门槛执行冻结
+
+- 报告：[`v0.8.21-no-effect-recovery-execution.md`](v0.8.21-no-effect-recovery-execution.md)。
+- 正式 P2 设计/CLI 已接入恢复门槛；8 道普通题共 48 项，C/T 唯一差异为重复 `no_effect` 后强制完整重读。2 道收集失败资格题单列。
+- 六位置模拟供应商端到端和完成态恢复通过；Requests-1766 本地服务配置及 pytest-10051 断言阶段错误分类已修正。本轮无付费请求。
+- 脱敏机器协议、执行身份、逐题依赖摘要及验证结果在 [`v0.8.21-no-effect-recovery-execution/`](../../benchmarks/experiments/v0.8.21-no-effect-recovery-execution/)。
+- 全量 pytest 461 passed，Ruff/compileall 退出 0。精确综合覆盖率 89.634203%，Coverage.py 按 `fail-under=90` 的整数显示为 90 并退出 0；未取整值不足 90，报告保留此限制。
+
+## V0.8.22：重复 no_effect 恢复门槛同期比较
+
+- 完整报告：[48 项正式比较与限制](v0.8.22-no-effect-recovery-48-campaign-results.md)。
+- 脱敏逐位置 JSON：[机器结果](v0.8.22-no-effect-recovery-48-results.json)。
+- 48 项全完成，C/T 独立成功均 6/24；20 个证据问题和一项操作中断事故导致结论证据不完整，未达到预注册采纳条件。
+- 本机原始工件：`runs/no-effect-recovery-paid-development-20260926-v1/experiment/`；最终诊断：`runs/no-effect-recovery-paid-development-20260926-v1/final-diagnostic/`。原始请求、补丁和账本不纳入版本库。

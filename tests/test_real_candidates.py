@@ -1,5 +1,8 @@
 import json
 
+import pytest
+
+from tracefix.exceptions import BenchmarkError
 from tracefix.real_benchmark import RealIssueTask
 from tracefix.real_candidates import CandidateCollectionConfig, collect_candidates, patch_paths
 
@@ -82,3 +85,83 @@ def test_collect_candidates_accepts_single_source_file_and_writes_loadable_manif
     task = RealIssueTask.load(tmp_path / "out" / "psf__requests-1")
     assert result.selected[0].source_file_count == 1
     assert task.expected_source_files == ("requests/models.py", "setup.cfg")
+    assert task.test_command == "pytest -q"
+
+
+def test_holdout_collection_freezes_seeded_order_exclusions_and_duplicates(tmp_path) -> None:
+    rows = []
+    for number in range(8):
+        rows.append(
+            {
+                "instance_id": f"psf__requests-{number}",
+                "repo": "psf/requests",
+                "base_commit": f"{number:040x}",
+                "version": "1.0",
+                "problem_statement": f"fix issue {number}",
+                "patch": _patch(f"requests/m{number}.py", "setup.cfg"),
+                "test_patch": _patch(f"tests/test_{number}.py", "tests/helper.py"),
+            }
+        )
+    rows[7]["problem_statement"] = rows[6]["problem_statement"]
+    source = tmp_path / "rows.json"
+    source.write_text(json.dumps(rows), encoding="utf-8")
+    config = CandidateCollectionConfig(
+        source=source,
+        output_dir=tmp_path / "one",
+        repositories=("psf/requests",),
+        per_repository=5,
+        holdout_mode=True,
+        selection_seed=20260921,
+        excluded_task_ids=("psf__requests-0",),
+    )
+    first = collect_candidates(config)
+    second = collect_candidates(config.model_copy(update={"output_dir": tmp_path / "two"}))
+    assert first.candidate_order == second.candidate_order
+    assert first.candidate_order_sha256 == second.candidate_order_sha256
+    assert len(first.selected) == 6
+    assert "psf__requests-0" not in first.candidate_order
+    assert "psf__requests-7" not in first.candidate_order
+    reasons = {item.instance_id: item.exclusion_reasons for item in first.excluded}
+    assert reasons["psf__requests-0"] == ("previously_reviewed_task",)
+    assert reasons["psf__requests-7"] == ("duplicate_problem_statement",)
+
+
+def test_candidate_collector_reads_jsonl_and_explains_quota_failure(tmp_path) -> None:
+    row = {
+        "instance_id": "psf__requests-1",
+        "repo": "psf/requests",
+        "base_commit": "a" * 40,
+        "problem_statement": "",
+        "patch": "",
+        "test_patch": "",
+    }
+    source = tmp_path / "rows.jsonl"
+    source.write_text(json.dumps(row) + "\n", encoding="utf-8")
+    output = tmp_path / "quota-report"
+    with pytest.raises(BenchmarkError, match="candidate quota is not satisfied") as error:
+        collect_candidates(
+            CandidateCollectionConfig(
+                source=source,
+                output_dir=output,
+                repositories=("psf/requests",),
+                per_repository=1,
+            )
+        )
+    saved = output / "candidate-pool.json"
+    assert saved.is_file()
+    assert error.value.context["counts"] == {"psf/requests": 0}
+    result = json.loads(saved.read_text(encoding="utf-8"))
+    reasons = result["excluded"][0]["exclusion_reasons"]
+    assert "empty_problem_statement" in reasons
+    assert "missing_patch_or_test_patch" in reasons
+    assert "no_test_patch_files" in reasons
+
+
+def test_candidate_collection_rejects_malformed_local_source_and_patch_paths(tmp_path) -> None:
+    source = tmp_path / "broken.json"
+    source.write_text("{", encoding="utf-8")
+    with pytest.raises(BenchmarkError, match="invalid local SWE-bench source"):
+        collect_candidates(
+            CandidateCollectionConfig(source=source, output_dir=tmp_path / "out")
+        )
+    assert patch_paths(_patch("../outside.py", "tests/../unsafe.py")) == ()

@@ -3,20 +3,28 @@
 from __future__ import annotations
 
 import difflib
+import hashlib
+import json
 import os
 import re
 import shlex
+import signal
 import subprocess
 import sys
+import tempfile
 import time
+import xml.etree.ElementTree as element_tree
+from collections.abc import Callable
 from pathlib import Path
-from typing import ClassVar
+from typing import Any, ClassVar
+from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from tracefix.exceptions import ToolExecutionError, ToolValidationError
 from tracefix.messages import ToolCall
 from tracefix.tools.base import BaseTool, ReservedToolName, ToolRegistry, ToolResult, ToolSpec
+from tracefix.tools.skills import SkillLimits
 
 _SKIPPED_DIRECTORIES = frozenset(
     {
@@ -35,6 +43,36 @@ _SKIPPED_DIRECTORIES = frozenset(
 )
 _SHELL_CONTROL_PATTERN = re.compile(r"[|&;<>`\r\n]")
 _SENSITIVE_ENV_MARKERS = ("API_KEY", "ACCESS_TOKEN", "PASSWORD", "SECRET", "CREDENTIAL")
+
+_AGENT_PYTEST_AUDIT_PLUGIN = """
+import json
+import os
+
+_records = {"format_version": 2, "run_id": os.environ.get("TRACEFIX_AGENT_AUDIT_ID"),
+            "collected_node_ids": [], "selected_node_ids": [],
+            "reports": [], "completed": False}
+
+def pytest_collection_modifyitems(session, config, items):
+    _records["collected_node_ids"] = [item.nodeid for item in items]
+
+def pytest_collection_finish(session):
+    # This runs after -k and plugin deselection have updated session.items.
+    _records["selected_node_ids"] = [item.nodeid for item in session.items]
+    for item in session.items:
+        item.user_properties.append(("tracefix_nodeid", item.nodeid))
+
+def pytest_runtest_logreport(report):
+    _records["reports"].append({"nodeid": report.nodeid, "when": report.when,
+                                "outcome": report.outcome})
+
+def pytest_sessionfinish(session, exitstatus):
+    _records["exitstatus"] = exitstatus
+    _records["completed"] = True
+    path = os.environ.get("TRACEFIX_AGENT_AUDIT_PATH")
+    if path:
+        with open(path, "w", encoding="utf-8") as stream:
+            json.dump(_records, stream)
+"""
 
 
 def _truncate_text(value: str, limit: int) -> tuple[str, bool]:
@@ -68,9 +106,7 @@ def _sanitized_subprocess_env() -> dict[str, str]:
 def _is_blocked_secret_file(name: str) -> bool:
     """阻止真实 dotenv 文件，同时允许公开的 .env.example 模板。"""
     normalized = name.casefold()
-    return normalized == ".env" or (
-        normalized.startswith(".env.") and normalized != ".env.example"
-    )
+    return normalized == ".env" or (normalized.startswith(".env.") and normalized != ".env.example")
 
 
 def _resolve_workspace(workspace: str | Path) -> Path:
@@ -385,6 +421,12 @@ class ApplyPatchTool(_WorkspaceTool):
         input_schema=_ApplyPatchArgs.model_json_schema(),
     )
 
+    def __init__(
+        self, workspace: Path, *, protected_dirs: set[str] | None = None, **kwargs: Any
+    ) -> None:
+        super().__init__(workspace, **kwargs)
+        self.protected_dirs = protected_dirs if protected_dirs is not None else set()
+
     def execute(self, call: ToolCall) -> ToolResult:
         """先执行无副作用检查，确认安全且可应用后才修改工作区。"""
         started = time.monotonic()
@@ -392,8 +434,20 @@ class ApplyPatchTool(_WorkspaceTool):
         assert isinstance(args, _ApplyPatchArgs)
         # 先把模型常见的 Begin Patch 格式转换为标准 diff。转换只操作内存，
         # 路径或上下文不合法时不会提前写文件。
-        patch = self._normalize_patch(args.patch)
-        changed_files = self._validate_patch_paths(patch)
+        try:
+            patch = self._normalize_patch(args.patch)
+        except ToolValidationError as exc:
+            if exc.message != "patch does not change the target file":
+                raise
+            return ToolResult(
+                call_id=call.id,
+                tool_name=self.spec.name,
+                success=False,
+                output={"changed_files": []},
+                error="no_effect",
+                duration_ms=(time.monotonic() - started) * 1000,
+            )
+        declared_files = self._validate_patch_paths(patch)
 
         checked = self._run_git_apply(patch, check=True)
         if checked.returncode != 0:
@@ -408,6 +462,7 @@ class ApplyPatchTool(_WorkspaceTool):
                 duration_ms=(time.monotonic() - started) * 1000,
             )
 
+        before_files, before_git = self._patch_state(declared_files)
         applied = self._run_git_apply(patch, check=False)
         if applied.returncode != 0:
             stdout, _ = _truncate_text(applied.stdout, self.max_output_chars)
@@ -418,6 +473,21 @@ class ApplyPatchTool(_WorkspaceTool):
                 success=False,
                 output={"stdout": stdout, "stderr": stderr},
                 error="git apply failed after validation",
+                duration_ms=(time.monotonic() - started) * 1000,
+            )
+        after_files, after_git = self._patch_state(declared_files)
+        changed_files = sorted(
+            name for name in declared_files if before_files[name] != after_files[name]
+        )
+        if before_git != after_git and not changed_files:
+            changed_files = declared_files
+        if not changed_files:
+            return ToolResult(
+                call_id=call.id,
+                tool_name=self.spec.name,
+                success=False,
+                output={"changed_files": [], "stdout": applied.stdout, "stderr": applied.stderr},
+                error="no_effect",
                 duration_ms=(time.monotonic() - started) * 1000,
             )
         return ToolResult(
@@ -432,6 +502,32 @@ class ApplyPatchTool(_WorkspaceTool):
             duration_ms=(time.monotonic() - started) * 1000,
         )
 
+    def _patch_state(self, names: list[str]) -> tuple[dict[str, tuple | None], bytes]:
+        """Compare actual file identity and scoped Git state, not diff declarations."""
+        files: dict[str, tuple | None] = {}
+        for name in names:
+            path = _resolve_path(self.workspace, name)
+            if path.is_file():
+                digest = hashlib.sha256(path.read_bytes()).hexdigest()
+                files[name] = ("file", path.stat().st_mode, digest)
+            elif path.exists():
+                files[name] = ("other", path.stat().st_mode)
+            else:
+                files[name] = None
+        try:
+            status = subprocess.run(
+                ["git", "status", "--porcelain=v1", "-z", "--untracked-files=all", "--", *names],
+                cwd=self.workspace,
+                capture_output=True,
+                timeout=30,
+                check=False,
+            )
+        except (OSError, subprocess.SubprocessError) as exc:
+            raise ToolExecutionError(f"cannot inspect patch Git state: {exc}") from exc
+        if status.returncode != 0:
+            raise ToolExecutionError("cannot inspect patch Git state")
+        return files, status.stdout
+
     def _normalize_patch(self, patch: str) -> str:
         """把受支持的模型补丁规范化为可交给 Git 的 unified diff。"""
         stripped = patch.strip()
@@ -441,10 +537,13 @@ class ApplyPatchTool(_WorkspaceTool):
         # 模型偶尔会在标准 diff 末尾误带 Codex 结束标记。它不是 diff 内容，
         # 可以确定性移除；其他未知控制行仍交由 git apply 拒绝。
         lines = patch.splitlines()
-        while lines and not lines[-1].strip():
+        # Unified diff 中以单空格开头的空白上下文行有语义，不能当作尾随空行删除。
+        while lines and lines[-1] == "":
             lines.pop()
         if lines and lines[-1].strip() == "*** End Patch":
             lines.pop()
+            while lines and lines[-1] == "":
+                lines.pop()
         return "\n".join(lines) + "\n"
 
     def _convert_begin_patch(self, patch: str) -> str:
@@ -610,6 +709,10 @@ class ApplyPatchTool(_WorkspaceTool):
                     continue
                 normalized = token[2:] if token.startswith(("a/", "b/")) else token
                 _resolve_path(self.workspace, normalized)
+                if Path(normalized).parts and Path(normalized).parts[0] in self.protected_dirs:
+                    raise ToolValidationError(
+                        "patch targets a registered TraceFix internal directory"
+                    )
                 paths.add(Path(normalized).as_posix())
 
         if not paths:
@@ -677,6 +780,11 @@ class RunTestsTool(_WorkspaceTool):
         default_timeout_seconds: float = 120,
         python_executable: str | Path | None = None,
         pythonpath_entries: tuple[Path, ...] = (),
+        pytest_config: str | None = None,
+        environment_variables: dict[str, str] | None = None,
+        protected_dirs: set[str] | None = None,
+        evidence_dir: Path | None = None,
+        on_process_started: Callable[[], None] | None = None,
     ) -> None:
         super().__init__(workspace, max_output_chars=max_output_chars)
         if default_timeout_seconds <= 0:
@@ -693,60 +801,162 @@ class RunTestsTool(_WorkspaceTool):
         )
         if any(not entry.is_dir() for entry in self.pythonpath_entries):
             raise ValueError("test PYTHONPATH entries must be existing directories")
+        self.pytest_config = pytest_config
+        self.environment_variables = dict(environment_variables or {})
+        self.protected_dirs = protected_dirs if protected_dirs is not None else set()
+        self.evidence_dir = evidence_dir or Path(tempfile.mkdtemp(prefix="tracefix-test-evidence-"))
+        evidence_root = self.evidence_dir.resolve()
+        if evidence_root == self.workspace or self.workspace in evidence_root.parents:
+            raise ToolValidationError("test evidence directory must be outside the checkout")
+        self.on_process_started = on_process_started
+        if any(
+            not name.isidentifier()
+            or name.upper().startswith("PYTEST_")
+            or any(marker in name.upper() for marker in ("API_KEY", "TOKEN", "PASSWORD", "SECRET"))
+            for name in self.environment_variables
+        ):
+            raise ValueError("test environment overrides cannot set pytest controls or credentials")
 
     def execute(self, call: ToolCall) -> ToolResult:
         """执行 pytest，并把失败和超时作为模型可以继续处理的结果返回。"""
         started = time.monotonic()
-        args = self._validate_call(call, _RunTestsArgs)
-        assert isinstance(args, _RunTestsArgs)
-        command = self._parse_command(args.command, self.python_executable)
-        timeout = args.timeout_seconds or self.default_timeout_seconds
+        command, timeout = self.prepare(call)
 
         try:
             environment = _sanitized_subprocess_env()
-            # 源码布局项目（如 pytest 的 src/）必须优先导入 Agent 修改后的工作区，
-            # 不能误用测试虚拟环境中为准备依赖而安装的旧 editable package。
-            import_roots = [str(self.workspace)]
+            environment.update(self.environment_variables)
+            test_tmp = self.workspace / ".tracefix-test-tmp"
+            if ".tracefix-test-tmp" not in self.protected_dirs:
+                if test_tmp.exists() or test_tmp.is_symlink():
+                    raise ToolValidationError("TraceFix test temporary path already exists")
+                test_tmp.mkdir(parents=True)
+                self.protected_dirs.add(".tracefix-test-tmp")
+            elif not test_tmp.is_dir() or test_tmp.is_symlink():
+                raise ToolValidationError("registered test temporary directory changed identity")
+            self.evidence_dir.mkdir(parents=True, exist_ok=True)
+            # 污染性的 pytest 参数和自动插件注入不会从 TraceFix 父进程继承。
+            environment.pop("PYTEST_ADDOPTS", None)
+            environment.pop("PYTEST_PLUGINS", None)
+            environment["PYTEST_DISABLE_PLUGIN_AUTOLOAD"] = "1"
+            environment["PYTHONDONTWRITEBYTECODE"] = "1"
+            # 被测 checkout 的源码必须优先于用于提供测试依赖的额外路径。
+            import_roots: list[str] = []
             if (self.workspace / "src").is_dir():
-                import_roots.insert(0, str(self.workspace / "src"))
-            import_roots[0:0] = [str(path) for path in self.pythonpath_entries]
-            inherited_pythonpath = environment.get("PYTHONPATH")
-            if inherited_pythonpath:
-                # 继承值可能本身包含多个目录，必须作为原始字符串拼接，不能把
-                # 整串内容错误地解释成单个 Path。
-                import_roots.append(inherited_pythonpath)
+                import_roots.append(str(self.workspace / "src"))
+            import_roots.append(str(self.workspace))
+            import_roots.extend(str(path) for path in self.pythonpath_entries)
+            # 不继承父级 PYTHONPATH：其内容可能把其他 checkout 或插件注入测试进程。
             environment["PYTHONPATH"] = os.pathsep.join(import_roots)
             # 临时目录必须位于仓库内：部分项目的嵌套 pytest 会沿父目录寻找
             # pyproject，放到仓库外可能误读 TraceFix 自身配置。通过仅修改本克隆
             # 的 .git/info/exclude 隐藏副产物，不改变受测源码或共享 .gitignore。
-            test_tmp = self.workspace / ".tracefix-test-tmp"
-            test_tmp.mkdir(parents=True, exist_ok=True)
-            exclude = self.workspace / ".git" / "info" / "exclude"
-            if exclude.is_file():
-                current = exclude.read_text(encoding="utf-8", errors="replace")
-                marker = ".tracefix-test-tmp/"
-                if marker not in current.splitlines():
-                    with exclude.open("a", encoding="utf-8") as stream:
-                        if current and not current.endswith("\n"):
-                            stream.write("\n")
-                        stream.write(f"{marker}\n")
             environment["TMP"] = str(test_tmp)
             environment["TEMP"] = str(test_tmp)
-            completed = subprocess.run(
+            config_path = self._pytest_config_path(self.evidence_dir)
+            audit_id = uuid4().hex
+            audit_path = self.evidence_dir / f"agent-audit-{audit_id}.json"
+            junit_path = self.evidence_dir / f"agent-junit-{audit_id}.xml"
+            plugin_path = self.evidence_dir / "tracefix_agent_audit.py"
+            plugin_path.write_text(_AGENT_PYTEST_AUDIT_PLUGIN, encoding="utf-8")
+            environment["PYTHONPATH"] = os.pathsep.join([str(self.evidence_dir), *import_roots])
+            environment["TRACEFIX_AGENT_AUDIT_ID"] = audit_id
+            environment["TRACEFIX_AGENT_AUDIT_PATH"] = str(audit_path)
+            command.extend(
+                [
+                    f"--rootdir={self.workspace}",
+                    f"--confcutdir={self.workspace}",
+                    "-c",
+                    str(config_path),
+                    "-p",
+                    "tracefix_agent_audit",
+                    "-p",
+                    "no:cacheprovider",
+                    f"--junitxml={junit_path}",
+                ]
+            )
+            process = subprocess.Popen(
                 command,
                 cwd=self.workspace,
                 env=environment,
-                capture_output=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
                 text=True,
                 encoding="utf-8",
                 errors="replace",
-                timeout=timeout,
-                check=False,
                 shell=False,
+                start_new_session=(os.name != "nt"),
+            )
+            try:
+                if self.on_process_started is not None:
+                    self.on_process_started()
+                try:
+                    stdout_text, stderr_text = process.communicate(timeout=timeout)
+                except subprocess.TimeoutExpired:
+                    if os.name != "nt":
+                        try:
+                            os.killpg(process.pid, signal.SIGKILL)
+                        except ProcessLookupError:
+                            pass
+                    else:
+                        process.kill()
+                    process.communicate()
+                    raise
+            except BaseException:
+                # If the bridge or its event pipe fails after Popen succeeds,
+                # do not leave pytest running in the container without an owner.
+                if process.poll() is None and os.name != "nt":
+                    try:
+                        os.killpg(process.pid, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+                elif process.poll() is None:
+                    process.kill()
+                process.communicate()
+                raise
+            completed = subprocess.CompletedProcess(
+                command, process.returncode, stdout_text, stderr_text
             )
             stdout, stdout_truncated = _truncate_text(completed.stdout, self.max_output_chars)
             stderr, stderr_truncated = _truncate_text(completed.stderr, self.max_output_chars)
-            passed = completed.returncode == 0
+            audit, audit_issue = self._read_agent_audit(audit_path, audit_id, completed.returncode)
+            test_stats, junit_issue = self._read_junit(junit_path)
+            phase_issue = self._validate_agent_phases(audit, test_stats)
+            if completed.returncode is None:
+                test_status = "timed_out"
+            elif (
+                any(
+                    token in f"{stdout}\n{stderr}".casefold()
+                    for token in (
+                        "modulenotfounderror",
+                        "no module named",
+                        "importerror",
+                        "cannot import name",
+                    )
+                )
+                and not audit
+            ):
+                test_status = "environment_error"
+            elif audit_issue or junit_issue or phase_issue or not audit:
+                test_status = "invalid_test_run"
+            elif (
+                test_stats["tests"] > 0
+                and test_stats["passed"] == 0
+                and test_stats["failures"] == 0
+                and test_stats["errors"] == 0
+            ):
+                test_status = "invalid_test_run"
+            elif completed.returncode != 0:
+                test_status = "test_failure"
+            elif (
+                test_stats["tests"] == 0
+                or test_stats["passed"] == 0
+                or test_stats["failures"]
+                or test_stats["errors"]
+            ):
+                test_status = "invalid_test_run"
+            else:
+                test_status = "passed"
+            passed = test_status == "passed"
             return ToolResult(
                 call_id=call.id,
                 tool_name=self.spec.name,
@@ -757,9 +967,26 @@ class RunTestsTool(_WorkspaceTool):
                     "stdout": stdout,
                     "stderr": stderr,
                     "timed_out": False,
+                    "test_status": test_status,
+                    "test_counts": test_stats,
+                    "audit_path": str(audit_path),
+                    "junit_path": str(junit_path),
+                    "audit": audit,
+                    "diagnostic": audit_issue or junit_issue or phase_issue,
                 },
-                error=None if passed else f"tests failed with exit code {completed.returncode}",
-                metadata={"truncated": stdout_truncated or stderr_truncated},
+                error=(
+                    None
+                    if passed
+                    else (
+                        f"pytest did not provide valid passing test evidence ({test_status})"
+                        if completed.returncode == 0
+                        else f"tests failed with exit code {completed.returncode}"
+                    )
+                ),
+                metadata={
+                    "truncated": stdout_truncated or stderr_truncated,
+                    "process_started": True,
+                },
                 duration_ms=(time.monotonic() - started) * 1000,
             )
         except subprocess.TimeoutExpired as exc:
@@ -781,13 +1008,42 @@ class RunTestsTool(_WorkspaceTool):
                     "timed_out": True,
                 },
                 error=f"test command timed out after {timeout} seconds",
-                metadata={"truncated": stdout_truncated or stderr_truncated},
+                metadata={
+                    "truncated": stdout_truncated or stderr_truncated,
+                    "process_started": True,
+                },
                 duration_ms=(time.monotonic() - started) * 1000,
             )
         except OSError as exc:
             raise ToolExecutionError(
                 f"cannot start test command: {exc}", context={"command": command}
             ) from exc
+
+    def prepare(self, call: ToolCall) -> tuple[list[str], float]:
+        """Reject invalid calls and checkout configuration before consuming test quota."""
+        args = self._validate_call(call, _RunTestsArgs)
+        assert isinstance(args, _RunTestsArgs)
+        command = self._parse_command(args.command, self.python_executable)
+        self._validate_pytest_config()
+        return command, args.timeout_seconds or self.default_timeout_seconds
+
+    def _validate_pytest_config(self) -> None:
+        test_tmp = self.workspace / ".tracefix-test-tmp"
+        if ".tracefix-test-tmp" not in self.protected_dirs and (
+            test_tmp.exists() or test_tmp.is_symlink()
+        ):
+            raise ToolValidationError("TraceFix test temporary path already exists")
+        if self.pytest_config is not None:
+            workspace = self.workspace.resolve()
+            config = (workspace / self.pytest_config).resolve()
+            if not config.is_file() or config.parent != workspace:
+                raise ToolValidationError("configured pytest file is missing from the checkout")
+        else:
+            workspace = self.workspace.resolve()
+            for name in ("pytest.ini", "tox.ini", "setup.cfg", "pyproject.toml"):
+                config = self.workspace / name
+                if config.is_file() and config.resolve().parent != workspace:
+                    raise ToolValidationError("pytest configuration escapes the checkout root")
 
     @staticmethod
     def _parse_command(command: str, python_executable: str | None = None) -> list[str]:
@@ -815,6 +1071,38 @@ class RunTestsTool(_WorkspaceTool):
                 "only pytest or python -m pytest commands are allowed",
                 context={"command": command},
             )
+        controlled_options = {
+            "-c",
+            "--confcutdir",
+            "--rootdir",
+            "-p",
+            "-o",
+            "--override-ini",
+        }
+        remaining = parts[1:]
+        index = 0
+        while index < len(remaining):
+            item = remaining[index]
+            # 允许仓库配方显式关闭唯一会写缓存的内置插件；其它插件开关均拒绝。
+            if item == "-p" and remaining[index : index + 2] == ["-p", "no:cacheprovider"]:
+                index += 2
+                continue
+            if (
+                item in controlled_options
+                or item.startswith(
+                    (
+                        "--confcutdir=",
+                        "--rootdir=",
+                        "--override-ini=",
+                        "--junitxml=",
+                    )
+                )
+                or item.startswith("--junitxml")
+            ):
+                raise ToolValidationError(
+                    "pytest configuration and evidence options are managed by TraceFix"
+                )
+            index += 1
         # 裸 pytest 入口不会在所有平台都把 cwd 加入 sys.path；统一到当前解释器。
         selected_python = python_executable or sys.executable
         if direct_pytest:
@@ -822,6 +1110,132 @@ class RunTestsTool(_WorkspaceTool):
         # 即使模型写了 python/python3/py，也统一替换为任务配置的解释器，确保
         # 同一实验组不会因 PATH 差异悄悄切换测试环境。
         return [selected_python, *parts[1:]]
+
+    def _pytest_config_path(self, temporary: Path) -> Path:
+        """Resolve an explicit checkout config, or make a private empty config."""
+        workspace = self.workspace.resolve()
+        if self.pytest_config is not None:
+            config = (workspace / self.pytest_config).resolve()
+            if not config.is_file() or config.parent != workspace:
+                raise ToolValidationError("configured pytest file is missing from the checkout")
+            return config
+        config = next(
+            (
+                self.workspace / name
+                for name in ("pytest.ini", "tox.ini", "setup.cfg", "pyproject.toml")
+                if (self.workspace / name).is_file()
+            ),
+            None,
+        )
+        if config is not None:
+            resolved = config.resolve()
+            if resolved.parent != workspace:
+                raise ToolValidationError("pytest configuration escapes the checkout root")
+            return resolved
+        empty = temporary / "empty-pytest.ini"
+        empty.write_text("[pytest]\n", encoding="utf-8")
+        return empty
+
+    @staticmethod
+    def _read_agent_audit(path: Path, audit_id: str, returncode: int) -> tuple[dict, str | None]:
+        try:
+            audit = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return {}, "pytest audit is missing or malformed"
+        if (
+            not isinstance(audit, dict)
+            or audit.get("format_version") != 2
+            or audit.get("run_id") != audit_id
+            or audit.get("completed") is not True
+            or audit.get("exitstatus") != returncode
+            or not isinstance(audit.get("collected_node_ids"), list)
+            or not isinstance(audit.get("selected_node_ids"), list)
+            or not isinstance(audit.get("reports"), list)
+        ):
+            return {}, "pytest audit identity or completion is invalid"
+        return audit, None
+
+    @staticmethod
+    def _read_junit(path: Path) -> tuple[dict[str, Any], str | None]:
+        stats: dict[str, Any] = {
+            "tests": 0,
+            "passed": 0,
+            "failures": 0,
+            "errors": 0,
+            "skipped": 0,
+            "node_ids": [],
+        }
+        try:
+            root = element_tree.parse(path).getroot()
+        except (OSError, element_tree.ParseError):
+            return stats, "pytest JUnit report is missing or malformed"
+        for case in root.iter("testcase"):
+            stats["tests"] += 1
+            node_ids = [
+                property_node.get("value")
+                for property_node in case.findall("./properties/property")
+                if property_node.get("name") == "tracefix_nodeid"
+            ]
+            if len(node_ids) != 1 or not isinstance(node_ids[0], str):
+                return stats, "pytest JUnit test identity is missing or duplicated"
+            stats["node_ids"].append(node_ids[0])
+            children = list(case)
+            if any(child.tag in {"failure", "error"} for child in children):
+                stats[
+                    "failures" if any(child.tag == "failure" for child in children) else "errors"
+                ] += 1
+            elif any(child.tag == "skipped" for child in children):
+                stats["skipped"] += 1
+            else:
+                stats["passed"] += 1
+        return stats, None
+
+    @staticmethod
+    def _validate_agent_phases(audit: dict, junit: dict[str, Any]) -> str | None:
+        collected = audit.get("collected_node_ids", [])
+        selected = audit.get("selected_node_ids", [])
+        reports = audit.get("reports", [])
+        if not collected or len(set(collected)) != len(collected):
+            return "pytest audit has no tests or duplicate node IDs"
+        if not selected or len(set(selected)) != len(selected):
+            return "pytest audit has no selected tests or duplicate selected node IDs"
+        if not set(selected).issubset(collected):
+            return "pytest audit selected tests are absent from collection"
+        seen: set[tuple[str, str]] = set()
+        phased: dict[str, set[str]] = {}
+        for report in reports:
+            if not isinstance(report, dict):
+                return "pytest audit has a malformed phase report"
+            node, phase, outcome = report.get("nodeid"), report.get("when"), report.get("outcome")
+            if (
+                node not in selected
+                or phase not in {"setup", "call", "teardown"}
+                or outcome not in {"passed", "failed", "skipped"}
+            ):
+                return "pytest audit has an invalid node or phase"
+            if (node, phase) in seen:
+                return "pytest audit contains a duplicate test phase"
+            seen.add((node, phase))
+            phased.setdefault(node, set()).add(phase)
+        if not phased or any("setup" not in phases for phases in phased.values()):
+            return "pytest audit lacks setup phase evidence"
+        # A zero process exit code is not enough: a normal pass requires the
+        # pytest plugin to have observed all lifecycle phases for every item.
+        # Failed/aborted runs may legitimately stop before later phases; they
+        # are classified as failures by the caller, never as passing evidence.
+        if junit.get("failures", 0) == 0 and junit.get("errors", 0) == 0:
+            if junit.get("tests") != len(selected):
+                return "pytest audit selected tests differ from JUnit count"
+            reported_nodes = junit.get("node_ids", [])
+            if len(reported_nodes) != len(set(reported_nodes)) or set(reported_nodes) != set(
+                selected
+            ):
+                return "pytest audit selected tests differ from JUnit node identities"
+            expected = {"setup", "call", "teardown"}
+            incomplete = [node for node in selected if phased.get(node) != expected]
+            if incomplete:
+                return "pytest audit lacks complete setup/call/teardown evidence"
+        return None
 
 
 class _GetGitDiffArgs(BaseModel):
@@ -839,28 +1253,47 @@ class GetGitDiffTool(_WorkspaceTool):
         input_schema=_GetGitDiffArgs.model_json_schema(),
     )
 
+    def __init__(
+        self, workspace: Path, *, protected_dirs: set[str] | None = None, **kwargs: Any
+    ) -> None:
+        super().__init__(workspace, **kwargs)
+        self.protected_dirs = protected_dirs if protected_dirs is not None else set()
+
     def execute(self, call: ToolCall) -> ToolResult:
         """在不暂存文件的前提下组合 tracked 与 untracked diff。"""
         started = time.monotonic()
         args = self._validate_call(call, _GetGitDiffArgs)
         assert isinstance(args, _GetGitDiffArgs)
 
+        excludes = [f":(exclude){name}/" for name in sorted(self.protected_dirs)]
         tracked = self._run_git(
-            ["diff", "--no-ext-diff", f"--unified={args.context_lines}", "HEAD", "--"]
+            [
+                "diff",
+                "--no-ext-diff",
+                f"--unified={args.context_lines}",
+                "HEAD",
+                "--",
+                ".",
+                *excludes,
+            ]
         )
         if tracked.returncode != 0:
             return self._git_failure(call, tracked, started)
 
-        names = self._run_git(["diff", "--name-only", "HEAD", "--"])
+        names = self._run_git(["diff", "--name-only", "HEAD", "--", ".", *excludes])
         untracked = self._run_git(["ls-files", "--others", "--exclude-standard", "-z"])
         if names.returncode != 0 or untracked.returncode != 0:
             return self._git_failure(call, names if names.returncode else untracked, started)
 
         changed_files = [line for line in names.stdout.splitlines() if line]
-        untracked_files = sorted(path for path in untracked.stdout.split("\0") if path)
+        untracked_files = sorted(
+            path
+            for path in untracked.stdout.split("\0")
+            if path and Path(path).parts[0] not in self.protected_dirs
+        )
         patches = [tracked.stdout]
         for relative in untracked_files:
-            path = _resolve_path(self.workspace, relative, must_exist=True)
+            _resolve_path(self.workspace, relative, must_exist=True)
             generated = self._run_git(
                 [
                     "diff",
@@ -869,7 +1302,7 @@ class GetGitDiffTool(_WorkspaceTool):
                     f"--unified={args.context_lines}",
                     "--",
                     os.devnull,
-                    str(path),
+                    relative,
                 ]
             )
             # git diff --no-index 用退出码 1 表示“确实存在差异”。
@@ -937,21 +1370,35 @@ def create_default_tool_registry(
     test_timeout_seconds: float = 120,
     test_python_executable: str | Path | None = None,
     test_pythonpath_entries: tuple[Path, ...] = (),
+    pytest_config: str | None = None,
+    test_environment_variables: dict[str, str] | None = None,
+    evidence_dir: Path | None = None,
+    protected_dirs: set[str] | None = None,
+    skills_enabled: bool = False,
+    skill_limits: SkillLimits | None = None,
 ) -> ToolRegistry:
     """为一个已有初始提交的 Git 仓库创建五工具注册表。"""
     root = _resolve_workspace(workspace)
-    return ToolRegistry(
-        [
+    internal = protected_dirs if protected_dirs is not None else set()
+    tools = [
             SearchCodeTool(root, max_output_chars=max_output_chars),
             ReadFileTool(root, max_output_chars=max_output_chars),
-            ApplyPatchTool(root, max_output_chars=max_output_chars),
+            ApplyPatchTool(root, max_output_chars=max_output_chars, protected_dirs=internal),
             RunTestsTool(
                 root,
                 max_output_chars=max_output_chars,
                 default_timeout_seconds=test_timeout_seconds,
                 python_executable=test_python_executable,
                 pythonpath_entries=test_pythonpath_entries,
+                pytest_config=pytest_config,
+                environment_variables=test_environment_variables,
+                protected_dirs=internal,
+                evidence_dir=evidence_dir,
             ),
-            GetGitDiffTool(root, max_output_chars=max_output_chars),
+            GetGitDiffTool(root, max_output_chars=max_output_chars, protected_dirs=internal),
         ]
-    )
+    if skills_enabled:
+        from tracefix.tools.skills import SkillActivationTool
+
+        tools.append(SkillActivationTool(limits=skill_limits))
+    return ToolRegistry(tools)

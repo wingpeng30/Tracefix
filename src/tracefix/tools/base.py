@@ -54,6 +54,17 @@ class ToolSpec(BaseModel):
         }
 
 
+class SkillCatalogEntry(BaseModel):
+    """Small, path-free description of an approved runtime skill."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    name: str = Field(min_length=1, pattern=r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
+    description: str = Field(min_length=1)
+    version: str = Field(min_length=1)
+    sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
+
+
 class ToolResult(BaseModel):
     """一次工具调用产生的结构化结果。"""
 
@@ -86,6 +97,11 @@ class BaseTool(ABC):
     @abstractmethod
     def spec(self) -> ToolSpec:
         """返回模型可见的工具定义。"""
+
+    @property
+    def skill_catalog(self) -> tuple[SkillCatalogEntry, ...]:
+        """Return approved skill metadata exposed by this tool, when applicable."""
+        return ()
 
     @abstractmethod
     def execute(self, call: ToolCall) -> ToolResult:
@@ -129,3 +145,11 @@ class ToolRegistry:
 
     def specs(self) -> tuple[ToolSpec, ...]:
         return tuple(tool.spec.model_copy(deep=True) for tool in self._tools.values())
+
+    @property
+    def skill_catalog(self) -> tuple[SkillCatalogEntry, ...]:
+        """Return the registered runtime skills through an explicit tool interface."""
+        tool = self._tools.get("load_skill")
+        if tool is None:
+            return ()
+        return tuple(tool.skill_catalog)

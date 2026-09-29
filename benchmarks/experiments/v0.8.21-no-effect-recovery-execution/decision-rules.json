@@ -1,0 +1,34 @@
+{
+  "schema_version": 1,
+  "kind": "p2_no_effect_recovery_comparison_rules",
+  "status": "frozen_for_development_comparison_paid_run_not_started",
+  "execution_commit": "adc8658ddf0425f8e88058203126536f093b38e1",
+  "protocol_sha256": "7a95d3988f2463fcb0cf12caaa44533efe499aa375759d7cb06680235da0b290",
+  "primary_metric": "independent acceptance successes over 24 planned positions per arm for eight ordinary development tasks",
+  "per_task_repetitions": 3,
+  "planned_positions": 48,
+  "all_planned_positions_in_denominator": true,
+  "collection_failure_tasks_separately_reported": [
+    "pylint-dev__pylint-4551",
+    "pylint-dev__pylint-4604"
+  ],
+  "adoption_rule": {
+    "fresh_read_recovery_min_successes": 16,
+    "net_success_gain_over_base": 4,
+    "minimum_tasks_with_net_gain": 2,
+    "require_complete_evidence": true,
+    "require_unresolved_infrastructure_incidents": false
+  },
+  "budget": {
+    "currency": "CNY",
+    "shared_cap": 150,
+    "latest_ledger_calculated_balance": 89.78873491999985,
+    "previous_price_full_batch_upper_bound": 41.28,
+    "stage_cap_proposal": 42,
+    "ledger_is_provider_invoice": false,
+    "refresh_official_price_and_shared_ledger_before_paid_start": true,
+    "paid_execution_started": false
+  },
+  "design_invariant": "C and T share task, model, prompt, scoring, tools and budgets; only T enables require_fresh_read_after_repeated_no_effect_patch",
+  "holdout_tasks_used": false
+}

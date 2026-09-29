@@ -1,0 +1,8 @@
+**
+!pyproject.toml
+!README.md
+!src/
+!src/**
+!requirements/
+!requirements/locks/
+!requirements/locks/reproduction-py311.txt

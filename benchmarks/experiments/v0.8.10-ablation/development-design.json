@@ -1,0 +1,48 @@
+{
+  "schema_version": 1,
+  "kind": "development_ablation_preregistration",
+  "paid_execution_enabled": false,
+  "task_set": "P1_QUALIFIED_TASK_IDS: existing 10 development tasks",
+  "primary_tasks": 8,
+  "reviewed_collection_failure_tasks": 2,
+  "repetitions": 3,
+  "planned_trials": 120,
+  "arms": ["no_compaction", "repo_map_only", "action_optimization_bundle", "context_management_only"],
+  "ordering": "task IDs sorted; repetition 1..3; left rotate four-arm order by (task_index + repetition - 1) mod 4",
+  "action_bundle_includes": ["tool_result_presentation", "action_guidance", "read_cache"],
+  "planned_model": {
+    "provider": "DeepSeek official direct",
+    "base_url": "https://api.deepseek.com",
+    "model_name": "deepseek/deepseek-flash",
+    "temperature": 0,
+    "thinking": "disabled",
+    "max_retries": 0,
+    "immutable_snapshot": false
+  },
+  "budget_per_trial": {
+    "input_tokens": 350000, "output_tokens": 20000,
+    "steps": 24, "agent_tests": 6, "seconds": 900,
+    "response_output_tokens": 4096, "context_threshold": 32000
+  },
+  "campaign": {
+    "currency": "CNY", "cap": "100",
+    "ledger": "runs/p2-formal-campaign-20260921/cost-ledger.json",
+    "reset_for_new_directory": false,
+    "stage_budget_resolved": false
+  },
+  "selection_rule": {
+    "unit": "task; average three repetitions before equal weighting",
+    "primary_set": "8 ordinary-qualified development tasks",
+    "eligible": "all planned evidence complete; observed success rate at least baseline; lower mean input tokens AND lower mean Agent duration",
+    "ranking": ["highest success rate", "lowest mean input tokens", "lowest mean Agent duration", "arm identifier lexical order"],
+    "if_none_eligible": "retain baseline; report no qualifying improvement",
+    "combined_modules": "require a separate preregistered development comparison before adoption",
+    "interpretation": "exploratory selection, not proof of success-rate noninferiority"
+  },
+  "holdout": {
+    "tasks": 20, "arms": 2, "repetitions": 3, "planned_trials": 120,
+    "execution_enabled": false,
+    "rule": "freeze one final configuration before running; no tuning or replacement based on outcomes"
+  },
+  "long_context": "two synthetic mechanism fixtures remain separate from repair-effect estimates"
+}

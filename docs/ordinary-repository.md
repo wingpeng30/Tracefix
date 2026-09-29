@@ -1,0 +1,59 @@
+# 在自己的 Python 仓库运行 TraceFix
+
+此路径支持**受信任、干净的 Git 仓库**，使用本地 Python 3.11/3.12、pytest 和调用者预先安装的项目依赖。TraceFix 克隆源提交，在独立 checkout 修改及测试；本地工具和 pytest 会执行项目代码，本地后端不是安全沙箱。含编译步骤、特殊构建流程、必须自动加载的 pytest 插件或外部服务的仓库，需要自行验证环境配方。本机 Windows Docker Desktop 尚未通过验证；现有 Docker 后端只支持冻结任务和公开合成案例。
+
+## 安装和配置
+
+从 GitHub 获取本仓库后，使用独立虚拟环境安装。PowerShell 示例：
+
+```powershell
+git clone https://github.com/wingpeng30/Tracefix.git
+cd Tracefix
+git switch codex/p0-checkpoint-p1-review
+py -3.12 -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -e '.[llm]'
+.\.venv\Scripts\tracefix.exe --help
+```
+
+目标仓库另用一个已经安装其依赖和 pytest 的测试虚拟环境。不要把 API Key 写入 TOML。可在配置目录放 `.env` 并在 TOML 中指定；凭据也可由进程环境提供。以下 `config.toml` 位于目标仓库之外，相对路径均相对配置文件：
+
+```toml
+[run]
+repo = "../my-python-project"
+task = "修复 tests/test_widget.py 中的分页错误"
+test_python = "../my-python-project/.venv/Scripts/python.exe"
+test_target = "tests/test_widget.py"
+source_import = "my_package"
+output_dir = "./runs"
+model = "deepseek/deepseek-v4-flash"
+env_file = "./.env"
+```
+
+`repo` 必须是 Git 根目录且工作树干净。**输出目录必须位于源仓库之外**；如果在目标仓库内启动命令，请显式设置仓库外的 `--output-dir`。`source_import` 是安装后应从 TraceFix 新 checkout 导入的模块名；探针在构造模型客户端之前执行。`test_target` 是该 checkout 中已有的相对测试文件或 pytest node ID。目标虚拟环境如安装了旧版项目，必须先排除路径冲突；探针会拒绝导入来源落在 checkout 外的结果。模型调用可能付费，运行 `doctor` 不会发送供应商请求。
+
+```powershell
+.\.venv\Scripts\tracefix.exe doctor --config config.toml --json
+.\.venv\Scripts\tracefix.exe run --config config.toml
+.\.venv\Scripts\tracefix.exe report --run .\runs\<run-id>
+.\.venv\Scripts\tracefix.exe export --run .\runs\<run-id> --output .\fix.patch
+```
+
+命令行参数优先于 `TRACEFIX_*` 环境变量，后者优先于 TOML，最后使用默认值；密钥仅从进程环境或 `.env` 读取。`doctor` 返回检查项、布尔结果和修复建议，失败退出码为 2。`run` 的终态、结果目录及补丁路径会打印到终端。`report` 生成单文件 HTML；`export` 只复制补丁和校验文件，不会将补丁应用于原仓库。输出目录默认是当前目录下的 `runs`；可用 `TRACEFIX_RUNS_ROOT` 或 `--output-dir` 覆盖。
+
+没有 Key 时先运行公开离线演示，验证安装、工具、Skills 与报告：
+
+```powershell
+.\.venv\Scripts\tracefix-reproduce.exe --scenario pagination --output runs/demo-baseline
+.\.venv\Scripts\tracefix-reproduce.exe --scenario pagination --skills-enabled --output runs/demo-skills
+.\.venv\Scripts\tracefix.exe report --run runs/demo-skills
+```
+
+另一个普通仓库接入回放使用录制的 LiteLLM 形态响应，实际经过普通 Runner、适配器解析、源码导入探针、pytest 和导出：
+
+```powershell
+python examples/replay_ordinary.py --output runs/ordinary-replay
+```
+
+该脚本生成自己的干净 Git 仓库和独立运行目录；输出中的 `result` 路径可传给 `tracefix export --run <result 所在目录> --output fix.patch`。它不调用供应商，原仓库保持干净。
+
+演示使用脚本模型，不能证明当前版本真实模型的端到端修复质量。普通 `run` 的测试通过只说明其公开测试有通过证据，不等于独立验收。产物中的完整历史、请求视图、估算 Token、供应商 usage 和成本各有不同含义；请求视图默认不记录。TraceFix 当前没有 Agent 会话 checkpoint，进程中断后不能直接继续原会话。

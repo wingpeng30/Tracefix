@@ -52,6 +52,10 @@ class FakeLiteLLM:
             raise self.error
         return self.response
 
+    def token_counter(self, **kwargs):
+        self.counted = kwargs
+        return 17
+
     @staticmethod
     def completion_cost(*, completion_response) -> float:
         return 0.0125
@@ -94,6 +98,8 @@ def test_adapter_normalizes_text_response_and_request() -> None:
     assert client.calls[0]["num_retries"] == 1
     assert client.calls[0]["extra_body"] == {"thinking": {"type": "disabled"}}
     assert "thinking" not in client.calls[0]
+    assert adapter.count_input_tokens([Message(role=MessageRole.USER, content="hello")]) == 17
+    assert client.counted["messages"] == client.calls[0]["messages"]
 
 
 def test_adapter_normalizes_multiple_tool_calls_and_tool_specs() -> None:
@@ -272,3 +278,52 @@ def test_missing_litellm_dependency_is_a_provider_error(monkeypatch) -> None:
     monkeypatch.setattr("tracefix.models.litellm_adapter.importlib.import_module", missing)
     with pytest.raises(LLMProviderError, match="not installed"):
         adapter.complete([Message(role=MessageRole.USER, content="hello")])
+
+
+def test_deepseek_budget_count_uses_serialized_byte_upper_bound_with_tools() -> None:
+    from tracefix.tools.base import ToolSpec
+
+    adapter = LiteLLMAdapter(
+        LLMConfig(model_name="deepseek/deepseek-flash"), client=FakeLiteLLM(make_response())
+    )
+    messages = [Message(role=MessageRole.USER, content="修复这个问题")]
+    plain = adapter.count_input_tokens(messages)
+    with_tool = adapter.count_input_tokens(
+        messages,
+        [
+            ToolSpec(
+                name="read_file",
+                description="读取文件内容",
+                input_schema={
+                    "type": "object",
+                    "properties": {"path": {"type": "string"}},
+                },
+            )
+        ],
+    )
+    assert plain > len("修复这个问题".encode())
+    assert with_tool > plain
+    assert getattr(adapter.client, "token_counter", None) is not None
+
+
+def test_counted_request_hash_rejects_payload_change_before_provider_call() -> None:
+    class Client:
+        def completion(self, **kwargs):
+            raise AssertionError("changed request must not reach provider")
+
+    adapter = LiteLLMAdapter(
+        LLMConfig(
+            model_name="deepseek/deepseek-flash",
+            extra_kwargs={
+                "api_base": "https://api.deepseek.com",
+                "extra_body": {"thinking": {"type": "disabled"}},
+            },
+        ),
+        client=Client(),
+    )
+    message = Message(role=MessageRole.USER, content="hello")
+    bound = adapter.count_input_bound([message])
+    assert bound.request_sha256 and len(bound.request_sha256) == 64
+    adapter.config.max_retries = 1
+    with pytest.raises(LLMProviderError, match="changed after input counting"):
+        adapter.complete([message])

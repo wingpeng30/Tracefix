@@ -4,6 +4,7 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -14,11 +15,17 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.11", "3.12"]
+        include:
+          - python-version: "3.11"
+            lock-file: requirements/locks/engineering-py311.txt
+          - python-version: "3.12"
+            lock-file: requirements/locks/engineering-py312.txt
 
     steps:
       - name: 检出代码
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: 配置 Python
         uses: actions/setup-python@v5
@@ -27,15 +34,181 @@ jobs:
           cache: pip
 
       - name: 安装项目与测试依赖
+        run: |
+          python -m pip install --require-hashes -r requirements/locks/build-tools.txt
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python -m pip install --require-hashes -r ${{ matrix.lock-file }}
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python -m pip install --no-deps --no-build-isolation -e .
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: 运行统一工程检查并保存原始结果
         env:
-          PIP_INDEX_URL: https://pypi.tuna.tsinghua.edu.cn/simple
-        run: python -m pip install -e ".[dev,llm]"
+          TRACEFIX_EVENT_BEFORE: ${{ github.event.before }}
+          TRACEFIX_DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        shell: pwsh
+        run: |
+          switch ($env:GITHUB_EVENT_NAME) {
+            "pull_request" { $diffBase = "origin/$env:GITHUB_BASE_REF" }
+            "push" {
+              if ($env:TRACEFIX_EVENT_BEFORE -match '^0+$') { $diffBase = "HEAD^" }
+              else { $diffBase = $env:TRACEFIX_EVENT_BEFORE }
+            }
+            "workflow_dispatch" { $diffBase = "origin/$env:TRACEFIX_DEFAULT_BRANCH" }
+            default { throw "Unsupported event for diff check: $env:GITHUB_EVENT_NAME" }
+          }
+          python scripts/check_engineering.py --output "$env:RUNNER_TEMP/tracefix-engineering" --python python --diff-base $diffBase
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-      - name: 运行测试与覆盖率检查
-        run: python -m pytest --cov=tracefix --cov-report=term-missing
+      - name: 从 checkout 执行 editable 零调用 smoke
+        if: always()
+        shell: pwsh
+        run: |
+          Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue
+          $smokeRoot = Join-Path $env:RUNNER_TEMP "tracefix-editable-smoke"
+          New-Item -ItemType Directory -Path $smokeRoot | Out-Null
+          Push-Location $env:RUNNER_TEMP
+          try {
+            python -m tracefix.reproduction --backend local --output (Join-Path $smokeRoot "baseline")
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            python -m tracefix.reproduction --backend local --skills-enabled --output (Join-Path $smokeRoot "skills")
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            python -m tracefix.reproduction --scenario pagination --backend local --output (Join-Path $smokeRoot "pagination-baseline")
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            python -m tracefix.reproduction --scenario pagination --backend local --skills-enabled --output (Join-Path $smokeRoot "pagination-skills")
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          } finally { Pop-Location }
 
-      - name: 运行 Ruff 静态检查
-        run: python -m ruff check .
+      - name: 构建并独立安装 wheel
+        if: always()
+        shell: pwsh
+        run: |
+          $wheelRoot = Join-Path $env:RUNNER_TEMP "tracefix-wheel"
+          $wheelSmoke = Join-Path $env:RUNNER_TEMP "tracefix-wheel-smoke"
+          $wheelEnv = Join-Path $env:RUNNER_TEMP "tracefix-wheel-env"
+          New-Item -ItemType Directory -Path $wheelRoot -Force | Out-Null
+          python -m pip wheel --no-deps --no-build-isolation . --wheel-dir $wheelRoot
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $wheel = (Get-ChildItem -LiteralPath $wheelRoot -Filter "*.whl" | Select-Object -First 1).FullName
+          if (-not $wheel) { throw "wheel build produced no wheel" }
+          python -c "import sys,zipfile; z=zipfile.ZipFile(sys.argv[1]); n=set(z.namelist()); assert 'tracefix/reproduction.py' in n; assert 'tracefix/agent_bridge.py' in n; assert any(p.startswith('tracefix/skills/') and p.endswith('/SKILL.md') for p in n)" $wheel
+          python -c "import sys,zipfile; z=zipfile.ZipFile(sys.argv[1]); assert 'tracefix/report.py' in set(z.namelist())" $wheel
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python -m venv $wheelEnv
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $wheelPython = Join-Path $wheelEnv "Scripts/python.exe"
+          & $wheelPython -m pip install --require-hashes -r requirements/locks/build-tools.txt
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & $wheelPython -m pip install --require-hashes -r ${{ matrix.lock-file }}
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & $wheelPython -m pip install --no-deps $wheel
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue
+          Push-Location $env:RUNNER_TEMP
+          try {
+            & $wheelPython -c "import pathlib,tracefix; p=pathlib.Path(tracefix.__file__).resolve(); assert 'site-packages' in str(p).lower(), p; print(p)"
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            & (Join-Path $wheelEnv "Scripts/tracefix-reproduce.exe") --backend local --output (Join-Path $wheelSmoke "baseline")
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            & (Join-Path $wheelEnv "Scripts/tracefix-reproduce.exe") --backend local --skills-enabled --output (Join-Path $wheelSmoke "skills")
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            & (Join-Path $wheelEnv "Scripts/tracefix-reproduce.exe") --scenario pagination --output (Join-Path $wheelSmoke "pagination-baseline")
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            & (Join-Path $wheelEnv "Scripts/tracefix-reproduce.exe") --scenario pagination --skills-enabled --output (Join-Path $wheelSmoke "pagination-skills")
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            $ordinary = Join-Path $wheelSmoke "ordinary"
+            & $wheelPython (Join-Path $env:GITHUB_WORKSPACE "examples/replay_ordinary.py") --output $ordinary
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            & (Join-Path $wheelEnv "Scripts/tracefix.exe") doctor --repo (Join-Path $ordinary "source") --test-python $wheelPython --test-target tests/test_widget.py --source-import widget --model offline/replay --json
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            $ordinaryRun = (Get-ChildItem -LiteralPath (Join-Path $ordinary "runs") -Directory | Select-Object -First 1).FullName
+            & (Join-Path $wheelEnv "Scripts/tracefix.exe") export --run $ordinaryRun --output (Join-Path $ordinary "export.patch")
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          } finally { Pop-Location }
 
-      - name: 检查 Python 文件可编译性
-        run: python -m compileall -q src tests
+      - name: 保存工程与 wheel 验证结果
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: engineering-${{ matrix.python-version }}-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/tracefix-engineering/summary.json
+            ${{ runner.temp }}/tracefix-engineering/*.log
+            ${{ runner.temp }}/tracefix-engineering/pytest.junit.xml
+            ${{ runner.temp }}/tracefix-engineering/coverage.json
+            ${{ runner.temp }}/tracefix-engineering/coverage.xml
+            ${{ runner.temp }}/tracefix-engineering/coverage-gaps.json
+            ${{ runner.temp }}/tracefix-editable-smoke/**/*.json
+            ${{ runner.temp }}/tracefix-editable-smoke/**/*.jsonl
+            ${{ runner.temp }}/tracefix-editable-smoke/**/*.diff
+            ${{ runner.temp }}/tracefix-editable-smoke/**/*.html
+            ${{ runner.temp }}/tracefix-wheel/*.whl
+            ${{ runner.temp }}/tracefix-wheel-smoke/**/*.json
+            ${{ runner.temp }}/tracefix-wheel-smoke/**/*.jsonl
+            ${{ runner.temp }}/tracefix-wheel-smoke/**/*.diff
+            ${{ runner.temp }}/tracefix-wheel-smoke/**/*.html
+            ${{ runner.temp }}/tracefix-wheel-smoke/**/*.patch
+            ${{ runner.temp }}/tracefix-wheel-smoke/**/*.sha256
+          if-no-files-found: warn
+
+  docker-zero-call:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 配置 Linux Python 与宿主 Runner 依赖
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: 安装 TraceFix 宿主 Runner
+        run: |
+          python -m pip install --require-hashes -r requirements/locks/build-tools.txt
+          python -m pip install --require-hashes -r requirements/locks/engineering-py311.txt
+          python -m pip install --no-deps --no-build-isolation -e .
+
+      - name: 构建隔离的合成任务镜像
+        run: |
+          docker build --pull=true -f docker/zero-call-smoke.Dockerfile -t tracefix-zero-call-smoke:${{ github.sha }} .
+          docker image inspect --format '{{.Id}}' tracefix-zero-call-smoke:${{ github.sha }} > "$RUNNER_TEMP/tracefix-image-id.txt"
+
+      - name: 运行 baseline 和 Skills 合成闭环
+        run: |
+          mkdir -p "$RUNNER_TEMP/tracefix-smoke"
+          image_id="$(cat "$RUNNER_TEMP/tracefix-image-id.txt")"
+          python -m tracefix.reproduction --backend docker --image-id "$image_id" --output "$RUNNER_TEMP/tracefix-smoke/baseline"
+          python -m tracefix.reproduction --backend docker --image-id "$image_id" --skills-enabled --output "$RUNNER_TEMP/tracefix-smoke/skills"
+          python -m tracefix.reproduction --backend docker --image-id "$image_id" --scenario pagination --output "$RUNNER_TEMP/tracefix-pagination/baseline"
+          python -m tracefix.reproduction --backend docker --image-id "$image_id" --scenario pagination --skills-enabled --output "$RUNNER_TEMP/tracefix-pagination/skills"
+
+      - name: 核对容器隔离、供应商零调用与清理
+        if: always()
+        run: |
+          image_id="$(cat "$RUNNER_TEMP/tracefix-image-id.txt")"
+          python scripts/audit_docker_smoke.py --root "$RUNNER_TEMP/tracefix-smoke" --image-id "$image_id" --output "$RUNNER_TEMP/tracefix-smoke/docker-audit.json"
+          python scripts/audit_docker_smoke.py --root "$RUNNER_TEMP/tracefix-pagination" --scenario pagination --image-id "$image_id" --output "$RUNNER_TEMP/tracefix-pagination/docker-audit.json"
+          test -f "$RUNNER_TEMP/tracefix-pagination/baseline/report.html"
+          test -f "$RUNNER_TEMP/tracefix-pagination/skills/report.html"
+
+      - name: 保存 smoke 摘要
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: docker-zero-call-smoke-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/tracefix-image-id.txt
+            ${{ runner.temp }}/tracefix-smoke/*/reproduction.json
+            ${{ runner.temp }}/tracefix-smoke/*/runs/*/result.json
+            ${{ runner.temp }}/tracefix-smoke/*/runs/*/trajectory.jsonl
+            ${{ runner.temp }}/tracefix-smoke/*/runs/*/patch.diff
+            ${{ runner.temp }}/tracefix-smoke/docker-audit.json
+            ${{ runner.temp }}/tracefix-pagination/*/reproduction.json
+            ${{ runner.temp }}/tracefix-pagination/*/report.html
+            ${{ runner.temp }}/tracefix-pagination/*/runs/*/result.json
+            ${{ runner.temp }}/tracefix-pagination/*/runs/*/trajectory.jsonl
+            ${{ runner.temp }}/tracefix-pagination/*/runs/*/patch.diff
+            ${{ runner.temp }}/tracefix-pagination/*/runs/*/test-evidence/*.json
+            ${{ runner.temp }}/tracefix-pagination/docker-audit.json
+          if-no-files-found: warn

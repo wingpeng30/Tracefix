@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "task_id": "psf__requests-6028",
+  "python_versions": ["3.12"],
+  "extra_dependencies": [
+    "pytest==9.1.1",
+    "urllib3==1.26.20",
+    "charset-normalizer==2.0.12"
+  ],
+  "build_commands": [],
+  "selector_overrides": [],
+  "supported_platforms": ["windows"],
+  "source_import_probe": "requests"
+}

@@ -1,0 +1,7 @@
+{
+  "completed": 120,
+  "resumed": 120,
+  "provider_constructors": 0,
+  "mode": "formal",
+  "purpose": "completed-state recovery, network provider guarded"
+}

@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "task_id": "pylint-dev__pylint-6386",
+  "python_versions": ["3.12"],
+  "extra_dependencies": [
+    "pytest==9.1.1",
+    "setuptools==84.0.0"
+  ],
+  "build_commands": [],
+  "selector_overrides": [],
+  "supported_platforms": ["windows"],
+  "source_import_probe": "pylint"
+}

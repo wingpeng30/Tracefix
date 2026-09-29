@@ -14,9 +14,7 @@
   ],
   "related_files": [
     "requests/sessions.py",
-    "test_requests.py",
-    "requests/__init__.py",
-    "requests/__init__.pyi"
+    "test_requests.py"
   ],
   "source_file_count": 1,
   "test_file_count": 1,

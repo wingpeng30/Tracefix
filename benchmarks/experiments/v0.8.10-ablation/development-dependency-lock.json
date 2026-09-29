@@ -1,0 +1,392 @@
+{
+  "schema_version": 1,
+  "p1_evidence_sha256": "58a302febbe8986e7350a6b60244a53ffb07eb89c5a4dcb23be95267fade6014",
+  "tasks": [
+    {
+      "task_id": "psf__requests-1142",
+      "base_commit": "22623bd8c265b78b161542663ee980738441c307",
+      "qualification_type": "assertion_failure",
+      "environment": {
+        "python_version": "3.9.21",
+        "executable_name": "python.exe",
+        "dependency_versions": {
+          "colorama": "0.4.6",
+          "exceptiongroup": "1.3.1",
+          "iniconfig": "2.1.0",
+          "packaging": "26.3",
+          "pip": "26.0.1",
+          "pluggy": "1.6.0",
+          "Pygments": "2.21.0",
+          "pytest": "8.4.2",
+          "requests": "1.1.0",
+          "setuptools": "58.1.0",
+          "tomli": "2.4.1",
+          "typing_extensions": "4.16.0"
+        },
+        "pythonpath_artifacts": {},
+        "fingerprint_sha256": "7e1d467a3118d23b64e55d3e116ed58e751a01337dd35b2f38ced0225769b109"
+      },
+      "target_node_ids": [
+        "test_requests.py::RequestsTestCase::test_no_content_length"
+      ],
+      "recipe_sha256": "af79db603d66bbf37f6f2f95c5af808436c12cff2f1b9cff14e5fe0fe263e07d"
+    },
+    {
+      "task_id": "psf__requests-1766",
+      "base_commit": "847735553aeda6e6633f2b32e14ba14ba86887a4",
+      "qualification_type": "assertion_failure",
+      "environment": {
+        "python_version": "3.9.21",
+        "executable_name": "python.exe",
+        "dependency_versions": {
+          "colorama": "0.4.6",
+          "exceptiongroup": "1.3.1",
+          "iniconfig": "2.1.0",
+          "packaging": "26.3",
+          "pip": "26.0.1",
+          "pluggy": "1.6.0",
+          "Pygments": "2.21.0",
+          "pytest": "8.4.2",
+          "requests": "2.0.1",
+          "setuptools": "58.1.0",
+          "tomli": "2.4.1",
+          "typing_extensions": "4.16.0"
+        },
+        "pythonpath_artifacts": {},
+        "fingerprint_sha256": "3b6cfd0cf615015a61392c75af9c90817ccbfccd27e3817a634559b4e4a20185"
+      },
+      "target_node_ids": [
+        "test_requests.py::RequestsTestCase::test_DIGESTAUTH_QUOTES_QOP_VALUE",
+        "test_requests.py::RequestsTestCase::test_HTTP_200_OK_GET_ALTERNATIVE",
+        "test_requests.py::RequestsTestCase::test_cookie_sent_on_redirect",
+        "test_requests.py::RequestsTestCase::test_custom_content_type",
+        "test_requests.py::RequestsTestCase::test_params_are_merged_case_sensitive",
+        "test_requests.py::RequestsTestCase::test_user_agent_transfers"
+      ],
+      "recipe_sha256": "24a899273beb58bb6a59be3a110ea42080b7245d1c184dd9c08ba2f5b3ce0a1b"
+    },
+    {
+      "task_id": "pylint-dev__pylint-4551",
+      "base_commit": "99589b08de8c5a2c6cc61e13a37420a868c80599",
+      "qualification_type": "expected_collection_failure",
+      "environment": {
+        "python_version": "3.10.20",
+        "executable_name": "python.exe",
+        "dependency_versions": {
+          "appdirs": "1.4.4",
+          "astroid": "2.6.6",
+          "colorama": "0.4.6",
+          "exceptiongroup": "1.3.1",
+          "iniconfig": "2.3.0",
+          "isort": "5.13.2",
+          "lazy-object-proxy": "1.12.0",
+          "mccabe": "0.6.1",
+          "packaging": "26.3",
+          "pip": "26.2.1",
+          "pluggy": "1.6.0",
+          "Pygments": "2.21.0",
+          "pylint": "2.9.0.dev1",
+          "pytest": "9.1.1",
+          "setuptools": "79.0.1",
+          "toml": "0.10.2",
+          "tomli": "2.4.1",
+          "typing_extensions": "4.16.0",
+          "wrapt": "1.12.1"
+        },
+        "pythonpath_artifacts": {},
+        "fingerprint_sha256": "ee7beb0d4e236690d5361f8a24b3d15aaca6556e3ee20743ea093e7ec2f1f3dd"
+      },
+      "target_node_ids": [
+        "tests/unittest_pyreverse_writer.py::test_dot_files[packages_No_Name.dot]",
+        "tests/unittest_pyreverse_writer.py::test_dot_files[classes_No_Name.dot]",
+        "tests/unittest_pyreverse_writer.py::test_get_visibility[names0-special]",
+        "tests/unittest_pyreverse_writer.py::test_get_visibility[names1-private]",
+        "tests/unittest_pyreverse_writer.py::test_get_visibility[names2-public]",
+        "tests/unittest_pyreverse_writer.py::test_get_visibility[names3-protected]",
+        "tests/unittest_pyreverse_writer.py::test_get_annotation_annassign[a: str = None-Optional[str]]",
+        "tests/unittest_pyreverse_writer.py::test_get_annotation_annassign[a: str = 'mystr'-str]",
+        "tests/unittest_pyreverse_writer.py::test_get_annotation_annassign[a: Optional[str] = 'str'-Optional[str]]",
+        "tests/unittest_pyreverse_writer.py::test_get_annotation_annassign[a: Optional[str] = None-Optional[str]]",
+        "tests/unittest_pyreverse_writer.py::test_get_annotation_assignattr[def __init__(self, x: str):                   self.x = x-str]",
+        "tests/unittest_pyreverse_writer.py::test_get_annotation_assignattr[def __init__(self, x: str = 'str'):           self.x = x-str]",
+        "tests/unittest_pyreverse_writer.py::test_get_annotation_assignattr[def __init__(self, x: str = None):            self.x = x-Optional[str]]",
+        "tests/unittest_pyreverse_writer.py::test_get_annotation_assignattr[def __init__(self, x: Optional[str]):         self.x = x-Optional[str]]",
+        "tests/unittest_pyreverse_writer.py::test_get_annotation_assignattr[def __init__(self, x: Optional[str] = None):  self.x = x-Optional[str]]",
+        "tests/unittest_pyreverse_writer.py::test_get_annotation_assignattr[def __init__(self, x: Optional[str] = 'str'): self.x = x-Optional[str]]",
+        "tests/unittest_pyreverse_writer.py::test_infer_node_1",
+        "tests/unittest_pyreverse_writer.py::test_infer_node_2"
+      ],
+      "recipe_sha256": "c1a06476d5ebfea70d5a4f85eaf4ba25460439b649ef7fd408d9e29b5918451b"
+    },
+    {
+      "task_id": "pylint-dev__pylint-4604",
+      "base_commit": "1e55ae64624d28c5fe8b63ad7979880ee2e6ef3f",
+      "qualification_type": "expected_collection_failure",
+      "environment": {
+        "python_version": "3.10.20",
+        "executable_name": "python.exe",
+        "dependency_versions": {
+          "appdirs": "1.4.4",
+          "astroid": "2.6.6",
+          "colorama": "0.4.6",
+          "exceptiongroup": "1.3.1",
+          "iniconfig": "2.3.0",
+          "isort": "5.13.2",
+          "lazy-object-proxy": "1.12.0",
+          "mccabe": "0.6.1",
+          "packaging": "26.3",
+          "pip": "26.2.1",
+          "pluggy": "1.6.0",
+          "Pygments": "2.21.0",
+          "pylint": "2.9.0.dev1",
+          "pytest": "9.1.1",
+          "setuptools": "79.0.1",
+          "toml": "0.10.2",
+          "tomli": "2.4.1",
+          "typing_extensions": "4.16.0",
+          "wrapt": "1.12.1"
+        },
+        "pythonpath_artifacts": {},
+        "fingerprint_sha256": "ee7beb0d4e236690d5361f8a24b3d15aaca6556e3ee20743ea093e7ec2f1f3dd"
+      },
+      "target_node_ids": [
+        "tests/checkers/unittest_variables.py::TestVariablesChecker::test_bitbucket_issue_78",
+        "tests/checkers/unittest_variables.py::TestVariablesChecker::test_no_name_in_module_skipped",
+        "tests/checkers/unittest_variables.py::TestVariablesChecker::test_all_elements_without_parent",
+        "tests/checkers/unittest_variables.py::TestVariablesChecker::test_redefined_builtin_ignored",
+        "tests/checkers/unittest_variables.py::TestVariablesChecker::test_redefined_builtin_custom_modules",
+        "tests/checkers/unittest_variables.py::TestVariablesChecker::test_redefined_builtin_modname_not_ignored",
+        "tests/checkers/unittest_variables.py::TestVariablesChecker::test_redefined_builtin_in_function",
+        "tests/checkers/unittest_variables.py::TestVariablesChecker::test_unassigned_global",
+        "tests/checkers/unittest_variables.py::TestVariablesChecker::test_listcomp_in_decorator",
+        "tests/checkers/unittest_variables.py::TestVariablesChecker::test_listcomp_in_ancestors",
+        "tests/checkers/unittest_variables.py::TestVariablesChecker::test_return_type_annotation",
+        "tests/checkers/unittest_variables.py::TestVariablesChecker::test_attribute_in_type_comment",
+        "tests/checkers/unittest_variables.py::TestVariablesCheckerWithTearDown::test_custom_callback_string",
+        "tests/checkers/unittest_variables.py::TestVariablesCheckerWithTearDown::test_redefined_builtin_modname_not_ignored",
+        "tests/checkers/unittest_variables.py::TestVariablesCheckerWithTearDown::test_redefined_builtin_in_function",
+        "tests/checkers/unittest_variables.py::TestVariablesCheckerWithTearDown::test_import_as_underscore",
+        "tests/checkers/unittest_variables.py::TestVariablesCheckerWithTearDown::test_lambda_in_classdef",
+        "tests/checkers/unittest_variables.py::TestVariablesCheckerWithTearDown::test_nested_lambda",
+        "tests/checkers/unittest_variables.py::TestVariablesCheckerWithTearDown::test_ignored_argument_names_no_message",
+        "tests/checkers/unittest_variables.py::TestVariablesCheckerWithTearDown::test_ignored_argument_names_starred_args",
+        "tests/checkers/unittest_variables.py::TestMissingSubmodule::test_package_all"
+      ],
+      "recipe_sha256": "79c135d88cd20a290305cea60e097f8172e8828a22d486a765c9655e99c8bff6"
+    },
+    {
+      "task_id": "pylint-dev__pylint-4661",
+      "base_commit": "1d1619ef913b99b06647d2030bddff4800abdf63",
+      "qualification_type": "assertion_failure",
+      "environment": {
+        "python_version": "3.10.20",
+        "executable_name": "python.exe",
+        "dependency_versions": {
+          "appdirs": "1.4.4",
+          "astroid": "2.6.6",
+          "colorama": "0.4.6",
+          "exceptiongroup": "1.3.1",
+          "iniconfig": "2.3.0",
+          "isort": "5.13.2",
+          "lazy-object-proxy": "1.12.0",
+          "mccabe": "0.6.1",
+          "packaging": "26.3",
+          "pip": "26.2.1",
+          "pluggy": "1.6.0",
+          "Pygments": "2.21.0",
+          "pylint": "2.10.0.dev0",
+          "pytest": "9.1.1",
+          "setuptools": "79.0.1",
+          "toml": "0.10.2",
+          "tomli": "2.4.1",
+          "typing_extensions": "4.16.0",
+          "wrapt": "1.12.1"
+        },
+        "pythonpath_artifacts": {},
+        "fingerprint_sha256": "6c8012ea3e0b0796447599c5b57c80ce7dcaa3b35f8d7c6bd2ea6bd5fc9143c7"
+      },
+      "target_node_ids": [
+        "tests/lint/unittest_lint.py::test_pylint_home"
+      ],
+      "recipe_sha256": "d7e8b0b55328023fd1bcd6de8bc2ecb680b6a8a4a77c267da199232ca62ce07f"
+    },
+    {
+      "task_id": "pytest-dev__pytest-10051",
+      "base_commit": "aa55975c7d3f6c9f6d7f68accc41bb7cadf0eb9a",
+      "qualification_type": "assertion_failure",
+      "environment": {
+        "python_version": "3.11.16",
+        "executable_name": "python.exe",
+        "dependency_versions": {
+          "atomicwrites": "1.4.1",
+          "attrs": "26.1.0",
+          "colorama": "0.4.6",
+          "iniconfig": "2.3.0",
+          "packaging": "26.3",
+          "pip": "26.2.1",
+          "pluggy": "1.6.0",
+          "py": "1.11.0",
+          "pytest": "7.2.0.dev157+gaa55975c7",
+          "setuptools": "79.0.1",
+          "setuptools-scm": "6.4.2",
+          "tomli": "2.4.1"
+        },
+        "pythonpath_artifacts": {},
+        "fingerprint_sha256": "1958f58475dd3d4e92c6f2c795000f96c5e0fe7499c75093d132135ead491a2e"
+      },
+      "target_node_ids": [
+        "testing/logging/test_fixture.py::test_clear_for_call_stage"
+      ],
+      "recipe_sha256": "97ed96150bc7beb7757cb65df20dee49b222239954867e1538f95d1c4ef55496"
+    },
+    {
+      "task_id": "pytest-dev__pytest-10081",
+      "base_commit": "da9a2b584eb7a6c7e924b2621ed0ddaeca0a7bea",
+      "qualification_type": "assertion_failure",
+      "environment": {
+        "python_version": "3.11.16",
+        "executable_name": "python.exe",
+        "dependency_versions": {
+          "atomicwrites": "1.4.1",
+          "attrs": "26.1.0",
+          "colorama": "0.4.6",
+          "iniconfig": "2.3.0",
+          "packaging": "26.3",
+          "pip": "26.2.1",
+          "pluggy": "1.6.0",
+          "py": "1.11.0",
+          "pytest": "7.2.0.dev173+gda9a2b584",
+          "setuptools": "79.0.1",
+          "setuptools-scm": "6.4.2",
+          "tomli": "2.4.1"
+        },
+        "pythonpath_artifacts": {},
+        "fingerprint_sha256": "1586c22a191bde2d3c1b142328c4de5091ebdade37d3ea84a4cf95cab93da5df"
+      },
+      "target_node_ids": [
+        "testing/test_unittest.py::test_pdb_teardown_skipped_for_classes[@unittest.skip]"
+      ],
+      "recipe_sha256": "458de83ae88df1942e039f9fe3651e5eae1f86387ca9557de9edc8511025a055"
+    },
+    {
+      "task_id": "pytest-dev__pytest-10356",
+      "base_commit": "3c1534944cbd34e8a41bc9e76818018fadefc9a1",
+      "qualification_type": "assertion_failure",
+      "environment": {
+        "python_version": "3.11.16",
+        "executable_name": "python.exe",
+        "dependency_versions": {
+          "atomicwrites": "1.4.1",
+          "attrs": "26.1.0",
+          "colorama": "0.4.6",
+          "iniconfig": "2.3.0",
+          "packaging": "26.3",
+          "pip": "26.2.1",
+          "pluggy": "1.6.0",
+          "py": "1.11.0",
+          "pytest": "7.2.0.dev312+g3c1534944",
+          "setuptools": "79.0.1",
+          "setuptools-scm": "6.4.2",
+          "tomli": "2.4.1"
+        },
+        "pythonpath_artifacts": {},
+        "fingerprint_sha256": "7eca2236950b34f56293fdbf555ebe39c3ad9820b831954c12e33547b4236027"
+      },
+      "target_node_ids": [
+        "testing/test_mark.py::test_mark_mro"
+      ],
+      "recipe_sha256": "d13a01f464083b27993d801ac5e2fa119723125abd8100d976b40a3d863ffdc0"
+    },
+    {
+      "task_id": "sphinx-doc__sphinx-10435",
+      "base_commit": "f1061c012e214f16fd8790dec3c283d787e3daa8",
+      "qualification_type": "assertion_failure",
+      "environment": {
+        "python_version": "3.11.16",
+        "executable_name": "python.exe",
+        "dependency_versions": {
+          "alabaster": "0.7.16",
+          "babel": "2.18.0",
+          "certifi": "2026.7.22",
+          "charset-normalizer": "3.5.1",
+          "colorama": "0.4.6",
+          "docutils": "0.18.1",
+          "html5lib": "1.1",
+          "idna": "3.19",
+          "imagesize": "2.0.1",
+          "iniconfig": "2.3.0",
+          "Jinja2": "3.1.6",
+          "MarkupSafe": "3.0.3",
+          "packaging": "26.3",
+          "pip": "26.2.1",
+          "pluggy": "1.6.0",
+          "Pygments": "2.11.2",
+          "pytest": "9.1.1",
+          "requests": "2.34.2",
+          "setuptools": "79.0.1",
+          "six": "1.17.0",
+          "snowballstemmer": "3.1.1",
+          "Sphinx": "5.0.0.dev20260917",
+          "sphinxcontrib-applehelp": "2.0.0",
+          "sphinxcontrib-devhelp": "2.0.0",
+          "sphinxcontrib-htmlhelp": "2.1.0",
+          "sphinxcontrib-jsmath": "1.0.1",
+          "sphinxcontrib-qthelp": "2.0.0",
+          "sphinxcontrib-serializinghtml": "2.0.0",
+          "urllib3": "2.8.0",
+          "webencodings": "0.6.1"
+        },
+        "pythonpath_artifacts": {},
+        "fingerprint_sha256": "d2950f940df34532b959f9d187c3e950bf234e30f53d595220a4fbfd45178d2b"
+      },
+      "target_node_ids": [
+        "tests/test_build_latex.py::test_latex_code_role"
+      ],
+      "recipe_sha256": "5827f531f565aa9641ef76f08b48dc2a8f6df2efe5e9a8e43bf3eebc7f061b6d"
+    },
+    {
+      "task_id": "sphinx-doc__sphinx-10449",
+      "base_commit": "36367765fe780f962bba861bf368a765380bbc68",
+      "qualification_type": "assertion_failure",
+      "environment": {
+        "python_version": "3.11.16",
+        "executable_name": "python.exe",
+        "dependency_versions": {
+          "alabaster": "0.7.16",
+          "babel": "2.18.0",
+          "certifi": "2026.7.22",
+          "charset-normalizer": "3.5.1",
+          "colorama": "0.4.6",
+          "docutils": "0.18.1",
+          "idna": "3.19",
+          "imagesize": "2.0.1",
+          "iniconfig": "2.3.0",
+          "Jinja2": "3.1.6",
+          "MarkupSafe": "3.0.3",
+          "packaging": "26.3",
+          "pip": "26.2.1",
+          "pluggy": "1.6.0",
+          "Pygments": "2.21.0",
+          "pytest": "9.1.1",
+          "requests": "2.34.2",
+          "setuptools": "79.0.1",
+          "snowballstemmer": "3.1.1",
+          "Sphinx": "5.1.0.dev20260917",
+          "sphinxcontrib-applehelp": "2.0.0",
+          "sphinxcontrib-devhelp": "2.0.0",
+          "sphinxcontrib-htmlhelp": "2.1.0",
+          "sphinxcontrib-jsmath": "1.0.1",
+          "sphinxcontrib-qthelp": "2.0.0",
+          "sphinxcontrib-serializinghtml": "2.0.0",
+          "urllib3": "2.8.0"
+        },
+        "pythonpath_artifacts": {},
+        "fingerprint_sha256": "5d08b8ec31d21300aae21c3a971d5407a9507cc82555fe20a8dfbe570b56acc5"
+      },
+      "target_node_ids": [
+        "tests/test_ext_autodoc_configs.py::test_autodoc_typehints_description_with_documented_init"
+      ],
+      "recipe_sha256": "7f1e715219a677b7670f10aa0ce0c3737d5cfe7b5c9d4f937f2449b67149132e"
+    }
+  ]
+}

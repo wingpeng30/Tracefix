@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import re
+import shlex
 import time
 from datetime import UTC, datetime
 from typing import Any
@@ -42,13 +44,21 @@ class MinimalAgent(BaseAgent):
         self.reset()
         # 以下运行期记忆只服务于确定性失败恢复，不进入持久化 AgentState。
         self._failed_apply_calls: dict[str, str] = {}
+        self._invalid_test_signatures: dict[str, int] = {}
         self._consecutive_apply_failures = 0
         self._patch_recovery_reminder_sent = False
         self._no_effect_patch_reminder_sent = False
         self._last_patch_failure_reason: str | None = None
+        self._no_effect_patch_targets: dict[
+            str, dict[str, tuple[tuple[int, int], ...] | None]
+        ] = {}
+        self._repeated_no_effect_patch_signature: str | None = None
+        self._fresh_read_required_for_patch = False
+        self._fresh_target_reads: dict[str, list[tuple[int, int, int, bool]]] = {}
         self._tests_passed = False
         self._diff_nonempty = False
         self._finish_reminder_sent = False
+        self._unverified_finish_reminder_sent = False
         self._successful_tool_cache: dict[str, ToolResult] = {}
         self._repo_map_candidate_reads: set[str] = set()
         self._exploration_reminder_sent = False
@@ -61,7 +71,8 @@ class MinimalAgent(BaseAgent):
         presentation_config = self.config.presentation.model_copy(
             update={
                 "enabled": (
-                    self.config.presentation.enabled and self.config.token_optimization_enabled
+                    self.config.presentation.enabled
+                    and self._feature_enabled(self.config.tool_result_presentation_enabled)
                 )
             }
         )
@@ -85,7 +96,31 @@ class MinimalAgent(BaseAgent):
         """运行已经完成状态初始化的任务，并集中处理控制流异常。"""
         self._emit(TraceEventType.TASK_STARTED, {"task": task})
         self._emit_state()
-        self._append_message(Message(role=MessageRole.SYSTEM, content=self.config.system_prompt))
+        self._append_message(
+            Message(role=MessageRole.SYSTEM, content=self.config.system_prompt)
+        )
+        if self.config.skills_enabled:
+            catalog = self.tools.skill_catalog
+            if catalog:
+                entries = "\n".join(
+                    f"- {item.name}: {item.description}"
+                    for item in catalog
+                )
+                self._append_message(
+                    Message(
+                        role=MessageRole.SYSTEM,
+                        content=(
+                            "可按需加载以下 TraceFix skills。仅在任务匹配时调用 load_skill；"
+                            "技能只提供指令，不授予额外工具权限。相对引用通过 load_skill 的 "
+                            "reference 参数读取。\n" + entries
+                        ),
+                        metadata={"kind": "skill_catalog"},
+                    )
+                )
+                self._emit(
+                    TraceEventType.SKILL_CATALOG_EXPOSED,
+                    {"skills": [entry.model_dump(mode="json") for entry in catalog]},
+                )
         if self.repository_map:
             # 将静态地图作为 system 锚点加入完整历史：压缩器会永久保留它，模型请求视图
             # 与 JSONL 审计也能明确区分“索引提供的候选”和 Agent 自己确认的事实。
@@ -106,7 +141,10 @@ class MinimalAgent(BaseAgent):
             while self.state.status is AgentStatus.RUNNING:
                 self.step()
         except AgentCompleted as exc:
-            self._finish(AgentStatus.COMPLETED, exc.code)
+            reason = exc.code
+            if self.config.require_tested_completion and self.state.validation_status != "verified":
+                reason = "agent_completed_unverified"
+            self._finish(AgentStatus.COMPLETED, reason)
         except AgentLimitExceeded as exc:
             self._emit_error(exc)
             self._finish(AgentStatus.INTERRUPTED, exc.code)
@@ -233,6 +271,24 @@ class MinimalAgent(BaseAgent):
             raise budget_error
 
         if not response.message.tool_calls:
+            if (
+                self.config.require_tested_completion
+                and self.state.validation_status != "verified"
+                and not self._unverified_finish_reminder_sent
+            ):
+                self._append_message(
+                    Message(
+                        role=MessageRole.USER,
+                        content=(
+                            "系统验证提示：当前补丁尚无与之对应的有效测试通过记录，或尚未确认非空改动。"
+                            "请检查 Diff，并运行实际测试；若预算不允许或测试与需求冲突，"
+                            "请说明具体情况。"
+                        ),
+                        metadata={"kind": "validation_required"},
+                    )
+                )
+                self._unverified_finish_reminder_sent = True
+                return
             self.state.final_output = response.message.content or ""
             self._set_phase(AgentPhase.FINISH, "assistant_final")
             raise AgentCompleted(
@@ -240,10 +296,37 @@ class MinimalAgent(BaseAgent):
                 context={"final_output": self.state.final_output},
             )
 
+        pending_skill_messages: list[tuple[Message, dict[str, object]]] = []
         for index, call in enumerate(response.message.tool_calls):
             try:
                 self._check_time_budget()
                 if call.name == ReservedToolName.RUN_TESTS.value:
+                    tool = self.tools.get(call.name)
+                    try:
+                        prepare = getattr(tool, "prepare", None)
+                        if prepare is not None:
+                            prepare(call)
+                    except ToolError as exc:
+                        signature = self._tool_signature(call)
+                        count = self._invalid_test_signatures.get(signature, 0) + 1
+                        self._invalid_test_signatures[signature] = count
+                        self.state.rejected_test_calls += 1
+                        self._emit(TraceEventType.TEST_CALL_REJECTED, {
+                            "call_id": call.id, "reason": exc.message,
+                            "same_call_count": count,
+                            "total_count": self.state.rejected_test_calls,
+                        })
+                        if count >= 3 or self.state.rejected_test_calls >= 6:
+                            raise TestLimitExceeded("invalid test call limit exceeded") from exc
+                        result = ToolResult(
+                            call_id=call.id,
+                            tool_name=call.name,
+                            success=False,
+                            error=exc.message,
+                            metadata={"error": exc.to_dict(), "test_call_rejected": True},
+                        )
+                        self._append_tool_result(result)
+                        continue
                     if self.state.test_runs >= self.config.max_test_runs:
                         raise TestLimitExceeded(
                             "test run budget exceeded",
@@ -252,16 +335,60 @@ class MinimalAgent(BaseAgent):
                                 "limit": self.config.max_test_runs,
                             },
                         )
-                    self.state.test_runs += 1
+                    def record_test_start(call_id: str = call.id) -> None:
+                        self.state.test_runs += 1
+                        self._emit(TraceEventType.TEST_PROCESS_STARTED, {
+                            "call_id": call_id, "test_runs": self.state.test_runs,
+                        })
+                    if prepare is not None:
+                        tool.on_process_started = record_test_start
                 result = self._execute_tool(call)
+                if call.name == ReservedToolName.RUN_TESTS.value and prepare is None:
+                    record_test_start()
             except AgentLimitExceeded as exc:
                 # 消息历史要求每个 tool call 都有结果，因此为未执行调用补齐失败消息。
                 self._append_skipped_results(response.message.tool_calls[index:], exc)
                 raise
 
             self._append_tool_result(result)
+            if (
+                result.success
+                and result.tool_name == "load_skill"
+                and isinstance(result.output, dict)
+                and result.output.get("kind") in {"skill", "reference"}
+                and isinstance(result.output.get("content"), str)
+            ):
+                content = result.output["content"]
+                metadata: dict[str, object] = {
+                    "kind": "skill_instructions",
+                    "skill_name": result.output.get("name"),
+                    "skill_version": result.output.get("version"),
+                    "content_sha256": result.output.get("sha256"),
+                    "source": result.output.get("path"),
+                    "content_bytes": result.output.get("content_bytes"),
+                }
+                pending_skill_messages.append(
+                    (
+                        Message(
+                            role=MessageRole.SYSTEM,
+                            content=(
+                                "<tracefix_skill_instructions>\n"
+                                + content
+                                + "\n</tracefix_skill_instructions>"
+                            ),
+                            metadata=metadata,
+                        ),
+                        metadata,
+                    )
+                )
 
         # 提示只能在本轮全部 tool result 写回后追加，否则会违反消息配对协议。
+        for message, metadata in pending_skill_messages:
+            self._append_message(message)
+            self._emit(
+                TraceEventType.SKILL_ACTIVATED,
+                {**metadata, "content": message.content},
+            )
         self._append_patch_recovery_reminder_if_needed()
         self._append_no_effect_patch_guidance_if_needed()
         self._append_exploration_guidance_if_needed()
@@ -281,7 +408,7 @@ class MinimalAgent(BaseAgent):
             self.state.file_read_calls += 1
 
         if (
-            self.config.token_optimization_enabled
+            self._feature_enabled(self.config.action_guidance_enabled)
             and self.state.input_tokens / self.config.max_input_tokens >= 0.85
             and call.name
             in {
@@ -314,7 +441,7 @@ class MinimalAgent(BaseAgent):
         # 搜索和读取是纯读取操作。完全相同的成功调用直接返回紧凑引用，原始结果仍在
         # 完整历史中，避免再次扫描仓库并把同一大段内容重复送入后续上下文。
         if (
-            self.config.token_optimization_enabled
+            self._feature_enabled(self.config.read_cache_enabled)
             and call.name
             in {
                 ReservedToolName.SEARCH_CODE.value,
@@ -346,13 +473,28 @@ class MinimalAgent(BaseAgent):
             call.name == ReservedToolName.APPLY_PATCH.value
             and signature in self._failed_apply_calls
         ):
+            repeated_no_effect = (
+                self.config.require_fresh_read_after_repeated_no_effect_patch
+                and signature in self._no_effect_patch_targets
+                and bool(self._no_effect_patch_targets[signature])
+            )
+            if repeated_no_effect:
+                self._repeated_no_effect_patch_signature = signature
+                self._fresh_read_required_for_patch = True
+                self._fresh_target_reads.clear()
+                self._invalidate_no_effect_target_read_cache(signature)
             result = ToolResult(
                 call_id=call.id,
                 tool_name=call.name,
                 success=False,
-                error="duplicate failed patch call was not executed",
+                error=(
+                    "repeated no-effect patch requires a fresh target read and different patch"
+                    if repeated_no_effect
+                    else "duplicate failed patch call was not executed"
+                ),
                 metadata={
                     "duplicate": True,
+                    **({"recovery_gate": "fresh_read_required"} if repeated_no_effect else {}),
                     "original_call_id": self._failed_apply_calls[signature],
                     "recommendation": (
                         "不要重复相同补丁；请重新读取目标文件，并使用标准 unified diff "
@@ -363,6 +505,39 @@ class MinimalAgent(BaseAgent):
             )
             self._record_tool_outcome(call, result, signature)
             return result
+
+        if (
+            call.name == ReservedToolName.APPLY_PATCH.value
+            and self.config.require_fresh_read_after_repeated_no_effect_patch
+            and self._fresh_read_required_for_patch
+            and not self._no_effect_paths_were_read()
+        ):
+            result = ToolResult(
+                call_id=call.id,
+                tool_name=call.name,
+                success=False,
+                error="fresh target read required after repeated no-effect patch",
+                metadata={
+                    "recovery_gate": "fresh_read_required",
+                    "target_paths": sorted(
+                        self._no_effect_patch_targets.get(
+                            self._repeated_no_effect_patch_signature or "", {}
+                        )
+                    ),
+                },
+                duration_ms=(time.monotonic() - started) * 1000,
+            )
+            return result
+
+        if (
+            call.name == ReservedToolName.APPLY_PATCH.value
+            and self.config.require_fresh_read_after_repeated_no_effect_patch
+            and self._fresh_read_required_for_patch
+        ):
+            # A fresh read authorizes exactly one distinct patch attempt.
+            self._fresh_read_required_for_patch = False
+            self._fresh_target_reads.clear()
+            self._repeated_no_effect_patch_signature = None
 
         try:
             tool = self.tools.get(call.name)
@@ -402,7 +577,7 @@ class MinimalAgent(BaseAgent):
         self.state.tool_execution_seconds += time.monotonic() - started
         self._record_tool_outcome(call, result, signature)
         if (
-            self.config.token_optimization_enabled
+            self._feature_enabled(self.config.read_cache_enabled)
             and result.success
             and call.name
             in {
@@ -484,11 +659,38 @@ class MinimalAgent(BaseAgent):
     ) -> None:
         """记录影响失败恢复和正常收尾的少量确定性事实。"""
         if call.name == ReservedToolName.READ_FILE.value and result.success:
-            path = call.arguments.get("path")
-            if isinstance(path, str):
-                normalized = path.replace("\\", "/")
-                if normalized in self.repository_candidates:
-                    self._repo_map_candidate_reads.add(normalized)
+            output = result.output if isinstance(result.output, dict) else {}
+            requested_path = call.arguments.get("path")
+            output_path = output.get("path")
+            if isinstance(output_path, str):
+                normalized_output_path = output_path.replace("\\", "/")
+                if (
+                    self._fresh_read_required_for_patch
+                    and not result.metadata.get("cached")
+                    and self._path_key(normalized_output_path)
+                    in {
+                        self._path_key(target)
+                        for target in self._no_effect_patch_targets.get(
+                            self._repeated_no_effect_patch_signature or "", {}
+                        ).keys()
+                    }
+                ):
+                    self._fresh_target_reads.setdefault(
+                        self._path_key(normalized_output_path), []
+                    ).append(
+                        (
+                            int(output.get("start_line", 1)),
+                            int(output.get("end_line", 0)),
+                            int(output.get("total_lines", 0)),
+                            bool(output.get("truncated", True)),
+                        )
+                    )
+            # Repo Map 记录的是成功的候选读取调用。保留请求路径兼容旧工具适配器；
+            # 恢复门槛上方则只认工具返回的真实路径与行范围。
+            if isinstance(requested_path, str):
+                normalized_requested_path = requested_path.replace("\\", "/")
+                if normalized_requested_path in self.repository_candidates:
+                    self._repo_map_candidate_reads.add(normalized_requested_path)
                     self.state.repo_map_candidate_reads = len(self._repo_map_candidate_reads)
                     # Repo Map 候选被读到只是一条定位证据，不强行切换阶段；模型仍可在
                     # 后续测试反馈下补读调用方，避免过早补丁导致准确率下降。
@@ -502,11 +704,19 @@ class MinimalAgent(BaseAgent):
                 # 文件再次改变后，旧的测试和 Diff 结论都已经过期。
                 self._tests_passed = False
                 self._diff_nonempty = False
+                self.state.validation_status = "unverified"
                 self._finish_reminder_sent = False
                 self._last_patch_failure_reason = None
             else:
                 self._set_phase(AgentPhase.PATCH, "patch_attempted")
                 self._failed_apply_calls.setdefault(signature, call.id)
+                if (
+                    self.config.require_fresh_read_after_repeated_no_effect_patch
+                    and result.error == "no_effect"
+                ):
+                    self._no_effect_patch_targets[signature] = self._extract_patch_read_ranges(
+                        str(call.arguments.get("patch", ""))
+                    )
                 self._consecutive_apply_failures += 1
                 self._last_patch_failure_reason = result.error
             return
@@ -517,8 +727,10 @@ class MinimalAgent(BaseAgent):
             self._tests_passed = result.success
             if result.success:
                 if self._diff_nonempty:
+                    self.state.validation_status = "verified"
                     self._set_phase(AgentPhase.FINISH, "tests_and_diff_ready")
             else:
+                self.state.validation_status = "unverified"
                 self._set_phase(AgentPhase.PATCH, "tests_failed")
             return
 
@@ -526,7 +738,10 @@ class MinimalAgent(BaseAgent):
             output = result.output if isinstance(result.output, dict) else {}
             self._diff_nonempty = bool(str(output.get("diff", "")).strip())
             if self._tests_passed and self._diff_nonempty:
+                self.state.validation_status = "verified"
                 self._set_phase(AgentPhase.FINISH, "tests_and_diff_ready")
+            else:
+                self.state.validation_status = "unverified"
 
     def _set_phase(self, phase: AgentPhase, reason: str) -> None:
         """仅在阶段实际变化时更新状态并留下可审计事件。"""
@@ -539,10 +754,112 @@ class MinimalAgent(BaseAgent):
             {"from": previous.value, "to": phase.value, "reason": reason},
         )
 
+    def _feature_enabled(self, override: bool | None) -> bool:
+        """Resolve a split optimization flag with backward-compatible fallback."""
+        return self.config.token_optimization_enabled if override is None else override
+
+    @staticmethod
+    def _extract_patch_paths(patch: str) -> set[str]:
+        """Extract old-side file paths, honoring quoted paths containing whitespace."""
+        return set(MinimalAgent._extract_patch_read_ranges(patch))
+
+    @staticmethod
+    def _extract_patch_read_ranges(
+        patch: str,
+    ) -> dict[str, tuple[tuple[int, int], ...] | None]:
+        """Return pre-patch line ranges the recovery gate must observe.
+
+        ``None`` means that the patch syntax did not expose reliable hunk ranges, so
+        a complete, untruncated read of that file is required.
+        """
+        ranges: dict[str, list[tuple[int, int]] | None] = {}
+        old_path: str | None = None
+        for line in patch.splitlines():
+            if line.startswith("*** Update File: "):
+                old_path = line.removeprefix("*** Update File: ").strip()
+                if old_path:
+                    ranges.setdefault(old_path.replace("\\", "/"), None)
+                continue
+            if line.startswith("--- "):
+                try:
+                    candidate = shlex.split(line[4:], posix=True)[0]
+                except (ValueError, IndexError):
+                    old_path = None
+                    continue
+                if candidate == "/dev/null":
+                    old_path = None
+                    continue
+                old_path = candidate[2:] if candidate.startswith("a/") else candidate
+                old_path = old_path.replace("\\", "/")
+                ranges.setdefault(old_path, [])
+                continue
+            if old_path is not None and line.startswith("@@"):
+                match = re.match(r"^@@ -(\d+)(?:,(\d+))? \+\d+(?:,\d+)? @@", line)
+                if match is None:
+                    ranges[old_path] = None
+                    continue
+                start = int(match.group(1))
+                count = int(match.group(2) or "1")
+                first = max(1, start if count else start + 1)
+                last = max(first, start + count - 1)
+                existing = ranges.get(old_path)
+                if existing is not None:
+                    existing.append((first, last))
+        return {
+            path: None if not spans else tuple(spans)
+            for path, spans in ranges.items()
+        }
+
+    @staticmethod
+    def _path_key(path: str) -> str:
+        """Normalize separators and case for workspace-relative path comparisons."""
+        return path.replace("\\", "/").casefold()
+
+    def _no_effect_paths_were_read(self) -> bool:
+        targets = self._no_effect_patch_targets.get(
+            self._repeated_no_effect_patch_signature or "", set()
+        )
+        if not targets:
+            return False
+        for target, required_ranges in targets.items():
+            observations = self._fresh_target_reads.get(self._path_key(target), ())
+            if required_ranges is None:
+                if not any(
+                    start <= 1 and end >= total and total > 0 and not truncated
+                    for start, end, total, truncated in observations
+                ):
+                    return False
+                continue
+            for required_start, required_end in required_ranges:
+                if not any(
+                    start <= required_start and end >= required_end and not truncated
+                    for start, end, _total, truncated in observations
+                ):
+                    return False
+        return True
+
+    def _invalidate_no_effect_target_read_cache(self, signature: str) -> None:
+        """A cached pre-failure read cannot satisfy recovery or hide a new read."""
+        targets = {
+            self._path_key(path)
+            for path in self._no_effect_patch_targets.get(signature, {})
+        }
+        for cached_signature in tuple(self._successful_tool_cache):
+            tool_name, separator, encoded = cached_signature.partition(":")
+            if tool_name != ReservedToolName.READ_FILE.value or not separator:
+                continue
+            try:
+                arguments = json.loads(encoded)
+            except json.JSONDecodeError:
+                continue
+            path = arguments.get("path") if isinstance(arguments, dict) else None
+            if isinstance(path, str) and self._path_key(path) in targets:
+                self._successful_tool_cache.pop(cached_signature, None)
+
     def _append_exploration_guidance_if_needed(self) -> None:
         """探索达到任一软上限后推动收敛，不直接拒绝模型后续的定向读取。"""
         if (
-            not self.config.token_optimization_enabled
+            not self._feature_enabled(self.config.action_guidance_enabled)
             or self.state.phase is not AgentPhase.EXPLORE
             or self._exploration_reminder_sent
         ):
@@ -573,7 +890,7 @@ class MinimalAgent(BaseAgent):
     def _append_patch_action_guidance_if_needed(self) -> None:
         """读取足够的 Repo Map 候选后要求从定位切换到最小修改。"""
         if (
-            not self.config.token_optimization_enabled
+            not self._feature_enabled(self.config.action_guidance_enabled)
             or self._patch_action_reminder_sent
             or self.state.repo_map_candidate_reads < self.config.repo_map_reads_before_patch
         ):
@@ -601,7 +918,7 @@ class MinimalAgent(BaseAgent):
         pending = [
             threshold for threshold in reached if threshold not in self._budget_guidance_sent
         ]
-        if not self.config.token_optimization_enabled or not pending:
+        if not self._feature_enabled(self.config.action_guidance_enabled) or not pending:
             return
         threshold = max(pending)
         if threshold >= 85:
@@ -644,7 +961,8 @@ class MinimalAgent(BaseAgent):
         if self._no_effect_patch_reminder_sent or not self._last_patch_failure_reason:
             return
         reason = self._last_patch_failure_reason.casefold()
-        if "does not change" not in reason and "already applied" not in reason:
+        no_effect_reasons = ("does not change", "already applied", "no_effect")
+        if not any(token in reason for token in no_effect_reasons):
             return
         self._append_message(
             Message(
@@ -678,7 +996,16 @@ class MinimalAgent(BaseAgent):
     def _append_tool_result(self, result: ToolResult) -> None:
         """把工具结果转换成模型可消费的 tool 消息并写入轨迹。"""
         original = result.model_dump_json()
-        presented = self._presenter.present(result)
+        model_result = result
+        if (
+            result.success
+            and result.tool_name == "load_skill"
+            and isinstance(result.output, dict)
+            and isinstance(result.output.get("content"), str)
+        ):
+            receipt = {key: value for key, value in result.output.items() if key != "content"}
+            model_result = result.model_copy(update={"output": receipt}, deep=True)
+        presented = self._presenter.present(model_result)
         self.state.presentation_metrics.add(original, presented)
         self._append_message(
             Message(

@@ -1,0 +1,237 @@
+{
+  "kind": "tracefix_holdout_recipe_lock",
+  "schema_version": 1,
+  "created_at": "2026-09-22T04:38:10.119175+00:00",
+  "holdout_freeze_sha256": "513c1a249ee97d3ba22c8f069529d0596fc268de59b933740ef1b52bb8d2e28b",
+  "entries": [
+    {
+      "task_id": "sphinx-doc__sphinx-8056",
+      "recipe_path": "benchmarks/holdout_recipes/sphinx-doc__sphinx-8056.json",
+      "recipe_sha256": "6c9d84f8c3942faabdc7ad0f355ca98532e9d90c7afb53f17d660a08eee3abaa",
+      "base_commit": "e188d56ed1248dead58f3f8018c0e9a3f99193f7",
+      "target_node_ids": [
+        "tests/test_ext_napoleon_docstring.py::NumpyDocstringTest::test_multiple_parameters"
+      ],
+      "dependency_fingerprint": "a7c9281b87d36a025e55f4b6eb1de9afa7a0c802459d622b621ec35d96043ed9"
+    },
+    {
+      "task_id": "sphinx-doc__sphinx-8551",
+      "recipe_path": "benchmarks/holdout_recipes/sphinx-doc__sphinx-8551.json",
+      "recipe_sha256": "1a19ac1b5291f6e0952d393cdfc51f3fb6cbb7008e41e1a4f3fdf6c5afe9ac35",
+      "base_commit": "57ed10c68057c96491acbd3e62254ccfaf9e3861",
+      "target_node_ids": [
+        "tests/test_domain_py.py::test_info_field_list"
+      ],
+      "dependency_fingerprint": "112c89b5d885690e5b41fd2a4a96c806ed2c15bac6a3c9d6033e8572e26bf842"
+    },
+    {
+      "task_id": "sphinx-doc__sphinx-8593",
+      "recipe_path": "benchmarks/holdout_recipes/sphinx-doc__sphinx-8593.json",
+      "recipe_sha256": "6bbd1a00e25b1d9bbc1848dc1d56d068571487c6e9ae2e94ee6ce07f1b63668f",
+      "base_commit": "07983a5a8704ad91ae855218ecbda1c8598200ca",
+      "target_node_ids": [
+        "tests/test_ext_autodoc_private_members.py::test_private_field",
+        "tests/test_ext_autodoc_private_members.py::test_private_members"
+      ],
+      "dependency_fingerprint": "d9a22b37bc5dfb668d775ce94b1ba264d870d5278e778f3597adc0ba7a0855d8"
+    },
+    {
+      "task_id": "pytest-dev__pytest-7205",
+      "recipe_path": "benchmarks/holdout_recipes/pytest-dev__pytest-7205.json",
+      "recipe_sha256": "a38f09875fb1333d2cf13050735a1aa8841c8aeb33b598bd65077babf9d90272",
+      "base_commit": "5e7f1ab4bf58e473e5d7f878eb2b499d7deabd29",
+      "target_node_ids": [
+        "testing/test_setuponly.py::test_show_fixtures_with_parameters[--setup-only]",
+        "testing/test_setuponly.py::test_show_fixtures_with_parameter_ids[--setup-only]",
+        "testing/test_setuponly.py::test_show_fixtures_with_parameter_ids_function[--setup-only]",
+        "testing/test_setuponly.py::test_show_fixtures_with_parameters[--setup-plan]",
+        "testing/test_setuponly.py::test_show_fixtures_with_parameter_ids[--setup-plan]",
+        "testing/test_setuponly.py::test_show_fixtures_with_parameter_ids_function[--setup-plan]",
+        "testing/test_setuponly.py::test_show_fixtures_with_parameters[--setup-show]",
+        "testing/test_setuponly.py::test_show_fixtures_with_parameter_ids[--setup-show]",
+        "testing/test_setuponly.py::test_show_fixtures_with_parameter_ids_function[--setup-show]",
+        "testing/test_setuponly.py::test_show_fixture_action_with_bytes"
+      ],
+      "dependency_fingerprint": "b53e3a3d2ec5d02c47b8b2d14c772e1b8b336e71390ba134ea0862008b12b517"
+    },
+    {
+      "task_id": "sphinx-doc__sphinx-7889",
+      "recipe_path": "benchmarks/holdout_recipes/sphinx-doc__sphinx-7889.json",
+      "recipe_sha256": "cab6c15b0ff48e62f3ab761d5aea24f2f311be78ed8ab95dd4ce608c3eb25be8",
+      "base_commit": "ec9af606c6cfa515f946d74da9b51574f2f9b16f",
+      "target_node_ids": [
+        "tests/test_ext_autodoc_mock.py::test_MockObject"
+      ],
+      "dependency_fingerprint": "a7c9281b87d36a025e55f4b6eb1de9afa7a0c802459d622b621ec35d96043ed9"
+    },
+    {
+      "task_id": "psf__requests-5414",
+      "recipe_path": "benchmarks/holdout_recipes/psf__requests-5414.json",
+      "recipe_sha256": "1c9e0ce11525b1a410604071070d05f0205009ce79a326968165ecc181e95b31",
+      "base_commit": "39d0fdd9096f7dceccbc8f82e1eda7dd64717a8e",
+      "target_node_ids": [
+        "tests/test_requests.py::TestRequests::test_invalid_url[InvalidURL-http://.example.com]"
+      ],
+      "dependency_fingerprint": "be2f244581a8306eded6e2a5eb6297d0895968b8c27afc4ff1cc4e9913069a8b"
+    },
+    {
+      "task_id": "pytest-dev__pytest-6197",
+      "recipe_path": "benchmarks/holdout_recipes/pytest-dev__pytest-6197.json",
+      "recipe_sha256": "da957e21ff506859c05a1eb9d3083c4c0807e724859294cbd99569313f5446ef",
+      "base_commit": "e856638ba086fcf5bebf1bebea32d5cf78de87b4",
+      "target_node_ids": [
+        "testing/test_collection.py::test_does_not_eagerly_collect_packages",
+        "testing/test_collection.py::test_does_not_put_src_on_path"
+      ],
+      "dependency_fingerprint": "af8072b3071b629928b586d50bcdfa5b01a171e96ce15c05d4280cca2e29ea1c"
+    },
+    {
+      "task_id": "sphinx-doc__sphinx-8120",
+      "recipe_path": "benchmarks/holdout_recipes/sphinx-doc__sphinx-8120.json",
+      "recipe_sha256": "0782160c82592ea540d04d153e89f51f88c98b42860c98b5ae28602f2a45a738",
+      "base_commit": "795747bdb6b8fb7d717d5bbfc2c3316869e66a73",
+      "target_node_ids": [
+        "tests/test_intl.py::test_customize_system_message"
+      ],
+      "dependency_fingerprint": "69af9d4ca1870990564997cf138a8bdeab6eb790191334762fca9bacb7538558"
+    },
+    {
+      "task_id": "pylint-dev__pylint-6903",
+      "recipe_path": "benchmarks/holdout_recipes/pylint-dev__pylint-6903.json",
+      "recipe_sha256": "59158e5bee774238b750ec902cc6265d132b80019c4d9ae2371266ea45826cb4",
+      "base_commit": "ca80f03a43bc39e4cc2c67dc99817b3c9f13b8a6",
+      "target_node_ids": [
+        "tests/test_pylint_runners.py::test_pylint_run_jobs_equal_zero_dont_crash_with_cpu_fraction"
+      ],
+      "dependency_fingerprint": "1e2c3e76d418a10d6ce381b52e81283885bb1b57c3ec66232f957867df503e58"
+    },
+    {
+      "task_id": "pytest-dev__pytest-5262",
+      "recipe_path": "benchmarks/holdout_recipes/pytest-dev__pytest-5262.json",
+      "recipe_sha256": "322fe11a722c1958576abb407d9c254dd69787feab415f2dfddd4759be3ba3cd",
+      "base_commit": "58e6a09db49f34886ff13f3b7520dd0bcd7063cd",
+      "target_node_ids": [
+        "testing/test_capture.py::TestFDCapture::test_capfd_sys_stdout_mode"
+      ],
+      "dependency_fingerprint": "f156c9901338c432d6e064c1e2a623e32de1687e7d36a53050e7153fac879a41"
+    },
+    {
+      "task_id": "pylint-dev__pylint-7277",
+      "recipe_path": "benchmarks/holdout_recipes/pylint-dev__pylint-7277.json",
+      "recipe_sha256": "f69ea073e496a025538dd5890a9ad56bff67516135883b77437b2f9777cd7761",
+      "base_commit": "684a1d6aa0a6791e20078bc524f97c8906332390",
+      "target_node_ids": [
+        "tests/test_self.py::TestRunTC::test_modify_sys_path"
+      ],
+      "dependency_fingerprint": "54c95e3ace2e604938978cece5a6f7f17ff4a1742348013201b65f77c1111112"
+    },
+    {
+      "task_id": "psf__requests-6028",
+      "recipe_path": "benchmarks/holdout_recipes/psf__requests-6028.json",
+      "recipe_sha256": "cb80d718354578c3c480d7d088f0a9cf360d0c9408e86ce502da3793eb28f0a6",
+      "base_commit": "0192aac24123735b3eaf9b08df46429bb770c283",
+      "target_node_ids": [
+        "tests/test_utils.py::test_prepend_scheme_if_needed[http://user:pass@example.com/path?query-http://user:pass@example.com/path?query]",
+        "tests/test_utils.py::test_prepend_scheme_if_needed[http://user@example.com/path?query-http://user@example.com/path?query]"
+      ],
+      "dependency_fingerprint": "d090a9706532122ce9ede28a069e8cf945f49f6883587fa2edd170ada81ebdfe"
+    },
+    {
+      "task_id": "psf__requests-1921",
+      "recipe_path": "benchmarks/holdout_recipes/psf__requests-1921.json",
+      "recipe_sha256": "f0ab38d8134c4f1ace77392b44f38ccddeb9dad82b69b2cba1b9c7cc7844d210",
+      "base_commit": "3c88e520da24ae6f736929a750876e7654accc3d",
+      "target_node_ids": [
+        "test_requests.py::RequestsTestCase::test_DIGESTAUTH_WRONG_HTTP_401_GET",
+        "test_requests.py::RequestsTestCase::test_POSTBIN_GET_POST_FILES",
+        "test_requests.py::RequestsTestCase::test_basicauth_with_netrc",
+        "test_requests.py::RequestsTestCase::test_cookie_persists_via_api",
+        "test_requests.py::RequestsTestCase::test_headers_on_session_with_None_are_not_sent",
+        "test_requests.py::RequestsTestCase::test_uppercase_scheme_redirect"
+      ],
+      "dependency_fingerprint": "4d620bb21a56126846eb92b14006cac55e52be84824e3a22f00e51105681a16e"
+    },
+    {
+      "task_id": "pytest-dev__pytest-7432",
+      "recipe_path": "benchmarks/holdout_recipes/pytest-dev__pytest-7432.json",
+      "recipe_sha256": "934b0547130f3b7a3f5a6ed99154ddbbdbfac38265d519948d4f6248c4a6246c",
+      "base_commit": "e6e300e729dd33956e5448d8be9a0b1540b4e53a",
+      "target_node_ids": [
+        "testing/test_skipping.py::TestXFail::test_xfail_run_with_skip_mark[test_input1-expected1]"
+      ],
+      "dependency_fingerprint": "7c81f6189d02536af3a1cb99841483bed466d57b57ce67de60920dd1d5fdf3e5"
+    },
+    {
+      "task_id": "pytest-dev__pytest-7324",
+      "recipe_path": "benchmarks/holdout_recipes/pytest-dev__pytest-7324.json",
+      "recipe_sha256": "113f3760a74d28d50266969404a24241080ff32c61fe09d61d93af86f49dc9c5",
+      "base_commit": "19ad5889353c7f5f2b65cc2acd346b7a9e95dfcd",
+      "target_node_ids": [
+        "testing/test_mark_expression.py::test_valid_idents[True]",
+        "testing/test_mark_expression.py::test_valid_idents[False]",
+        "testing/test_mark_expression.py::test_valid_idents[None]"
+      ],
+      "dependency_fingerprint": "b5c3b5eece4da29290d799efe71908a1481c5b87c0e7cc2de001e8488193eb3c"
+    },
+    {
+      "task_id": "pylint-dev__pylint-6528",
+      "recipe_path": "benchmarks/holdout_recipes/pylint-dev__pylint-6528.json",
+      "recipe_sha256": "f081158fe78c7625be84b60f03f1f03807e1da40cf0d8ab86ec7ba1d8866f86c",
+      "base_commit": "273a8b25620467c1e5686aa8d2a1dbb8c02c78d0",
+      "target_node_ids": [
+        "tests/lint/unittest_lint.py::test_recursive_ignore[--ignore-ignored_subdirectory]",
+        "tests/lint/unittest_lint.py::test_recursive_ignore[--ignore-patterns-ignored_*]",
+        "tests/test_self.py::TestRunTC::test_ignore_recursive",
+        "tests/test_self.py::TestRunTC::test_ignore_pattern_recursive"
+      ],
+      "dependency_fingerprint": "a516c319d29c7bcbbe595e6c8e054ad1c0b07a2836e313dfa879ce07f4b6cfc5"
+    },
+    {
+      "task_id": "pylint-dev__pylint-4970",
+      "recipe_path": "benchmarks/holdout_recipes/pylint-dev__pylint-4970.json",
+      "recipe_sha256": "3c3688f8fe3c4734630c7c454c4b7c823ce7b6e9e6eb087aa50b302445299c71",
+      "base_commit": "40cc2ffd7887959157aaf469e09585ec2be7f528",
+      "target_node_ids": [
+        "tests/checkers/unittest_similar.py::test_set_duplicate_lines_to_zero"
+      ],
+      "dependency_fingerprint": "c1d5c39c5b22dd97438bee577e60a6547795cbee3f6f5b48362924f8713d867b"
+    },
+    {
+      "task_id": "pylint-dev__pylint-6386",
+      "recipe_path": "benchmarks/holdout_recipes/pylint-dev__pylint-6386.json",
+      "recipe_sha256": "cd6da2600292bece53d4f5f35ff0bf59132bf848c1b57a69f80535da17a4248d",
+      "base_commit": "754b487f4d892e3d4872b6fc7468a71db4e31c13",
+      "target_node_ids": [
+        "tests/config/test_config.py::test_short_verbose"
+      ],
+      "dependency_fingerprint": "2474b26e122c12b23a11a548c8a3b082c5bf9fad9dc26e4e6961135d6f62b591"
+    },
+    {
+      "task_id": "psf__requests-2317",
+      "recipe_path": "benchmarks/holdout_recipes/psf__requests-2317.json",
+      "recipe_sha256": "33db86600d87748fbe16e91d656e62d1e46fba36e73fcf2cf4ddbe034adfa91c",
+      "base_commit": "091991be0da19de9108dbe5e3752917fea3d7fdc",
+      "target_node_ids": [
+        "test_requests.py::RequestsTestCase::test_HTTP_302_ALLOW_REDIRECT_GET",
+        "test_requests.py::RequestsTestCase::test_POSTBIN_GET_POST_FILES",
+        "test_requests.py::RequestsTestCase::test_POSTBIN_GET_POST_FILES_WITH_DATA",
+        "test_requests.py::RequestsTestCase::test_basicauth_with_netrc",
+        "test_requests.py::RequestsTestCase::test_json_param_post_content_type_works",
+        "test_requests.py::RequestsTestCase::test_manual_redirect_with_partial_body_read",
+        "test_requests.py::RequestsTestCase::test_requests_history_is_saved",
+        "test_requests.py::TestTimeout::test_encoded_methods"
+      ],
+      "dependency_fingerprint": "ff46138e3339937831769a02626008469ba04fc60ba4b635865b6997b6ee1872"
+    },
+    {
+      "task_id": "psf__requests-2931",
+      "recipe_path": "benchmarks/holdout_recipes/psf__requests-2931.json",
+      "recipe_sha256": "ec1db95ae7b6d37ff1e6c692e9f3b52caeb5e33268848e0bb2c8eee806ceeb45",
+      "base_commit": "5f7a3a74aab1625c2bb65f643197ee885e3da576",
+      "target_node_ids": [
+        "test_requests.py::TestRequests::test_binary_put"
+      ],
+      "dependency_fingerprint": "19841476781a91d6a50d5b8b44d303862af706610f3da12f6a1cc6f1e91283a4"
+    }
+  ]
+}

@@ -1,5 +1,6 @@
 import hashlib
 import json
+import shutil
 import subprocess
 import sys
 from datetime import UTC, datetime
@@ -7,24 +8,70 @@ from pathlib import Path
 
 import pytest
 
-from tracefix import AgentConfig, AgentStatus, LLMConfig, RunResult
-from tracefix.exceptions import BenchmarkError
+from tracefix import AgentConfig, AgentStatus, BaseLLM, LLMConfig, RunResult
+from tracefix.exceptions import AgentLimitExceeded, BenchmarkError, P2TrialBudgetExceeded
+from tracefix.messages import Message, MessageRole, ToolCall
+from tracefix.models import LLMResponse, TokenUsage
+from tracefix.p2_protocol import (
+    P2BudgetedLLM,
+    P2CostLedgerRecord,
+    P2CostRequestRecord,
+    P2FormalRunRequirements,
+    P2ProtocolConfig,
+    P2SimulationLLM,
+    P2TrialRecord,
+    _verify_recipe_service,
+    _verify_saved_artifacts,
+    _write_cost_ledger,
+    build_p2_protocol,
+    check_p2_inputs,
+    diagnose_p2_experiment,
+    estimated_request_reservation,
+    read_completed_trial,
+    run_p2_experiment,
+    run_p2_simulation,
+    summarize_p2_experiment,
+    write_p2_check,
+    write_p2_diagnostic,
+    write_p2_dry_run,
+    write_p2_followup_plan,
+    write_p2_reconciliation,
+    write_p2_summary,
+    write_trial_record,
+)
 from tracefix.paired import ExperimentArm
-from tracefix.provenance import collect_run_provenance
+from tracefix.provenance import collect_run_provenance, inspect_test_environment
 from tracefix.real_benchmark import RealIssueTask
 from tracefix.real_experiment import (
+    CollectionErrorEvidence,
+    ProcessEvidence,
+    PytestExecutionEvidence,
     RealExperimentConfig,
     RealPairedExperimentRunner,
     RealPrescreenRunner,
     RealRepoMapPrescreenRunner,
     RealTrajectoryMetrics,
     RealTrialResult,
+    _audit_complete,
+    _canonical_node_ids,
+    _collection_exception,
     _eligibility_failures,
     _git,
+    _matches_expected_collection_failure,
+    _probe_source_import,
+    _pytest_command,
+    _pytest_evidence,
+    _read_audit,
+    _run_recipe_build,
     _task_python,
     analyze_real_trajectory,
+    classify_p2_paths,
+    p2_scoring_instruction,
+    validate_agent_patch_strict,
     validate_real_task_behavior,
 )
+from tracefix.real_recipes import EnvironmentRecipe, ExpectedBaseFailure
+from tracefix.tools import ToolResult
 
 GOLD = """diff --git a/pkg/a.py b/pkg/a.py
 --- a/pkg/a.py
@@ -48,7 +95,7 @@ new file mode 100644
 +from pkg.a import VALUE
 +from pkg.b import ENABLED
 +
-+def test_fixed():
++def test_hidden():
 +    assert VALUE == 1 and ENABLED
 """
 
@@ -58,7 +105,651 @@ def test_real_experiment_default_input_budget_is_350k() -> None:
     assert RealExperimentConfig().agent_config.max_input_tokens == 350_000
 
 
+def test_pytest_command_honors_frozen_historical_config(tmp_path: Path) -> None:
+    """历史 pytest 配方可明确选择 TOML，不能被另一份 INI 配置悄悄替换。"""
+    checkout = tmp_path / "checkout"
+    evidence = checkout / ".tracefix-validation"
+    evidence.mkdir(parents=True)
+    (checkout / "tox.ini").write_text("[pytest]\n", encoding="utf-8")
+    (checkout / "pyproject.toml").write_text("[tool.pytest.ini_options]\n", encoding="utf-8")
+    recipe = EnvironmentRecipe(task_id="org__repo-1", pytest_config="pyproject.toml")
+
+    command = _pytest_command(
+        Path(sys.executable), checkout, ("tests/test_x.py",), evidence, recipe
+    )
+
+    assert command[command.index("-c") + 1] == str(checkout / "pyproject.toml")
+
+
+def test_recipe_rejects_unsafe_pytest_config() -> None:
+    with pytest.raises(ValueError, match="pytest_config"):
+        EnvironmentRecipe(task_id="org__repo-1", pytest_config="../pytest.ini")
+
+
+def test_requests_1766_recipe_pins_local_httpbin_and_requires_health_check(monkeypatch) -> None:
+    recipe = EnvironmentRecipe(
+        task_id="psf__requests-1766",
+        environment_variables={"HTTPBIN_URL": "http://127.0.0.1:8765/"},
+        service_health_url="http://127.0.0.1:8765/get",
+    )
+
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self, *_args):
+            return b'{"url":"http://127.0.0.1:8765/get"}'
+
+    class FakeOpener:
+        def open(self, url, timeout):
+            assert url == "http://127.0.0.1:8765/get"
+            assert timeout == 5
+            return FakeResponse()
+
+    monkeypatch.setattr("tracefix.p2_protocol.build_opener", lambda handler: FakeOpener())
+    _verify_recipe_service(recipe.task_id, recipe)
+
+    class WrongService(FakeOpener):
+        def open(self, _url, timeout):
+            response = FakeResponse()
+            response.read = lambda *_args: b'{"url":"http://127.0.0.1:9999/get"}'
+            return response
+
+    monkeypatch.setattr("tracefix.p2_protocol.build_opener", lambda _handler: WrongService())
+    with pytest.raises(BenchmarkError, match="unexpected health identity"):
+        _verify_recipe_service(recipe.task_id, recipe)
+
+
+def test_recipe_service_requires_expected_environment_url() -> None:
+    recipe = EnvironmentRecipe(
+        task_id="psf__requests-1766",
+        environment_variables={"HTTPBIN_URL": "http://127.0.0.1:8765/"},
+        service_health_url="http://127.0.0.1:8765/get",
+    )
+    recipe = recipe.model_copy(update={"environment_variables": {}})
+
+    with pytest.raises(BenchmarkError, match="has no HTTPBIN_URL"):
+        _verify_recipe_service(recipe.task_id, recipe)
+
+
+def test_recipe_service_connection_failure_is_a_blocking_error(monkeypatch) -> None:
+    recipe = EnvironmentRecipe(
+        task_id="psf__requests-1766",
+        environment_variables={"HTTPBIN_URL": "http://127.0.0.1:8765/"},
+        service_health_url="http://127.0.0.1:8765/get",
+    )
+
+    class OfflineOpener:
+        def open(self, *_args, **_kwargs):
+            raise OSError("connection refused")
+
+    monkeypatch.setattr("tracefix.p2_protocol.build_opener", lambda _handler: OfflineOpener())
+    with pytest.raises(BenchmarkError, match="service is unavailable"):
+        _verify_recipe_service(recipe.task_id, recipe)
+
+
+@pytest.mark.parametrize(
+    ("run_result", "expected_message"),
+    [
+        (OSError("interpreter missing"), "source import probe failed"),
+        (
+            subprocess.CompletedProcess(
+                args=["python"], returncode=1, stdout="", stderr="bad import"
+            ),
+            "source import probe failed",
+        ),
+        (
+            subprocess.CompletedProcess(
+                args=["python"], returncode=0, stdout="C:/outside/site-packages/pkg.py\n", stderr=""
+            ),
+            "resolved outside",
+        ),
+    ],
+)
+def test_source_import_probe_fails_closed_for_process_and_path_errors(
+    tmp_path: Path, monkeypatch, run_result, expected_message: str
+) -> None:
+    recipe = EnvironmentRecipe(task_id="org__repo-1", source_import_probe="pkg")
+
+    def fake_run(*_args, **_kwargs):
+        if isinstance(run_result, Exception):
+            raise run_result
+        return run_result
+
+    monkeypatch.setattr("tracefix.real_experiment.subprocess.run", fake_run)
+    message, imported = _probe_source_import(recipe, tmp_path, Path("python"))
+
+    assert message is not None and expected_message in message
+    assert (
+        imported is None
+        if (isinstance(run_result, Exception) or run_result.returncode != 0)
+        else imported is not None
+    )
+
+
+def test_recipe_build_stops_after_first_failed_step(tmp_path: Path, monkeypatch) -> None:
+    recipe = EnvironmentRecipe(
+        task_id="org__repo-1",
+        build_commands=(("{python}", "-m", "build"), ("{python}", "-m", "pytest")),
+    )
+    calls = []
+
+    def fake_process(command, checkout, environment, evidence_root, stage):
+        calls.append((command, stage))
+        return ProcessEvidence(
+            stage=stage,
+            command=command,
+            working_directory=str(checkout),
+            returncode=1 if len(calls) == 1 else 0,
+            timed_out=False,
+            duration_ms=1,
+            stdout_path=str(evidence_root / "stdout"),
+            stderr_path=str(evidence_root / "stderr"),
+        )
+
+    monkeypatch.setattr("tracefix.real_experiment._run_validation_process", fake_process)
+    steps = _run_recipe_build(recipe, tmp_path, Path("python"), tmp_path / "evidence")
+
+    assert len(steps) == 1
+    assert calls[0][0][0] == "python"
+    assert steps[0].returncode == 1
+
+
+@pytest.mark.parametrize(
+    ("contents", "expected"),
+    [
+        ("{not-json", ((), None)),
+        (
+            json.dumps({"collected_node_ids": ["tests/test_x.py", 5]}),
+            (("tests/test_x.py",), "{path}"),
+        ),
+    ],
+)
+def test_read_audit_handles_corrupt_and_mixed_node_records(
+    tmp_path: Path, contents: str, expected
+) -> None:
+    audit = tmp_path / "audit.json"
+    audit.write_text(contents, encoding="utf-8")
+    expected_nodes, expected_path = expected
+    if expected_path == "{path}":
+        expected_path = str(audit)
+
+    assert _read_audit(audit) == (expected_nodes, expected_path)
+
+
+def test_pytest_evidence_marks_xfail_as_non_qualifying_pass(tmp_path: Path) -> None:
+    """xfail 的零退出码必须与普通通过区分，避免误判为 base 复现。"""
+    (tmp_path / ".tracefix-junit.xml").write_text(
+        '<testsuite tests="1" failures="0" errors="0" />', encoding="utf-8"
+    )
+    result = ToolResult(
+        call_id="test-xfail",
+        tool_name="run_tests",
+        success=True,
+        output={"returncode": 0, "stdout": "1 xfailed", "stderr": "", "timed_out": False},
+    )
+
+    assert _pytest_evidence(result, tmp_path).status == "passed_xfail"
+
+
+def test_pytest_evidence_classifies_network_and_permission_failures(tmp_path: Path) -> None:
+    """外部代理与 pip 权限错误不能误写成待修复的业务断言失败。"""
+    network = ToolResult(
+        call_id="network",
+        tool_name="run_tests",
+        success=False,
+        error="pytest execution failed",
+        output={"stdout": "requests.exceptions.ProxyError: Cannot connect to proxy", "stderr": ""},
+    )
+    permission = ToolResult(
+        call_id="permission",
+        tool_name="run_tests",
+        success=False,
+        error="recipe build command failed",
+        output={"stdout": "", "stderr": "Permission denied: pip-build-tracker"},
+    )
+
+    assert _pytest_evidence(network, tmp_path).status == "network_error"
+    assert _pytest_evidence(permission, tmp_path).status == "permission_error"
+
+
+@pytest.mark.parametrize(
+    ("result", "expected"),
+    [
+        (
+            ToolResult(
+                call_id="timeout",
+                tool_name="run_tests",
+                success=False,
+                error="pytest execution timed out",
+                output={"timed_out": True, "stdout": "", "stderr": ""},
+            ),
+            "timeout",
+        ),
+        (
+            ToolResult(
+                call_id="collection",
+                tool_name="run_tests",
+                success=False,
+                error="pytest collection failed",
+                output={"stdout": "", "stderr": ""},
+            ),
+            "collection_error",
+        ),
+        (
+            ToolResult(
+                call_id="dependency",
+                tool_name="run_tests",
+                success=False,
+                error="pytest execution failed",
+                output={"stdout": "ModuleNotFoundError: No module named 'pluggy'", "stderr": ""},
+            ),
+            "dependency_error",
+        ),
+        (
+            ToolResult(
+                call_id="selector",
+                tool_name="run_tests",
+                success=False,
+                error="official test selectors were not fully collected",
+                output={"stdout": "", "stderr": ""},
+            ),
+            "selector_mismatch",
+        ),
+        (
+            ToolResult(
+                call_id="build",
+                tool_name="run_tests",
+                success=False,
+                error="recipe build command failed at step 2",
+                output={"stdout": "", "stderr": ""},
+            ),
+            "build_error",
+        ),
+        (
+            ToolResult(
+                call_id="source",
+                tool_name="run_tests",
+                success=False,
+                error="source import probe resolved outside checkout",
+                output={"stdout": "", "stderr": ""},
+            ),
+            "source_import_error",
+        ),
+    ],
+)
+def test_pytest_evidence_preserves_operational_failure_categories(
+    tmp_path: Path, result: ToolResult, expected: str
+) -> None:
+    """基础设施失败要保持独立分类，不能退化为报告缺失。"""
+    assert _pytest_evidence(result, tmp_path).status == expected
+
+
+def test_pytest_evidence_rejects_success_without_structured_audit(tmp_path: Path) -> None:
+    """JUnit 存在但缺少实际 node ID 审计时，不得把结果当作合格通过。"""
+    junit = tmp_path / "junit.xml"
+    junit.write_text('<testsuite tests="1" failures="0" errors="0" />', encoding="utf-8")
+    result = ToolResult(
+        call_id="missing-audit",
+        tool_name="run_tests",
+        success=True,
+        output={"returncode": 0, "junit_path": str(junit), "stdout": "1 passed"},
+    )
+
+    assert _pytest_evidence(result, tmp_path).status == "report_missing"
+
+
+def test_pytest_evidence_rejects_source_loaded_outside_checkout(tmp_path: Path) -> None:
+    """单独导入探针通过也不能替代真实 pytest 进程中的源码身份。"""
+    junit = tmp_path / "junit.xml"
+    junit.write_text('<testsuite tests="1" failures="0" errors="0" />', encoding="utf-8")
+    collection = tmp_path / "collection.json"
+    execution = tmp_path / "execution.json"
+    common = {
+        "format_version": 2,
+        "collected_node_ids": ["tests/test_x.py::test_x"],
+        "collection_errors": [],
+        "completed": True,
+        "exitstatus": 0,
+    }
+    collection.write_text(
+        json.dumps(common | {"run_id": "run:collection", "stage": "collection", "reports": []}),
+        encoding="utf-8",
+    )
+    reports = [
+        {"nodeid": "tests/test_x.py::test_x", "when": phase, "outcome": "passed", "wasxfail": False}
+        for phase in ("setup", "call", "teardown")
+    ]
+    execution.write_text(
+        json.dumps(
+            common
+            | {
+                "run_id": "run:execution",
+                "stage": "execution",
+                "reports": reports,
+                "imported_source_paths": {"pkg": str(tmp_path.parent / "site-packages/pkg.py")},
+            }
+        ),
+        encoding="utf-8",
+    )
+    process = {
+        "stage": "execution",
+        "command": ["pytest"],
+        "working_directory": str(tmp_path),
+        "returncode": 0,
+        "timed_out": False,
+        "duration_ms": 1,
+        "stdout_path": str(tmp_path / "out"),
+        "stderr_path": str(tmp_path / "err"),
+    }
+    result = ToolResult(
+        call_id="source",
+        tool_name="run_tests",
+        success=True,
+        output={
+            "returncode": 0,
+            "junit_path": str(junit),
+            "audit_path": str(execution),
+            "collection_audit_path": str(collection),
+            "audit_run_id": "run",
+            "source_import_probe": "pkg",
+            "collection": process | {"stage": "collection"},
+            "execution": process,
+        },
+    )
+    evidence = _pytest_evidence(result, tmp_path)
+    assert evidence.status == "source_import_error"
+    assert evidence.source_import_audit_valid is False
+
+
+def test_assertion_failure_with_assertion_teardown_is_not_mislabeled_execution_error(
+    tmp_path: Path,
+) -> None:
+    """pytest-10051 style assertion failures remain behavioral evidence when teardown asserts."""
+    junit = tmp_path / "junit.xml"
+    junit.write_text(
+        '<testsuite tests="1" failures="1" errors="1" skipped="0">'
+        '<testcase classname="tests.test_case" name="test_case">'
+        '<failure message="call assertion">AssertionError: call assertion</failure>'
+        '<error message="teardown assertion">AssertionError: teardown assertion</error>'
+        "</testcase></testsuite>",
+        encoding="utf-8",
+    )
+    collection = tmp_path / "collection.json"
+    execution = tmp_path / "execution.json"
+    common = {
+        "format_version": 2,
+        "collected_node_ids": ["tests/test_case.py::test_case"],
+        "collection_errors": [],
+        "completed": True,
+    }
+    collection.write_text(
+        json.dumps(
+            common
+            | {
+                "run_id": "mixed:collection",
+                "stage": "collection",
+                "exitstatus": 0,
+                "reports": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    reports = [
+        {"nodeid": "tests/test_case.py::test_case", "when": "setup", "outcome": "passed"},
+        {
+            "nodeid": "tests/test_case.py::test_case",
+            "when": "call",
+            "outcome": "failed",
+            "longrepr": "AssertionError: call assertion",
+        },
+        {
+            "nodeid": "tests/test_case.py::test_case",
+            "when": "teardown",
+            "outcome": "failed",
+            "longrepr": "AssertionError: teardown assertion",
+        },
+    ]
+    execution.write_text(
+        json.dumps(
+            common
+            | {
+                "run_id": "mixed:execution",
+                "stage": "execution",
+                "exitstatus": 1,
+                "reports": reports,
+            }
+        ),
+        encoding="utf-8",
+    )
+    process = {
+        "stage": "execution",
+        "command": ["pytest"],
+        "working_directory": str(tmp_path),
+        "returncode": 1,
+        "timed_out": False,
+        "duration_ms": 1,
+        "stdout_path": str(tmp_path / "out"),
+        "stderr_path": str(tmp_path / "err"),
+    }
+    collection_process = process | {"stage": "collection", "returncode": 0}
+    result = ToolResult(
+        call_id="mixed",
+        tool_name="run_tests",
+        success=False,
+        error="pytest execution failed",
+        output={
+            "returncode": 1,
+            "junit_path": str(junit),
+            "audit_path": str(execution),
+            "collection_audit_path": str(collection),
+            "audit_run_id": "mixed",
+            "stdout": "1 failed, 1 error",
+            "stderr": "",
+            "collection": collection_process,
+            "execution": process,
+        },
+    )
+    evidence = _pytest_evidence(result, tmp_path)
+    assert evidence.status == "assertion_failed_with_phase_errors"
+    assert evidence.failure_count == 1
+    assert evidence.error_count == 1
+
+    from tracefix.p2_protocol import _verification_failure_kind
+
+    assert (
+        _verification_failure_kind(
+            "pytest-dev__pytest-10051",
+            {"eligible": False, "evidence": evidence.model_dump(mode="json")},
+        )
+        is None
+    )
+
+
+@pytest.mark.parametrize(
+    ("update", "message"),
+    [
+        ({"format_version": 1}, "format version"),
+        ({"run_id": "stale"}, "does not belong"),
+        ({"completed": False}, "completed"),
+        ({"exitstatus": 2}, "exit status"),
+        ({"reports": None}, "structured node IDs"),
+        ({"collection_errors": None}, "collection error"),
+        ({"collected_node_ids": []}, "no collected nodes"),
+        ({"reports": [{}]}, "lacks a test node"),
+        (
+            {"reports": [{"nodeid": "tests/test_x.py::test_x", "when": "call"}]},
+            "missing setup",
+        ),
+        (
+            {
+                "reports": [
+                    {"nodeid": "tests/test_x.py::test_x", "when": phase}
+                    for phase in ("setup", "call", "teardown", "call")
+                ]
+            },
+            "duplicate test phase",
+        ),
+        (
+            {
+                "reports": [
+                    {"nodeid": "tests/test_y.py::test_y", "when": phase}
+                    for phase in ("setup", "call", "teardown")
+                ]
+            },
+            "outside the collected set",
+        ),
+    ],
+)
+def test_execution_audit_fails_closed_for_incomplete_evidence(update, message) -> None:
+    """审计身份、结构或测试阶段不完整时必须给出明确拒绝原因。"""
+    audit = {
+        "format_version": 2,
+        "run_id": "run",
+        "stage": "execution",
+        "completed": True,
+        "exitstatus": 0,
+        "collected_node_ids": ["tests/test_x.py::test_x"],
+        "reports": [
+            {"nodeid": "tests/test_x.py::test_x", "when": phase}
+            for phase in ("setup", "call", "teardown")
+        ],
+        "collection_errors": [],
+    }
+    valid, diagnostic = _audit_complete(
+        audit | update, stage="execution", run_id="run", returncode=0
+    )
+    assert valid is False
+    assert message in str(diagnostic)
+
+
+def test_node_id_normalization_preserves_directory_and_parameter(tmp_path: Path) -> None:
+    """两个同名测试文件不能因旧的截断规则而被视为同一个测试。"""
+    root = tmp_path / "checkout"
+    root.mkdir()
+    ids = _canonical_node_ids(
+        (
+            str(root / "first" / "test_same.py") + "::test_value[param-a]",
+            str(root / "second" / "test_same.py") + "::test_value[param-a]",
+        ),
+        root,
+    )
+
+    assert ids == {
+        "first/test_same.py::test_value[param-a]",
+        "second/test_same.py::test_value[param-a]",
+    }
+    assert _canonical_node_ids(("tests/test_a.py::test_value[a\\b]",), root) == {
+        "tests/test_a.py::test_value[a\\b]"
+    }
+
+
+def test_reviewed_collection_failure_must_match_every_declared_field(tmp_path: Path) -> None:
+    """配方不能把任意 ImportError 放进受审查的 base 失败类别。"""
+    audit = tmp_path / "collection.audit.json"
+    audit.write_text(
+        json.dumps(
+            {
+                "format_version": 2,
+                "run_id": "collection:collection",
+                "stage": "collection",
+                "collected_node_ids": [],
+                "reports": [],
+                "collection_errors": [
+                    {
+                        "nodeid": "tests/test_x.py",
+                        "longrepr": "ImportError: cannot import name 'NEW_API' from 'pkg.module'",
+                    }
+                ],
+                "completed": True,
+                "exitstatus": 2,
+            }
+        ),
+        encoding="utf-8",
+    )
+    evidence = _pytest_evidence(
+        ToolResult(
+            call_id="collection",
+            tool_name="run_tests",
+            success=False,
+            error="pytest collection failed",
+            output={
+                "stdout": "ImportError: cannot import name 'NEW_API' from 'pkg.module'",
+                "collection": {
+                    "stage": "collection",
+                    "command": ["pytest"],
+                    "working_directory": str(tmp_path),
+                    "returncode": 2,
+                    "timed_out": False,
+                    "duration_ms": 1,
+                    "stdout_path": str(tmp_path / "out"),
+                    "stderr_path": str(tmp_path / "err"),
+                },
+                "collection_audit_path": str(audit),
+                "audit_run_id": "collection",
+            },
+        ),
+        tmp_path,
+    )
+    rule = ExpectedBaseFailure(
+        stage="collection",
+        exception_type="ImportError",
+        module="pkg.module",
+        symbol="NEW_API",
+        test_entry="tests/test_x.py",
+        reason="gold adds the API",
+    )
+
+    assert _matches_expected_collection_failure(evidence, rule)
+    assert evidence.audit_diagnostic is None
+    assert not _matches_expected_collection_failure(
+        evidence, rule.model_copy(update={"symbol": "OTHER_API"})
+    )
+    assert not _matches_expected_collection_failure(
+        evidence, rule.model_copy(update={"test_entry": "tests/other.py"})
+    )
+    assert _collection_exception("ImportError: cannot import name 'NEW_API' from 'pkg.module'") == (
+        "ImportError",
+        "pkg.module",
+        "NEW_API",
+    )
+
+    payload = json.loads(audit.read_text(encoding="utf-8"))
+    payload["collection_errors"].append(
+        {"nodeid": "tests/test_y.py", "longrepr": "RuntimeError: unrelated"}
+    )
+    audit.write_text(json.dumps(payload), encoding="utf-8")
+    mixed = _pytest_evidence(
+        ToolResult(
+            call_id="collection",
+            tool_name="run_tests",
+            success=False,
+            error="pytest collection failed",
+            output={
+                "stdout": "ImportError: cannot import name 'NEW_API' from 'pkg.module'",
+                "collection": evidence.collection.model_dump(mode="json"),
+                "collection_audit_path": str(audit),
+                "audit_run_id": "collection",
+            },
+        ),
+        tmp_path,
+    )
+    assert not _matches_expected_collection_failure(mixed, rule)
+
+
 def _run_git(repo: Path, *arguments: str) -> str:
+    # Local fixture clones need no Git upload-pack subprocess. Copying the
+    # isolated fixture repository avoids Windows sandbox failures in sh.exe's
+    # signal-pipe setup while preserving its committed .git identity.
+    if arguments and arguments[0] == "clone" and len(arguments) >= 3:
+        source = Path(arguments[-2])
+        destination = Path(arguments[-1])
+        if source.is_dir():
+            shutil.copytree(source, destination)
+            return ""
     result = subprocess.run(
         ["git", *arguments], cwd=repo, capture_output=True, text=True, check=True
     )
@@ -95,8 +786,8 @@ def _fixture(tmp_path: Path) -> tuple[RealIssueTask, Path]:
     task_dir = tmp_path / "tasks" / "owner__repo-1"
     task_dir.mkdir(parents=True)
     (task_dir / "problem.md").write_text("Fix both flags.\n", encoding="utf-8")
-    (task_dir / "gold.patch").write_text(GOLD, encoding="utf-8")
-    (task_dir / "test.patch").write_text(HIDDEN, encoding="utf-8")
+    (task_dir / "gold.patch").write_bytes(GOLD.encode("utf-8"))
+    (task_dir / "test.patch").write_bytes(HIDDEN.encode("utf-8"))
     manifest = {
         "id": "owner__repo-1",
         "title": "Two-file issue",
@@ -130,6 +821,66 @@ def _fixture(tmp_path: Path) -> tuple[RealIssueTask, Path]:
     return RealIssueTask.load(task_dir), source
 
 
+def _p1_qualification_evidence(
+    tmp_path: Path, tasks: tuple[RealIssueTask, ...], collection_tasks: tuple[str, ...] = ()
+) -> Path:
+    """构造与当前测试解释器一致的最小 P1 原始资格记录。"""
+    fingerprint = inspect_test_environment(Path(sys.executable)).fingerprint_sha256
+    records = []
+    for task in tasks:
+        artifact_dir = tmp_path / "p1-artifacts" / task.id / ".tracefix-validation"
+        artifact_dir.mkdir(parents=True)
+        nodes = ["tests/test_hidden.py::test_hidden"]
+        reports = [
+            {"nodeid": nodes[0], "when": stage, "outcome": "passed"}
+            for stage in ("setup", "call", "teardown")
+        ]
+        for name, stage, reports_for_stage in (
+            ("execution.audit.json", "execution", reports),
+            ("collection.audit.json", "collection", []),
+        ):
+            (artifact_dir / name).write_text(
+                json.dumps(
+                    {
+                        "stage": stage,
+                        "completed": True,
+                        "exitstatus": 0,
+                        "collected_node_ids": nodes,
+                        "reports": reports_for_stage,
+                    }
+                ),
+                encoding="utf-8",
+            )
+        (artifact_dir / "junit.xml").write_text("<testsuites />", encoding="utf-8")
+        records.append(
+            {
+                "task_id": task.id,
+                "base_commit": task.base_commit,
+                "qualification_type": (
+                    "expected_collection_failure"
+                    if task.id in collection_tasks
+                    else "assertion_failure"
+                ),
+                "test_environment": {"fingerprint_sha256": fingerprint},
+                "gold_evidence": {
+                    "status": "passed",
+                    "returncode": 0,
+                    "audit_available": True,
+                    "collection_audit_available": True,
+                    "source_import_audit_valid": True,
+                    "skipped_count": 0,
+                    "xfailed_count": 0,
+                    "xpassed_count": 0,
+                    "executed_node_ids": ["tests/test_hidden.py::test_hidden"],
+                    "audit_path": str(artifact_dir / "execution.audit.json"),
+                },
+            }
+        )
+    path = tmp_path / "p1-evidence.json"
+    path.write_text(json.dumps(records), encoding="utf-8")
+    return path
+
+
 def _trace(path: Path, *, eligible: bool = True) -> None:
     events = [
         {
@@ -152,9 +903,7 @@ def _trace(path: Path, *, eligible: bool = True) -> None:
             {
                 "event_type": "tool_called",
                 "step": 1,
-                "payload": {
-                    "call": {"name": "read_file", "arguments": {"path": f"pkg/{name}"}}
-                },
+                "payload": {"call": {"name": "read_file", "arguments": {"path": f"pkg/{name}"}}},
             }
         )
     events.extend(
@@ -214,9 +963,7 @@ class _FakeRunner:
             diff_path=str(diff),
             result_path=str(result_path),
             agent_config=config.agent_config,
-            provenance=collect_run_provenance(
-                config.task, LLMConfig(model_name=config.model_name)
-            ),
+            provenance=collect_run_provenance(config.task, LLMConfig(model_name=config.model_name)),
         )
 
 
@@ -231,21 +978,274 @@ def test_behavior_validation_proves_initial_fail_and_gold_pass(tmp_path) -> None
 
     assert result.initial_hidden_failed is True
     assert result.gold_hidden_passed is True
+    assert result.initial_evidence.status == "assertion_failed"
+    assert result.gold_evidence.status == "passed"
+    assert result.eligible_for_llm_prescreen is True
     assert result.initial_returncode != 0
     assert result.gold_returncode == 0
     assert result.test_environment.python_version
+    assert result.dependency_drift_detected is False
+    assert (
+        result.environment_before.fingerprint_sha256
+        == result.environment_after_gold.fingerprint_sha256
+    )
 
 
-def test_prescreen_runs_hidden_verification_and_applies_entry_gate(
-    tmp_path, monkeypatch
+def test_behavior_validation_accepts_crlf_patch_files_on_lf_checkout(tmp_path) -> None:
+    task, source = _fixture(tmp_path)
+    for patch in (task.test_patch_path, task.gold_patch_path):
+        normalized = patch.read_bytes().replace(b"\r\n", b"\n")
+        patch.write_bytes(normalized.replace(b"\n", b"\r\n"))
+
+    result = validate_real_task_behavior(
+        task,
+        source=source,
+        test_python=Path(sys.executable),
+        output_dir=tmp_path / "behavior-crlf",
+    )
+
+    assert result.eligible_for_llm_prescreen is True
+    assert result.initial_evidence.status == "assertion_failed"
+    assert result.gold_evidence.status == "passed"
+
+
+def test_behavior_qualification_distinguishes_business_and_environment_outcomes(
+    tmp_path: Path, monkeypatch
 ) -> None:
+    """base/gold 分类要区分真实断言失败、未复现、环境阻塞和收集例外。"""
+    task, source = _fixture(tmp_path)
+    environment = inspect_test_environment(Path(sys.executable))
+    active_evidence: dict[str, PytestExecutionEvidence] = {}
+    returncodes = {"initial": 1, "gold": 0}
+
+    def fake_runner(_task, checkout, _python, call_id, *_args, **_kwargs):
+        variant = "gold" if checkout.name.endswith("-gold") else "initial"
+        return ToolResult(
+            call_id=call_id,
+            tool_name="run_tests",
+            success=returncodes[variant] == 0,
+            error=None if returncodes[variant] == 0 else "simulated pytest failure",
+            output={"returncode": returncodes[variant]},
+        )
+
+    monkeypatch.setattr(
+        "tracefix.real_experiment._create_behavior_checkout", lambda _s, d: d.mkdir()
+    )
+    monkeypatch.setattr("tracefix.real_experiment._git", lambda *_args: "")
+    monkeypatch.setattr("tracefix.real_experiment._git_apply_patch_file", lambda *_args: None)
+    monkeypatch.setattr("tracefix.real_experiment._run_qualified_pytest", fake_runner)
+    monkeypatch.setattr(
+        "tracefix.real_experiment.inspect_test_environment",
+        lambda *_args, **_kwargs: environment,
+    )
+    monkeypatch.setattr(
+        "tracefix.real_experiment._pytest_evidence",
+        lambda result, _checkout: active_evidence[result.call_id],
+    )
+
+    def evidence(
+        status: str,
+        nodes: tuple[str, ...],
+        *,
+        collection_error: bool = False,
+    ) -> PytestExecutionEvidence:
+        rule_error = (
+            (
+                CollectionErrorEvidence(
+                    nodeid="tests/test_x.py",
+                    longrepr="ImportError: cannot import name 'NEW_API' from 'pkg.module'",
+                ),
+            )
+            if collection_error
+            else ()
+        )
+        collection = (
+            ProcessEvidence(
+                stage="collection",
+                command=("pytest", "--collect-only"),
+                working_directory=str(source),
+                returncode=2,
+                timed_out=False,
+                duration_ms=1,
+                stdout_path="stdout.log",
+                stderr_path="stderr.log",
+            )
+            if collection_error
+            else None
+        )
+        return PytestExecutionEvidence(
+            status=status,
+            returncode=2 if collection_error else (1 if status == "assertion_failed" else 0),
+            timed_out=status == "timeout",
+            junit_available=status == "passed",
+            audit_available=True,
+            collection_audit_available=True,
+            execution_audit_available=status == "passed",
+            source_import_audit_valid=True,
+            test_count=len(nodes),
+            failure_count=1 if status == "assertion_failed" else 0,
+            error_count=0,
+            skipped_count=0,
+            xfailed_count=0,
+            xpassed_count=0,
+            collected_node_ids=nodes,
+            executed_node_ids=nodes,
+            collection_error_records=rule_error,
+            collection=collection,
+        )
+
+    node = "tests/test_x.py::test_x"
+    gold_pass = evidence("passed", (node,))
+
+    def evaluate(name: str, initial: PytestExecutionEvidence, *, recipe=None, drift=False):
+        nonlocal environment
+        returncodes["initial"] = (
+            2
+            if initial.status == "collection_error"
+            else (1 if initial.status in {"assertion_failed", "timeout"} else 0)
+        )
+        active_evidence.clear()
+        active_evidence[f"behavior-{task.id}-initial"] = initial
+        active_evidence[f"behavior-{task.id}-gold"] = gold_pass
+        if drift:
+            changed = environment.model_copy(update={"fingerprint_sha256": "different"})
+            states = iter((environment, changed, changed, changed))
+            monkeypatch.setattr(
+                "tracefix.real_experiment.inspect_test_environment",
+                lambda *_args, **_kwargs: next(states, changed),
+            )
+        else:
+            monkeypatch.setattr(
+                "tracefix.real_experiment.inspect_test_environment",
+                lambda *_args, **_kwargs: environment,
+            )
+        return validate_real_task_behavior(
+            task,
+            source=source,
+            test_python=Path(sys.executable),
+            output_dir=tmp_path / name,
+            recipe=recipe,
+        )
+
+    assertion = evaluate("assertion", evidence("assertion_failed", (node,)))
+    assert assertion.eligible_for_llm_prescreen is True
+    assert assertion.qualification_type == "assertion_failure"
+
+    not_reproduced = evaluate("not-reproduced", gold_pass)
+    assert not_reproduced.qualification_type == "business_not_reproduced"
+
+    blocked = evaluate("blocked", evidence("timeout", ()))
+    assert blocked.qualification_type == "environment_blocked"
+    assert "base/gold executed node IDs differ" in blocked.eligibility_reason
+
+    mismatch = evaluate("mismatch", evidence("assertion_failed", ("tests/other.py::test_x",)))
+    assert mismatch.qualification_type == "behavior_unqualified"
+    assert "base/gold executed node IDs differ" in mismatch.eligibility_reason
+
+    drifted = evaluate("drifted", evidence("assertion_failed", (node,)), drift=True)
+    assert drifted.dependency_drift_detected is True
+    assert "fingerprint drifted" in drifted.eligibility_reason
+
+    collection_rule = ExpectedBaseFailure(
+        stage="collection",
+        exception_type="ImportError",
+        module="pkg.module",
+        symbol="NEW_API",
+        test_entry="tests/test_x.py",
+        reason="gold adds the API",
+    )
+    collection = evaluate(
+        "collection",
+        evidence("collection_error", (), collection_error=True),
+        recipe=EnvironmentRecipe(task_id=task.id, expected_base_failure=collection_rule),
+    )
+    assert collection.eligible_for_llm_prescreen is True
+    assert collection.qualification_type == "expected_collection_failure"
+
+
+def test_behavior_validation_records_isolated_source_import_probe(tmp_path: Path) -> None:
+    """base/gold 的模块导入路径必须指向各自工作副本，而不是 site-packages。"""
+    task, source = _fixture(tmp_path)
+    result = validate_real_task_behavior(
+        task,
+        source=source,
+        test_python=Path(sys.executable),
+        output_dir=tmp_path / "behavior-probe",
+        recipe=EnvironmentRecipe(task_id=task.id, source_import_probe="pkg.a"),
+    )
+
+    assert result.initial_evidence.import_probe_path is not None
+    assert result.gold_evidence.import_probe_path is not None
+    assert "owner__repo-1-initial" in result.initial_evidence.import_probe_path
+    assert "owner__repo-1-gold" in result.gold_evidence.import_probe_path
+
+
+def test_strict_agent_patch_validation_rejects_empty_patch(tmp_path: Path) -> None:
+    task, source = _fixture(tmp_path)
+    patch = tmp_path / "empty.diff"
+    patch.write_text("", encoding="utf-8")
+
+    result = validate_agent_patch_strict(
+        task,
+        source=source,
+        agent_patch=patch,
+        test_python=Path(sys.executable),
+        output_dir=tmp_path / "agent-validation",
+    )
+
+    assert result.patch_applied is False
+    assert result.eligible is False
+    assert result.reason == "empty_agent_patch"
+
+
+def test_strict_agent_patch_validation_accepts_complete_hidden_evidence(tmp_path: Path) -> None:
+    task, source = _fixture(tmp_path)
+    patch = tmp_path / "gold.diff"
+    patch.write_text(GOLD, encoding="utf-8")
+
+    result = validate_agent_patch_strict(
+        task,
+        source=source,
+        agent_patch=patch,
+        test_python=Path(sys.executable),
+        output_dir=tmp_path / "strict-agent-validation",
+        recipe=EnvironmentRecipe(task_id=task.id, source_import_probe="pkg.a"),
+    )
+
+    assert result.patch_applied is True
+    assert result.eligible is True
+    assert result.evidence is not None
+    assert result.evidence.source_import_audit_valid is True
+
+
+def test_strict_agent_patch_validation_rejects_untracked_test_file(tmp_path: Path) -> None:
+    """Agent 新建未跟踪测试也属于验收入口篡改，不能被 git diff 漏掉。"""
+    task, source = _fixture(tmp_path)
+    patch = tmp_path / "new-test.diff"
+    patch.write_text(
+        "diff --git a/tests/test_agent_bypass.py b/tests/test_agent_bypass.py\n"
+        "new file mode 100644\n--- /dev/null\n+++ b/tests/test_agent_bypass.py\n"
+        "@@ -0,0 +1,2 @@\n+def test_bypass():\n+    assert True\n",
+        encoding="utf-8",
+    )
+    result = validate_agent_patch_strict(
+        task,
+        source=source,
+        agent_patch=patch,
+        test_python=Path(sys.executable),
+        output_dir=tmp_path / "strict-agent-untracked",
+    )
+    assert result.patch_applied is True
+    assert result.eligible is False
+    assert result.reason == "agent_modified_test_or_pytest_configuration"
+
+
+def test_prescreen_runs_hidden_verification_and_applies_entry_gate(tmp_path, monkeypatch) -> None:
     task, source = _fixture(tmp_path)
     source_root = tmp_path / "sources"
     source_root.mkdir()
     source.rename(source_root / task.id)
-    monkeypatch.setattr(
-        "tracefix.real_experiment._task_python", lambda *_: Path(sys.executable)
-    )
+    monkeypatch.setattr("tracefix.real_experiment._task_python", lambda *_: Path(sys.executable))
 
     summary = RealPrescreenRunner(_FakeRunner()).run(
         RealExperimentConfig(
@@ -318,9 +1318,7 @@ def test_paired_runner_rejects_fewer_than_three_eligible_tasks(tmp_path) -> None
         )
 
 
-def test_paired_runner_uses_ct_tc_ct_order_and_persists_summary(
-    tmp_path, monkeypatch
-) -> None:
+def test_paired_runner_uses_ct_tc_ct_order_and_persists_summary(tmp_path, monkeypatch) -> None:
     task, source = _fixture(tmp_path)
     config = RealExperimentConfig(output_dir=tmp_path / "runs")
     fake_run = _FakeRunner().run(
@@ -375,6 +1373,1418 @@ def test_paired_runner_uses_ct_tc_ct_order_and_persists_summary(
         ExperimentArm.CONTROL,
     ]
     assert Path(summary.summary_path).is_file()
+
+
+def test_p2_protocol_fixes_whole_system_60_trial_schedule_and_offline_gate(
+    tmp_path, monkeypatch
+) -> None:
+    """P2 固定三轮 C/T、T/C、C/T；未填写商业参数只能做零费用演练。"""
+    task, _ = _fixture(tmp_path)
+    ids = tuple(f"task-{index}" for index in range(10))
+    tasks = tuple(task.model_copy(update={"id": task_id}) for task_id in ids)
+    recipes = {task_id: EnvironmentRecipe(task_id=task_id) for task_id in ids}
+    monkeypatch.setattr("tracefix.p2_protocol.P1_QUALIFIED_TASK_IDS", ids)
+    monkeypatch.setattr("tracefix.p2_protocol.COLLECTION_FAILURE_TASK_IDS", ids[-2:])
+    monkeypatch.setattr("tracefix.p2_protocol.load_real_issue_tasks", lambda *args, **kwargs: tasks)
+    monkeypatch.setattr("tracefix.p2_protocol.load_environment_recipes", lambda *_: recipes)
+    monkeypatch.setattr("tracefix.p2_protocol._git_commit", lambda *_: "a" * 40)
+    config = P2ProtocolConfig(output_dir=tmp_path / "runs")
+
+    protocol = build_p2_protocol(config)
+
+    assert len(protocol.schedule) == 60
+    assert protocol.formal_ready is False
+    assert protocol.formal_missing == (
+        "model_name",
+        "provider",
+        "pricing_source",
+        "total_cost_cap_usd",
+        "input_cost_per_million_usd",
+        "output_cost_per_million_usd",
+    )
+    assert [item.arm for item in protocol.schedule[:2]] == [
+        ExperimentArm.CONTROL,
+        ExperimentArm.TREATMENT,
+    ]
+    assert [item.arm for item in protocol.schedule[20:22]] == [
+        ExperimentArm.TREATMENT,
+        ExperimentArm.CONTROL,
+    ]
+    assert protocol.schedule[0].token_optimization_enabled is False
+    assert protocol.schedule[1].context_compaction_enabled is True
+    path = write_p2_dry_run(config)
+    assert path.is_file()
+    assert "p2_whole_system_ct_protocol" in path.read_text(encoding="utf-8")
+
+
+def test_p2_protocol_accepts_complete_commercial_requirements(tmp_path, monkeypatch) -> None:
+    task, source = _fixture(tmp_path)
+    ids = tuple(f"task-{index}" for index in range(10))
+    tasks = tuple(task.model_copy(update={"id": task_id}) for task_id in ids)
+    recipes = {task_id: EnvironmentRecipe(task_id=task_id) for task_id in ids}
+    monkeypatch.setattr("tracefix.p2_protocol.P1_QUALIFIED_TASK_IDS", ids)
+    monkeypatch.setattr("tracefix.p2_protocol.COLLECTION_FAILURE_TASK_IDS", ids[-2:])
+    monkeypatch.setattr("tracefix.p2_protocol.load_real_issue_tasks", lambda *args, **kwargs: tasks)
+    monkeypatch.setattr("tracefix.p2_protocol.load_environment_recipes", lambda *_: recipes)
+
+    protocol = build_p2_protocol(
+        P2ProtocolConfig(
+            formal=P2FormalRunRequirements(
+                model_name="provider/model",
+                provider="provider",
+                pricing_source="https://example.invalid/pricing",
+                total_cost_cap_usd=1.0,
+                input_cost_per_million_usd=1.0,
+                output_cost_per_million_usd=2.0,
+            )
+        ),
+        repository_root=source,
+    )
+
+    assert protocol.formal_ready is True
+    assert protocol.formal_missing == ()
+    assert protocol.offline_only is False
+    assert protocol.code_commit == _run_git(source, "rev-parse", "HEAD")
+
+
+def test_p2_trial_records_resume_only_completed_and_reserve_cost(tmp_path: Path) -> None:
+    record = P2TrialRecord(
+        sequence=1,
+        task_id="task",
+        arm=ExperimentArm.CONTROL,
+        repetition=1,
+        mode="simulation",
+        status="verification_complete",
+        input_tokens=10,
+        output_tokens=5,
+        cost_usd=0,
+    )
+    path = tmp_path / "trial.json"
+    write_trial_record(path, record)
+    resumed = read_completed_trial(path)
+    assert resumed is not None and resumed.resumed is True
+    requirements = P2FormalRunRequirements(
+        model_name="provider/model",
+        provider="provider",
+        pricing_source="source",
+        total_cost_cap_usd=1,
+        input_cost_per_million_usd=2,
+        output_cost_per_million_usd=4,
+    )
+    assert (
+        estimated_request_reservation(requirements, input_tokens=1_000_000, output_tokens=500_000)
+        == 4
+    )
+    write_trial_record(path, record.model_copy(update={"status": "request_uncertain"}))
+    with pytest.raises(BenchmarkError, match="uncertain"):
+        read_completed_trial(path)
+    artifact = tmp_path / "patch.diff"
+    artifact.write_text("changed", encoding="utf-8")
+    with pytest.raises(BenchmarkError, match="artifact identity"):
+        _verify_saved_artifacts(
+            record.model_copy(
+                update={
+                    "agent_patch_path": str(artifact),
+                    "agent_patch_sha256": "0" * 64,
+                }
+            )
+        )
+
+
+def test_p2_budgeted_llm_reserves_reconciles_and_freezes_uncertain_request(tmp_path) -> None:
+    requirements = P2FormalRunRequirements(
+        model_name="provider/model",
+        provider="provider",
+        pricing_source="source",
+        total_cost_cap_usd=10,
+        input_cost_per_million_usd=2,
+        output_cost_per_million_usd=4,
+    )
+    ledger = tmp_path / "ledger.json"
+    llm = P2BudgetedLLM(
+        LLMConfig(model_name="provider/model", max_output_tokens=100, max_retries=0),
+        ledger_path=ledger,
+        formal=requirements,
+        input_upper_bound=1000,
+        legacy_input_counting=True,
+    )
+
+    class Delegate:
+        config = LLMConfig(model_name="provider/model", max_output_tokens=100, max_retries=0)
+
+        def count_input_tokens(self, messages, tools=()):
+            return 100
+
+        def complete(self, messages, tools=()):
+            return LLMResponse(
+                message=Message(role=MessageRole.ASSISTANT, content="done"),
+                usage=TokenUsage(input_tokens=100, output_tokens=20, total_tokens=120),
+                model_name="provider/model",
+            )
+
+    llm._delegate = Delegate()
+    response = llm.complete(())
+    saved = P2CostLedgerRecord.model_validate_json(ledger.read_text(encoding="utf-8"))
+    assert response.usage.cost_usd == pytest.approx(0.00028)
+    assert saved.spent_usd == pytest.approx(0.00028)
+    assert saved.reserved_usd == 0 and saved.uncertain_request is False
+
+    class Uncertain(Delegate):
+        def complete(self, messages, tools=()):
+            raise RuntimeError("connection lost after send")
+
+    llm._delegate = Uncertain()
+    with pytest.raises(RuntimeError, match="connection lost"):
+        llm.complete(())
+    with pytest.raises(BenchmarkError, match="uncertain"):
+        llm.complete(())
+
+    too_small = requirements.model_copy(update={"total_cost_cap_usd": 0.0001})
+    limited = P2BudgetedLLM(
+        LLMConfig(model_name="provider/model", max_output_tokens=100, max_retries=0),
+        ledger_path=tmp_path / "limited.json",
+        formal=too_small,
+        input_upper_bound=1000,
+        legacy_input_counting=True,
+    )
+    limited._delegate = Delegate()
+    with pytest.raises(BenchmarkError, match="cost cap"):
+        limited.complete(())
+
+    mismatched_path = tmp_path / "mismatched.json"
+    mismatched_path.write_text(P2CostLedgerRecord(cap_usd=1).model_dump_json(), encoding="utf-8")
+    mismatch = P2BudgetedLLM(
+        LLMConfig(model_name="provider/model", max_output_tokens=100, max_retries=0),
+        ledger_path=mismatched_path,
+        formal=requirements,
+        input_upper_bound=1000,
+        legacy_input_counting=True,
+    )
+    with pytest.raises(BenchmarkError, match="does not match"):
+        mismatch.complete(())
+
+    missing_usage = P2BudgetedLLM(
+        LLMConfig(model_name="provider/model", max_output_tokens=100, max_retries=0),
+        ledger_path=tmp_path / "missing-usage.json",
+        formal=requirements,
+        input_upper_bound=1000,
+        legacy_input_counting=True,
+    )
+    missing_usage._delegate = type(
+        "MissingUsage",
+        (),
+        {
+            "config": LLMConfig(model_name="provider/model", max_output_tokens=100, max_retries=0),
+            "count_input_tokens": lambda *_: 100,
+            "complete": lambda *_: LLMResponse(
+                message=Message(role=MessageRole.ASSISTANT, content="done"),
+                usage=TokenUsage(),
+                model_name="provider/model",
+            ),
+        },
+    )()
+    with pytest.raises(BenchmarkError, match="usage"):
+        missing_usage.complete(())
+    frozen = P2CostLedgerRecord.model_validate_json(
+        (tmp_path / "missing-usage.json").read_text(encoding="utf-8")
+    )
+    assert frozen.uncertain_request is False
+    assert frozen.halt_reason == "response_usage_unknown"
+    assert frozen.requests[0].status == "response_received_usage_unknown"
+    assert frozen.requests[0].response_evidence_sha256
+
+    halted_llm = P2BudgetedLLM(
+        LLMConfig(model_name="provider/model", max_output_tokens=100, max_retries=0),
+        ledger_path=tmp_path / "halted.json",
+        formal=too_small,
+        input_upper_bound=1000,
+        legacy_input_counting=True,
+    )
+    halted_llm._delegate = Delegate()
+    with pytest.raises(BenchmarkError, match="cost cap"):
+        halted_llm.complete(())
+    halted = P2CostLedgerRecord.model_validate_json(
+        (tmp_path / "halted.json").read_text(encoding="utf-8")
+    )
+    assert halted.halt_reason == "cost_cap_would_be_exceeded"
+
+
+def test_p2_budget_gate_blocks_provider_before_remaining_input_is_exceeded(tmp_path) -> None:
+    requirements = P2FormalRunRequirements(
+        model_name="provider/model",
+        provider="provider",
+        pricing_source="source",
+        total_cost_cap_usd=10,
+        input_cost_per_million_usd=2,
+        output_cost_per_million_usd=4,
+        currency="USD",
+    )
+    calls = []
+
+    class Delegate:
+        config = LLMConfig(model_name="provider/model", max_output_tokens=4096, max_retries=0)
+
+        def count_input_tokens(self, messages, tools=()):
+            return 27_091
+
+        def complete(self, messages, tools=()):
+            calls.append(True)
+            raise AssertionError("provider must not be called")
+
+    llm = P2BudgetedLLM(
+        LLMConfig(model_name="provider/model", max_output_tokens=4096, max_retries=0),
+        ledger_path=tmp_path / "boundary.json",
+        formal=requirements,
+        input_upper_bound=128_000,
+        legacy_input_counting=True,
+        trial_input_budget=350_000,
+    )
+    llm._delegate = Delegate()
+    llm._trial_input_used = 322_910
+    with pytest.raises(BenchmarkError, match="before provider invocation"):
+        llm.complete(())
+    assert calls == []
+    assert not (tmp_path / "boundary.json").exists()
+
+
+def test_p2_budget_gate_sends_remaining_output_limit_and_records_currency(tmp_path) -> None:
+    requirements = P2FormalRunRequirements(
+        model_name="provider/model",
+        provider="provider",
+        pricing_source="source",
+        total_cost_cap_usd=100,
+        input_cost_per_million_usd=2,
+        output_cost_per_million_usd=8,
+        currency="CNY",
+        input_cache_hit_cost_per_million=0.04,
+        input_cache_miss_cost_per_million=2,
+        output_cost_per_million=8,
+    )
+
+    class Delegate:
+        config = LLMConfig(model_name="provider/model", max_output_tokens=4096, max_retries=0)
+
+        def count_input_tokens(self, messages, tools=()):
+            return 100
+
+        def complete(self, messages, tools=()):
+            assert self.config.max_output_tokens == 50
+            return LLMResponse(
+                message=Message(role=MessageRole.ASSISTANT, content="done"),
+                usage=TokenUsage(input_tokens=100, output_tokens=20, total_tokens=120),
+                model_name="provider/model-v1",
+            )
+
+    ledger_path = tmp_path / "ledger.json"
+    llm = P2BudgetedLLM(
+        LLMConfig(model_name="provider/model", max_output_tokens=4096, max_retries=0),
+        ledger_path=ledger_path,
+        formal=requirements,
+        input_upper_bound=128_000,
+        legacy_input_counting=True,
+    )
+    llm._trial_output_used = 19_950
+    llm._delegate = Delegate()
+    llm.complete(())
+    ledger = P2CostLedgerRecord.model_validate_json(ledger_path.read_text(encoding="utf-8"))
+    assert ledger.currency == "CNY"
+    assert ledger.calculated_spent_amount == ledger.spent_usd
+    assert ledger.requests[0].response_model_name == "provider/model-v1"
+    assert ledger.requests[0].response_evidence_sha256
+
+
+def test_p2_returned_response_exceeding_bound_is_preserved_and_halted(tmp_path) -> None:
+    requirements = P2FormalRunRequirements(
+        model_name="provider/model",
+        provider="provider",
+        pricing_source="source",
+        total_cost_cap_usd=10,
+        input_cost_per_million_usd=2,
+        output_cost_per_million_usd=4,
+    )
+
+    class Delegate:
+        config = LLMConfig(model_name="provider/model", max_output_tokens=100, max_retries=0)
+
+        def count_input_tokens(self, messages, tools=()):
+            return 100
+
+        def complete(self, messages, tools=()):
+            return LLMResponse(
+                message=Message(role=MessageRole.ASSISTANT, content="returned"),
+                usage=TokenUsage(input_tokens=101, output_tokens=5, total_tokens=106),
+                model_name="provider/model-v1",
+            )
+
+    ledger_path = tmp_path / "exceeded.json"
+    llm = P2BudgetedLLM(
+        LLMConfig(model_name="provider/model", max_output_tokens=100, max_retries=0),
+        ledger_path=ledger_path,
+        formal=requirements,
+        input_upper_bound=1000,
+        legacy_input_counting=True,
+    )
+    llm._delegate = Delegate()
+    with pytest.raises(BenchmarkError, match="exceeds the persisted request bound"):
+        llm.complete(())
+    ledger = P2CostLedgerRecord.model_validate_json(ledger_path.read_text(encoding="utf-8"))
+    request = ledger.requests[0]
+    assert ledger.uncertain_request is False
+    assert ledger.halt_reason == "provider_usage_exceeded_request_bound"
+    assert request.status == "response_received_bound_exceeded"
+    assert request.actual_input_tokens == 101
+    assert request.response_received is True and request.response_evidence_sha256
+
+
+def test_p2_reconciliation_preserves_unknown_legacy_request(tmp_path) -> None:
+    root = tmp_path / "old"
+    root.mkdir()
+    (root / "protocol.json").write_text(
+        json.dumps({"formal": {"currency": "CNY"}}), encoding="utf-8"
+    )
+    ledger = P2CostLedgerRecord(
+        cap_usd=100,
+        spent_usd=1.4,
+        reserved_usd=0.08,
+        uncertain_request=True,
+        currency="USD",
+        requests=(
+            P2CostRequestRecord(
+                request_id="old:67",
+                status="reserved",
+                reserved_usd=0.08,
+                input_token_upper_bound=27_090,
+                output_token_upper_bound=4096,
+            ),
+        ),
+    )
+    ledger_path = root / "cost-ledger.json"
+    ledger_path.write_text(ledger.model_dump_json(indent=2), encoding="utf-8")
+    output = write_p2_reconciliation(root)
+    result = json.loads(output.read_text(encoding="utf-8"))
+    assert result["unresolved_request_ids"] == ["old:67"]
+    assert result["safe_to_resume_or_start_paid_run"] is False
+    assert hashlib.sha256(ledger_path.read_bytes()).hexdigest() == result["ledger_sha256"]
+
+
+def test_p2_reconciliation_imports_filtered_provider_bill_without_rewriting_ledger(
+    tmp_path,
+) -> None:
+    root = tmp_path / "old"
+    root.mkdir()
+    (root / "protocol.json").write_text(
+        json.dumps({"formal": {"currency": "CNY"}}), encoding="utf-8"
+    )
+    ledger = P2CostLedgerRecord(
+        cap_usd=100,
+        spent_usd=1.4,
+        reserved_usd=0.08,
+        uncertain_request=True,
+        currency="USD",
+        requests=(
+            P2CostRequestRecord(
+                request_id="old:67",
+                status="reserved",
+                reserved_usd=0.08,
+                input_token_upper_bound=27_090,
+                output_token_upper_bound=4096,
+            ),
+        ),
+    )
+    ledger_path = root / "cost-ledger.json"
+    ledger_path.write_text(ledger.model_dump_json(indent=2), encoding="utf-8")
+    before = hashlib.sha256(ledger_path.read_bytes()).hexdigest()
+    bill = tmp_path / "bill.csv"
+    bill.write_text(
+        "api_key_name,start_time_iso,end_time_iso,model,type,price,amount\n"
+        "Tracefix,2026-09-20,2026-09-21,deepseek-flash,request_count,,67\n"
+        "Tracefix,2026-09-20,2026-09-21,deepseek-flash,output_tokens,0.000004,10241\n"
+        "Other,2026-09-20,2026-09-21,deepseek-flash,output_tokens,1,999\n",
+        encoding="utf-8",
+    )
+    output = write_p2_reconciliation(root, bill_path=bill, api_key_name="Tracefix")
+    result = json.loads(output.read_text(encoding="utf-8"))
+    assert result["provider_bill"]["request_count"] == 67
+    assert result["provider_bill"]["billed_amount"] == "0.040964"
+    assert result["provider_bill"]["currency"] == "CNY"
+    assert result["safe_to_resume_or_start_paid_run"] is True
+    assert hashlib.sha256(ledger_path.read_bytes()).hexdigest() == before
+
+
+def test_p2_cny_calculated_amount_is_not_returned_as_usd(tmp_path) -> None:
+    requirements = P2FormalRunRequirements(
+        model_name="provider/model",
+        provider="provider",
+        pricing_source="source",
+        total_cost_cap_usd=100,
+        input_cost_per_million_usd=2,
+        output_cost_per_million_usd=8,
+        currency="CNY",
+        input_cache_hit_cost_per_million=0.04,
+        input_cache_miss_cost_per_million=2,
+        output_cost_per_million=8,
+    )
+
+    class Delegate:
+        config = LLMConfig(model_name="provider/model", max_output_tokens=100, max_retries=0)
+
+        def count_input_tokens(self, messages, tools=()):
+            return 100
+
+        def complete(self, messages, tools=()):
+            return LLMResponse(
+                message=Message(role=MessageRole.ASSISTANT, content="done"),
+                usage=TokenUsage(input_tokens=100, output_tokens=20, total_tokens=120),
+                model_name="provider/model",
+            )
+
+    llm = P2BudgetedLLM(
+        LLMConfig(model_name="provider/model", max_output_tokens=100, max_retries=0),
+        ledger_path=tmp_path / "ledger.json",
+        formal=requirements,
+        input_upper_bound=1000,
+        legacy_input_counting=True,
+    )
+    llm._delegate = Delegate()
+    response = llm.complete(())
+    assert response.usage.cost_usd is None
+    ledger = P2CostLedgerRecord.model_validate_json(
+        (tmp_path / "ledger.json").read_text(encoding="utf-8")
+    )
+    assert ledger.calculated_spent_amount == pytest.approx(0.00036)
+
+
+def test_p2_formal_prices_and_bill_fail_closed(tmp_path) -> None:
+    common = {
+        "model_name": "provider/model",
+        "provider": "provider",
+        "pricing_source": "source",
+        "total_cost_cap_usd": 100,
+        "input_cost_per_million_usd": 2,
+        "output_cost_per_million_usd": 8,
+    }
+    with pytest.raises(ValueError, match="finite"):
+        P2FormalRunRequirements(**(common | {"output_cost_per_million_usd": float("inf")}))
+    with pytest.raises(ValueError, match="cache-hit"):
+        P2FormalRunRequirements(**common, currency="CNY")
+    with pytest.raises(ValueError, match="USD or CNY"):
+        P2FormalRunRequirements(**common, currency="EUR")
+    with pytest.raises(ValueError, match="no usable"):
+        P2FormalRunRequirements(**common, prior_calculated_amount=100)
+
+    root = tmp_path / "missing"
+    root.mkdir()
+    with pytest.raises(BenchmarkError, match="requires protocol"):
+        write_p2_reconciliation(root)
+
+    bill = tmp_path / "invalid.csv"
+    bill.write_text(
+        "api_key_name,start_time_iso,end_time_iso,model,type,price,amount\n"
+        "Tracefix,a,b,m,output_tokens,bad,1\n",
+        encoding="utf-8",
+    )
+    valid_root = tmp_path / "old"
+    valid_root.mkdir()
+    (valid_root / "protocol.json").write_text("{}", encoding="utf-8")
+    (valid_root / "cost-ledger.json").write_text(
+        P2CostLedgerRecord(cap_usd=100).model_dump_json(), encoding="utf-8"
+    )
+    with pytest.raises(BenchmarkError, match="invalid numeric"):
+        write_p2_reconciliation(valid_root, bill_path=bill)
+
+
+def test_p2_simulation_model_emits_supported_nonempty_git_patch() -> None:
+    response = P2SimulationLLM(LLMConfig(model_name="simulation")).complete(())
+    patch = response.message.tool_calls[0].arguments["patch"]
+    assert isinstance(patch, str)
+    assert patch.startswith("diff --git ")
+    assert "--- /dev/null" in patch
+
+
+def test_p2_formal_mode_rejects_missing_commercial_parameters(tmp_path) -> None:
+    with pytest.raises(BenchmarkError, match="commercial parameters"):
+        run_p2_experiment(P2ProtocolConfig(), experiment_dir=tmp_path / "formal", mode="formal")
+    with pytest.raises(BenchmarkError, match="unknown"):
+        run_p2_experiment(P2ProtocolConfig(), experiment_dir=tmp_path / "unknown", mode="invalid")
+
+
+def test_p2_simulation_completes_and_resumes_all_trials(tmp_path, monkeypatch) -> None:
+    # This test drives 60 state transitions in one process. Keep provenance
+    # collection deterministic and avoid rescanning unrelated untracked
+    # experiment directories for every synthetic trial.
+    monkeypatch.setattr(
+        "tracefix.provenance._read_git_state",
+        lambda _root: ("synthetic-test-commit", True),
+    )
+    task, source = _fixture(tmp_path)
+    ids = tuple(f"task-{index}" for index in range(10))
+    tasks = tuple(task.model_copy(update={"id": task_id}) for task_id in ids)
+    recipes = {task_id: EnvironmentRecipe(task_id=task_id) for task_id in ids}
+    monkeypatch.setattr("tracefix.p2_protocol.P1_QUALIFIED_TASK_IDS", ids)
+    monkeypatch.setattr("tracefix.p2_protocol.COLLECTION_FAILURE_TASK_IDS", ids[-2:])
+    monkeypatch.setattr("tracefix.p2_protocol.load_real_issue_tasks", lambda *args, **kwargs: tasks)
+    monkeypatch.setattr("tracefix.p2_protocol.load_environment_recipes", lambda *_: recipes)
+    monkeypatch.setattr("tracefix.p2_protocol._git_commit", lambda *_: "c" * 40)
+    sources = tmp_path / "sources"
+    sources.mkdir()
+    for task_id in ids:
+        _run_git(tmp_path, "clone", "--quiet", str(source), str(sources / task_id))
+    monkeypatch.setattr(
+        "tracefix.p2_protocol.resolve_managed_environment_python",
+        lambda *_: Path(sys.executable),
+    )
+
+    class Verification:
+        eligible = False
+
+        def model_dump_json(self, **kwargs):
+            return '{"eligible": false}'
+
+    monkeypatch.setattr(
+        "tracefix.p2_protocol.validate_agent_patch_strict",
+        lambda *args, **kwargs: Verification(),
+    )
+
+    # 此单测验证 60 次状态机与恢复，不重复运行真实 Agent 子进程；真实闭环由
+    # P2 离线演练工件覆盖。
+    class SimulationRunner:
+        def run(self, run_config):
+            return _FakeRunner().run(run_config).model_copy(update={"cost_usd": 0})
+
+    monkeypatch.setattr("tracefix.p2_protocol.TraceFixRunner", lambda *_: SimulationRunner())
+    root = tmp_path / "simulation"
+    config = P2ProtocolConfig(
+        source_root=sources,
+        p1_evidence_path=_p1_qualification_evidence(tmp_path, tasks, ids[-2:]),
+    )
+    first = run_p2_simulation(config, experiment_dir=root)
+    resumed = run_p2_simulation(config, experiment_dir=root)
+    assert first.completed_count == 60 and first.resumed_count == 0
+    assert resumed.completed_count == 60 and resumed.resumed_count == 60
+    assert resumed.cost_usd == 0
+    protocol_path = root / "protocol.json"
+    payload = json.loads(protocol_path.read_text(encoding="utf-8"))
+    payload["code_commit"] = "changed"
+    protocol_path.write_text(json.dumps(payload), encoding="utf-8")
+    with pytest.raises(BenchmarkError, match="identity does not match"):
+        run_p2_simulation(config, experiment_dir=root)
+
+
+@pytest.mark.parametrize(
+    ("design", "treatment_arm"),
+    (
+        ("presentation_only", "tool_presentation_only"),
+        ("no_effect_recovery", "no_effect_recovery"),
+    ),
+)
+def test_single_variable_p2_simulation_runs_agent_verifier_and_resumes_without_calls(
+    tmp_path, monkeypatch, design, treatment_arm
+) -> None:
+    """Synthetic only: tool facts reach the model view, strict tests pass, resume is read-only."""
+    import tracefix.p2_protocol as p2
+
+    # Copy the committed fixture for the two isolated checkouts. Git clone and
+    # worktree are covered separately; this host's global LFS filter is not part
+    # of the behavior this offline P2 protocol test is exercising.
+    import tracefix.real_experiment as real_experiment
+
+    def copy_checkout(source_path: Path, checkout: Path) -> None:
+        shutil.copytree(source_path, checkout)
+
+    def copy_agent_workspace(_cls, source_path: Path, destination: Path) -> Path:
+        copy_checkout(source_path, destination)
+        return destination.resolve()
+
+    monkeypatch.setattr(p2.TraceFixRunner, "_clone_repository", classmethod(copy_agent_workspace))
+    monkeypatch.setattr(real_experiment, "_create_behavior_checkout", copy_checkout)
+
+    # Keep this small formal-path simulation independent of the outer checkout.
+    monkeypatch.setattr(
+        "tracefix.provenance._read_git_state",
+        lambda _root: ("synthetic-test-commit", True),
+    )
+
+    task, source = _fixture(tmp_path)
+    # Git for Windows checks out CRLF under the host system config; keep this
+    # unified-diff fixture byte-stable so apply_patch tests the code path itself.
+    (source / "pkg" / "a.py").write_bytes(b"VALUE = 0\n")
+    (source / "pkg" / "b.py").write_bytes(b"ENABLED = False\n")
+    visible_markers = (
+        "# TARGET_PATH:pkg/a.py NODE:tests/test_visible.py::test_visible\n"
+        + "# fixture context " * 450
+        + "\n# ASSERT: expected 2 got 1 EXCEPTION: AssertionError\n"
+    )
+    (source / "pkg" / "markers.txt").write_text(visible_markers, encoding="utf-8")
+    _run_git(source, "add", "--all")
+    _run_git(
+        source,
+        "-c",
+        "user.name=TraceFix Test",
+        "-c",
+        "user.email=test@example.invalid",
+        "commit",
+        "--quiet",
+        "-m",
+        "visible diagnostic fixture",
+    )
+    task = task.model_copy(update={"base_commit": _run_git(source, "rev-parse", "HEAD")})
+    monkeypatch.setattr(p2, "P1_QUALIFIED_TASK_IDS", (task.id,))
+    monkeypatch.setattr(p2, "COLLECTION_FAILURE_TASK_IDS", ())
+    monkeypatch.setattr(p2, "load_real_issue_tasks", lambda *args, **kwargs: (task,))
+    monkeypatch.setattr(
+        p2, "load_environment_recipes", lambda *_: {task.id: EnvironmentRecipe(task_id=task.id)}
+    )
+    monkeypatch.setattr(p2, "_git_commit", lambda *_: "d" * 40)
+    monkeypatch.setattr(p2, "resolve_managed_environment_python", lambda *_: Path(sys.executable))
+    sources = tmp_path / "sources"
+    sources.mkdir()
+    _run_git(tmp_path, "clone", "--quiet", str(source), str(sources / task.id))
+
+    class FixtureModel(BaseLLM):
+        instances = []
+
+        def __init__(self, config):
+            super().__init__(config)
+            self.requests = []
+            self.instances.append(self)
+
+        def complete(self, messages, tools=()):
+            self.requests.append(tuple(messages))
+            call_number = len(self.requests)
+            if call_number == 1:
+                message = Message(
+                    role=MessageRole.ASSISTANT,
+                    tool_calls=(
+                        ToolCall(
+                            id="visible-read",
+                            name="read_file",
+                            arguments={"path": "pkg/markers.txt", "start_line": 1, "end_line": 8},
+                        ),
+                    ),
+                )
+            elif call_number == 2:
+                message = Message(
+                    role=MessageRole.ASSISTANT,
+                    tool_calls=(
+                        ToolCall(
+                            id="fixture-repair",
+                            name="apply_patch",
+                            arguments={"patch": GOLD},
+                        ),
+                    ),
+                )
+            else:
+                message = Message(role=MessageRole.ASSISTANT, content="fixture complete")
+            return LLMResponse(
+                message=message,
+                usage=TokenUsage(input_tokens=10, output_tokens=2, total_tokens=12, cost_usd=0),
+                model_name=self.config.model_name,
+            )
+
+    class ForbiddenSupplier:
+        def __init__(self, *_args, **_kwargs):
+            pytest.fail("simulation attempted to construct a supplier client")
+
+    monkeypatch.setattr(p2, "P2SimulationLLM", FixtureModel)
+    monkeypatch.setattr("tracefix.runtime.LiteLLMAdapter", ForbiddenSupplier)
+    config = P2ProtocolConfig(
+        design=design,
+        source_root=sources,
+        p1_evidence_path=_p1_qualification_evidence(tmp_path, (task,)),
+    )
+    protocol = build_p2_protocol(config)
+    expected_kind = (
+        "p2_presentation_only_protocol"
+        if design == "presentation_only"
+        else "p2_no_effect_recovery_protocol"
+    )
+    assert protocol.kind == expected_kind
+    assert len(protocol.schedule) == 6
+    assert protocol.arm_configurations["no_compaction"]["tool_result_presentation_enabled"] is False
+    assert protocol.arm_configurations[treatment_arm]["action_guidance_enabled"] is False
+    assert protocol.arm_configurations[treatment_arm]["read_cache_enabled"] is False
+    assert protocol.arm_configurations[treatment_arm]["validation_closure_enabled"] is False
+    assert protocol.arm_configurations[treatment_arm]["tool_result_presentation_enabled"] is (
+        design == "presentation_only"
+    )
+    assert protocol.arm_configurations[treatment_arm][
+        "require_fresh_read_after_repeated_no_effect_patch"
+    ] is (design == "no_effect_recovery")
+    control_config = protocol.effective_agent_configurations["no_compaction"]
+    treatment_config = protocol.effective_agent_configurations[treatment_arm]
+    assert control_config["require_tested_completion"] is False
+    assert treatment_config["require_tested_completion"] is False
+    diff_fields = {key for key in control_config if control_config[key] != treatment_config[key]}
+    expected_diff = (
+        "tool_result_presentation_enabled"
+        if design == "presentation_only"
+        else "require_fresh_read_after_repeated_no_effect_patch"
+    )
+    assert diff_fields == {expected_diff}
+    assert protocol.analysis_plan["fixed_denominator"] == (
+        24 if design == "no_effect_recovery" else True
+    )
+    monkeypatch.setattr(
+        p2,
+        "check_p2_inputs",
+        lambda *args, **kwargs: type("Check", (), {"protocol": protocol})(),
+    )
+
+    root = tmp_path / "presentation-only-simulation"
+    first = run_p2_simulation(config, experiment_dir=root)
+    assert first.completed_count == 6 and first.resumed_count == 0
+    assert all(record.independent_passed is True for record in first.results)
+    assert len(FixtureModel.instances) == 6
+
+    fixture_views = []
+    for model in FixtureModel.instances:
+        first_request = json.dumps(model.requests[0], default=str, ensure_ascii=False)
+        assert HIDDEN not in first_request
+        assert "VALUE = 1" not in first_request
+        tool_messages = [
+            message for message in model.requests[1] if message.role is MessageRole.TOOL
+        ]
+        assert tool_messages
+        fixture_views.extend(message.content or "" for message in tool_messages)
+    assert all(
+        "pkg/markers.txt" in view and "TARGET_PATH:pkg/a.py" in view for view in fixture_views
+    )
+    assert all("NODE:tests/test_visible.py::test_visible" in view for view in fixture_views)
+    assert all(
+        "ASSERT: expected 2 got 1 EXCEPTION: AssertionError" in view for view in fixture_views
+    )
+    assert sum("TraceFix 已裁剪" in view for view in fixture_views) == (
+        3 if design == "presentation_only" else 0
+    )
+
+    resumed = run_p2_simulation(config, experiment_dir=root)
+    assert resumed.completed_count == 6 and resumed.resumed_count == 6
+    assert len(FixtureModel.instances) == 6
+    summary = summarize_p2_experiment(root)
+    assert summary.control_success_count == 3
+    assert summary.treatment_success_count == 3
+    assert summary.primary_control_success_rate == 1
+    assert summary.primary_treatment_success_rate == 1
+    summary_path = write_p2_summary(root)
+    assert "普通题固定分母成功率：C 3/3 (100.0%)" in (root / "p2-summary.md").read_text(
+        encoding="utf-8"
+    )
+    assert summary_path.is_file()
+
+
+def test_p2_summary_keeps_all_planned_positions_and_separates_failures(
+    tmp_path, monkeypatch
+) -> None:
+    task, _ = _fixture(tmp_path)
+    ids = ("task-a", "task-b")
+    tasks = tuple(task.model_copy(update={"id": task_id}) for task_id in ids)
+    monkeypatch.setattr("tracefix.p2_protocol.P1_QUALIFIED_TASK_IDS", ids)
+    monkeypatch.setattr("tracefix.p2_protocol.COLLECTION_FAILURE_TASK_IDS", ("task-b",))
+    monkeypatch.setattr("tracefix.p2_protocol.load_real_issue_tasks", lambda *args, **kwargs: tasks)
+    monkeypatch.setattr(
+        "tracefix.p2_protocol.load_environment_recipes",
+        lambda *_: {task_id: EnvironmentRecipe(task_id=task_id) for task_id in ids},
+    )
+    monkeypatch.setattr("tracefix.p2_protocol._git_commit", lambda *_: "s" * 40)
+    config = P2ProtocolConfig(
+        p1_evidence_path=_p1_qualification_evidence(tmp_path, tasks, ("task-b",))
+    )
+    protocol = build_p2_protocol(config)
+    root = tmp_path / "summary"
+    (root / "trials").mkdir(parents=True)
+    (root / "protocol.json").write_text(protocol.model_dump_json(), encoding="utf-8")
+    plan = protocol.schedule[0]
+    write_trial_record(
+        root / "trials" / "001.json",
+        P2TrialRecord(
+            sequence=plan.sequence,
+            task_id=plan.task_id,
+            arm=plan.arm,
+            repetition=plan.repetition,
+            mode="simulation",
+            status="verification_complete",
+            input_tokens=5,
+            output_tokens=2,
+            cost_usd=0,
+            independent_passed=False,
+            agent_duration_seconds=1,
+        ),
+    )
+    summary = summarize_p2_experiment(root)
+    assert summary.planned_count == 12
+    assert summary.completed_count == 1 and summary.repair_failure_count == 0
+    assert summary.evidence_issue_count == 12
+    assert summary.unexecuted_count == 11 and summary.input_tokens is None
+    assert summary.calculated_cost_amount is None
+    assert summary.cost_currency is None
+    assert {item.qualification_type for item in summary.task_summaries} == {
+        "assertion_failure",
+        "expected_collection_failure",
+    }
+    output = write_p2_summary(root)
+    assert output.is_file()
+    report = (root / "p2-summary.md").read_text(encoding="utf-8")
+    assert "计划 12 次" in report and "模拟结果仅验证工程流程" in report
+
+
+def test_p2_diagnostic_separates_budget_stop_and_test_patch(tmp_path, monkeypatch) -> None:
+    task, _ = _fixture(tmp_path)
+    monkeypatch.setattr("tracefix.p2_protocol.P1_QUALIFIED_TASK_IDS", (task.id,))
+    monkeypatch.setattr("tracefix.p2_protocol.COLLECTION_FAILURE_TASK_IDS", ())
+    monkeypatch.setattr("tracefix.p2_protocol.load_real_issue_tasks", lambda *a, **k: (task,))
+    monkeypatch.setattr(
+        "tracefix.p2_protocol.load_environment_recipes",
+        lambda *_: {task.id: EnvironmentRecipe(task_id=task.id)},
+    )
+    monkeypatch.setattr("tracefix.p2_protocol._git_commit", lambda *_: "s" * 40)
+    protocol = build_p2_protocol(
+        P2ProtocolConfig(p1_evidence_path=_p1_qualification_evidence(tmp_path, (task,), ()))
+    )
+    root = tmp_path / "diagnostic"
+    (root / "trials").mkdir(parents=True)
+    (root / "protocol.json").write_text(protocol.model_dump_json(), encoding="utf-8")
+    patch = root / "patch.diff"
+    patch.write_text(
+        "diff --git a/pkg/a.py b/pkg/a.py\ndiff --git a/tests/test_a.py b/tests/test_a.py\n",
+        encoding="utf-8",
+    )
+    run = root / "run.json"
+    run.write_text(
+        json.dumps(
+            {
+                "error": {
+                    "message": "P2 trial input budget is exhausted before provider invocation"
+                },
+                "context_metrics": {},
+                "presentation_metrics": {},
+            }
+        ),
+        encoding="utf-8",
+    )
+    verification = root / "verification.json"
+    verification.write_text(
+        json.dumps({"eligible": False, "reason": "agent_modified_test_or_pytest_configuration"}),
+        encoding="utf-8",
+    )
+    plan = protocol.schedule[0]
+    write_trial_record(
+        root / "trials" / "001.json",
+        P2TrialRecord(
+            sequence=1,
+            task_id=task.id,
+            arm=plan.arm,
+            repetition=plan.repetition,
+            mode="formal",
+            status="verification_complete",
+            stop_reason="benchmark_error",
+            run_result_path=str(run),
+            agent_patch_path=str(patch),
+            verification_path=str(verification),
+            independent_passed=False,
+        ),
+    )
+    output = write_p2_diagnostic(root)
+    payload = json.loads(output.read_text(encoding="utf-8"))
+    assert payload["termination_categories"]["normal_trial_budget_stop"] == 1
+    assert payload["test_modification_categories"]["source_and_test"] == 1
+    assert payload["paid_requests_made"] == 0
+
+
+def test_cost_ledger_atomic_write_retries_permission_error(tmp_path, monkeypatch) -> None:
+    calls = 0
+    real_replace = __import__("os").replace
+
+    def flaky_replace(source, target):
+        nonlocal calls
+        calls += 1
+        if calls < 3:
+            raise PermissionError("busy")
+        real_replace(source, target)
+
+    monkeypatch.setattr("tracefix.p2_protocol.os.replace", flaky_replace)
+    path = tmp_path / "ledger.json"
+    _write_cost_ledger(path, P2CostLedgerRecord(cap_usd=10))
+    assert calls == 3
+    assert P2CostLedgerRecord.model_validate_json(path.read_text(encoding="utf-8")).cap_usd == 10
+
+
+def test_p2_trial_budget_exception_has_dedicated_code() -> None:
+    assert P2TrialBudgetExceeded.code == "p2_trial_budget_exhausted"
+    assert issubclass(P2TrialBudgetExceeded, AgentLimitExceeded)
+
+
+def test_p2_scoring_contract_uses_exact_paths_and_shared_instruction() -> None:
+    category, forbidden = classify_p2_paths(
+        (
+            "src/contest/helpers.py",
+            "tests space/test_feature.py",
+            "pkg/setup.cfg",
+            "docs/testing-notes.md",
+        )
+    )
+    assert category == "config_modified"
+    assert forbidden == ("pkg/setup.cfg", "tests space/test_feature.py")
+    assert "禁止修改、新增、删除或重命名测试" in p2_scoring_instruction()
+
+
+def test_p2_summary_and_diagnostic_share_evidence_classification(tmp_path, monkeypatch) -> None:
+    task, _ = _fixture(tmp_path)
+    monkeypatch.setattr("tracefix.p2_protocol.P1_QUALIFIED_TASK_IDS", (task.id,))
+    monkeypatch.setattr("tracefix.p2_protocol.COLLECTION_FAILURE_TASK_IDS", ())
+    monkeypatch.setattr("tracefix.p2_protocol.load_real_issue_tasks", lambda *a, **k: (task,))
+    monkeypatch.setattr(
+        "tracefix.p2_protocol.load_environment_recipes",
+        lambda *_: {task.id: EnvironmentRecipe(task_id=task.id)},
+    )
+    monkeypatch.setattr("tracefix.p2_protocol._git_commit", lambda *_: "c" * 40)
+    protocol = build_p2_protocol(
+        P2ProtocolConfig(p1_evidence_path=_p1_qualification_evidence(tmp_path, (task,), ()))
+    )
+    root = tmp_path / "shared-audit"
+    (root / "trials").mkdir(parents=True)
+    (root / "protocol.json").write_text(protocol.model_dump_json(), encoding="utf-8")
+    run = root / "run.json"
+    patch = root / "patch.diff"
+    run.write_text(json.dumps({"error": None}), encoding="utf-8")
+    patch.write_text("diff --git a/pkg/a.py b/pkg/a.py\n", encoding="utf-8")
+    plan = protocol.schedule[0]
+    write_trial_record(
+        root / "trials" / "001.json",
+        P2TrialRecord(
+            sequence=plan.sequence,
+            task_id=plan.task_id,
+            arm=plan.arm,
+            repetition=plan.repetition,
+            mode="formal",
+            status="verification_complete",
+            run_result_path=str(run),
+            run_result_sha256=hashlib.sha256(run.read_bytes()).hexdigest(),
+            agent_patch_path=str(patch),
+            agent_patch_sha256=hashlib.sha256(patch.read_bytes()).hexdigest(),
+            verification_path=str(root / "missing-verification.json"),
+            verification_sha256="0" * 64,
+            independent_passed=True,
+        ),
+    )
+    summary = summarize_p2_experiment(root)
+    diagnostic = diagnose_p2_experiment(root)
+    assert summary.evidence_issue_count == diagnostic["evidence_issue_count"] == 6
+    assert summary.verification_reasons == diagnostic["verification_reasons"]
+    assert summary.repair_success_count == 0
+    assert diagnostic["trials"][0]["verification_reason"] == "evidence_invalid"
+
+
+def test_p2_audit_reads_valid_trajectory_and_freezes_followup_design(tmp_path, monkeypatch) -> None:
+    task, _ = _fixture(tmp_path)
+    monkeypatch.setattr("tracefix.p2_protocol.P1_QUALIFIED_TASK_IDS", (task.id,))
+    monkeypatch.setattr("tracefix.p2_protocol.COLLECTION_FAILURE_TASK_IDS", ())
+    monkeypatch.setattr("tracefix.p2_protocol.load_real_issue_tasks", lambda *a, **k: (task,))
+    monkeypatch.setattr(
+        "tracefix.p2_protocol.load_environment_recipes",
+        lambda *_: {task.id: EnvironmentRecipe(task_id=task.id)},
+    )
+    monkeypatch.setattr("tracefix.p2_protocol._git_commit", lambda *_: "d" * 40)
+    protocol = build_p2_protocol(
+        P2ProtocolConfig(p1_evidence_path=_p1_qualification_evidence(tmp_path, (task,), ()))
+    )
+    root = tmp_path / "complete-audit"
+    (root / "trials").mkdir(parents=True)
+    (root / "protocol.json").write_text(protocol.model_dump_json(), encoding="utf-8")
+    trace = root / "trajectory.jsonl"
+    events = (
+        {"event_type": "task_started", "payload": {"task": "Add a regression test"}},
+        {"event_type": "context_prepared", "payload": {"estimated_tokens_before": 33000}},
+        {
+            "event_type": "tool_called",
+            "payload": {"call": {"name": "read_file", "arguments": {"path": "pkg/a.py"}}},
+        },
+        {
+            "event_type": "tool_called",
+            "payload": {"call": {"name": "read_file", "arguments": {"path": "pkg/a.py"}}},
+        },
+        {"event_type": "tool_returned", "payload": {"result": {"success": False}}},
+        {
+            "event_type": "tool_result_presented",
+            "payload": {"original_chars": 20, "presented_chars": 10},
+        },
+        {
+            "event_type": "tool_result_presented",
+            "payload": {"original_chars": 10, "presented_chars": 12},
+        },
+        {
+            "event_type": "tool_result_presented",
+            "payload": {"original_chars": 5, "presented_chars": 5},
+        },
+    )
+    trace.write_text(
+        "not-json\n" + "\n".join(json.dumps(event) for event in events), encoding="utf-8"
+    )
+    verification = root / "verification.json"
+    verification.write_text(
+        json.dumps(
+            {
+                "eligible": False,
+                "reason": "pytest failed",
+                "evidence": {
+                    "status": "assertion_failed",
+                    "error_count": 0,
+                    "failure_count": 1,
+                    "junit_available": True,
+                    "audit_available": True,
+                    "collection_audit_available": True,
+                    "execution_audit_available": True,
+                    "source_import_audit_valid": True,
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    patch = root / "patch.diff"
+    patch.write_text('diff --git "a/pkg/file name.py" "b/pkg/file name.py"\n', encoding="utf-8")
+    stops = (
+        ("p2_trial_budget_exhausted", ""),
+        ("benchmark_error", "configured per-request input bound"),
+        ("agent_error", "unexpected agent error"),
+        ("step_limit_exceeded", ""),
+        ("test_limit_exceeded", ""),
+        ("agent_completed", ""),
+    )
+    instruction = p2_scoring_instruction()
+    for plan, (stop_reason, message) in zip(protocol.schedule, stops, strict=True):
+        run = root / f"run-{plan.sequence}.json"
+        run.write_text(
+            json.dumps(
+                {
+                    "error": {"message": message},
+                    "trace_path": str(trace),
+                    "repo_map": {"candidate_files": ["pkg/a.py"]},
+                    "context_metrics": {"compaction_count": 1},
+                    "presentation_metrics": {
+                        "original_chars": 35,
+                        "presented_chars": 27,
+                        "compacted_result_count": 2,
+                    },
+                    "agent_config": {"system_prompt": instruction},
+                }
+            ),
+            encoding="utf-8",
+        )
+        write_trial_record(
+            root / "trials" / f"{plan.sequence:03d}.json",
+            P2TrialRecord(
+                sequence=plan.sequence,
+                task_id=plan.task_id,
+                arm=plan.arm,
+                repetition=plan.repetition,
+                mode="formal",
+                status="verification_complete",
+                stop_reason=stop_reason,
+                run_result_path=str(run),
+                run_result_sha256=hashlib.sha256(run.read_bytes()).hexdigest(),
+                agent_patch_path=str(patch),
+                agent_patch_sha256=hashlib.sha256(patch.read_bytes()).hexdigest(),
+                verification_path=str(verification),
+                verification_sha256=hashlib.sha256(verification.read_bytes()).hexdigest(),
+                independent_passed=False,
+                input_tokens=10,
+                output_tokens=2,
+                agent_duration_seconds=1,
+            ),
+        )
+    diagnostic = diagnose_p2_experiment(root)
+    assert diagnostic["evidence_valid_count"] == 6
+    assert diagnostic["termination_categories"] == {
+        "agent_completed": 1,
+        "infrastructure_error": 1,
+        "normal_trial_budget_stop": 1,
+        "request_bound_violation": 1,
+        "step_limit_exceeded": 1,
+        "test_limit_exceeded": 1,
+    }
+    first = diagnostic["trials"][0]
+    assert first["changed_paths"] == ["pkg/file name.py"]
+    assert first["tool_results_shortened"] == 1
+    assert first["tool_results_lengthened"] == 1
+    assert first["tool_results_unchanged"] == 1
+    assert first["context_peak_tokens"] == 33000
+    assert first["repo_map_candidate_reads"] == 1
+    assert first["file_rereads"] == 1 and first["failed_tool_calls"] == 1
+    assert first["task_explicitly_requests_test_change"] is True
+    assert first["scoring_instruction_present"] is True
+    candidates = tmp_path / "candidates"
+    (candidates / task.id).mkdir(parents=True)
+    (candidates / task.id / "task.json").write_text("{}", encoding="utf-8")
+    followup = write_p2_followup_plan(
+        root, candidates_dir=candidates, output_dir=tmp_path / "output"
+    )
+    design = json.loads(followup.read_text(encoding="utf-8"))
+    assert design["paid_requests_made"] == 0
+    assert design["holdout"]["candidate_deficit"] == 20
+    assert set(design["ablation_arms"]) == {
+        "baseline_all_off",
+        "repo_map_only",
+        "action_optimization_bundle",
+        "context_management_only",
+    }
+
+
+def test_p2_input_check_writes_snapshot_and_rejects_dirty_source(tmp_path, monkeypatch) -> None:
+    task, source = _fixture(tmp_path)
+    monkeypatch.setattr("tracefix.p2_protocol.P1_QUALIFIED_TASK_IDS", (task.id,))
+    monkeypatch.setattr("tracefix.p2_protocol.COLLECTION_FAILURE_TASK_IDS", ())
+    monkeypatch.setattr(
+        "tracefix.p2_protocol.load_real_issue_tasks", lambda *args, **kwargs: (task,)
+    )
+    monkeypatch.setattr(
+        "tracefix.p2_protocol.load_environment_recipes",
+        lambda *_: {task.id: EnvironmentRecipe(task_id=task.id)},
+    )
+    monkeypatch.setattr(
+        "tracefix.p2_protocol.resolve_managed_environment_python",
+        lambda *_: Path(sys.executable),
+    )
+    monkeypatch.setattr("tracefix.p2_protocol._git_commit", lambda *_: "d" * 40)
+    sources = tmp_path / "sources"
+    sources.mkdir()
+    _run_git(tmp_path, "clone", "--quiet", str(source), str(sources / task.id))
+    config = P2ProtocolConfig(
+        source_root=sources,
+        output_dir=tmp_path / "runs",
+        p1_evidence_path=_p1_qualification_evidence(tmp_path, (task,)),
+    )
+    check_path = write_p2_check(config)
+    assert check_path.is_file()
+    frozen = json.loads(check_path.read_text(encoding="utf-8"))["protocol"]["p1_qualifications"]
+    assert frozen[task.id]["expected_node_ids"] == ["tests/test_hidden.py::test_hidden"]
+    formal = P2FormalRunRequirements(
+        model_name="provider/model",
+        provider="provider",
+        pricing_source="source",
+        total_cost_cap_usd=1,
+        input_cost_per_million_usd=1,
+        output_cost_per_million_usd=1,
+    )
+    monkeypatch.setattr("tracefix.p2_protocol._tracked_diff", lambda *_: b"diff")
+    with pytest.raises(BenchmarkError, match="clean tracked worktree"):
+        check_p2_inputs(config.model_copy(update={"formal": formal}))
+    (sources / task.id / "dirty.txt").write_text("x", encoding="utf-8")
+    with pytest.raises(BenchmarkError, match="not clean"):
+        check_p2_inputs(config)
+
+
+def test_p2_input_gate_rejects_missing_or_drifted_p1_identity(tmp_path, monkeypatch) -> None:
+    """P2 不得在缺失 P1 记录或更换受管依赖后开始。"""
+    task, source = _fixture(tmp_path)
+    monkeypatch.setattr("tracefix.p2_protocol.P1_QUALIFIED_TASK_IDS", (task.id,))
+    monkeypatch.setattr("tracefix.p2_protocol.COLLECTION_FAILURE_TASK_IDS", ())
+    monkeypatch.setattr(
+        "tracefix.p2_protocol.load_real_issue_tasks", lambda *args, **kwargs: (task,)
+    )
+    monkeypatch.setattr(
+        "tracefix.p2_protocol.load_environment_recipes",
+        lambda *_: {task.id: EnvironmentRecipe(task_id=task.id)},
+    )
+    monkeypatch.setattr(
+        "tracefix.p2_protocol.resolve_managed_environment_python", lambda *_: Path(sys.executable)
+    )
+    sources = tmp_path / "sources"
+    sources.mkdir()
+    _run_git(tmp_path, "clone", "--quiet", str(source), str(sources / task.id))
+    with pytest.raises(BenchmarkError, match="requires the retained P1"):
+        check_p2_inputs(P2ProtocolConfig(source_root=sources))
+    evidence = _p1_qualification_evidence(tmp_path, (task,))
+    payload = json.loads(evidence.read_text(encoding="utf-8"))
+    payload[0]["test_environment"]["fingerprint_sha256"] = "drifted"
+    evidence.write_text(json.dumps(payload), encoding="utf-8")
+    with pytest.raises(BenchmarkError, match="differs from the P1-qualified"):
+        check_p2_inputs(P2ProtocolConfig(source_root=sources, p1_evidence_path=evidence))
+
+
+def test_p2_protocol_rejects_malformed_raw_p1_evidence(tmp_path, monkeypatch) -> None:
+    task, _ = _fixture(tmp_path)
+    monkeypatch.setattr("tracefix.p2_protocol.P1_QUALIFIED_TASK_IDS", (task.id,))
+    monkeypatch.setattr("tracefix.p2_protocol.COLLECTION_FAILURE_TASK_IDS", ())
+    monkeypatch.setattr(
+        "tracefix.p2_protocol.load_real_issue_tasks", lambda *args, **kwargs: (task,)
+    )
+    monkeypatch.setattr(
+        "tracefix.p2_protocol.load_environment_recipes",
+        lambda *_: {task.id: EnvironmentRecipe(task_id=task.id)},
+    )
+    malformed = tmp_path / "malformed-p1.json"
+    malformed.write_text("{}", encoding="utf-8")
+    with pytest.raises(BenchmarkError, match="must be a JSON list"):
+        build_p2_protocol(P2ProtocolConfig(p1_evidence_path=malformed))
+    malformed.write_text("[]", encoding="utf-8")
+    with pytest.raises(BenchmarkError, match="missing a P2 task"):
+        build_p2_protocol(P2ProtocolConfig(p1_evidence_path=malformed))
+
+
+def test_p2_identity_helpers_fail_closed_when_git_cannot_answer(monkeypatch) -> None:
+    """代码身份或工作区差异不可读取时，P2 不得静默继续。"""
+    import tracefix.p2_protocol as p2
+
+    failed = type("Result", (), {"returncode": 1, "stdout": b""})()
+    monkeypatch.setattr(p2.subprocess, "run", lambda *args, **kwargs: failed)
+    with pytest.raises(BenchmarkError, match="code commit"):
+        p2._git_commit(Path("."))
+    with pytest.raises(BenchmarkError, match="tracked worktree"):
+        p2._tracked_diff(Path("."))
+    assert read_completed_trial(Path("missing-p2-trial.json")) is None
+
+
+def test_p2_resume_verifies_persisted_agent_result_without_rerunning_agent(
+    tmp_path, monkeypatch
+) -> None:
+    """Agent 已落盘但验收中断时，只能续验，不得重发模型请求。"""
+    task, source = _fixture(tmp_path)
+    monkeypatch.setattr("tracefix.p2_protocol.P1_QUALIFIED_TASK_IDS", (task.id,))
+    monkeypatch.setattr("tracefix.p2_protocol.COLLECTION_FAILURE_TASK_IDS", ())
+    monkeypatch.setattr(
+        "tracefix.p2_protocol.load_real_issue_tasks", lambda *args, **kwargs: (task,)
+    )
+    monkeypatch.setattr(
+        "tracefix.p2_protocol.load_environment_recipes",
+        lambda *_: {task.id: EnvironmentRecipe(task_id=task.id)},
+    )
+    monkeypatch.setattr(
+        "tracefix.p2_protocol.resolve_managed_environment_python", lambda *_: Path(sys.executable)
+    )
+    monkeypatch.setattr("tracefix.p2_protocol._git_commit", lambda *_: "r" * 40)
+    sources = tmp_path / "sources"
+    sources.mkdir()
+    _run_git(tmp_path, "clone", "--quiet", str(source), str(sources / task.id))
+    config = P2ProtocolConfig(
+        source_root=sources, p1_evidence_path=_p1_qualification_evidence(tmp_path, (task,))
+    )
+    protocol = build_p2_protocol(config)
+    root = tmp_path / "resume"
+    trials = root / "trials"
+    trials.mkdir(parents=True)
+    patch = tmp_path / "agent.diff"
+    patch.write_text(GOLD, encoding="utf-8")
+    for plan in protocol.schedule:
+        write_trial_record(
+            trials / f"{plan.sequence:03d}.json",
+            P2TrialRecord(
+                sequence=plan.sequence,
+                task_id=plan.task_id,
+                arm=plan.arm,
+                repetition=plan.repetition,
+                mode="simulation",
+                status="agent_completed",
+                attempt_id=f"saved-{plan.sequence}",
+                agent_patch_path=str(patch),
+                run_result_path="saved-result.json",
+            ),
+        )
+    calls = []
+
+    class NoRerunRunner:
+        def run(self, *args, **kwargs):
+            pytest.fail("agent reran")
+
+    monkeypatch.setattr("tracefix.p2_protocol.TraceFixRunner", lambda *_: NoRerunRunner())
+
+    class Verification:
+        eligible = False
+
+        def model_dump_json(self, **kwargs):
+            return '{"eligible": false}'
+
+    monkeypatch.setattr(
+        "tracefix.p2_protocol.validate_agent_patch_strict",
+        lambda *args, **kwargs: calls.append(kwargs["expected_node_ids"]) or Verification(),
+    )
+    summary = run_p2_simulation(config, experiment_dir=root)
+    assert summary.completed_count == 6 and summary.resumed_count == 6
+    assert len(calls) == 6
+
+
+def test_p2_simulation_rejects_existing_lock(tmp_path, monkeypatch) -> None:
+    task, _ = _fixture(tmp_path)
+    monkeypatch.setattr("tracefix.p2_protocol.P1_QUALIFIED_TASK_IDS", (task.id,))
+    monkeypatch.setattr("tracefix.p2_protocol.COLLECTION_FAILURE_TASK_IDS", ())
+    monkeypatch.setattr(
+        "tracefix.p2_protocol.load_real_issue_tasks", lambda *args, **kwargs: (task,)
+    )
+    monkeypatch.setattr(
+        "tracefix.p2_protocol.load_environment_recipes",
+        lambda *_: {task.id: EnvironmentRecipe(task_id=task.id)},
+    )
+    monkeypatch.setattr("tracefix.p2_protocol._git_commit", lambda *_: "e" * 40)
+    monkeypatch.setattr(
+        "tracefix.p2_protocol.check_p2_inputs",
+        lambda *args, **kwargs: type(
+            "Check", (), {"protocol": build_p2_protocol(P2ProtocolConfig())}
+        )(),
+    )
+    root = tmp_path / "simulation"
+    root.mkdir()
+    (root / ".p2-run.lock").write_text("other", encoding="utf-8")
+    with pytest.raises(BenchmarkError, match="already running"):
+        run_p2_simulation(P2ProtocolConfig(), experiment_dir=root)
+
+
+def test_p2_simulation_records_missing_agent_patch_as_infrastructure_error(
+    tmp_path, monkeypatch
+) -> None:
+    task, source = _fixture(tmp_path)
+    monkeypatch.setattr("tracefix.p2_protocol.P1_QUALIFIED_TASK_IDS", (task.id,))
+    monkeypatch.setattr("tracefix.p2_protocol.COLLECTION_FAILURE_TASK_IDS", ())
+    monkeypatch.setattr(
+        "tracefix.p2_protocol.load_real_issue_tasks", lambda *args, **kwargs: (task,)
+    )
+    monkeypatch.setattr(
+        "tracefix.p2_protocol.load_environment_recipes",
+        lambda *_: {task.id: EnvironmentRecipe(task_id=task.id)},
+    )
+    monkeypatch.setattr("tracefix.p2_protocol._git_commit", lambda *_: "f" * 40)
+    monkeypatch.setattr(
+        "tracefix.p2_protocol.resolve_managed_environment_python",
+        lambda *_: Path(sys.executable),
+    )
+    protocol = build_p2_protocol(P2ProtocolConfig())
+    monkeypatch.setattr(
+        "tracefix.p2_protocol.check_p2_inputs",
+        lambda *args, **kwargs: type("Check", (), {"protocol": protocol})(),
+    )
+
+    class NoPatchRunner:
+        def run(self, run_config):
+            return (
+                _FakeRunner().run(run_config).model_copy(update={"diff_path": None, "cost_usd": 0})
+            )
+
+    monkeypatch.setattr("tracefix.p2_protocol.TraceFixRunner", lambda *_: NoPatchRunner())
+    sources = tmp_path / "sources"
+    sources.mkdir()
+    _run_git(tmp_path, "clone", "--quiet", str(source), str(sources / task.id))
+    summary = run_p2_simulation(
+        P2ProtocolConfig(source_root=sources), experiment_dir=tmp_path / "simulation"
+    )
+    assert summary.completed_count == 0
+    assert {item.status for item in summary.results} == {"infrastructure_error"}
+
+
+def test_p2_protocol_rejects_changed_repetition_and_missing_recipe(tmp_path, monkeypatch) -> None:
+    task, source = _fixture(tmp_path)
+    ids = tuple(f"task-{index}" for index in range(10))
+    tasks = tuple(task.model_copy(update={"id": task_id}) for task_id in ids)
+    monkeypatch.setattr("tracefix.p2_protocol.P1_QUALIFIED_TASK_IDS", ids)
+    monkeypatch.setattr("tracefix.p2_protocol.load_real_issue_tasks", lambda *args, **kwargs: tasks)
+    monkeypatch.setattr(
+        "tracefix.p2_protocol.load_environment_recipes",
+        lambda *_: {task_id: EnvironmentRecipe(task_id=task_id) for task_id in ids[:-1]},
+    )
+
+    with pytest.raises(ValueError, match="less than or equal"):
+        P2ProtocolConfig(repetitions=4)
+    with pytest.raises(BenchmarkError, match="missing environment recipes"):
+        build_p2_protocol(P2ProtocolConfig(), repository_root=source)
+    monkeypatch.setattr("tracefix.p2_protocol.P1_QUALIFIED_TASK_IDS", (*ids, "task-missing"))
+    with pytest.raises(BenchmarkError, match="task set is incomplete"):
+        build_p2_protocol(P2ProtocolConfig(), repository_root=source)
 
 
 def test_repo_map_prescreen_alternates_arms_and_keeps_context_policy(tmp_path, monkeypatch) -> None:

@@ -3,10 +3,18 @@
 本目录保存代码演进、实验解释和后续任务记录。README 首页只保留当前使用方法与主要结果，
 完整的历史和证据从这里进入。
 
+## 新任务交接入口
+
+- [`handoffs/2026-09-17-v084.md`](handoffs/2026-09-17-v084.md)：当前版本、优先级任务、
+  必读代码、原始证据位置和可复制启动提示。最新状态见文末第 26 节：V0.8.14 60 项开发集输出呈现比较已完成，T 未满足预注册采纳条件，留出集未运行。
+
 ## 项目历程
 
+- [`roadmap.md`](roadmap.md)：项目目标、当前阶段、验收门槛与下一步行动。
 - [`development-history.md`](development-history.md)：从 V0 接口骨架到 V0.3.2 实验可追溯性
   A/B 的代码说明、设计取舍、验证结果和 Git 版本。
+- [`reproduction.md`](reproduction.md)：干净安装、wheel、零模型调用本地/Docker 复现、材料清单与当前外部复验边界。
+- [`tasks/2026-09-28-current-checkout-reproduction.md`](tasks/2026-09-28-current-checkout-reproduction.md)：当前 checkout 的 Skills/TLS 实现、验证门槛与未完成环境复验记录。
 
 ## 实验记录
 
@@ -34,6 +42,50 @@
   24 次交替配对实验、未触发 32k 的否定性结论与下一功能决策。
 - [`experiments/v0.5.0-real-issue-32k-prescreen.md`](experiments/v0.5.0-real-issue-32k-prescreen.md)：
   三道真实 Issue 的 32k 单次预筛选、0/3 入选结论和 Repo Map 功能决策。
+- [`experiments/v0.8.1-real-environment-behavior.md`](experiments/v0.8.1-real-environment-behavior.md)：
+  五道新候选的环境、base/gold 验收与 0/5 资格结论。
+- [`tasks/v0.8.3-auditable-real-validation.md`](tasks/v0.8.3-auditable-real-validation.md)：
+  构建、收集、pytest 执行证据和失败分类改进。
+- [`experiments/v0.8.3-real-environment-validation.md`](experiments/v0.8.3-real-environment-validation.md)：
+  12 道真实候选的 7/12 合格重验结果。
+- [`tasks/v0.8.4-strict-real-validation.md`](tasks/v0.8.4-strict-real-validation.md)：
+  严格 node ID、受审查收集失败、解释器复用与环境指纹修复。
+- [`tasks/v0.8.5-p0-trusted-validation.md`](tasks/v0.8.5-p0-trusted-validation.md)：
+  环境所有权、双阶段审计、源码隔离及 P0 全量测试与覆盖率门槛。
+- [`experiments/v0.8.5-p1-real-environment-validation.md`](experiments/v0.8.5-p1-real-environment-validation.md)：
+  新环境、固定配方下 12 道真实任务的统一 base/gold 行为复核。
+- [`experiments/v0.8.6-p2-whole-system-protocol.md`](experiments/v0.8.6-p2-whole-system-protocol.md)：
+  10 道任务、60 次整体优化 C/T 的冻结协议与零费用演练。
+- [`experiments/v0.8.6-p2-formal-diagnostic.md`](experiments/v0.8.6-p2-formal-diagnostic.md)：
+  已有 60 项正式轨迹的终止分类、测试修改细分和机制触发诊断；未新增付费调用。
+- [`experiments/v0.8.7-p2-evidence-contract.md`](experiments/v0.8.7-p2-evidence-contract.md)：
+  统一证据统计、评分契约核对、既有轨迹机制分析及消融与留出集冻结方案。
+- [`experiments/v0.8.8-holdout-freeze.md`](experiments/v0.8.8-holdout-freeze.md)：
+  不可变候选顺序、首轮留出资格缺口及独立长上下文机制集合。
+- [`experiments/v0.8.9-holdout-final-freeze.md`](experiments/v0.8.9-holdout-final-freeze.md)：
+  20 道普通资格留出任务的兼容重验、严格证据冻结及长上下文关键信息保留验证。
+- [`experiments/v0.8.11-development-ablation.md`](experiments/v0.8.11-development-ablation.md)：
+  开发集四组正式 120 项、独立对账及零调用恢复；无组达到预定净收益要求，保留基线与未使用留出集。
+- [`experiments/v0.8.13-presentation-only-preflight.md`](experiments/v0.8.13-presentation-only-preflight.md)：
+  更正工具裁剪/历史折叠统计，冻结 60 位置输出呈现单变量协议、合成零费用预检和预算停止决策。
+- [`experiments/v0.8.14-presentation-only-paid-development.md`](experiments/v0.8.14-presentation-only-paid-development.md)：
+  完成 C/T 60 项正式开发集比较，记录 58/60 有效证据、费用对账、恢复结果及未通过采纳门槛的原因。
+- [`experiments/v0.8.15-validation-closure-results.md`](experiments/v0.8.15-validation-closure-results.md)：
+  48 项验证闭环正式比较、独立验收成功率、费用与未采纳结论。
+- [`experiments/v0.8.16-validation-feedback-diagnostic.md`](experiments/v0.8.16-validation-feedback-diagnostic.md)：
+  48 项既有轨迹的空补丁与验证反馈离线诊断。
+- [`experiments/v0.8.17-selection-feedback-correction.md`](experiments/v0.8.17-selection-feedback-correction.md)：
+  去选测试审计修正、17 次历史反馈更正和下一轮 48 项比较预算草案。
+- [`experiments/v0.8.10-ablation-preflight.md`](experiments/v0.8.10-ablation-preflight.md)：
+  四组 120 项协议、真实任务与正式入口零费用模拟、恢复、完整依赖锁及共享预算预检。
+- [`experiments/v0.8.4-real-environment-validation.md`](experiments/v0.8.4-real-environment-validation.md)：
+  12 道真实候选严格重验的 10/12 行为资格结果与边界。
+- [`../benchmarks/experiments/v0.8.4-real-environment-validation.json`](../benchmarks/experiments/v0.8.4-real-environment-validation.json)：
+  V0.8.4 的脱敏机器可读资格汇总，不含模型输出或本机绝对路径。
+- [`tasks/v0.8.2-space-aware-environments.md`](tasks/v0.8.2-space-aware-environments.md)：
+  解释器发现、任务级环境配方、空间门槛与安全清理实现。
+- [`experiments/v0.8.2-real-environment-validation.md`](experiments/v0.8.2-real-environment-validation.md)：
+  本轮离线环境与 base/gold 验收的逐题结论和证据边界。
 - [`../benchmarks/experiments/v0.5.0-real-task-fixture-validation.json`](../benchmarks/experiments/v0.5.0-real-task-fixture-validation.json)：
   三个真实任务固定提交、补丁可应用性、base 失败/gold 通过和测试环境指纹的机器可读记录。
 - [`../benchmarks/experiments/v0.5.0-real-issue-32k-prescreen.json`](../benchmarks/experiments/v0.5.0-real-issue-32k-prescreen.json)：
@@ -55,3 +107,7 @@
 代码任务说明进入 `development-history.md` 或单独的 `docs/tasks/` 文档；实验解释进入
 `docs/experiments/`，结构化数据进入 `benchmarks/experiments/`。聊天中的结论不能作为
 唯一留档。
+
+最新机制预检见 [`experiments/v0.8.20-no-effect-recovery-preflight.md`](experiments/v0.8.20-no-effect-recovery-preflight.md)；全量 457 项测试通过，pytest-only coverage 86.073278%，追加只读诊断入口后的综合 coverage 90.149626%。新门槛默认关闭，脚本化 fixture 不代表真实修复成功率。下一轮 C/T 草案及预算缺口见 [`../benchmarks/experiments/v0.8.20-no-effect-recovery-preflight/next-comparison.json`](../benchmarks/experiments/v0.8.20-no-effect-recovery-preflight/next-comparison.json)。前序证据更正与失败复盘见 [`experiments/v0.8.19-validation-closure-failure-review.md`](experiments/v0.8.19-validation-closure-failure-review.md)。V0.8.18 的原始结果、逐项哈希及后续更正索引分别位于 `benchmarks/experiments/v0.8.18-validation-closure-comparison/` 与 `benchmarks/experiments/v0.8.19-closure-failure-review/`。
+
+最新冻结版本为 [V0.8.21](experiments/v0.8.21-no-effect-recovery-execution.md)：恢复门槛正式路径模拟、完成态恢复及离线 `p2-check` 已通过，执行提交 `adc8658`；48 项真实模型比较尚未运行。共享账本计算余额 ¥89.78873492（不是供应商账单）。全量 pytest 461 passed；Coverage.py 门槛命令通过，但 JSON 精确综合覆盖率为 89.634203%，未取整值低于 90%，报告已披露。

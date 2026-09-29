@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "source": "https://api-docs.deepseek.com/zh-cn/quick_start/pricing/",
+  "retrieved_at": "2026-09-22T05:48:16.012595+00:00",
+  "html_sha256": "2e02c7203e9b250fa27f54ea3bed0792fb1749508c14fd5b10f9eb1bdacc691a",
+  "local_html": "runs/ablation-preflight-v2-20260922/deepseek-pricing.html",
+  "currency": "CNY",
+  "model": "deepseek-flash",
+  "observable_service_version": "DeepSeek-V4.1-Flash",
+  "immutable_model_snapshot_available": false,
+  "peak_input_cache_hit_per_million": "0.04",
+  "peak_input_cache_miss_per_million": "2",
+  "peak_output_per_million": "8",
+  "off_peak_input_cache_hit_per_million": "0.02",
+  "off_peak_input_cache_miss_per_million": "1",
+  "off_peak_output_per_million": "4",
+  "peak_period": "Asia/Shanghai weekdays except public holidays: 09:00-12:00, 14:00-18:00",
+  "use": "Offline budget calculation only; recheck before any paid run."
+}

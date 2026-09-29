@@ -1,0 +1,225 @@
+{
+  "schema_version": 1,
+  "goal_key": "tracefix-container-qualification-20260927",
+  "created_on": "2026-09-27",
+  "execution_gate": "complete_all_nodes_accepted",
+  "plan_path": "D:/Tracefix/docs/goals/2026-09-27-container-qualification.md",
+  "evidence_root": "E:\\TraceFixRunsActive\\goal-container-qualification-20260927",
+  "selection_rule": "Select pending nodes whose dependencies are all accepted, ordered by priority then order; verify evidence before accepting; automatically continue after acceptance.",
+  "common_prompt": "你在 Windows / PowerShell 的 D:\\Tracefix 维护 TraceFix。开始读 AGENTS.md、docs/roadmap.md、\ndocs/development-history.md 最近记录、docs/experiments/2026-09-27-environment-qualification.md；\n旧交接为 docs/handoffs/2026-09-17-v084.md。读取本 Goal 的 MD/JSON，核验依赖后执行当前节点。\n\n- 项目供应商调用保持零，不构造真实供应商客户端，不跑付费比较或留出题，不修改历史评分、协议、账本或原始证据。\n  脚本化模型替身仅证明控制流；合成成功率、离线定位和真实模型修复成功率分开报告。\n- 真实任务只限 pytest-10081、Requests-1766、Sphinx-10449。源码在容器 Linux 原生文件系统执行；\n  独立验收另建相同冻结镜像的新容器。Agent 不得接触 gold、验收专用测试、密钥或 Docker socket。\n- 新实验、代码快照和原始证据写 E:\\TraceFixRunsActive 的新目录；旧路径/junction 只读并保留，不自动删除。\n  项目计划与脱敏文档写 D:\\Tracefix。Windows 测试用 E:\\TFP 短根统一 TEMP/TMP/basetemp/cache，\n  每次使用新短子目录，避免 pytest 自动清理旧现场。写入遵守沙箱权限，不能绕过拒绝。\n- 构建前核查 E 盘、Docker 实际存储盘及容器可用空间，相关盘剩余不足 10 GiB 停止新增构建；\n  不依据旧报告假定当前数据盘与容量，不自动扩容或清理。\n- 保留工作区所有既有修改与未跟踪文件，不 reset/clean/自动提交/推送。版本身份包含 HEAD、diff、\n  实际运行 tracked/untracked 源码和脚本的快照及 SHA-256，明确范围并排除秘密和旧运行巨量数据。\n  计划时 HEAD 5258dc44e324626cc9ab5345d5f7b68cc5d47613 只是背景，不代表执行版本。\n- 每次实验固定代码快照、任务/源码、镜像、依赖、解释器、配方、产品/测试补丁、命令和配置、\n  源码导入身份、时间、容器 ID、原始日志、JUnit/阶段审计及退出码。准备失败记录 preparation_failed，\n  不计作测试失败或有效矩阵格。\n- 原样复用正式 Harness 准备，包含版本文件生成和补丁应用顺序；不得另写简化准备逻辑。\n  不关闭 warnings，不改产品断言，不缩小公开文件冒充完整资格，不修改历史 expected node IDs。\n  诊断选择器用独立派生配置，保留差异和哈希。\n- 每个代码任务结束更新开发记录和路线图，写实际改动、验证结果、限制、下一步。\n  501 passed 与 coverage 83.462867% 导致 exit 1 是历史基线，不能写工程门槛已过。\n- 755 个历史 usage 一致不构成未来可信硬计数契约；该契约和真实约 1M 请求验证不属于本 Goal，\n  付费门槛保持冻结。不得把完成本 Goal 解释成模型修复率提高。",
+  "nodes": [
+    {
+      "id": "G0",
+      "title": "执行现场冻结",
+      "priority": "P0",
+      "order": 0,
+      "dependencies": [],
+      "status": "accepted",
+      "prompt": "恢复后只读检查当前 git 状态、既有证据索引、三题输入 manifest、保存补丁与镜像。\n建立唯一 evidence_root、可重建的脏工作区执行快照和哈希清单，记录无秘密的解释器/依赖环境、\n旧账本与冻结输入基线。检查 Docker Desktop Linux 引擎、实际数据盘、E 盘空间，保留已有容器。\n确认脚本化模型和零供应商调用守卫可用；权限、镜像或身份不符先记录并解决，不启动矩阵。",
+      "acceptance_criteria": "执行代码不只由 HEAD 表示；代码与输入快照可校验；三个镜像核对成功；证据根、\n空间和零调用基线齐备。执行期间代码变化必须另存新快照。",
+      "evidence": [
+        "E:\\TraceFixRunsActive\\goal-container-qualification-20260927\\g0-baseline.json (contains disk, live Docker, exact image, summary hashes and scope metadata).",
+        "E:\\TraceFixRunsActive\\goal-container-qualification-20260927\\dirty-workspace-snapshot.zip SHA-256 a9efce6fe54a3d24f249879523295591eb6f8e7be8616c532bdc7570126702f5; 121 source/config/evidence files captured; Git HEAD 5258dc44e324626cc9ab5345d5f7b68cc5d47613 and dirty diff/status hashes recorded.",
+        "D free 33.67 GiB; E free 120.94 GiB; Docker Desktop configured WSL data directory E:\\dockerspace\\DockerDesktopWSL. Live Docker Linux server 29.8.0; all three exact frozen image IDs inspected; docker system df recorded.",
+        "Frozen prior-run identities are preserved in five existing E-drive formal Runner summaries; per-task manifest and recipe identities included. The separately staged D drive inputs-v2 tree has differing manifest/recipe fingerprints and is not represented as the same run.",
+        "This Goal made zero model/vendor calls and did not read or write the historical shared ledger."
+      ],
+      "acceptance_result": "Accepted: dirty source snapshot and hashes, frozen image digests, prior formal manifest/report identities, storage headroom, and zero-call boundary recorded. Docker pipe required elevated read-only access; successful check confirms daemon was available.",
+      "completed_at": "2026-09-27"
+    },
+    {
+      "id": "G1",
+      "title": "正式 Harness 矩阵",
+      "priority": "P0",
+      "order": 1,
+      "dependencies": [
+        "G0"
+      ],
+      "status": "accepted",
+      "prompt": "追踪 scripts/docker_runner_e2e.py::_fresh_acceptance、scripts/docker_reverify.py::run\n及 validate_real_task_behavior / validate_agent_patch_strict 实际准备入口，然后复用它们。\n若诊断选择器缺接口，最小扩展共用入口并验证，不复制准备逻辑或改正式评分。\n\nbase、gold、保存补丁分别运行\ntesting/test_unittest.py::test_plain_unittest_does_not_support_async\n和整个 testing/test_unittest.py，各重复两次。每格新容器/工作区；标明验收测试补丁是否注入，\n除产品补丁外保持输入相同，不能混用 Agent 公开视图与独立验收视图。\n\n记录 _pytest._version.py 生成、模块 __file__、sys.path、Python/pytest/pluggy、插件列表、\n环境变量、pytest 配置、warning 策略、收集/执行集合、完整警告和异常栈、阶段/JUnit/退出码、\n产品及测试补丁和输入哈希。准备失败先修复复用方式，失败现场另存；获取 12 格真实结果后才验收。",
+      "acceptance_criteria": "12 格有真实执行和完整证据；base 原任务目标预期失败、gold/保存补丁通过的严格资格另记。\n归因实验允许观察到测试失败，不能把 preparation_failed 冒充一个格子的测试结果。",
+      "evidence": [
+        "E:\\TraceFixRunsActive\\goal-container-qualification-20260927\\g1-pytest-matrix-01: preparation_failed, missing protocol path; preserved, no pytest cells.",
+        "E:\\TraceFixRunsActive\\goal-container-qualification-20260927\\g1-pytest-matrix-02: driver failed before pytest because Python 3.10 lacks datetime.UTC; preserved, no pytest cells.",
+        "E:\\TraceFixRunsActive\\goal-container-qualification-20260927\\g1-pytest-matrix-03: four validators ran but Windows symlink export failed; no matrix-cell reports recovered; not accepted.",
+        "E:\\TraceFixRunsActive\\goal-container-qualification-20260927\\g1-pytest-matrix-04: complete raw export with 12 diagnostic cells; retained, strict validator marks warning and file qualification invalid.",
+        "E:\\TraceFixRunsActive\\goal-container-qualification-20260927\\g1-pytest-matrix-05\\g1-matrix-review.json: 18/18 diagnostic evidence integrity verified, six host commands returned zero; issue target base assertion_failed / gold passed / saved_patch passed in both repeats.",
+        "Attempt 05 image sha256:1e2488a5c0e112771dec47fb1d07bd405c8c68e6973d1e91a8d85cf87c384c64; manifest 8a7ba8cc4caaed8fd13cfd7730449f62b951930d1fa61744e0ae6c494d961ad5; recipe 2f7ed34243c8fc4f145e0543932b3079dfdcd408e61cc620ecaba5f8cbc44da4; product patch 42a3091ea0436528c8ff5b90f3a577138e139f1689022a9848c441aaad99d857; code snapshot 4987d501a9472ab1d82ee4e85a1e23fab885676e68f99e16e7010980690a1188.",
+        "Ruff, compileall of the diagnostic script, and git diff --check passed. No model/provider calls, paid runs, holdout, or historical score/ledger edits."
+      ],
+      "acceptance_result": "Accepted after independent raw-evidence review: official issue target base failed and gold/saved patch passed in both repeats; warning-node and full-file diagnostic executions were repeated twice for each variant. All 18 cells have reconciled JUnit, collection/execution audit, source import, exit status, dependency fingerprint, and hashes. The strict validator rejects legal skipped-node phase sequences in the full-file run, so the full-file rows are accepted as complete diagnostics only; their qualification remains failed.",
+      "completed_at": "2026-09-27"
+    },
+    {
+      "id": "G2",
+      "title": "归因和环境资格",
+      "priority": "P0",
+      "order": 2,
+      "dependencies": [
+        "G1"
+      ],
+      "status": "accepted",
+      "prompt": "比较 G1，判断 warning 与环境、上游测试交互、产品补丁的关系；三组同失败不能独自证明根因。\n追踪父/子 pytest、协程析构和 warning 转换，按证据增加单节点/整文件/顺序等最小单变量对照。\n用可证伪证据支持主要归因，未分清则继续诊断。若应修复配方或桥接，最小修复并冻结派生身份，\n保留旧镜像/输入，重复受影响矩阵及目标严格验收。更新三题环境报告，分别给目标、公开整文件、\n验收整文件资格；明确模型能力未测。",
+      "acceptance_criteria": "有支持与排除证据、复现路径和准确资格结论。若确定为上游既有缺陷或保存补丁限制，\n归因可以完成，但整文件资格须保持不合格；不得通过改断言造通过。未解释清楚不得放行 G3。",
+      "evidence": [
+        "E:\\TraceFixRunsActive\\goal-container-qualification-20260927\\g1-pytest-matrix-05\\g1-matrix-review.json records per-cell outputs and hashes.",
+        "The official issue selector passed with gold/saved patch and failed on base twice; the standalone async warning node failed in base/gold/saved patch twice.",
+        "The full public file failed twice per variant: base 2 failed/9 skipped; gold and saved patch 1 failed/9 skipped. The residual failure is test_plain_unittest_does_not_support_async.",
+        "The upstream test source expects an un-awaited coroutine RuntimeWarning followed by 1 passed. In the frozen test subprocess, pytest captures the unraisable coroutine and emits PytestUnraisableExceptionWarning as a failing test. This failure occurs identically across all product variants and the saved patch changes only PDB teardown skip handling.",
+        "Module import paths point inside each Linux checkout; dependency fingerprints are unchanged before/after. No warning filters or product assertions were changed. Python point-release causality remains untested."
+      ],
+      "acceptance_result": "Accepted with a scoped attribution: the pytest-10081 issue target is qualified (base fails; gold and saved patch pass twice). The public-file failure is a separate upstream async-test/unraisable-warning interaction under the exact frozen profile: all three variants reproduce it twice, while the gold/saved patch fixes the task-specific PDB case. The same Python/dependency fingerprints and source import identity hold before/after, and the product diff is confined to PDB teardown handling. Full-file qualification remains failed. A Python point-release control was not run, so no claim isolates Python 3.10.21 as the sole cause.",
+      "completed_at": "2026-09-27"
+    },
+    {
+      "id": "G3",
+      "title": "故障注入协议",
+      "priority": "P1",
+      "order": 3,
+      "dependencies": [
+        "G2"
+      ],
+      "status": "accepted",
+      "prompt": "G2 通过后单独制定故障协议。审阅 docker_backend 会话日志、阶段身份和恢复入口，\n覆盖发送前、容器已执行但响应未收到、响应收到但未持久化、验收中断、完成态恢复。\n预定义 Docker 不可访问、容器不存在、容器/镜像/任务/源码身份不匹配的分类及恢复行为；\n区分安全重连、固定快照新容器重验和 unknown 后安全停止，禁止盲重放未知 apply_patch/run_tests。\n\n只对本 Goal 创建登记的容器和子进程注入，断开本试次连接；不停止全局 Docker 服务或其他容器。\n不存在场景用从未存在的 ID 或专用空 fixture；不为实验删除旧现场。",
+      "acceptance_criteria": "在实验前保存故障矩阵、注入手段、预期分类、恢复决策、日志字段与证据清单。",
+      "evidence": [
+        "D:\\Tracefix\\docs\\experiments\\2026-09-27-docker-fault-injection-protocol.md",
+        "E:\\TraceFixRunsActive\\goal-container-qualification-20260927\\g3-protocol-01\\fault-injection-protocol.json SHA-256 671da32465681732928932cb492a99f40a4664521b1a664d4f65bc321c295a4f",
+        "Protocol source identities record HEAD 5258dc44e324626cc9ab5345d5f7b68cc5d47613 and dirty-diff SHA-256 ff92de55ab4ad444499a35cf77213b9c3974b77b55cf280bce6203f72307d86c."
+      ],
+      "acceptance_result": "Accepted before injection. The eight-case fault protocol, classifications, no-replay policy, scoped process/container boundaries, expected artifacts and acceptance checks were written to both D-drive documentation and a hashed E-drive pre-registration artifact. Code review identified event ordering and the completed-state inspector edge case for G4/G5 validation.",
+      "completed_at": "2026-09-27"
+    },
+    {
+      "id": "G4",
+      "title": "真实容器故障复现",
+      "priority": "P1",
+      "order": 4,
+      "dependencies": [
+        "G3"
+      ],
+      "status": "accepted",
+      "prompt": "按 G3 在 Docker Desktop Linux 引擎执行，用真实桥接进程断连、单任务控制进程中断、\n自有容器停止验证；单元 mock 不代替真实故障。保持脚本化模型和零调用守卫。\nDocker 不可访问不能误报 container_missing；恢复核对容器/镜像/任务/源码及输入身份。\n保存中断前后事件、调用 ID、副作用、补丁和报告；unknown 保持未知，不新建假成功。\n检查重复恢复不膨胀状态、不重复调用、不覆盖报告；缺陷交 G5。",
+      "acceptance_criteria": "协议各格实际执行、分类和证据齐备，mock/真实故障区分清楚。\n发现实现缺陷可交 G5，但故障复现完成不能写作恢复实现通过。",
+      "evidence": [
+        "E:\\TraceFixRunsActive\\goal-container-qualification-20260927\\g3-protocol-01\\fault-injection-protocol.json SHA-256 671da32465681732928932cb492a99f40a4664521b1a664d4f65bc321c295a4f.",
+        "E:\\TraceFixRunsActive\\goal-container-qualification-20260927\\g4-faults-01 through g4-faults-07 preserve F01-F09 inputs, event journals, diff, reports and owned-container stop register; five owned containers stopped and retained.",
+        "F01a is preserved as invalid injection because request_sent was logged; F01b was valid pre-payload-write. F02 confirms apply_patch side effect by external diff after result frame loss. F03 reproduces result_received before trace/result persistence and prior inspector false-completed classification.",
+        "F04/F05 prior inspector outputs identical; F04b disproves the concern that completed+unreachable is accepted. F06 run-label mismatch rejected. F07 official docker_reverify interrupted during pytest, report qualified=false. F08 two read-only completed-state checks identical."
+      ],
+      "acceptance_result": "Accepted: pre-registered real-container/process fault cases F01-F09 executed; F01a boundary mismatch retained as invalid; F01b/F02/F03 unknown outcomes not replayed; F04b counterevidence shows completed+unreachable was already fail-closed; F06 identity mismatch rejected; F07 formal acceptance interruption produced unqualified report; F08 repeated completed-state inspection was read-only/idempotent. G5 repairs remain separate.",
+      "completed_at": null
+    },
+    {
+      "id": "G5",
+      "title": "恢复修复与复验",
+      "priority": "P1",
+      "order": 5,
+      "dependencies": [
+        "G4"
+      ],
+      "status": "accepted",
+      "prompt": "对 G4 证实的缺陷最小修复，支持能证明安全的恢复，其他场景准确拒绝并留现场。\n关键故障真实容器各重复两次，验证分类、幂等、导出证据、未知调用不重放、\n完成态恢复不新增执行。对三题正式 Runner→MinimalAgent→五工具→新容器验收做必要回归，\n保持固定身份、产品 diff 与隔离边界。无代码缺陷也须完成重复验收并说明无需修改。\n\nG4 已完成并验收，G5 已修复检查器分类、未持久化结果的 fail-closed 处理及 terminal phase 落盘顺序。当前优先重复 F03/F04/F05/F09 与 F08 的恢复检查，再做三题正式 Runner 新容器严格资格回归。",
+      "acceptance_criteria": "可恢复场景成功，不可安全恢复场景 fail closed 且分类准确；\n三题目标资格/保存补丁严格复验稳定，隔离通过。整文件按 G2 结论报告，历史评分不改。",
+      "evidence": [
+        "E:\\TraceFixRunsActive\\goal-container-qualification-20260927\\g5-recovery-repeat-02\\repeat-review.json: six real retained cases each inspected twice; raw JSON/stderr per run; reports stable, source evidence unchanged.",
+        "F04=docker_unavailable; F04b completed+unreachable=docker_unavailable (not accepted); F05=container_missing; F09=container_stopped; F03=result_received_not_persisted with call unknown; F08 completed historical run has 4 received results without persisted tool_returned trace and is rejected for reuse.",
+        "E:\\TraceFixRunsActive\\goal-container-qualification-20260927\\g5-formal-reruns: pytest, Requests, and Sphinx official docker_runner_e2e reports all passed; each has 4 independent fresh acceptance containers (qualification x2, saved patch x2), strict audit repeat_consistent=true, exact frozen image, no mounts, sentinel absent, and model_requests=0.",
+        "Relevant code verification: tests/test_docker_backend.py + tests/test_runtime.py: 24 passed; final tests/test_docker_backend.py: 7 passed; Ruff, compileall and git diff --check passed."
+      ],
+      "acceptance_result": "Accepted: F03/F04/F04b/F05/F08/F09 read-only recovery checks repeated twice with stable classification/output and unchanged source evidence; unknown calls are never replayed, missing trace results fail closed, stopped containers return nonzero. Three official zero-cost scripted Runner flows and each task qualification/saved-patch independent acceptance repeated twice passed on the exact frozen images, with strict audits, no mounts, sentinel isolation, and zero model requests. This is control-flow/task qualification, not model repair performance.",
+      "completed_at": null
+    },
+    {
+      "id": "G6",
+      "title": "工程与覆盖率门槛",
+      "priority": "P2",
+      "order": 6,
+      "dependencies": [
+        "G5"
+      ],
+      "status": "accepted",
+      "prompt": "最终版本采用新 E:\\TFP 短子目录统一 TEMP/TMP/basetemp/cache，运行全量 pytest。\n针对新增 Docker/恢复/准备路径及未覆盖高风险分支补有意义行为回归，不堆实现镜像测试、\n不执行无关入口凑覆盖。保留统计范围和阈值，单列 pytest-only 精确值；如用既有合并口径，\n说明相关真实入口及数据来源，不合并不同代码版本。不靠整数舍入、降低阈值或排除源码过关。\n执行必要 Ruff、compileall、diff 检查，注明源码/测试/脚本范围；旧临时夹具访问失败单列。\n只在代码变化、新失败或未解决疑点需要时重跑测试，保存完整日志及最终退出码。\n\nLatest compliant full run: 517 passed, 0 failed, 589.73s; exact combined coverage 89.33506044905009%, below 90% by 0.66493955094991 percentage points. The Docker terminal-phase persistence regression passes, but its production lines were already counted in the combined data. The final run puts TEMP/TMP/basetemp/cache under E:\\TFP. See g6-runtime-durable-phase-final. Pytest-only measurement for the same final version: 517 passed, exact coverage 84.4041450777202% (statements 87.13310580204778%, branches 75.80645161290323%). Evidence: g6-pytest-only-final. Continue only with meaningful behavior paths; G6 remains in progress.",
+      "acceptance_criteria": "最终版本全量 pytest 通过、精确综合 coverage ≥90%、必要工程检查通过；\n不满足则继续处理或如实阻塞，不能把 501 passed 历史记录当本次完成证据。",
+      "evidence": [
+        "E:\\TraceFixRunsActive\\goal-container-qualification-20260927\\g6-engineering-final2\\pytest-coverage-final.log: 516 passed, 0 failed, 622.37s; pytest coverage command exit 1 solely because combined exact threshold was not met. JUnit and coverage-final.json retained.",
+        "Coverage exact totals: combined percent_covered 89.32642487046633; statements 91.68373151308305; branches 81.89964157706093. Final pytest used --cov-append; pytest-only for the 516-item run was not separately exported. First 502-item run pytest-only total was 83.462867%.",
+        "Valid same-version production paths appended to coverage: validation-closure feedback diagnostic, detailed-ablation read-only diagnostic, all three official docker_runner_e2e scripted task flows with independent acceptance, and read-only environment inventory. One unrelated historical diagnostic rejected its input protocol before analysis and is not counted.",
+        "E:\\TraceFixRunsActive\\goal-container-qualification-20260927\\g6-engineering-final2\\static-checks.json: Ruff 0, compileall 0 over 129 tracked Python files, git diff --check 0.",
+        "Added Docker recovery behavior tests: uncertain bridge timeout remains unknown; invalid protocol handshake refused; only matching run label permits owned-container removal; Docker prepare rejects missing/mismatched manifest, source/path/hash/image/tag and reserved evidence path. Final tests/test_docker_backend.py: 21 passed.",
+        "E:\\TraceFixRunsActive\\goal-container-qualification-20260927\\g6-engineering-final2\\execution-identity.json records HEAD, dirty diff/status hash and relevant file SHA-256. Model requests 0; no formal paid experiment or holdout used.",
+        "E:\\TraceFixRunsActive\\goal-container-qualification-20260927\\g6-runtime-durable-phase-final: compliant final run with TEMP/TMP/basetemp/cache under E:\\TFP; 517 passed, no failures/warnings, 589.73s; pytest exit 1 only because unchanged coverage fail_under=90. coverage.json exact total 89.33506044905009% (8059/8790 statements, 2286/2790 branches).",
+        "tests/test_runtime.py adds test_docker_runner_persists_result_before_terminal_phase; targeted 1 passed. It asserts result.json is durable and status-consistent before terminal set_phase, and unchanged-product close(remove=False). This production path was already represented in the cumulative coverage, so combined covered lines did not increase.",
+        "E:\\TraceFixRunsActive\\goal-container-qualification-20260927\\g6-pytest-only-final: isolated final-code pytest-only run with new COVERAGE_FILE and TEMP/TMP/basetemp/cache under E:\\TFP; 517 passed, 604.11s, exit 1 only for coverage. Exact pytest-only total 84.4041450777202% (7659/8790 statements; 2115/2790 branches), distinct from same-code combined valid-entrypoint coverage 89.33506044905009%.",
+        "E:\\TraceFixRunsActive\\goal-container-qualification-20260927\\g6-coverage-gate-final: full pytest 543 passed, 0 warnings, 634.37s, pytest exit 0; exact cumulative valid same-code production-entrypoint coverage 90.00863557858376% (8108/8790 statements; 2315/2790 branches; 82.97491039426524% branch coverage), unchanged fail_under=90.",
+        "E:\\TraceFixRunsActive\\goal-container-qualification-20260927\\g6-pytest-only-gate-final: isolated pytest-only same-version run 543 passed, 633.79s, exit 1 solely due coverage; exact total 85.77720207253886% (7775/8790 statements; 2158/2790 branches). Kept distinct from combined coverage.",
+        "E:\\TraceFixRunsActive\\goal-container-qualification-20260927\\g6-coverage-gate-final\\static-checks.json: Ruff 0, compileall 0 for all 129 tracked Python files, git diff --check 0.",
+        "E:\\TraceFixRunsActive\\goal-container-qualification-20260927\\g6-coverage-gate-final\\execution-identity.json: HEAD, full dirty status/diff SHA-256, and hashes for the three modified test files; no supplier/model requests.",
+        "Targeted behavior regressions (all passed): bridge malformed result 3, startup timeout/process-ID/early-exit/close timeout and remote test-preparation refusal; Requests HTTP/HTTPS service-health failure and source import outside Agent checkout; Runner terminal phase persistence, final diff/export errors, root-cause preservation; Begin Patch parser malformed/ambiguous variants; secret/oversized search exclusions and patch apply race. Exact test logs are retained in sibling G6 evidence directories."
+      ],
+      "acceptance_result": "Accepted: final compliant full pytest passed 543/543 with zero warnings in 634.37s; same-version exact combined coverage is 90.00863557858376% (8108/8790 statements; 2315/2790 branches), strictly above the unchanged 90% gate. Independent pytest-only coverage is 85.77720207253886% (7775/8790 statements; 2158/2790 branches), reported separately and not substituted for the combined gate. Ruff, compileall across all 129 tracked Python files, and git diff --check all exited 0. Tests exercise Docker bridge timeout/identity/result validation and cleanup, Requests HTTP/HTTPS health preparation failure, source import provenance, runtime terminal/export failure persistence, and patch/search safety. No provider/model calls, paid runs, holdouts, or historical data changes.",
+      "completed_at": null
+    },
+    {
+      "id": "G7",
+      "title": "审计和最终交接",
+      "priority": "P2",
+      "order": 7,
+      "dependencies": [
+        "G2",
+        "G5",
+        "G6"
+      ],
+      "status": "accepted",
+      "prompt": "核对所有 accepted 节点的 evidence 和哈希；确认旧输入、评分、账本未改，\n项目供应商调用为零。分别汇总环境资格、实际恢复能力、工程结果与限制，\n更新路线图、开发记录、环境报告、本 Goal 状态和新交接；提供代码快照身份、\n重放命令、原始结果位置和下一步。确认没有本 Goal 必需的残留工作，保留现场。\n全部节点验收通过才完成原生 Goal，付费和计数门槛仍冻结。\n\nG6 accepted: 543 passed; exact combined coverage 90.00863557858376%; pytest-only 85.77720207253886% separately; static checks pass. Proceed with completion audit.",
+      "acceptance_criteria": "每个结论可追溯，文档一致，没有必需待办；不得宣称模型修复能力提升。",
+      "evidence": [
+        "E:\\TraceFixRunsActive\\goal-container-qualification-20260927\\g7-audit-01\\completion-audit.json: 22/22 evidence paths exist; dirty workspace snapshot and five formal summary hashes match G0; all 18 G1 diagnostic cells and raw exports verify; G3 protocol hash matches; six recovery classifications are stable over two repeats; ledger read-only hash/mtime predates Goal. G0 snapshot excluded score/ledger files, so no archive-hash proof is claimed.",
+        "E:\\TraceFixRunsActive\\goal-container-qualification-20260927\\g7-audit-02\\completion-audit-correction.json SHA-256 265c0e637013d07a1e465e892ebf1732751c32294cfef1abba7b408a493c9f96: G5 Sphinx used inputs-v3 manifest 2ce71e… rather than baseline inputs-v4 manifest 8dcbc6…. Eight of nine manifest file hashes match; only recipe differs (Python 3.11/Windows metadata versus Python 3.10/Linux). Runtime and all four new acceptance containers use the exact pinned Linux image and same source commit, with no build steps. Retain as fixed-image execution evidence, not an identical manifest/recipe rerun or rebuild qualification. The original reports were not altered.",
+        "G6 final same-version engineering gate: 543 passed; exact combined coverage 90.00863557858376% (>90%), pytest-only 85.77720207253886% separately; Ruff, compileall of 129 tracked Python files, and git diff --check exit 0. Evidence in E:\\TraceFixRunsActive\\goal-container-qualification-20260927\\g6-coverage-gate-final and g6-pytest-only-gate-final.",
+        "Updated docs/roadmap.md, docs/development-history.md, docs/experiments/2026-09-27-environment-qualification.md, and this Goal contract; final handoff: docs/handoffs/2026-09-27-container-qualification-final.md.",
+        "No provider calls, paid experiment, holdout use, historical ledger/score writes, or model-repair-success claim. pytest-10081 public-file qualification remains failed due repeated async/unraisable warning interaction."
+      ],
+      "acceptance_result": "Accepted with explicit limits: all Goal evidence and dependent node results are traceable; G6 meets the unchanged exact combined coverage threshold; G5 Sphinx discrepancy is reconciled as a recipe-metadata deviation while fixed-image execution/acceptance remains valid, and is not misrepresented as an identical-input rerun. Documentation and handoff agree. No required Goal work remains; future recipe-rebuild proof and pytest full-file qualification are separate follow-up work, not hidden as passed. No model capability improvement is claimed.",
+      "completed_at": "2026-09-27"
+    }
+  ],
+  "history": [
+    {
+      "date": "2026-09-27",
+      "event": "Plan and prompts created; execution has not started; waiting for user to switch model and resume."
+    },
+    {
+      "date": "2026-09-27",
+      "event": "Resumed by user. G0 in progress. Read-only disk check: D 33.67 GiB free, E 120.94 GiB free; Docker desktop-linux access denied via named pipe; evidence output and dirty code snapshot pending."
+    },
+    {
+      "date": "2026-09-27",
+      "event": "G0 accepted from E-drive snapshot/baseline and verified Docker images/storage. G1 started: inspect formal Harness preparation and diagnostics; no matrix cells run yet."
+    },
+    {
+      "date": "2026-09-27",
+      "event": "G1/G2 accepted after evidence review. Official pytest-10081 target is base-fail/gold-pass/saved-patch-pass twice. Async warning fails all variants twice; whole-file qualification remains failed due that unrelated failure. G3 fault protocol is next; no supplier calls or historical data changes."
+    },
+    {
+      "date": "2026-09-27",
+      "event": "G3 protocol accepted before injection (sha256 671da324…). G4 real Docker fault reproduction is now selected; global Docker stop, unrelated container changes, unknown tool replay, supplier calls, and holdout are prohibited."
+    },
+    {
+      "date": "2026-09-27",
+      "event": "G6 resumed: added Docker Runner terminal result durability behavior regression. Final compliant 517-test full suite passed with exact combined coverage 89.33506044905009%, below the unchanged 90% gate; static checks passed. G6 remains in_progress; G7 dependency not met."
+    },
+    {
+      "date": "2026-09-27",
+      "event": "Completed exact pytest-only coverage run on final code: 517 passed, 84.4041450777202%, below gate. Kept separate from same-code combined entrypoint coverage 89.33506044905009%; G6 still in progress."
+    },
+    {
+      "date": "2026-09-27",
+      "event": "G6 accepted: final full suite 543/543, exact same-version combined coverage 90.00863557858376% (>90%), pytest-only 85.77720207253886% reported separately, and Ruff/compileall (129 tracked Python files)/diff check all pass. G7 completion audit selected automatically; goal remains active pending audit."
+    },
+    {
+      "date": "2026-09-27",
+      "event": "G7 completed after evidence and Sphinx manifest reconciliation. G5 Sphinx used inputs-v3, differing from G0 inputs-v4 only in recipe metadata; exact pinned runtime image/source and all other file identities match. Disclosed as fixed-image evidence, not exact manifest/recipe replay. Final docs and handoff updated; native Goal marked complete."
+    }
+  ]
+}

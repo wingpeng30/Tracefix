@@ -1,6 +1,7 @@
 import json
 import os
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -21,6 +22,8 @@ from tracefix import (
     TraceFixRunner,
     WorkspaceError,
 )
+from tracefix.exceptions import RunConfigurationError
+from tracefix.real_recipes import EnvironmentRecipe
 
 
 def _git(repo: Path, *arguments: str) -> subprocess.CompletedProcess[str]:
@@ -80,6 +83,129 @@ def _response(
     )
 
 
+def test_run_config_uses_tracefix_runs_root_environment(tmp_path, monkeypatch) -> None:
+    output_root = tmp_path / "external-runs"
+    monkeypatch.setenv("TRACEFIX_RUNS_ROOT", str(output_root))
+    config = RunConfig(repo=tmp_path, task="output root test")
+    assert config.output_dir == output_root
+
+
+def test_run_config_defaults_to_local_runs_root(monkeypatch) -> None:
+    monkeypatch.delenv("TRACEFIX_RUNS_ROOT", raising=False)
+    assert RunConfig(repo=Path("."), task="platform default").output_dir == Path("runs")
+
+
+@pytest.mark.parametrize("module", ["absent_module", "json"])
+def test_ordinary_source_probe_rejects_wrong_import_before_model(tmp_path, module) -> None:
+    repo = _make_repo(tmp_path)
+
+    def no_model(_config):
+        raise AssertionError("model must not be constructed")
+
+    result = TraceFixRunner(llm_factory=no_model).run(
+        RunConfig(
+            repo=repo,
+            task="fix",
+            model_name="offline/scripted",
+            output_dir=tmp_path / "runs",
+            env_file=None,
+            test_python_executable=Path(sys.executable),
+            source_import=module,
+        )
+    )
+    assert result.status is AgentStatus.FAILED
+    probe = result.workspace_preparation.get("source_import_probe", {})
+    assert probe.get("valid") is False, result.error
+    assert Path(result.result_path).is_file()
+
+
+def test_run_rejects_output_inside_source_before_creating_artifacts(tmp_path) -> None:
+    repo = _make_repo(tmp_path)
+    with pytest.raises(RunConfigurationError, match="output directory must be outside"):
+        TraceFixRunner().run(
+            RunConfig(
+                repo=repo, task="fix", output_dir=repo / "runs", model_name="offline/scripted"
+            )
+        )
+    assert not (repo / "runs").exists()
+
+
+@pytest.mark.parametrize(
+    "field,value,expected",
+    [
+        ("source_import", "bad-name", "source_import"),
+        ("test_target", "../outside.py", "test_target"),
+        ("test_target", "tests/test.py\nignore", "test_target"),
+    ],
+)
+def test_ordinary_configuration_rejects_unsafe_inputs(field, value, expected) -> None:
+    with pytest.raises(ValueError, match=expected):
+        RunConfig(repo=Path("."), task="fix", **{field: value})
+
+
+@pytest.mark.parametrize(
+    "python_name,test_target,expected",
+    [
+        ("missing-python", None, "test Python executable does not exist"),
+        (None, "tests/missing.py", "test target must be an existing file"),
+    ],
+)
+def test_ordinary_preflight_stops_before_model_for_missing_environment(
+    tmp_path, python_name, test_target, expected
+) -> None:
+    repo = _make_repo(tmp_path)
+
+    def no_model(_config):
+        raise AssertionError("model must not be constructed")
+
+    result = TraceFixRunner(llm_factory=no_model).run(
+        RunConfig(
+            repo=repo,
+            task="fix",
+            model_name="offline/scripted",
+            env_file=None,
+            output_dir=tmp_path / "runs",
+            source_import="sample",
+            test_target=test_target,
+            test_python_executable=(
+                tmp_path / python_name if python_name else Path(sys.executable)
+            ),
+        )
+    )
+    assert result.status is AgentStatus.FAILED
+    assert expected in str(result.error)
+    assert Path(result.result_path).is_file()
+
+
+def test_ordinary_preflight_rejects_missing_pytest_before_model(tmp_path, monkeypatch) -> None:
+    repo = _make_repo(tmp_path)
+    original_run = subprocess.run
+
+    def without_pytest(command, *args, **kwargs):
+        if len(command) >= 3 and command[1:3] == ["-c", "import pytest"]:
+            return subprocess.CompletedProcess(command, 1, "", "No module named pytest")
+        return original_run(command, *args, **kwargs)
+
+    monkeypatch.setattr("tracefix.runtime.subprocess.run", without_pytest)
+
+    def no_model(_config):
+        raise AssertionError("model must not be constructed")
+
+    result = TraceFixRunner(llm_factory=no_model).run(
+        RunConfig(
+            repo=repo,
+            task="fix",
+            model_name="offline/scripted",
+            env_file=None,
+            output_dir=tmp_path / "runs",
+            source_import="sample",
+            test_python_executable=Path(sys.executable),
+        )
+    )
+    assert result.status is AgentStatus.FAILED
+    assert "pytest is unavailable" in str(result.error)
+
+
 class ScriptedLLM(BaseLLM):
     def __init__(self, config: LLMConfig, responses: list[LLMResponse]) -> None:
         super().__init__(config)
@@ -103,9 +229,7 @@ def test_runner_clones_runs_agent_writes_artifacts_and_converts_cost(tmp_path, m
     scripted = [
         _response(
             None,
-            tool_calls=(
-                ToolCall(id="patch-1", name="apply_patch", arguments={"patch": patch}),
-            ),
+            tool_calls=(ToolCall(id="patch-1", name="apply_patch", arguments={"patch": patch}),),
         ),
         _response("修复完成", input_tokens=20, output_tokens=4, cost_usd=0.02),
     ]
@@ -126,6 +250,7 @@ def test_runner_clones_runs_agent_writes_artifacts_and_converts_cost(tmp_path, m
     )
 
     assert result.status is AgentStatus.COMPLETED
+    assert result.agent_validation_status == "unverified"
     assert result.source_commit == _git(repo, "rev-parse", "HEAD").stdout.strip()
     assert result.workspace is not None
     workspace = Path(result.workspace)
@@ -158,17 +283,100 @@ def test_runner_clones_runs_agent_writes_artifacts_and_converts_cost(tmp_path, m
     assert "pydantic" in stored["provenance"]["dependency_versions"]
     event_types = [json.loads(line)["event_type"] for line in trace_text.splitlines()]
     assert event_types[0] == "run_provenance"
-    assert event_types[1] == "repository_indexed"
+    assert event_types[1] == "workspace_prepared"
+    assert event_types[2] == "repository_indexed"
     assert "repo_map_added" in event_types
     assert event_types[-1] == "task_finished"
+
+
+def test_runner_builds_agent_checkout_and_verifies_source_import_before_model(
+    tmp_path, monkeypatch
+) -> None:
+    repo = _make_repo(tmp_path)
+    (repo / "src" / "sample_pkg").mkdir(parents=True)
+    (repo / "src" / "sample_pkg" / "__init__.py").write_text("VALUE = 1\n", encoding="utf-8")
+    _git(repo, "add", "--all")
+    _git(repo, "config", "user.name", "Tests")
+    _git(repo, "config", "user.email", "tests@example.invalid")
+    _git(repo, "commit", "--quiet", "-m", "add package")
+    observed = []
+
+    def factory(config):
+        class InspectingLLM(ScriptedLLM):
+            def complete(self, messages, tools=()):
+                workspace = Path(observed[0])
+                assert (workspace / "src" / "sample_pkg" / "generated.py").is_file()
+                return _response("done")
+
+        return InspectingLLM(config, [])
+
+    recipe = EnvironmentRecipe(
+        task_id="org__sample-1",
+        build_commands=(
+            (
+                "{python}",
+                "-c",
+                "open('src/sample_pkg/generated.py','w').write('VALUE=2')",
+            ),
+        ),
+        source_import_probe="sample_pkg.generated",
+    )
+
+    class ObservedRunner(TraceFixRunner):
+        def _prepare_workspace(self, config, workspace, run_dir):
+            observed.append(str(workspace))
+            return super()._prepare_workspace(config, workspace, run_dir)
+
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-build-fixture")
+    result = ObservedRunner(factory).run(
+        RunConfig(
+            repo=repo,
+            task="inspect generated module",
+            output_dir=tmp_path / "runs",
+            env_file=None,
+            test_python_executable=Path(sys.executable),
+            environment_recipe=recipe,
+        )
+    )
+
+    assert result.status is AgentStatus.COMPLETED
+    assert result.workspace_preparation["success"] is True
+    assert result.workspace_preparation["build_steps"][0]["returncode"] == 0
+    assert result.workspace_preparation["source_import_probe"]["valid"] is True
+    assert (repo / "src" / "sample_pkg" / "generated.py").exists() is False
+
+
+def test_runner_does_not_construct_model_when_agent_source_probe_fails(
+    tmp_path, monkeypatch
+) -> None:
+    repo = _make_repo(tmp_path)
+    calls = []
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-probe-fixture")
+    result = TraceFixRunner(
+        lambda config: calls.append(config) or ScriptedLLM(config, [_response("no")])
+    ).run(
+        RunConfig(
+            repo=repo,
+            task="probe failure",
+            output_dir=tmp_path / "runs",
+            env_file=None,
+            environment_recipe=EnvironmentRecipe(
+                task_id="org__sample-1", source_import_probe="module_that_does_not_exist"
+            ),
+        )
+    )
+
+    assert result.status is AgentStatus.FAILED
+    assert result.workspace_preparation["success"] is False
+    assert calls == []
+    assert ".tracefix-build-tmp" not in Path(result.diff_path).read_text(encoding="utf-8")
+    assert ".tracefix-build-tmp" not in result.changed_files
 
 
 def test_runner_marks_unknown_cost_incomplete(tmp_path, monkeypatch) -> None:
     repo = _make_repo(tmp_path)
     monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-test-unknown-cost")
-    runner = TraceFixRunner(
-        lambda config: ScriptedLLM(config, [_response("done", cost_usd=None)])
-    )
+    runner = TraceFixRunner(lambda config: ScriptedLLM(config, [_response("done", cost_usd=None)]))
 
     result = runner.run(
         RunConfig(repo=repo, task="inspect", output_dir=tmp_path / "runs", env_file=None)
@@ -195,6 +403,34 @@ def test_runner_returns_failed_result_for_dirty_source(tmp_path, monkeypatch) ->
     assert result.error["code"] == "workspace_error"
     assert Path(result.result_path).is_file()
     assert Path(result.diff_path).read_text(encoding="utf-8") == ""
+
+
+def test_workspace_clone_falls_back_to_detached_worktree(tmp_path, monkeypatch) -> None:
+    repo = _make_repo(tmp_path)
+    expected_commit = _git(repo, "rev-parse", "HEAD").stdout.strip()
+    original = TraceFixRunner._run_git
+
+    def clone_blocked(cls, arguments, *, cwd, purpose):
+        if arguments[0] == "clone":
+            destination = Path(arguments[-1])
+            destination.mkdir(parents=True)
+            (destination / "partial-clone.marker").write_text("partial", encoding="utf-8")
+            raise WorkspaceError(
+                "cannot clone isolated workspace",
+                context={"returncode": 128, "stderr": "MSYS signal pipe denied"},
+            )
+        return original(arguments, cwd=cwd, purpose=purpose)
+
+    monkeypatch.setattr(TraceFixRunner, "_run_git", classmethod(clone_blocked))
+    destination = tmp_path / "runs" / "trial" / "workspace"
+
+    workspace = TraceFixRunner._clone_repository(repo, destination)
+
+    assert workspace == destination.resolve()
+    assert not (workspace / "partial-clone.marker").exists()
+    assert (workspace / "sample.py").read_text(encoding="utf-8") == "VALUE = 1\n"
+    assert _git(workspace, "rev-parse", "HEAD").stdout.strip() == expected_commit
+    assert _git(workspace, "status", "--porcelain").stdout.strip() == ""
 
 
 def test_runner_loads_dotenv_without_overriding_existing_environment(tmp_path, monkeypatch) -> None:
@@ -333,6 +569,229 @@ def test_runner_records_keyboard_interrupt_and_diff_collection_failure(
     )
     assert failed.status is AgentStatus.FAILED
     assert failed.error["code"] == "unexpected_run_error"
+
+
+def test_docker_runner_persists_result_before_terminal_phase(tmp_path, monkeypatch) -> None:
+    """A terminal container phase must never outrun its durable host result."""
+    from tracefix import runtime
+    from tracefix.tools.base import ToolRegistry, ToolResult
+
+    repo = _make_repo(tmp_path)
+    input_root = tmp_path / "frozen-input"
+    input_root.mkdir()
+    phases: list[str] = []
+    close_calls: list[bool] = []
+    run_dir_holder: list[Path] = []
+
+    class FakeSession:
+        def call(self, tool_name, arguments):
+            assert tool_name == "get_git_diff"
+            assert arguments == {"context_lines": 3}
+            return ToolResult(
+                call_id="final-diff",
+                tool_name=tool_name,
+                success=True,
+                output={"diff": "", "changed_files": []},
+            )
+
+    class FakeDockerBackend:
+        def __init__(self, *, run_dir, **kwargs):
+            self.run_dir = run_dir
+            run_dir_holder.append(run_dir)
+            self.container_id = "qualification-container"
+            self.session = FakeSession()
+            self.repo_map = None
+            self.workspace_preparation = {"success": True, "backend": "docker"}
+
+        def prepare(self, *args, **kwargs):
+            return ToolRegistry()
+
+        def set_phase(self, phase):
+            phases.append(phase)
+            if phase in {"completed", "failed", "interrupted"}:
+                result_path = self.run_dir / "result.json"
+                assert result_path.is_file()
+                assert json.loads(result_path.read_text(encoding="utf-8"))["status"] == phase
+
+        def export_evidence(self):
+            return None
+
+        def close(self, *, remove):
+            close_calls.append(remove)
+
+    monkeypatch.setattr(runtime, "DockerToolBackend", FakeDockerBackend)
+    runner = TraceFixRunner(lambda config: ScriptedLLM(config, [_response("done")]))
+    result = runner.run(
+        RunConfig(
+            repo=repo,
+            task="verify durable terminal phase",
+            model_name="offline/scripted",
+            output_dir=tmp_path / "runs",
+            env_file=None,
+            execution_backend="docker",
+            docker_task_id="pytest-dev__pytest-10081",
+            docker_input_root=input_root,
+            agent_config=AgentConfig(require_tested_completion=False),
+        )
+    )
+
+    assert result.status is AgentStatus.COMPLETED
+    assert phases == ["agent_running", "completed"]
+    assert close_calls == [False]
+    assert json.loads(Path(result.result_path).read_text(encoding="utf-8"))["status"] == "completed"
+
+
+@pytest.mark.parametrize("failure_stage", ["diff", "truncated", "evidence"])
+def test_docker_runner_persists_export_failure_and_preserves_first_error(
+    tmp_path, monkeypatch, failure_stage: str
+) -> None:
+    """Final container export failures must be durable and fail closed."""
+    from tracefix import runtime
+    from tracefix.tools.base import ToolRegistry, ToolResult
+
+    repo = _make_repo(tmp_path)
+    input_root = tmp_path / "frozen-input"
+    input_root.mkdir()
+    phases: list[str] = []
+    export_attempts: list[bool] = []
+
+    class FakeSession:
+        def call(self, tool_name, arguments):
+            assert tool_name == "get_git_diff"
+            if failure_stage == "diff":
+                return ToolResult(
+                    call_id="final-diff",
+                    tool_name=tool_name,
+                    success=False,
+                    error="bridge unavailable",
+                )
+            output = {
+                "diff": "",
+                "changed_files": [],
+                "truncated": failure_stage == "truncated",
+            }
+            return ToolResult(
+                call_id="final-diff",
+                tool_name=tool_name,
+                success=True,
+                output=output,
+            )
+
+    class FakeDockerBackend:
+        def __init__(self, *, run_dir, **kwargs):
+            self.run_dir = run_dir
+            self.container_id = "qualification-container"
+            self.session = FakeSession()
+            self.repo_map = None
+            self.workspace_preparation = {"success": True, "backend": "docker"}
+
+        def prepare(self, *args, **kwargs):
+            return ToolRegistry()
+
+        def set_phase(self, phase):
+            phases.append(phase)
+            if phase in {"completed", "failed", "interrupted"}:
+                result_path = self.run_dir / "result.json"
+                assert result_path.is_file()
+                assert json.loads(result_path.read_text(encoding="utf-8"))["status"] == phase
+
+        def export_evidence(self):
+            export_attempts.append(True)
+            if failure_stage == "evidence":
+                raise WorkspaceError("primary evidence export failed")
+
+        def close(self, *, remove):
+            assert remove is False
+
+    monkeypatch.setattr(runtime, "DockerToolBackend", FakeDockerBackend)
+    runner = TraceFixRunner(lambda config: ScriptedLLM(config, [_response("done")]))
+    result = runner.run(
+        RunConfig(
+            repo=repo,
+            task="verify durable export failure",
+            model_name="offline/scripted",
+            output_dir=tmp_path / "runs",
+            env_file=None,
+            execution_backend="docker",
+            docker_task_id="pytest-dev__pytest-10081",
+            docker_input_root=input_root,
+            agent_config=AgentConfig(require_tested_completion=False),
+        )
+    )
+
+    assert result.status is AgentStatus.FAILED
+    assert result.error is not None
+    assert result.stop_reason == "workspace_error"
+    assert phases == ["agent_running", "failed"]
+    assert len(export_attempts) == (2 if failure_stage == "evidence" else 1)
+    if failure_stage == "evidence":
+        assert result.error["message"] == "primary evidence export failed"
+
+
+def test_docker_runner_preserves_prepare_error_when_export_also_fails(
+    tmp_path, monkeypatch
+) -> None:
+    """A secondary finalization failure must not replace the original prepare error."""
+    from tracefix import runtime
+
+    repo = _make_repo(tmp_path)
+    input_root = tmp_path / "frozen-input"
+    input_root.mkdir()
+    phases: list[str] = []
+    export_attempts: list[bool] = []
+    llm_factory_calls: list[bool] = []
+
+    class FakeDockerBackend:
+        def __init__(self, *, run_dir, **kwargs):
+            self.run_dir = run_dir
+            self.container_id = "qualification-container"
+            self.session = None
+            self.repo_map = None
+            self.workspace_preparation = {}
+
+        def prepare(self, *args, **kwargs):
+            raise WorkspaceError("frozen input manifest rejected")
+
+        def set_phase(self, phase):
+            phases.append(phase)
+            if phase in {"completed", "failed", "interrupted"}:
+                result_path = self.run_dir / "result.json"
+                assert result_path.is_file()
+                assert json.loads(result_path.read_text(encoding="utf-8"))["status"] == phase
+
+        def export_evidence(self):
+            export_attempts.append(True)
+            raise WorkspaceError("secondary export failure")
+
+        def close(self, *, remove):
+            assert remove is False
+
+    def llm_factory(config):
+        llm_factory_calls.append(True)
+        return ScriptedLLM(config, [_response("unexpected model invocation")])
+
+    monkeypatch.setattr(runtime, "DockerToolBackend", FakeDockerBackend)
+    result = TraceFixRunner(llm_factory).run(
+        RunConfig(
+            repo=repo,
+            task="preserve container preparation failure",
+            model_name="offline/scripted",
+            output_dir=tmp_path / "runs",
+            env_file=None,
+            execution_backend="docker",
+            docker_task_id="pytest-dev__pytest-10081",
+            docker_input_root=input_root,
+            agent_config=AgentConfig(require_tested_completion=False),
+        )
+    )
+
+    assert result.status is AgentStatus.FAILED
+    assert result.error is not None
+    assert result.error["message"] == "frozen input manifest rejected"
+    assert result.stop_reason == "workspace_error"
+    assert phases == ["failed"]
+    assert len(export_attempts) == 1
+    assert llm_factory_calls == []
 
 
 def test_runtime_validation_errors_are_explicit(tmp_path) -> None:

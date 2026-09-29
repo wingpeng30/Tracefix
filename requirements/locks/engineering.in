@@ -1,0 +1,10 @@
+# Lock the dependencies used for the full TraceFix engineering checks.
+# TraceFix itself is installed separately with --no-deps / --no-build-isolation.
+pydantic==2.10.1
+litellm==1.75.5.post2
+python-dotenv>=1.0,<2
+pytest==8.4.2
+pytest-cov==7.1.0
+coverage==7.16.0
+ruff==0.16.6
+cryptography==48.0.0

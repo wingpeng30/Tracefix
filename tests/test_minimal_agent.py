@@ -23,6 +23,7 @@ from tracefix import (
     ToolRegistry,
     ToolResult,
     ToolSpec,
+    ToolValidationError,
     TraceEvent,
     TraceEventType,
     TraceProtocolError,
@@ -173,6 +174,138 @@ def test_duplicate_successful_read_uses_compact_cache_and_prompts_patch() -> Non
     assert TraceEventType.AGENT_PHASE_CHANGED in [event.event_type for event in sink.events]
 
 
+def test_split_optimization_flags_enable_presentation_without_guidance_or_cache() -> None:
+    class LongReadTool(BaseTool):
+        def __init__(self) -> None:
+            self.calls = []
+
+        @property
+        def name(self):
+            return "read_file"
+
+        @property
+        def spec(self):
+            return ToolSpec(name=self.name, description="read fixture")
+
+        def execute(self, call):
+            self.calls.append(call)
+            return ToolResult(
+                call_id=call.id,
+                tool_name=self.name,
+                success=True,
+                output={
+                    "path": "src/pkg/engine.py",
+                    "content": (
+                        "NODE:tests/test_engine.py::test_expected\n"
+                        + "context " * 150
+                        + "ASSERT: expected 2 got 1 ERROR: AssertionError"
+                    ),
+                },
+            )
+
+    tool = LongReadTool()
+    arguments = {"path": "src/pkg/engine.py", "start_line": 1, "end_line": 100}
+    llm = ScriptedLLM(
+        [
+            response(calls=(ToolCall(id="read-1", name="read_file", arguments=arguments),)),
+            response(calls=(ToolCall(id="read-2", name="read_file", arguments=arguments),)),
+            response(content="done"),
+        ]
+    )
+    config = AgentConfig(
+        token_optimization_enabled=False,
+        tool_result_presentation_enabled=True,
+        action_guidance_enabled=False,
+        read_cache_enabled=False,
+        max_exploration_steps=1,
+        presentation={"max_read_chars": 300},
+    )
+    agent = MinimalAgent(llm, ToolRegistry([tool]), config)
+
+    state = agent.run("preserve fixture evidence")
+
+    assert state.status is AgentStatus.COMPLETED
+    assert len(tool.calls) == 2
+    assert state.cached_tool_calls == 0
+    requests = [message for message in llm.requests[2][0] if message.role is MessageRole.TOOL]
+    assert len(requests) == 2
+    for message in requests:
+        visible = json.loads(message.content or "")
+        content = visible["output"]["content"]
+        assert visible["output"]["path"] == "src/pkg/engine.py"
+        assert "NODE:tests/test_engine.py::test_expected" in content
+        assert "ASSERT: expected 2 got 1 ERROR: AssertionError" in content
+        assert "TraceFix 已裁剪" in content
+    assert not any(
+        message.metadata.get("kind") in {"exploration_budget", "token_budget_guidance"}
+        for message in llm.requests[1][0]
+    )
+
+
+def test_read_cache_override_is_independent_of_legacy_master_switch() -> None:
+    tool = RecordingTool(name="read_file")
+    arguments = {"path": "src/parser.py", "start_line": 1, "end_line": 80}
+    llm = ScriptedLLM(
+        [
+            response(calls=(ToolCall(id="read-1", name="read_file", arguments=arguments),)),
+            response(calls=(ToolCall(id="read-2", name="read_file", arguments=arguments),)),
+            response(content="done"),
+        ]
+    )
+    agent = MinimalAgent(
+        llm,
+        ToolRegistry([tool]),
+        AgentConfig(
+            token_optimization_enabled=False,
+            tool_result_presentation_enabled=False,
+            action_guidance_enabled=False,
+            read_cache_enabled=True,
+        ),
+    )
+
+    state = agent.run("repeat read")
+
+    assert len(tool.calls) == 1
+    assert state.cached_tool_calls == 1
+
+
+def test_action_guidance_override_is_independent_of_presentation_and_read_cache() -> None:
+    tool = RecordingTool(name="read_file")
+    llm = ScriptedLLM(
+        [
+            response(
+                content="reading",
+                calls=(
+                    ToolCall(
+                        id="read-1",
+                        name="read_file",
+                        arguments={"path": "src/a.py", "start_line": 1, "end_line": 2},
+                    ),
+                ),
+                input_tokens=50,
+            ),
+            response(content="done"),
+        ]
+    )
+    agent = MinimalAgent(
+        llm,
+        ToolRegistry([tool]),
+        AgentConfig(
+            token_optimization_enabled=False,
+            tool_result_presentation_enabled=False,
+            action_guidance_enabled=True,
+            read_cache_enabled=False,
+            max_input_tokens=100,
+        ),
+    )
+
+    agent.run("action hint only")
+
+    assert any(
+        message.metadata.get("kind") == "token_budget_guidance" for message in llm.requests[1][0]
+    )
+
+
 def test_exploration_soft_limit_adds_action_guidance() -> None:
     """达到搜索软上限只推动收敛，不破坏消息配对或强行终止任务。"""
     tool = RecordingTool()
@@ -198,8 +331,7 @@ def test_exploration_soft_limit_adds_action_guidance() -> None:
     assert state.status is AgentStatus.COMPLETED
     assert state.search_calls == 2
     assert any(
-        message.metadata.get("kind") == "exploration_budget"
-        for message in llm.requests[1][0]
+        message.metadata.get("kind") == "exploration_budget" for message in llm.requests[1][0]
     )
 
 
@@ -311,9 +443,7 @@ def test_unknown_tool_becomes_feedback_and_agent_can_recover() -> None:
 
 def test_step_limit_interrupts_after_allowed_request() -> None:
     tool = RecordingTool()
-    llm = ScriptedLLM(
-        [response(calls=(ToolCall(id="call-1", name="search_code"),))]
-    )
+    llm = ScriptedLLM([response(calls=(ToolCall(id="call-1", name="search_code"),))])
     agent = MinimalAgent(
         llm,
         ToolRegistry([tool]),
@@ -377,6 +507,27 @@ def test_test_budget_stops_multi_call_response_without_dangling_calls() -> None:
     assert len(test_tool.calls) == 1
     assert search_tool.calls == []
     assert agent.history.pending_tool_call_ids == frozenset()
+
+
+def test_repeated_invalid_test_calls_do_not_consume_started_test_quota() -> None:
+    class RejectingTests(RecordingTool):
+        def prepare(self, call: ToolCall) -> None:
+            raise ToolValidationError("only pytest commands are allowed")
+
+    tool = RejectingTests(name="run_tests")
+    calls = tuple(ToolCall(id=f"invalid-{index}", name="run_tests") for index in range(3))
+    sink = MemorySink()
+    state = MinimalAgent(
+        ScriptedLLM([response(calls=calls)]),
+        ToolRegistry([tool]),
+        trace_sink=sink,
+    ).run("测试命令校验")
+    assert state.status is AgentStatus.INTERRUPTED
+    assert state.stop_reason == "test_limit_exceeded"
+    assert state.test_runs == 0
+    assert state.rejected_test_calls == 3
+    assert tool.calls == []
+    assert sum(event.event_type is TraceEventType.TEST_CALL_REJECTED for event in sink.events) == 3
 
 
 def test_wall_time_budget_is_checked_before_model_request(monkeypatch) -> None:
@@ -470,9 +621,7 @@ def test_mismatched_and_crashing_tools_become_failed_results() -> None:
             response(content="收到失败反馈"),
         ]
     )
-    registry = ToolRegistry(
-        [MismatchedTool(name="bad_metadata"), CrashingTool(name="crashing")]
-    )
+    registry = ToolRegistry([MismatchedTool(name="bad_metadata"), CrashingTool(name="crashing")])
     agent = MinimalAgent(llm, registry)
 
     state = agent.run("工具错误")
@@ -501,12 +650,8 @@ def test_duplicate_failed_patch_is_not_executed_twice_and_prompts_recovery() -> 
     arguments = {"patch": "invalid but identical"}
     llm = ScriptedLLM(
         [
-            response(
-                calls=(ToolCall(id="patch-1", name="apply_patch", arguments=arguments),)
-            ),
-            response(
-                calls=(ToolCall(id="patch-2", name="apply_patch", arguments=arguments),)
-            ),
+            response(calls=(ToolCall(id="patch-1", name="apply_patch", arguments=arguments),)),
+            response(calls=(ToolCall(id="patch-2", name="apply_patch", arguments=arguments),)),
             response(content="改用其他方案"),
         ]
     )
@@ -615,12 +760,80 @@ def test_output_token_overrun_interrupts_immediately() -> None:
     assert state.output_tokens == 3
 
 
+def test_validation_closure_prompts_once_before_unverified_final() -> None:
+    llm = ScriptedLLM(
+        [
+            response(content="已修复"),
+            response(content="仍无测试输出，结束"),
+        ]
+    )
+    agent = MinimalAgent(
+        llm,
+        config=AgentConfig(require_tested_completion=True),
+    )
+
+    state = agent.run("修复并验证")
+
+    assert state.status is AgentStatus.COMPLETED
+    assert state.stop_reason == "agent_completed_unverified"
+    assert state.validation_status == "unverified"
+    assert len(llm.requests) == 2
+    assert any(
+        message.metadata.get("kind") == "validation_required" for message in llm.requests[1][0]
+    )
+
+
+def test_validation_closure_finishes_when_tests_and_nonempty_diff_are_valid() -> None:
+    @dataclass
+    class ResultTool(BaseTool):
+        name: str
+        output: dict
+
+        @property
+        def spec(self) -> ToolSpec:
+            return ToolSpec(name=self.name, description="fixture tool")
+
+        def execute(self, call: ToolCall) -> ToolResult:
+            return ToolResult(
+                call_id=call.id,
+                tool_name=self.name,
+                success=True,
+                output=self.output,
+            )
+
+    registry = ToolRegistry(
+        [
+            ResultTool("run_tests", {"test_status": "passed"}),
+            ResultTool("get_git_diff", {"diff": "diff --git a/a.py b/a.py\n+a = 1\n"}),
+        ]
+    )
+    llm = ScriptedLLM(
+        [
+            response(content="我已检查"),
+            response(
+                calls=(
+                    ToolCall(id="verified-tests", name="run_tests"),
+                    ToolCall(id="verified-diff", name="get_git_diff"),
+                )
+            ),
+            response(content="已验证"),
+        ]
+    )
+    state = MinimalAgent(
+        llm,
+        registry,
+        AgentConfig(require_tested_completion=True),
+    ).run("修复并验证")
+
+    assert state.validation_status == "verified"
+    assert state.stop_reason == "agent_completed"
+    assert state.test_runs == 1
+
+
 def test_format_error_usage_is_preserved() -> None:
     error = LLMResponseFormatError(
         "bad response",
-        context={
-            "usage": {"input_tokens": 7, "output_tokens": 3, "cost_usd": 0.25}
-        },
+        context={"usage": {"input_tokens": 7, "output_tokens": 3, "cost_usd": 0.25}},
     )
     agent = MinimalAgent(ScriptedLLM([error]))
     with pytest.raises(LLMResponseFormatError):

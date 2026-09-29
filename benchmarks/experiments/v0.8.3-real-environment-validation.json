@@ -1,0 +1,29 @@
+{
+  "kind": "offline_real_task_environment_validation",
+  "version": "0.8.3",
+  "llm_called": false,
+  "cost_usd": 0.0,
+  "eligibility_rule": "same collected/executed node IDs; base assertion failure; gold pass; no skip/xfail/xpass",
+  "task_count": 12,
+  "eligible_count": 7,
+  "tasks": [
+    {"task_id": "pylint-dev__pylint-4551", "status": "collection_error", "eligible": false, "reason": "base tests import symbols introduced only by the gold patch"},
+    {"task_id": "pylint-dev__pylint-4604", "status": "collection_error", "eligible": false, "reason": "base tests import a constant introduced only by the gold patch"},
+    {"task_id": "pylint-dev__pylint-4661", "status": "qualified", "python": "3.10", "eligible": true},
+    {"task_id": "pytest-dev__pytest-10051", "status": "qualified", "python": "3.11", "eligible": true},
+    {"task_id": "pytest-dev__pytest-10081", "status": "qualified", "python": "3.11", "eligible": true},
+    {"task_id": "pytest-dev__pytest-10356", "status": "qualified", "python": "3.11", "eligible": true},
+    {"task_id": "sphinx-doc__sphinx-10323", "status": "platform_unsupported", "eligible": false, "reason": "upstream Windows xfail"},
+    {"task_id": "sphinx-doc__sphinx-10435", "status": "platform_unsupported", "eligible": false, "reason": "LaTeX toolchain candidate retained for Linux validation"},
+    {"task_id": "sphinx-doc__sphinx-10449", "status": "qualified", "python": "3.11", "eligible": true},
+    {"task_id": "psf__requests-1142", "status": "qualified", "python": "3.9", "eligible": true},
+    {"task_id": "psf__requests-1724", "status": "base_passed", "eligible": false, "reason": "selected base tests already pass"},
+    {"task_id": "psf__requests-1766", "status": "qualified", "python": "3.9", "eligible": true}
+  ],
+  "raw_result_locations": [
+    "runs/real-candidate-behavior-validation-v083-firstfive",
+    "runs/real-candidate-behavior-validation-v083-second",
+    "runs/real-candidate-behavior-validation-v083-requests2",
+    "runs/real-candidate-behavior-validation-v083-sphinx"
+  ]
+}

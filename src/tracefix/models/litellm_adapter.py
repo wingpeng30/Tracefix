@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import importlib
 import json
 from collections.abc import Mapping, Sequence
@@ -19,6 +20,7 @@ from tracefix.exceptions import (
 )
 from tracefix.messages import Message, MessageRole, ToolCall
 from tracefix.models.base import BaseLLM, LLMConfig, LLMResponse, TokenUsage
+from tracefix.models.input_bounds import InputBound, count_deepseek_v41_request
 from tracefix.tools.base import ToolSpec
 
 
@@ -34,6 +36,7 @@ class LiteLLMAdapter(BaseLLM):
     def __init__(self, config: LLMConfig, *, client: Any | None = None) -> None:
         super().__init__(config)
         self._client = client
+        self._counted_request_sha256: str | None = None
 
     @property
     def client(self) -> Any:
@@ -52,20 +55,17 @@ class LiteLLMAdapter(BaseLLM):
         messages: Sequence[Message],
         tools: Sequence[ToolSpec] = (),
     ) -> LLMResponse:
+        kwargs = self.request_kwargs(messages, tools)
+        if self._counted_request_sha256 is not None:
+            serialized = json.dumps(
+                kwargs, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+            ).encode("utf-8")
+            actual_sha256 = hashlib.sha256(serialized).hexdigest()
+            expected_sha256 = self._counted_request_sha256
+            self._counted_request_sha256 = None
+            if actual_sha256 != expected_sha256:
+                raise LLMProviderError("serialized request changed after input counting")
         client = self.client
-        kwargs: dict[str, Any] = {
-            "model": self.config.model_name,
-            "messages": [self._format_message(message) for message in messages],
-            "timeout": self.config.timeout_seconds,
-            "num_retries": self.config.max_retries,
-            **self.config.extra_kwargs,
-        }
-        if self.config.temperature is not None:
-            kwargs["temperature"] = self.config.temperature
-        if self.config.max_output_tokens is not None:
-            kwargs["max_tokens"] = self.config.max_output_tokens
-        if tools:
-            kwargs["tools"] = [tool.to_openai_tool() for tool in tools]
 
         try:
             response = client.completion(**kwargs)
@@ -117,6 +117,89 @@ class LiteLLMAdapter(BaseLLM):
             finish_reason=_get(choice, "finish_reason"),
             raw_response=raw_response,
         )
+
+    def request_kwargs(
+        self, messages: Sequence[Message], tools: Sequence[ToolSpec] = ()
+    ) -> dict[str, Any]:
+        """构造实际供应商调用参数，供调用和预算计数共用。"""
+        kwargs: dict[str, Any] = {
+            "model": self.config.model_name,
+            "messages": [self._format_message(message) for message in messages],
+            "timeout": self.config.timeout_seconds,
+            "num_retries": self.config.max_retries,
+            **self.config.extra_kwargs,
+        }
+        if self.config.temperature is not None:
+            kwargs["temperature"] = self.config.temperature
+        if self.config.max_output_tokens is not None:
+            kwargs["max_tokens"] = self.config.max_output_tokens
+        if tools:
+            kwargs["tools"] = [tool.to_openai_tool() for tool in tools]
+        return kwargs
+
+    def count_input_tokens(
+        self, messages: Sequence[Message], tools: Sequence[ToolSpec] = ()
+    ) -> int:
+        """Return an auditable upper bound for the exact serialized request.
+
+        LiteLLM silently falls back to an OpenAI tokenizer for unknown model
+        names.  That estimate is useful for display, but it must not guard a
+        hard DeepSeek budget.  A UTF-8 byte count is conservative for the
+        byte-based tokenizer family and includes the tool schema verbatim.
+        The fixed allowance covers provider-added chat framing.
+        """
+        kwargs = self.request_kwargs(messages, tools)
+        if self.config.model_name.casefold().startswith("deepseek/"):
+            payload = {
+                "model": kwargs["model"].split("/", 1)[-1],
+                "messages": kwargs["messages"],
+                "tools": kwargs.get("tools", []),
+            }
+            serialized = json.dumps(
+                payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+            ).encode("utf-8")
+            return len(serialized) + 1024
+        counter = getattr(self.client, "token_counter", None)
+        if counter is None:
+            raise LLMProviderError("provider adapter exposes no auditable token counter")
+        value = counter(
+            model=kwargs["model"], messages=kwargs["messages"], tools=kwargs.get("tools")
+        )
+        if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
+            raise LLMProviderError("provider token counter returned an invalid input bound")
+        return value
+
+    def count_input_bound(
+        self, messages: Sequence[Message], tools: Sequence[ToolSpec] = ()
+    ) -> InputBound:
+        """Qualified model count for new formal requests; legacy byte counts stay diagnostic."""
+        kwargs = self.request_kwargs(messages, tools)
+        if self.config.model_name.casefold() == "deepseek/deepseek-flash":
+            allowed = {
+                "model", "messages", "tools", "timeout", "num_retries", "temperature",
+                "max_tokens", "api_base", "extra_body",
+            }
+            if set(kwargs) - allowed or kwargs.get("extra_body") != {
+                "thinking": {"type": "disabled"}
+            }:
+                return InputBound(
+                    None, "unavailable", "deepseek-v41", "unsupported request parameters"
+                )
+            bound = count_deepseek_v41_request({
+                "model": "deepseek-flash",
+                "messages": kwargs["messages"],
+                "tools": kwargs.get("tools", []),
+                "thinking": kwargs.get("extra_body", {}).get("thinking"),
+            })
+            serialized = json.dumps(
+                kwargs, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+            ).encode("utf-8")
+            request_sha256 = hashlib.sha256(serialized).hexdigest()
+            self._counted_request_sha256 = request_sha256
+            return InputBound(
+                bound.tokens, bound.status, bound.method, bound.identity, request_sha256
+            )
+        return InputBound(None, "unavailable", "unknown", "no qualified model counter")
 
     @staticmethod
     def _format_message(message: Message) -> dict[str, Any]:

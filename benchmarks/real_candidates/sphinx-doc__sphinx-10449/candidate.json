@@ -14,9 +14,7 @@
   ],
   "related_files": [
     "sphinx/ext/autodoc/typehints.py",
-    "tests/test_ext_autodoc_configs.py",
-    "sphinx/ext/autodoc/__init__.py",
-    "sphinx/ext/autodoc/__init__.pyi"
+    "tests/test_ext_autodoc_configs.py"
   ],
   "source_file_count": 1,
   "test_file_count": 1,

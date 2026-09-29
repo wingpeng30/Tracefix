@@ -1,0 +1,42 @@
+{
+  "kind": "offline_real_task_behavior_revalidation",
+  "tracefix_version": "0.8.4",
+  "code_commit": "71da10732d834841196e0eabd04d7b839dad9b34",
+  "llm_called": false,
+  "model_cost_usd": 0.0,
+  "candidate_count": 12,
+  "qualified_count": 10,
+  "qualification_counts": {
+    "assertion_failure": 8,
+    "expected_collection_failure": 2,
+    "business_not_reproduced": 1,
+    "platform_pending": 1
+  },
+  "results": {
+    "psf__requests-1142": "assertion_failure",
+    "psf__requests-1724": "business_not_reproduced_on_python_3_9_21",
+    "psf__requests-1766": "assertion_failure",
+    "pylint-dev__pylint-4551": "expected_collection_failure",
+    "pylint-dev__pylint-4604": "expected_collection_failure",
+    "pylint-dev__pylint-4661": "assertion_failure",
+    "pytest-dev__pytest-10051": "assertion_failure",
+    "pytest-dev__pytest-10081": "assertion_failure",
+    "pytest-dev__pytest-10356": "assertion_failure",
+    "sphinx-doc__sphinx-10323": "platform_pending_windows",
+    "sphinx-doc__sphinx-10435": "assertion_failure",
+    "sphinx-doc__sphinx-10449": "assertion_failure"
+  },
+  "environment_preparation": {
+    "ready_count": 11,
+    "platform_unsupported_count": 1,
+    "python_versions": {
+      "requests": "3.9.21",
+      "pylint": "3.10.20",
+      "pytest": "3.11.16",
+      "sphinx": "3.11.16"
+    },
+    "index_url": "https://pypi.tuna.tsinghua.edu.cn/simple"
+  },
+  "evidence_root_pattern": "runs/p1-revalidation-20260917/",
+  "interpretation": "Behavior qualification is not an Agent repair success rate."
+}

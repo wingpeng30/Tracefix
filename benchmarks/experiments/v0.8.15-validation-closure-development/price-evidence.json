@@ -1,0 +1,46 @@
+{
+  "schema_version": 1,
+  "source": "https://api-docs.deepseek.com/zh-cn/quick_start/pricing/",
+  "captured_at_utc": "2026-09-24T14:49:19Z",
+  "provider": "DeepSeek official direct",
+  "model_alias": "deepseek-flash",
+  "documented_model_identity": "DeepSeek-V4.1-Flash",
+  "api_base": "https://api.deepseek.com",
+  "currency": "CNY",
+  "unit": "CNY per 1,000,000 tokens",
+  "peak_schedule": "Beijing time weekdays 09:00-12:00 and 14:00-18:00",
+  "prices": {
+    "peak": {
+      "input_cache_hit": 0.04,
+      "input_cache_miss": 2.0,
+      "output": 8.0
+    },
+    "off_peak": {
+      "input_cache_hit": 0.02,
+      "input_cache_miss": 1.0,
+      "output": 4.0
+    }
+  },
+  "pricing_evidence_limit": "Values transcribed from the official pricing page; this file is a normalized excerpt, not a raw HTML capture.",
+  "version_identity_limit": "The API model name is an alias. Record and compare response model identities at launch and stop if the observed identity changes.",
+  "full_schedule_worst_case": {
+    "planned_positions": 48,
+    "max_input_tokens_per_position": 350000,
+    "max_output_tokens_per_position": 20000,
+    "input_tokens_total": 16800000,
+    "output_tokens_total": 960000,
+    "all_input_miss_peak_cost_cny": 41.28
+  },
+  "ledger_snapshot": {
+    "path": "runs/p2-formal-campaign-20260921/cost-ledger.json",
+    "cap_cny": 150.0,
+    "calculated_spent_cny": 106.5460912,
+    "unsettled_reservation_cny": 0.0,
+    "unknown_request": false,
+    "settled_request_count": 4345,
+    "available_cny": 43.4539088,
+    "proposed_stage_cap_cny": 42.0,
+    "remaining_after_stage_cap_cny": 1.4539088,
+    "amounts_are_provider_bill": false
+  }
+}

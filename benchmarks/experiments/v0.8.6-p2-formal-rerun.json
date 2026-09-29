@@ -1,0 +1,73 @@
+{
+  "kind": "p2_formal_ct_result",
+  "execution_commit": "e464f9b312bc6f075e8beec79ddd6981a5dfc1d4",
+  "model": "deepseek-flash",
+  "planned_trials": 60,
+  "completed_trials": 60,
+  "infrastructure_failures": 0,
+  "control": {
+    "trials": 30,
+    "repair_successes": 8,
+    "input_tokens": 6255579,
+    "output_tokens": 81373,
+    "agent_seconds": 1398.596,
+    "verification_seconds": 188.47,
+    "conservative_cost_cny": 13.162142
+  },
+  "treatment": {
+    "trials": 30,
+    "repair_successes": 7,
+    "input_tokens": 6084821,
+    "output_tokens": 89769,
+    "agent_seconds": 1312.734,
+    "verification_seconds": 192.012,
+    "conservative_cost_cny": 12.887794
+  },
+  "treatment_minus_control": {
+    "repair_success_rate_percentage_points": -3.3333333333333335,
+    "input_tokens": -170758,
+    "input_tokens_percent": -2.7296913682970048,
+    "output_tokens": 8396,
+    "output_tokens_percent": 10.317918719968544,
+    "agent_seconds": -85.862,
+    "agent_seconds_percent": -6.139156697144854,
+    "conservative_cost_cny": -0.274348,
+    "conservative_cost_percent": -2.08437198139938
+  },
+  "primary_ordinary_tasks": {
+    "task_count": 8,
+    "control_successes": 8,
+    "treatment_successes": 7,
+    "trials_per_arm": 24
+  },
+  "reviewed_collection_failure_tasks": {
+    "task_count": 2,
+    "control_successes": 0,
+    "treatment_successes": 0,
+    "trials_per_arm": 6
+  },
+  "paired_both_success": 6,
+  "provider_usage_including_probe": {
+    "request_count": 1094,
+    "input_tokens": 12340420,
+    "output_tokens": 171146,
+    "cache_hit_input_tokens": 11491432,
+    "cache_miss_input_tokens": 848988
+  },
+  "cost": {
+    "currency": "CNY",
+    "historical_bill": 3.2455332,
+    "probe_and_experiment_conservative_total": 29.2955412,
+    "experiment_conservative_amount": 26.049936,
+    "provider_bill_pending": true
+  },
+  "recovery": {
+    "reused_trials": 60,
+    "request_count_before": 1094,
+    "request_count_after": 1094,
+    "agent_directories_before": 60,
+    "agent_directories_after": 60
+  },
+  "raw_evidence": "runs/p2-formal-deepseek-rerun-20260921",
+  "campaign_ledger": "runs/p2-formal-campaign-20260921/cost-ledger.json"
+}

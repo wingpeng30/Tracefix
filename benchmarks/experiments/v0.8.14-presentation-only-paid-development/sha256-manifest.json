@@ -1,0 +1,15 @@
+{
+  "schema_version": "1",
+  "report_sha256": "4fc36889ddfff8637a2c7e7d3650bbc698bbb95e8f8da0d78ffe654191bbbedd",
+  "local_evidence": {
+    "protocol_sha256": "ba24dc87eaa3a8ea8d10d9a0fa26b4f230b536cf77b34c438a9b6d40a554999c",
+    "run_summary_sha256": "1fc86a237a77e30447aa5253cf59c53fa548b15adf684ef03ef1bc0c977e8b23",
+    "p2_diagnostic_sha256": "3262f91ce41038a62da012c41b2da4970f9d83c1d6b9d0ec40536c77f3a2638b",
+    "p2_check_sha256": "892dda1da658d410287addc9dec8f8acb699c0bc81fc0fc74700d1f4344ffa29",
+    "price_excerpt_sha256": "d12057764c05f4d22387c8b21cc75bf5758afce942324a2b735886f390fb193c",
+    "ledger_sha256_after_recovery": "e53e69fcf9718dc1b01a946ac256b0bc6e00718c5d8a6c62f01e8549e4e7e305",
+    "recheck_index_sha256": "e5c02297bca956f60d67a558550e60fe5fe8358a779af669435db13ddba38658",
+    "campaign_before_sha256": "070980667c2e13861be77c72158081cee50cabb1db83bbac1db481d701223417"
+  },
+  "sensitive_raw_artifacts_retained_under_local_runs": true
+}

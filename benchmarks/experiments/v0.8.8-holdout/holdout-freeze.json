@@ -1,0 +1,510 @@
+{
+  "kind": "tracefix_holdout_freeze",
+  "schema_version": 1,
+  "created_at": "2026-09-21T09:30:57.335642+00:00",
+  "candidate_pool_sha256": "4e56d826128a55591ac64f88de44e17962d81dffe521174b07d5912e21cb37db",
+  "behavior_report_sha256": "0b02b875550e26d893dcf320282154e9dbec388acfb30489d3ed360f3b8d85a7",
+  "selection_seed": 20260921,
+  "candidate_order_sha256": "836b71d226807d0f85391de1a7e8b3436d0c5acd12a11af24e5db3a071079098",
+  "per_repository": 5,
+  "counts": {
+    "pytest-dev/pytest": 0,
+    "pylint-dev/pylint": 2,
+    "sphinx-doc/sphinx": 0,
+    "psf/requests": 2
+  },
+  "selected_task_ids": [
+    "psf__requests-5414",
+    "psf__requests-6028",
+    "pylint-dev__pylint-6386",
+    "pylint-dev__pylint-8898"
+  ],
+  "qualified_count": 4,
+  "target_count": 20,
+  "deficit": 16,
+  "decisions": [
+    {
+      "task_id": "sphinx-doc__sphinx-8056",
+      "repository": "sphinx-doc/sphinx",
+      "category": "not_qualified",
+      "accepted": false,
+      "behavior_evidence_present": true
+    },
+    {
+      "task_id": "sphinx-doc__sphinx-8551",
+      "repository": "sphinx-doc/sphinx",
+      "category": "not_qualified",
+      "accepted": false,
+      "behavior_evidence_present": true
+    },
+    {
+      "task_id": "sphinx-doc__sphinx-8593",
+      "repository": "sphinx-doc/sphinx",
+      "category": "not_qualified",
+      "accepted": false,
+      "behavior_evidence_present": true
+    },
+    {
+      "task_id": "pytest-dev__pytest-7982",
+      "repository": "pytest-dev/pytest",
+      "category": "not_qualified",
+      "accepted": false,
+      "behavior_evidence_present": true
+    },
+    {
+      "task_id": "sphinx-doc__sphinx-9229",
+      "repository": "sphinx-doc/sphinx",
+      "category": "not_qualified",
+      "accepted": false,
+      "behavior_evidence_present": true
+    },
+    {
+      "task_id": "pytest-dev__pytest-7205",
+      "repository": "pytest-dev/pytest",
+      "category": "not_qualified",
+      "accepted": false,
+      "behavior_evidence_present": true
+    },
+    {
+      "task_id": "sphinx-doc__sphinx-7985",
+      "repository": "sphinx-doc/sphinx",
+      "category": "not_qualified",
+      "accepted": false,
+      "behavior_evidence_present": true
+    },
+    {
+      "task_id": "sphinx-doc__sphinx-7889",
+      "repository": "sphinx-doc/sphinx",
+      "category": "not_validated",
+      "accepted": false,
+      "behavior_evidence_present": false
+    },
+    {
+      "task_id": "psf__requests-5414",
+      "repository": "psf/requests",
+      "category": "ordinary_qualified",
+      "accepted": true,
+      "behavior_evidence_present": true
+    },
+    {
+      "task_id": "pytest-dev__pytest-6197",
+      "repository": "pytest-dev/pytest",
+      "category": "not_qualified",
+      "accepted": false,
+      "behavior_evidence_present": true
+    },
+    {
+      "task_id": "sphinx-doc__sphinx-8120",
+      "repository": "sphinx-doc/sphinx",
+      "category": "not_validated",
+      "accepted": false,
+      "behavior_evidence_present": false
+    },
+    {
+      "task_id": "sphinx-doc__sphinx-9281",
+      "repository": "sphinx-doc/sphinx",
+      "category": "not_validated",
+      "accepted": false,
+      "behavior_evidence_present": false
+    },
+    {
+      "task_id": "pylint-dev__pylint-6903",
+      "repository": "pylint-dev/pylint",
+      "category": "not_qualified",
+      "accepted": false,
+      "behavior_evidence_present": true
+    },
+    {
+      "task_id": "sphinx-doc__sphinx-8459",
+      "repository": "sphinx-doc/sphinx",
+      "category": "not_validated",
+      "accepted": false,
+      "behavior_evidence_present": false
+    },
+    {
+      "task_id": "sphinx-doc__sphinx-9658",
+      "repository": "sphinx-doc/sphinx",
+      "category": "not_validated",
+      "accepted": false,
+      "behavior_evidence_present": false
+    },
+    {
+      "task_id": "pytest-dev__pytest-5262",
+      "repository": "pytest-dev/pytest",
+      "category": "not_qualified",
+      "accepted": false,
+      "behavior_evidence_present": true
+    },
+    {
+      "task_id": "sphinx-doc__sphinx-8595",
+      "repository": "sphinx-doc/sphinx",
+      "category": "not_validated",
+      "accepted": false,
+      "behavior_evidence_present": false
+    },
+    {
+      "task_id": "pylint-dev__pylint-7277",
+      "repository": "pylint-dev/pylint",
+      "category": "not_validated",
+      "accepted": false,
+      "behavior_evidence_present": false
+    },
+    {
+      "task_id": "sphinx-doc__sphinx-11510",
+      "repository": "sphinx-doc/sphinx",
+      "category": "not_validated",
+      "accepted": false,
+      "behavior_evidence_present": false
+    },
+    {
+      "task_id": "psf__requests-6028",
+      "repository": "psf/requests",
+      "category": "ordinary_qualified",
+      "accepted": true,
+      "behavior_evidence_present": true
+    },
+    {
+      "task_id": "psf__requests-1921",
+      "repository": "psf/requests",
+      "category": "not_validated",
+      "accepted": false,
+      "behavior_evidence_present": false
+    },
+    {
+      "task_id": "sphinx-doc__sphinx-9698",
+      "repository": "sphinx-doc/sphinx",
+      "category": "not_validated",
+      "accepted": false,
+      "behavior_evidence_present": false
+    },
+    {
+      "task_id": "sphinx-doc__sphinx-7748",
+      "repository": "sphinx-doc/sphinx",
+      "category": "not_validated",
+      "accepted": false,
+      "behavior_evidence_present": false
+    },
+    {
+      "task_id": "sphinx-doc__sphinx-7910",
+      "repository": "sphinx-doc/sphinx",
+      "category": "not_validated",
+      "accepted": false,
+      "behavior_evidence_present": false
+    },
+    {
+      "task_id": "pytest-dev__pytest-7432",
+      "repository": "pytest-dev/pytest",
+      "category": "not_qualified",
+      "accepted": false,
+      "behavior_evidence_present": true
+    },
+    {
+      "task_id": "pytest-dev__pytest-7324",
+      "repository": "pytest-dev/pytest",
+      "category": "not_validated",
+      "accepted": false,
+      "behavior_evidence_present": false
+    },
+    {
+      "task_id": "pytest-dev__pytest-8399",
+      "repository": "pytest-dev/pytest",
+      "category": "not_validated",
+      "accepted": false,
+      "behavior_evidence_present": false
+    },
+    {
+      "task_id": "sphinx-doc__sphinx-9230",
+      "repository": "sphinx-doc/sphinx",
+      "category": "not_validated",
+      "accepted": false,
+      "behavior_evidence_present": false
+    },
+    {
+      "task_id": "sphinx-doc__sphinx-9461",
+      "repository": "sphinx-doc/sphinx",
+      "category": "not_validated",
+      "accepted": false,
+      "behavior_evidence_present": false
+    },
+    {
+      "task_id": "sphinx-doc__sphinx-9602",
+      "repository": "sphinx-doc/sphinx",
+      "category": "not_validated",
+      "accepted": false,
+      "behavior_evidence_present": false
+    },
+    {
+      "task_id": "sphinx-doc__sphinx-7462",
+      "repository": "sphinx-doc/sphinx",
+      "category": "not_validated",
+      "accepted": false,
+      "behavior_evidence_present": false
+    },
+    {
+      "task_id": "pytest-dev__pytest-7236",
+      "repository": "pytest-dev/pytest",
+      "category": "not_validated",
+      "accepted": false,
+      "behavior_evidence_present": false
+    },
+    {
+      "task_id": "sphinx-doc__sphinx-8638",
+      "repository": "sphinx-doc/sphinx",
+      "category": "not_validated",
+      "accepted": false,
+      "behavior_evidence_present": false
+    },
+    {
+      "task_id": "pylint-dev__pylint-6528",
+      "repository": "pylint-dev/pylint",
+      "category": "not_qualified",
+      "accepted": false,
+      "behavior_evidence_present": true
+    },
+    {
+      "task_id": "pytest-dev__pytest-5631",
+      "repository": "pytest-dev/pytest",
+      "category": "not_validated",
+      "accepted": false,
+      "behavior_evidence_present": false
+    },
+    {
+      "task_id": "sphinx-doc__sphinx-8721",
+      "repository": "sphinx-doc/sphinx",
+      "category": "not_validated",
+      "accepted": false,
+      "behavior_evidence_present": false
+    },
+    {
+      "task_id": "pytest-dev__pytest-7521",
+      "repository": "pytest-dev/pytest",
+      "category": "not_validated",
+      "accepted": false,
+      "behavior_evidence_present": false
+    },
+    {
+      "task_id": "pytest-dev__pytest-7490",
+      "repository": "pytest-dev/pytest",
+      "category": "not_validated",
+      "accepted": false,
+      "behavior_evidence_present": false
+    },
+    {
+      "task_id": "sphinx-doc__sphinx-8265",
+      "repository": "sphinx-doc/sphinx",
+      "category": "not_validated",
+      "accepted": false,
+      "behavior_evidence_present": false
+    },
+    {
+      "task_id": "pylint-dev__pylint-4970",
+      "repository": "pylint-dev/pylint",
+      "category": "not_qualified",
+      "accepted": false,
+      "behavior_evidence_present": true
+    },
+    {
+      "task_id": "pylint-dev__pylint-6386",
+      "repository": "pylint-dev/pylint",
+      "category": "ordinary_qualified",
+      "accepted": true,
+      "behavior_evidence_present": true
+    },
+    {
+      "task_id": "pytest-dev__pytest-7571",
+      "repository": "pytest-dev/pytest",
+      "category": "not_validated",
+      "accepted": false,
+      "behavior_evidence_present": false
+    },
+    {
+      "task_id": "sphinx-doc__sphinx-8035",
+      "repository": "sphinx-doc/sphinx",
+      "category": "not_validated",
+      "accepted": false,
+      "behavior_evidence_present": false
+    },
+    {
+      "task_id": "psf__requests-2317",
+      "repository": "psf/requests",
+      "category": "not_validated",
+      "accepted": false,
+      "behavior_evidence_present": false
+    },
+    {
+      "task_id": "sphinx-doc__sphinx-11445",
+      "repository": "sphinx-doc/sphinx",
+      "category": "not_validated",
+      "accepted": false,
+      "behavior_evidence_present": false
+    },
+    {
+      "task_id": "sphinx-doc__sphinx-9320",
+      "repository": "sphinx-doc/sphinx",
+      "category": "not_validated",
+      "accepted": false,
+      "behavior_evidence_present": false
+    },
+    {
+      "task_id": "sphinx-doc__sphinx-9258",
+      "repository": "sphinx-doc/sphinx",
+      "category": "not_validated",
+      "accepted": false,
+      "behavior_evidence_present": false
+    },
+    {
+      "task_id": "pytest-dev__pytest-5787",
+      "repository": "pytest-dev/pytest",
+      "category": "not_validated",
+      "accepted": false,
+      "behavior_evidence_present": false
+    },
+    {
+      "task_id": "sphinx-doc__sphinx-7757",
+      "repository": "sphinx-doc/sphinx",
+      "category": "not_validated",
+      "accepted": false,
+      "behavior_evidence_present": false
+    },
+    {
+      "task_id": "sphinx-doc__sphinx-8475",
+      "repository": "sphinx-doc/sphinx",
+      "category": "not_validated",
+      "accepted": false,
+      "behavior_evidence_present": false
+    },
+    {
+      "task_id": "pylint-dev__pylint-7080",
+      "repository": "pylint-dev/pylint",
+      "category": "not_qualified",
+      "accepted": false,
+      "behavior_evidence_present": true
+    },
+    {
+      "task_id": "pytest-dev__pytest-5840",
+      "repository": "pytest-dev/pytest",
+      "category": "not_validated",
+      "accepted": false,
+      "behavior_evidence_present": false
+    },
+    {
+      "task_id": "sphinx-doc__sphinx-8269",
+      "repository": "sphinx-doc/sphinx",
+      "category": "not_validated",
+      "accepted": false,
+      "behavior_evidence_present": false
+    },
+    {
+      "task_id": "sphinx-doc__sphinx-9591",
+      "repository": "sphinx-doc/sphinx",
+      "category": "not_validated",
+      "accepted": false,
+      "behavior_evidence_present": false
+    },
+    {
+      "task_id": "sphinx-doc__sphinx-10673",
+      "repository": "sphinx-doc/sphinx",
+      "category": "not_validated",
+      "accepted": false,
+      "behavior_evidence_present": false
+    },
+    {
+      "task_id": "sphinx-doc__sphinx-9673",
+      "repository": "sphinx-doc/sphinx",
+      "category": "not_validated",
+      "accepted": false,
+      "behavior_evidence_present": false
+    },
+    {
+      "task_id": "sphinx-doc__sphinx-8548",
+      "repository": "sphinx-doc/sphinx",
+      "category": "not_validated",
+      "accepted": false,
+      "behavior_evidence_present": false
+    },
+    {
+      "task_id": "sphinx-doc__sphinx-10614",
+      "repository": "sphinx-doc/sphinx",
+      "category": "not_validated",
+      "accepted": false,
+      "behavior_evidence_present": false
+    },
+    {
+      "task_id": "sphinx-doc__sphinx-7454",
+      "repository": "sphinx-doc/sphinx",
+      "category": "not_validated",
+      "accepted": false,
+      "behavior_evidence_present": false
+    },
+    {
+      "task_id": "sphinx-doc__sphinx-10466",
+      "repository": "sphinx-doc/sphinx",
+      "category": "not_validated",
+      "accepted": false,
+      "behavior_evidence_present": false
+    },
+    {
+      "task_id": "sphinx-doc__sphinx-7590",
+      "repository": "sphinx-doc/sphinx",
+      "category": "not_validated",
+      "accepted": false,
+      "behavior_evidence_present": false
+    },
+    {
+      "task_id": "pylint-dev__pylint-8898",
+      "repository": "pylint-dev/pylint",
+      "category": "ordinary_qualified",
+      "accepted": true,
+      "behavior_evidence_present": true
+    },
+    {
+      "task_id": "psf__requests-2931",
+      "repository": "psf/requests",
+      "category": "not_qualified",
+      "accepted": false,
+      "behavior_evidence_present": true
+    },
+    {
+      "task_id": "pytest-dev__pytest-5809",
+      "repository": "pytest-dev/pytest",
+      "category": "not_validated",
+      "accepted": false,
+      "behavior_evidence_present": false
+    },
+    {
+      "task_id": "sphinx-doc__sphinx-9711",
+      "repository": "sphinx-doc/sphinx",
+      "category": "not_validated",
+      "accepted": false,
+      "behavior_evidence_present": false
+    },
+    {
+      "task_id": "sphinx-doc__sphinx-7440",
+      "repository": "sphinx-doc/sphinx",
+      "category": "not_validated",
+      "accepted": false,
+      "behavior_evidence_present": false
+    },
+    {
+      "task_id": "sphinx-doc__sphinx-8621",
+      "repository": "sphinx-doc/sphinx",
+      "category": "not_validated",
+      "accepted": false,
+      "behavior_evidence_present": false
+    },
+    {
+      "task_id": "pytest-dev__pytest-6202",
+      "repository": "pytest-dev/pytest",
+      "category": "not_validated",
+      "accepted": false,
+      "behavior_evidence_present": false
+    },
+    {
+      "task_id": "sphinx-doc__sphinx-9367",
+      "repository": "sphinx-doc/sphinx",
+      "category": "not_validated",
+      "accepted": false,
+      "behavior_evidence_present": false
+    }
+  ]
+}

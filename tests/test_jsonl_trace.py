@@ -30,3 +30,18 @@ def test_jsonl_sink_context_manager_and_closed_write(tmp_path) -> None:
 
     with pytest.raises(TraceProtocolError):
         sink.write(TraceEvent(event_type=TraceEventType.ERROR))
+
+
+def test_jsonl_sink_marks_closed_when_stream_close_fails(tmp_path) -> None:
+    sink = JSONLTraceSink(tmp_path / "events.jsonl")
+
+    class BrokenStream:
+        def close(self) -> None:
+            raise OSError("simulated close failure")
+
+    original_stream = sink._stream
+    sink._stream = BrokenStream()
+    original_stream.close()
+    with pytest.raises(TraceProtocolError, match="cannot close JSONL trace file"):
+        sink.close()
+    assert sink.closed

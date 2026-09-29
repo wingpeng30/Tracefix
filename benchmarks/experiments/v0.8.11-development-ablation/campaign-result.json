@@ -1,0 +1,22 @@
+{
+  "currency": "CNY",
+  "cap": 100.0,
+  "calculated_spent_before": 29.2955412,
+  "calculated_spent_after": 80.36876520000017,
+  "calculated_batch_amount": 51.07322400000017,
+  "reserved_amount": 0.0,
+  "new_requests": 2094,
+  "uncertain_request": false,
+  "halt_reason": null,
+  "amount_kind": "conservative_calculation_not_provider_bill",
+  "response_models": [
+    "deepseek-flash"
+  ],
+  "provider_usage_complete": true,
+  "provider_token_totals": {
+    "prompt_cache_hit_tokens": 22308352,
+    "prompt_cache_miss_tokens": 1760364,
+    "prompt_tokens": 24068716,
+    "completion_tokens": 366974
+  }
+}

@@ -1,12 +1,34 @@
 # TraceFix
 
+想在自己的受信任 Python/pytest 仓库运行？先看[普通仓库安装与使用指南](docs/ordinary-repository.md)：配置、零调用预检、隔离运行、HTML 报告和补丁导出均有可复制命令。[系统审查](docs/reviews/2026-09-28-system-review.md)列出已贯通能力和限制。当前仍无可恢复的 Agent 会话；通用仓库 Docker 与 MCP 属于后续批次。
+
+## 两分钟修复演示（零供应商调用）
+
+从干净 checkout 按[冻结依赖说明](docs/reproduction.md)安装后，在 PowerShell 运行：
+
+```powershell
+tracefix-reproduce --scenario pagination --output runs/demo-baseline
+tracefix-reproduce --scenario pagination --skills-enabled --output runs/demo-skills
+tracefix report --run runs/demo-skills --output runs/demo-skills/report.html
+```
+
+用浏览器打开 `runs/demo-skills/report.html`：第一页测试失败，Agent 搜索并读取
+`catalog/api.py` 和 `catalog/pagination.py`，只修改分页偏移量，复测通过，最后展示 Diff。
+两臂运行在独立的合成仓库，核心步骤及补丁相同；Skills-only 额外按需加载调试技能。
+页面标注“脚本模型演示”，不代表真实模型修复成功率。完整说明与两分钟讲稿见
+[演示指南](docs/demo-pagination.md)。
+
+![分页修复演示的离线报告首屏](docs/assets/pagination-report.png)
+
+截图来自本地 Skills-only 合成运行；完整时间线、测试和 Diff 可在生成的 HTML 中展开。
+
 TraceFix 是一个面向真实 GitHub Issue 的单 Agent Coding 系统。项目计划在固定模型和
 Token 预算下，通过仓库结构检索、动态上下文和测试驱动的补丁验证，提高 Bug 修复成功率
 与成本效率。
 
 完整的版本代码说明与实验索引见 [`docs/README.md`](docs/README.md)。
 
-最新开发版本为 **v0.8.0**（最新稳定标签以 GitHub Releases 为准）。它已经具备一条可真实运行的最小闭环，并新增确定性上下文管理：
+当前包版本为 **v0.8.4**（最新稳定标签以 GitHub Releases 为准）。它已经具备一条可真实运行的最小闭环，并新增确定性上下文管理：
 完整轨迹始终保留，模型请求视图会按压力裁剪超长工具输出并折叠较早轮次。
 
 ## 当前能力
@@ -27,6 +49,7 @@ Token 预算下，通过仓库结构检索、动态上下文和测试驱动的�
 - 支持关闭压缩与 32k 压缩的交替、至少三次重复配对实验。
 - 3 道来自 SWE-bench Verified、gold 实际修改多个源码文件的真实 Issue 任务。
 - 确定性 Python AST Repository Indexer 与任务相关 Repo Map，先给出候选文件和符号行号。
+- 可选 Skills 目录与按需正文加载；默认关闭，首版只附带 TraceFix 审核过的只读指令。
 
 ## 架构
 
@@ -73,8 +96,19 @@ python -m pip install -i https://pypi.tuna.tsinghua.edu.cn/simple -e ".[llm]"
 python -m pip install -i https://pypi.tuna.tsinghua.edu.cn/simple -e ".[dev,llm]"
 ```
 
+若使用 Docker 执行后端或运行 Requests TLS 验收，还需安装 `docker` extra：
+
+```powershell
+python -m pip install -i https://pypi.tuna.tsinghua.edu.cn/simple -e ".[dev,llm,docker]"
+```
+
 核心数据模型仍然只依赖 Pydantic；LiteLLM 和 `.env` 加载器位于 `llm` 可选依赖中。
 项目固定使用已验证的 `litellm==1.75.5.post2`，保证本阶段的适配行为可复现。
+
+从干净 checkout 复现工程门槛时，使用 [`docs/reproduction.md`](docs/reproduction.md) 里的哈希锁，
+不要用上述范围依赖命令代替验收环境。Windows x64 Python 3.11/3.12 分别使用
+`requirements/locks/engineering-py311.txt` 或 `engineering-py312.txt`；TraceFix 包本身以
+`--no-deps --no-build-isolation` 安装。
 
 ## 配置 DeepSeek
 
@@ -165,6 +199,37 @@ CLI 参数优先于 `TRACEFIX_*` 环境变量，环境变量优先于代码默�
 `trajectory.jsonl`，默认关闭，且记录只做凭据脱敏，不应直接公开含业务代码的轨迹。
 当前消息协议尚未保存思考模式工具轮次要求的 `reasoning_content`。
 
+## 零模型调用复现
+
+可用固定模型替身走一次真实 `TraceFixRunner` 控制流：搜索、读取、应用补丁、执行 pytest、读取
+Diff 并保存轨迹。替身会阻止供应商客户端构造、请求发送和宿主 Runner 网络连接：
+
+```powershell
+tracefix-reproduce --backend local --output runs/reproduction-baseline
+tracefix-reproduce --backend local --skills-enabled --output runs/reproduction-skills
+```
+
+该合成流程验证的是安装和工程控制流，不是离线定位效果或真实独立修复成功率。Docker 容器
+复现、受控 Requests TLS 检查、历史三题输入和外部材料边界见
+[`docs/reproduction.md`](docs/reproduction.md)。
+
+## 按需 Skills
+
+Skills 默认关闭。可通过 `tracefix run --skills` 或 `TRACEFIX_SKILLS_ENABLED=true` 开启；启动时
+只向 Agent 展示审核技能的名称和简介，需要时才由 `load_skill` 读取指令及显式列出的 Markdown
+参考文本。工具权限不会随技能变化，`allowed-tools` 不会扩大 ToolRegistry。
+
+```powershell
+tracefix run --repo D:\repos\example --task-file issue.md --skills `
+  --skills-max-active 4 `
+  --skills-max-bytes 16384 `
+  --skills-max-reference-bytes 8192 `
+  --skills-max-total-bytes 32768
+```
+
+字节上限按 UTF-8 计量，是内容大小限制，不是 Token 硬上限。Skills 开关、Docker bridge 行为、
+上下文压缩保留以及回退配置见复现指南。
+
 ## 上下文压缩
 
 TraceFix 保留两份不同用途的数据：`MessageHistory` 和 JSONL 轨迹保存全部原始消息，供审计
@@ -234,6 +299,14 @@ tracefix eval `
   --checkout-dir runs/real-task-validation-new
 
 # 不调用模型：验证 base 的隐藏用例失败、gold 后通过
+.\.venv\Scripts\python.exe -m tracefix.cli prepare-real-environments `
+  --tasks benchmarks/real_tasks `
+  --source-root runs/real-task-validation `
+  --test-env-root runs/real-task-envs-v2
+
+.\.venv\Scripts\python.exe -m tracefix.cli inspect-real-environments `
+  --environment-root runs/real-task-envs-v2
+
 .\.venv\Scripts\python.exe -m tracefix.cli validate-real-behavior `
   --tasks benchmarks/real_tasks `
   --source-root runs/real-task-validation `
@@ -251,6 +324,11 @@ tracefix eval `
   --source-root runs/real-task-validation `
   --test-env-root runs/real-task-envs-v2
 ```
+
+环境准备会优先发现并复用本机已有的兼容解释器（包括 Python Launcher、Conda 和 TraceFix
+登记的解释器），并按任务配方选择版本；默认要求磁盘至少剩余 10 GiB。只有未找到兼容版本时，
+才会尝试创建一个 TraceFix 专用 Conda 环境。可用 `clean-real-artifacts` 先预览可回收的、带
+TraceFix 标记的环境；只有加 `--apply` 才会删除，绝不扫描或删除其他 Conda 环境和原始仓库。
 
 三个任务已在独立 Python 3.9 环境中验证：清单里的隐藏用例均在 base 上失败、gold 后通过。
 当前机器没有 Docker，因此尚未执行官方完整 `PASS_TO_PASS`；这仍不是 Agent 解决率。详细边界和验证证据见

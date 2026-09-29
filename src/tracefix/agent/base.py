@@ -5,6 +5,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from datetime import datetime
 from enum import StrEnum
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -14,6 +15,7 @@ from tracefix.messages import MessageHistory
 from tracefix.models.base import BaseLLM
 from tracefix.repository import RepoMapConfig
 from tracefix.tools.base import ToolRegistry
+from tracefix.tools.skills import SkillLimits
 from tracefix.tracing.base import TraceSink
 
 DEFAULT_SYSTEM_PROMPT = """你是 TraceFix，一个负责修复 Python 仓库问题的 Coding Agent。
@@ -60,7 +62,15 @@ class AgentConfig(BaseModel):
     max_search_calls: int = Field(default=4, ge=1)
     max_file_reads_before_patch: int = Field(default=8, ge=1)
     repo_map_reads_before_patch: int = Field(default=2, ge=1)
+    skills_enabled: bool = False
+    skill_limits: SkillLimits = Field(default_factory=SkillLimits)
     token_optimization_enabled: bool = True
+    # Optional per-feature overrides preserve the legacy master switch when unset.
+    tool_result_presentation_enabled: bool | None = None
+    action_guidance_enabled: bool | None = None
+    read_cache_enabled: bool | None = None
+    require_tested_completion: bool = False
+    require_fresh_read_after_repeated_no_effect_patch: bool = False
     presentation: ToolPresentationConfig = Field(default_factory=ToolPresentationConfig)
     record_request_views: bool = False
     context: ContextConfig = Field(default_factory=ContextConfig)
@@ -81,6 +91,7 @@ class AgentState(BaseModel):
     cost_usd: float = Field(default=0.0, ge=0)
     cost_complete: bool = True
     test_runs: int = Field(default=0, ge=0)
+    rejected_test_calls: int = Field(default=0, ge=0)
     search_calls: int = Field(default=0, ge=0)
     file_read_calls: int = Field(default=0, ge=0)
     cached_tool_calls: int = Field(default=0, ge=0)
@@ -89,6 +100,7 @@ class AgentState(BaseModel):
     finished_at: datetime | None = None
     stop_reason: str | None = None
     final_output: str | None = None
+    validation_status: Literal["unverified", "verified"] = "unverified"
     context_metrics: ContextMetrics = Field(default_factory=ContextMetrics)
     presentation_metrics: ToolPresentationMetrics = Field(default_factory=ToolPresentationMetrics)
     model_request_seconds: float = Field(default=0.0, ge=0)

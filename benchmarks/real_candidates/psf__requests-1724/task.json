@@ -23,7 +23,7 @@
     "test_requests.py::RequestsTestCase::test_uppercase_scheme_redirect",
     "test_requests.py::RequestsTestCase::test_user_agent_transfers"
   ],
-  "test_command": "pytest -q",
+  "test_command": "pytest -q test_requests.py::RequestsTestCase::test_DIGEST_AUTH_RETURNS_COOKIE test_requests.py::RequestsTestCase::test_DIGEST_HTTP_200_OK_GET test_requests.py::RequestsTestCase::test_different_encodings_dont_break_post test_requests.py::RequestsTestCase::test_generic_cookiejar_works test_requests.py::RequestsTestCase::test_uppercase_scheme_redirect test_requests.py::RequestsTestCase::test_user_agent_transfers",
   "pass_to_pass_count": 79,
   "expected_source_files": [
     "requests/sessions.py"
@@ -33,9 +33,7 @@
   ],
   "related_context_files": [
     "requests/sessions.py",
-    "test_requests.py",
-    "requests/__init__.py",
-    "requests/__init__.pyi"
+    "test_requests.py"
   ],
   "hashes": {
     "problem_statement": "eacde5d201658474274cce4558b5d2b8ae74d9fcc2ad6ddc76aaf003b2160b8a",

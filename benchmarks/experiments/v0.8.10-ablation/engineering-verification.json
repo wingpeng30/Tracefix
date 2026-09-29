@@ -1,0 +1,32 @@
+{
+  "schema_version": 1,
+  "tests_passed": 335,
+  "pytest_seconds": 674.36,
+  "combined_coverage_percent": 90.98527475158626,
+  "statement_coverage_percent": 93.05066585029849,
+  "branch_coverage_percent": 83.57142857142857,
+  "covered_lines": 6079,
+  "statements": 6533,
+  "covered_branches": 1521,
+  "branches": 1820,
+  "command_exit_codes": {
+    "pytest": 0,
+    "ruff": 0,
+    "compileall": 0
+  },
+  "snapshot_unchanged": true,
+  "evidence_sha256": {
+    "code-hashes.json": "b5f521bab2e54b7bc546370bdef4a38c0b3623b84b599acb7a45744436a8bec1",
+    "commands.json": "61d33d037dee4720605877faa8681853e9acf51b5f031393dbc8d3247382c733",
+    "compileall.stderr.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "compileall.stdout.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "coverage.json": "249b09372d09a7dc06e58cd02ff9aa6f1763d70b423349fcca170de45f5a711c",
+    "coverage.xml": "665b633a6e96d591546b1e8a52b386db57cd5424daff25cac97d41761fbe8221",
+    "identity-check.json": "c3e21df4cb7a3ac7d81cb77e87bc91832973ac49541740858407758c8e0a652e",
+    "junit.xml": "a711f6201c7594c71ead257530bb4b5d04e83706f9589261d1d2d5e1c9e72d37",
+    "pytest.stderr.log": "cb3947fb67a5eba2413556c27d2fc3530de93faa717b258cfe6e9d4b0bbc1dfb",
+    "pytest.stdout.log": "6bbd9d9c3e6c5e578477e850c1699004f4a3ba35c3e92afcbb3bcd2d620d37af",
+    "ruff.stderr.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "ruff.stdout.log": "82b3e6a6c090a57601d22943bd23fca9218d1031dbe5a7b754092f9a156b4f18"
+  }
+}

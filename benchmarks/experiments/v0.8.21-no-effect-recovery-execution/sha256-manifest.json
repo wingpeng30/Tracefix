@@ -1,0 +1,10 @@
+{
+  "schema_version": 1,
+  "kind": "v0.8.21_artifact_manifest",
+  "files": {
+    "protocol.json": "7a95d3988f2463fcb0cf12caaa44533efe499aa375759d7cb06680235da0b290",
+    "execution-identity.json": "f1a819560d96aae3d6784f38169bdb0781152a294f90a363d79692b8e5aefee7",
+    "engineering-verification.json": "99fab22a27021bd2930bc40ca9ae3e50a4cab971feb383418125fb1a2dd550cc",
+    "decision-rules.json": "32844281914cbef95afb918d0703bc89c640a20d44443e289e8a6c8b6acf01bb"
+  }
+}

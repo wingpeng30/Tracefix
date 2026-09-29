@@ -1,0 +1,1672 @@
+{
+  "schema_version": 1,
+  "protocol_sha256": "6ff8c07017e1c6c7ecf3156a25e6c8bd223985f829a18e37d4a75d4371c870cd",
+  "ordinary_pair_count": 24,
+  "all_pair_count": 30,
+  "cases": [
+    {
+      "task_id": "psf__requests-1142",
+      "repetition": 1,
+      "primary_ordinary": true,
+      "direction": "same_success",
+      "baseline_sequence": 1,
+      "action_sequence": 3,
+      "baseline_passed": true,
+      "action_passed": true,
+      "baseline_failure": "passed",
+      "action_failure": "passed",
+      "baseline_termination": "agent_completed",
+      "action_termination": "agent_completed",
+      "input_delta_action_minus_baseline": -54967,
+      "output_delta_action_minus_baseline": -868,
+      "agent_seconds_delta_action_minus_baseline": -11.23399999999674,
+      "first_post_request_observable_difference": {
+        "request_ordinal": 1,
+        "stage": "assistant_decision",
+        "baseline_event_line": 9,
+        "action_event_line": 9,
+        "baseline_sha256": "08c5a5c40ab4122a1c54ec155896e364f8feced414e7cfc6982c6fe07cad5883",
+        "action_sha256": "f8f7b8f76ace75aef9847adfc4bcfc2afce24d351dd59df44968ee2466bc7e2f"
+      },
+      "content_marker_count_changes": {
+        "missing_exception_class": {
+          "baseline": 0,
+          "action": 1
+        },
+        "missing_repository_path": {
+          "baseline": 0,
+          "action": 6
+        },
+        "missing_test_node": {
+          "baseline": 0,
+          "action": 10
+        },
+        "tool_results": {
+          "baseline": 20,
+          "action": 12
+        },
+        "tool_results_shortened": {
+          "baseline": 0,
+          "action": 12
+        }
+      },
+      "evidence": [
+        {
+          "sequence": 1,
+          "trace_sha256": "0e5881018a101537081b94dce0b82c14b9ce0a1351fb0b17c2ff0b94383e3560",
+          "run_result_sha256": "1fdb9677c1b533ad3c7dc060796a7206561ec78aa4268c8ca84462dfd9677c67"
+        },
+        {
+          "sequence": 3,
+          "trace_sha256": "17d1314ce7a5644bcd34ceae391c7250428bad561bc18a4e52cb602f955254eb",
+          "run_result_sha256": "f13b8e64a86b272367f195fea72fa8fe10fe25392dca8b60b73ab664330cc3f3"
+        }
+      ],
+      "interpretation": "observable_association_only; no causal or model-motive claim"
+    },
+    {
+      "task_id": "psf__requests-1142",
+      "repetition": 2,
+      "primary_ordinary": true,
+      "direction": "same_success",
+      "baseline_sequence": 44,
+      "action_sequence": 42,
+      "baseline_passed": true,
+      "action_passed": true,
+      "baseline_failure": "passed",
+      "action_failure": "passed",
+      "baseline_termination": "agent_completed",
+      "action_termination": "agent_completed",
+      "input_delta_action_minus_baseline": -18784,
+      "output_delta_action_minus_baseline": 332,
+      "agent_seconds_delta_action_minus_baseline": 2.375,
+      "first_post_request_observable_difference": {
+        "request_ordinal": 1,
+        "stage": "tool_results",
+        "baseline_event_line": 13,
+        "action_event_line": 13,
+        "baseline_sha256": "9c20b0179667ae5d12ed0f104a8cf8421d77dd447b2124582400172d8ec11eef",
+        "action_sha256": "d9a7ea51af6a1199cad1759c16f854d62825f23347f26727e98ac8b3f293043f"
+      },
+      "content_marker_count_changes": {
+        "missing_exception_class": {
+          "baseline": 0,
+          "action": 1
+        },
+        "missing_repository_path": {
+          "baseline": 0,
+          "action": 7
+        },
+        "missing_test_node": {
+          "baseline": 0,
+          "action": 10
+        },
+        "tool_results": {
+          "baseline": 15,
+          "action": 16
+        },
+        "tool_results_shortened": {
+          "baseline": 0,
+          "action": 16
+        }
+      },
+      "evidence": [
+        {
+          "sequence": 44,
+          "trace_sha256": "b849a0b40e05668d5be6c39eb458762b78b02f55daaa2f61db37938ad4ab93cb",
+          "run_result_sha256": "f17da5f117d52d90f8b26a146ffde95f2918a34048d15a051d908484c542bd41"
+        },
+        {
+          "sequence": 42,
+          "trace_sha256": "4c372629cede8efbebee94456500f45044e6977f71345b3f75f2cfaff013c565",
+          "run_result_sha256": "8241283820d2e701cf14a46550e53b53dc7b5a46331e11125e1c958b3de98f4d"
+        }
+      ],
+      "interpretation": "observable_association_only; no causal or model-motive claim"
+    },
+    {
+      "task_id": "psf__requests-1142",
+      "repetition": 3,
+      "primary_ordinary": true,
+      "direction": "same_success",
+      "baseline_sequence": 83,
+      "action_sequence": 81,
+      "baseline_passed": true,
+      "action_passed": true,
+      "baseline_failure": "passed",
+      "action_failure": "passed",
+      "baseline_termination": "agent_completed",
+      "action_termination": "agent_completed",
+      "input_delta_action_minus_baseline": -60128,
+      "output_delta_action_minus_baseline": -209,
+      "agent_seconds_delta_action_minus_baseline": -0.8589999999967404,
+      "first_post_request_observable_difference": {
+        "request_ordinal": 1,
+        "stage": "assistant_decision",
+        "baseline_event_line": 9,
+        "action_event_line": 9,
+        "baseline_sha256": "f8f7b8f76ace75aef9847adfc4bcfc2afce24d351dd59df44968ee2466bc7e2f",
+        "action_sha256": "08c5a5c40ab4122a1c54ec155896e364f8feced414e7cfc6982c6fe07cad5883"
+      },
+      "content_marker_count_changes": {
+        "missing_exception_class": {
+          "baseline": 0,
+          "action": 1
+        },
+        "missing_repository_path": {
+          "baseline": 0,
+          "action": 10
+        },
+        "missing_test_node": {
+          "baseline": 0,
+          "action": 10
+        },
+        "tool_results": {
+          "baseline": 18,
+          "action": 13
+        },
+        "tool_results_shortened": {
+          "baseline": 0,
+          "action": 13
+        }
+      },
+      "evidence": [
+        {
+          "sequence": 83,
+          "trace_sha256": "938c1d5c7f7a83e5974d4d98200d5d82558142373124cf89d750494914530a76",
+          "run_result_sha256": "a419286c5c5da10867a7f93dd26c1357ca2359c6802e18d4cae6b286904ee518"
+        },
+        {
+          "sequence": 81,
+          "trace_sha256": "288def6f03dd2d50dd9f6a2a7c982c8b9c884f7ab18f61ed5a66d7fd6bc8229d",
+          "run_result_sha256": "9c43757763f385b0ffdd4d4f780f674ded2e213c97f2035223e87768fd6d5720"
+        }
+      ],
+      "interpretation": "observable_association_only; no causal or model-motive claim"
+    },
+    {
+      "task_id": "psf__requests-1766",
+      "repetition": 1,
+      "primary_ordinary": true,
+      "direction": "same_success",
+      "baseline_sequence": 8,
+      "action_sequence": 6,
+      "baseline_passed": true,
+      "action_passed": true,
+      "baseline_failure": "passed",
+      "action_failure": "passed",
+      "baseline_termination": "agent_completed",
+      "action_termination": "agent_completed",
+      "input_delta_action_minus_baseline": -5697,
+      "output_delta_action_minus_baseline": 164,
+      "agent_seconds_delta_action_minus_baseline": 4.592999999993481,
+      "first_post_request_observable_difference": {
+        "request_ordinal": 1,
+        "stage": "assistant_decision",
+        "baseline_event_line": 9,
+        "action_event_line": 9,
+        "baseline_sha256": "e95c1d7fae4041e0b60bce1431d5f3e0a06397cf2eefee047a476a7b3bca819d",
+        "action_sha256": "e4a1d3b97a3a7eba0cf508a3bc1425297b0bff347519b12a60fa06a78152b399"
+      },
+      "content_marker_count_changes": {
+        "missing_repository_path": {
+          "baseline": 0,
+          "action": 5
+        },
+        "missing_test_node": {
+          "baseline": 0,
+          "action": 1
+        },
+        "tool_results": {
+          "baseline": 8,
+          "action": 10
+        },
+        "tool_results_shortened": {
+          "baseline": 0,
+          "action": 10
+        }
+      },
+      "evidence": [
+        {
+          "sequence": 8,
+          "trace_sha256": "59b0d08edc269c4a7cbab32d9366c690a4d01b3e2705a6379b4dcd1e24d58824",
+          "run_result_sha256": "73bff947ac4dba6b60439df9ba14272b4c57a7cd80531895a5eeee9c9fa1edee"
+        },
+        {
+          "sequence": 6,
+          "trace_sha256": "7d8e7e0fddf10ed2d1c13236feef927236fd78c5b79b92434dc67a80a3e893ef",
+          "run_result_sha256": "da304e029a620942cc0b392d1e4cf8123ad89bf053536ed477b7788b4bb36aad"
+        }
+      ],
+      "interpretation": "observable_association_only; no causal or model-motive claim"
+    },
+    {
+      "task_id": "psf__requests-1766",
+      "repetition": 2,
+      "primary_ordinary": true,
+      "direction": "same_success",
+      "baseline_sequence": 47,
+      "action_sequence": 45,
+      "baseline_passed": true,
+      "action_passed": true,
+      "baseline_failure": "passed",
+      "action_failure": "passed",
+      "baseline_termination": "agent_completed",
+      "action_termination": "agent_completed",
+      "input_delta_action_minus_baseline": -12365,
+      "output_delta_action_minus_baseline": -4,
+      "agent_seconds_delta_action_minus_baseline": 71.48499999998603,
+      "first_post_request_observable_difference": {
+        "request_ordinal": 1,
+        "stage": "tool_results",
+        "baseline_event_line": 13,
+        "action_event_line": 13,
+        "baseline_sha256": "c4e37ddbe7fd428b044d13422cffd78c8e66a1f600bb36eca6f557713fd16a00",
+        "action_sha256": "980254c5412d27dedf75bde0fb5986d810a512e791fd16ae067187b7407116ce"
+      },
+      "content_marker_count_changes": {
+        "missing_repository_path": {
+          "baseline": 0,
+          "action": 5
+        },
+        "missing_test_node": {
+          "baseline": 0,
+          "action": 1
+        },
+        "tool_results_shortened": {
+          "baseline": 0,
+          "action": 8
+        }
+      },
+      "evidence": [
+        {
+          "sequence": 47,
+          "trace_sha256": "5a602f669763668dc69fbc9321f4ed60431f0d37c60668aff6fe7cb94ea3452c",
+          "run_result_sha256": "cc5f59ae3bce7d3d6164a40a71ab4e71a351fdf6f1fcc602a08b0c7ce156e0f1"
+        },
+        {
+          "sequence": 45,
+          "trace_sha256": "8f1378a081acc80692ac8413067734a851d3c4a2b23a16a3378de87777dcdc08",
+          "run_result_sha256": "10f9cfeee56f10bdad3cb470c6d6824ed9064718f8b59b4ea9a6db786ca48c70"
+        }
+      ],
+      "interpretation": "observable_association_only; no causal or model-motive claim"
+    },
+    {
+      "task_id": "psf__requests-1766",
+      "repetition": 3,
+      "primary_ordinary": true,
+      "direction": "same_success",
+      "baseline_sequence": 86,
+      "action_sequence": 88,
+      "baseline_passed": true,
+      "action_passed": true,
+      "baseline_failure": "passed",
+      "action_failure": "passed",
+      "baseline_termination": "agent_completed",
+      "action_termination": "agent_completed",
+      "input_delta_action_minus_baseline": 6578,
+      "output_delta_action_minus_baseline": 50,
+      "agent_seconds_delta_action_minus_baseline": 1.8269999999902211,
+      "first_post_request_observable_difference": {
+        "request_ordinal": 1,
+        "stage": "tool_results",
+        "baseline_event_line": 13,
+        "action_event_line": 13,
+        "baseline_sha256": "e94c64171e7068f9ff6751c4f77f797e5c59832726f7e7d49728a6dcfdd059dd",
+        "action_sha256": "06aff75f7e55d9256b4fe68729407338db9d2720d89c94ecffdf88d88ddcb3b8"
+      },
+      "content_marker_count_changes": {
+        "missing_repository_path": {
+          "baseline": 0,
+          "action": 5
+        },
+        "missing_test_node": {
+          "baseline": 0,
+          "action": 1
+        },
+        "tool_results": {
+          "baseline": 8,
+          "action": 9
+        },
+        "tool_results_shortened": {
+          "baseline": 0,
+          "action": 9
+        }
+      },
+      "evidence": [
+        {
+          "sequence": 86,
+          "trace_sha256": "b20f7a3aa15f22a6402fe92759a89715f7fba7c856b10c28d522551f09280ab3",
+          "run_result_sha256": "d349a77a537ec2d50d78df39b85eac8437aff2ab6011f37113507658a589fd33"
+        },
+        {
+          "sequence": 88,
+          "trace_sha256": "e475a8327df23005c9ededd8398b9a9dbe1cf248e579cd6b2d84edd1ebdc0b8e",
+          "run_result_sha256": "d237e0a18c84d8deafd0de09f8294c6c67e95cb63f74f940fc30a2ac32ec1f42"
+        }
+      ],
+      "interpretation": "observable_association_only; no causal or model-motive claim"
+    },
+    {
+      "task_id": "pylint-dev__pylint-4551",
+      "repetition": 1,
+      "primary_ordinary": false,
+      "direction": "same_success",
+      "baseline_sequence": 11,
+      "action_sequence": 9,
+      "baseline_passed": false,
+      "action_passed": false,
+      "baseline_failure": "empty_agent_patch",
+      "action_failure": "pytest collection failed",
+      "baseline_termination": "normal_trial_budget_stop",
+      "action_termination": "normal_trial_budget_stop",
+      "input_delta_action_minus_baseline": 36285,
+      "output_delta_action_minus_baseline": 1475,
+      "agent_seconds_delta_action_minus_baseline": 24.375,
+      "first_post_request_observable_difference": {
+        "request_ordinal": 1,
+        "stage": "assistant_decision",
+        "baseline_event_line": 9,
+        "action_event_line": 9,
+        "baseline_sha256": "a06ee7c1b54c24e7771c37ee9f73abea78e5c46f08a927040d268a043f1b45c5",
+        "action_sha256": "d75965593f9c7127ad0a9f55435fbd4a6b00b88daa255e40eaddb67dad0d72d2"
+      },
+      "content_marker_count_changes": {
+        "missing_exception_class": {
+          "baseline": 0,
+          "action": 5
+        },
+        "missing_repository_path": {
+          "baseline": 0,
+          "action": 19
+        },
+        "tool_results": {
+          "baseline": 22,
+          "action": 34
+        },
+        "tool_results_shortened": {
+          "baseline": 0,
+          "action": 34
+        }
+      },
+      "evidence": [
+        {
+          "sequence": 11,
+          "trace_sha256": "885437c90159521f9d5bebd356a878fb94ffc3b6a4771c94019515a62d568a92",
+          "run_result_sha256": "0d16064d82e26a15748fe7380f353d878a82dece2683df9be1495c99ad875266"
+        },
+        {
+          "sequence": 9,
+          "trace_sha256": "903cd87b266e3788f6a2b82197041239eff3402c3ac658ccca4d5231fed66ade",
+          "run_result_sha256": "c10e10b5a4fdff71ebd0189d6865d951b0ec0809c04fe0b364228aeaf3561e86"
+        }
+      ],
+      "interpretation": "observable_association_only; no causal or model-motive claim"
+    },
+    {
+      "task_id": "pylint-dev__pylint-4551",
+      "repetition": 2,
+      "primary_ordinary": false,
+      "direction": "same_success",
+      "baseline_sequence": 50,
+      "action_sequence": 52,
+      "baseline_passed": false,
+      "action_passed": false,
+      "baseline_failure": "empty_agent_patch",
+      "action_failure": "pytest collection failed",
+      "baseline_termination": "normal_trial_budget_stop",
+      "action_termination": "normal_trial_budget_stop",
+      "input_delta_action_minus_baseline": 29357,
+      "output_delta_action_minus_baseline": 1005,
+      "agent_seconds_delta_action_minus_baseline": 0.015000000013969839,
+      "first_post_request_observable_difference": {
+        "request_ordinal": 1,
+        "stage": "assistant_decision",
+        "baseline_event_line": 9,
+        "action_event_line": 9,
+        "baseline_sha256": "fb877a7924cfbe93cbccbf833132cbc34de837f554c5fe10f04f1ddb6de0efa3",
+        "action_sha256": "a06ee7c1b54c24e7771c37ee9f73abea78e5c46f08a927040d268a043f1b45c5"
+      },
+      "content_marker_count_changes": {
+        "missing_assertion_keyword": {
+          "baseline": 0,
+          "action": 3
+        },
+        "missing_exception_class": {
+          "baseline": 0,
+          "action": 7
+        },
+        "missing_repository_path": {
+          "baseline": 0,
+          "action": 19
+        },
+        "tool_results": {
+          "baseline": 25,
+          "action": 27
+        },
+        "tool_results_shortened": {
+          "baseline": 0,
+          "action": 27
+        }
+      },
+      "evidence": [
+        {
+          "sequence": 50,
+          "trace_sha256": "4bdc8ae6bf0950a87aae2ea0afdbf5f0d4636ccc73c096d88d0d9a98448b9bda",
+          "run_result_sha256": "e4df4edb4a2ed0cc313a17cdc8f2379ba4d857466709cb76858aebbfc6596c87"
+        },
+        {
+          "sequence": 52,
+          "trace_sha256": "c530684829ea720a24aaee8ef2072661b12bb1eac5bbff7e136a3834e7add572",
+          "run_result_sha256": "40332dfc5f40e96b38738f6cc23d649513a2331039d775c3f172b4935627204b"
+        }
+      ],
+      "interpretation": "observable_association_only; no causal or model-motive claim"
+    },
+    {
+      "task_id": "pylint-dev__pylint-4551",
+      "repetition": 3,
+      "primary_ordinary": false,
+      "direction": "same_success",
+      "baseline_sequence": 89,
+      "action_sequence": 91,
+      "baseline_passed": false,
+      "action_passed": false,
+      "baseline_failure": "empty_agent_patch",
+      "action_failure": "pytest collection failed",
+      "baseline_termination": "normal_trial_budget_stop",
+      "action_termination": "step_limit_exceeded",
+      "input_delta_action_minus_baseline": 1771,
+      "output_delta_action_minus_baseline": 986,
+      "agent_seconds_delta_action_minus_baseline": -1.1419999999925494,
+      "first_post_request_observable_difference": {
+        "request_ordinal": 1,
+        "stage": "tool_results",
+        "baseline_event_line": 13,
+        "action_event_line": 13,
+        "baseline_sha256": "f1ec78569ae5dfb467ad5d945f19bf0b000fda0a73fecf29905e4a9032824b27",
+        "action_sha256": "fb5e36b3982e61f7b13143eff3ef7935114491e04f6c6e7371b15021475c247a"
+      },
+      "content_marker_count_changes": {
+        "missing_assertion_keyword": {
+          "baseline": 0,
+          "action": 3
+        },
+        "missing_exception_class": {
+          "baseline": 0,
+          "action": 5
+        },
+        "missing_repository_path": {
+          "baseline": 0,
+          "action": 28
+        },
+        "tool_results": {
+          "baseline": 25,
+          "action": 30
+        },
+        "tool_results_shortened": {
+          "baseline": 0,
+          "action": 30
+        }
+      },
+      "evidence": [
+        {
+          "sequence": 89,
+          "trace_sha256": "661143b3d470ff39da3f134a69955f6e1f3d0c97db19de512a6630380de1a5de",
+          "run_result_sha256": "ee8252e16332d1a191a52cc070e7106d95479dcf01d27b6e65696b4431c9ca83"
+        },
+        {
+          "sequence": 91,
+          "trace_sha256": "c9f2351990a498be0aaeae9ac0dd18eb1b9fc9326b806b92d1a6f29ce8d39a89",
+          "run_result_sha256": "a3ca5101ff6811fecf905d3dabc65d2d1bc4e76ca22bb6ae21de36fa1eb59f9f"
+        }
+      ],
+      "interpretation": "observable_association_only; no causal or model-motive claim"
+    },
+    {
+      "task_id": "pylint-dev__pylint-4604",
+      "repetition": 1,
+      "primary_ordinary": false,
+      "direction": "same_success",
+      "baseline_sequence": 14,
+      "action_sequence": 16,
+      "baseline_passed": false,
+      "action_passed": false,
+      "baseline_failure": "agent_modified_test_or_pytest_configuration",
+      "action_failure": "pytest collection failed",
+      "baseline_termination": "normal_trial_budget_stop",
+      "action_termination": "step_limit_exceeded",
+      "input_delta_action_minus_baseline": -48148,
+      "output_delta_action_minus_baseline": -3988,
+      "agent_seconds_delta_action_minus_baseline": -15.173000000009779,
+      "first_post_request_observable_difference": {
+        "request_ordinal": 1,
+        "stage": "tool_results",
+        "baseline_event_line": 13,
+        "action_event_line": 13,
+        "baseline_sha256": "a697ffc6462b58485f23ef30f3a21ac7b918f0eac98fdaf7ed9cae48a71c2359",
+        "action_sha256": "cf77a2534a9c8fe2943026dd34b95476dcab0072c160a721b3e7dbc74d31d278"
+      },
+      "content_marker_count_changes": {
+        "missing_repository_path": {
+          "baseline": 0,
+          "action": 16
+        },
+        "tool_results": {
+          "baseline": 32,
+          "action": 28
+        },
+        "tool_results_shortened": {
+          "baseline": 0,
+          "action": 28
+        }
+      },
+      "evidence": [
+        {
+          "sequence": 14,
+          "trace_sha256": "b0f31dc2e6b6ca0d720f6078c3d3f0e19a754befbc96bea03deab7f3df3808b2",
+          "run_result_sha256": "298d2529a6b4d47bf981c41c88a892a0b52737fadbf7ce9f3aaeea8a7518182e"
+        },
+        {
+          "sequence": 16,
+          "trace_sha256": "eecd1d9913e96271e730d1669ea6557848a089fbecaa165a566501de5e172da2",
+          "run_result_sha256": "2a7fc67c7db312726ca56d16dae89ba3b74c0d4af4e642ee6f12b998b3f7b77a"
+        }
+      ],
+      "interpretation": "observable_association_only; no causal or model-motive claim"
+    },
+    {
+      "task_id": "pylint-dev__pylint-4604",
+      "repetition": 2,
+      "primary_ordinary": false,
+      "direction": "same_success",
+      "baseline_sequence": 53,
+      "action_sequence": 55,
+      "baseline_passed": false,
+      "action_passed": false,
+      "baseline_failure": "pytest collection failed",
+      "action_failure": "pytest collection failed",
+      "baseline_termination": "test_limit_exceeded",
+      "action_termination": "agent_completed",
+      "input_delta_action_minus_baseline": 14,
+      "output_delta_action_minus_baseline": -215,
+      "agent_seconds_delta_action_minus_baseline": 2.4209999999729916,
+      "first_post_request_observable_difference": {
+        "request_ordinal": 1,
+        "stage": "assistant_decision",
+        "baseline_event_line": 9,
+        "action_event_line": 9,
+        "baseline_sha256": "26c674832ad44a5765ed82ab088433a125f75a85c0179632c3b519fd4fd15608",
+        "action_sha256": "8233a4625bb156e70fd448010304477ede9d187fcd393ac3154716169b38eac4"
+      },
+      "content_marker_count_changes": {
+        "missing_assertion_keyword": {
+          "baseline": 0,
+          "action": 1
+        },
+        "missing_repository_path": {
+          "baseline": 0,
+          "action": 24
+        },
+        "tool_results": {
+          "baseline": 36,
+          "action": 32
+        },
+        "tool_results_shortened": {
+          "baseline": 0,
+          "action": 32
+        }
+      },
+      "evidence": [
+        {
+          "sequence": 53,
+          "trace_sha256": "8b3d89154b767620d71dcfa1decf5d515fe098e1987b36099d3062f20c377a66",
+          "run_result_sha256": "6dc641e32145c52c643e199cce6afbfb66412e2358a1b0f318c5029326a341ec"
+        },
+        {
+          "sequence": 55,
+          "trace_sha256": "a4acc67ef2361239846629aa7b902bac072bde673a597da916f63d860a7f1658",
+          "run_result_sha256": "fcaa58f46170e2ecbdd41deb616fe40ce3a71a58becb451e3df9758dd3fe8c58"
+        }
+      ],
+      "interpretation": "observable_association_only; no causal or model-motive claim"
+    },
+    {
+      "task_id": "pylint-dev__pylint-4604",
+      "repetition": 3,
+      "primary_ordinary": false,
+      "direction": "same_success",
+      "baseline_sequence": 96,
+      "action_sequence": 94,
+      "baseline_passed": false,
+      "action_passed": false,
+      "baseline_failure": "empty_agent_patch",
+      "action_failure": "empty_agent_patch",
+      "baseline_termination": "normal_trial_budget_stop",
+      "action_termination": "step_limit_exceeded",
+      "input_delta_action_minus_baseline": 6300,
+      "output_delta_action_minus_baseline": -1067,
+      "agent_seconds_delta_action_minus_baseline": -7.826999999990221,
+      "first_post_request_observable_difference": {
+        "request_ordinal": 1,
+        "stage": "tool_results",
+        "baseline_event_line": 13,
+        "action_event_line": 13,
+        "baseline_sha256": "cf576b6800c61eb42e47df4a58d2368e45a086327f70a042d159fa94ec086cd5",
+        "action_sha256": "64c0c0ad1dab4aba9392a8c50b0a4cf3058ecbfb7e781d56ca5fa5f53b66dbb0"
+      },
+      "content_marker_count_changes": {
+        "missing_assertion_keyword": {
+          "baseline": 0,
+          "action": 1
+        },
+        "missing_repository_path": {
+          "baseline": 0,
+          "action": 25
+        },
+        "tool_results": {
+          "baseline": 33,
+          "action": 27
+        },
+        "tool_results_shortened": {
+          "baseline": 0,
+          "action": 27
+        }
+      },
+      "evidence": [
+        {
+          "sequence": 96,
+          "trace_sha256": "f74b54dc024d6bc37b92feb551576fda572230bef51705d5bb004ada442d2e39",
+          "run_result_sha256": "a50819d3bbe60b02551bd625a0d5c1a782aaab549bc7fd52d123c6d20cce49bd"
+        },
+        {
+          "sequence": 94,
+          "trace_sha256": "c315560972d5d6cceced848fca58baec95b8113dfe864bf09f3d6f62ea13999f",
+          "run_result_sha256": "84e692b238a2e1f3b6f0450d79ebdc1ef5819bcc38ea6e1c37501e834034ccd8"
+        }
+      ],
+      "interpretation": "observable_association_only; no causal or model-motive claim"
+    },
+    {
+      "task_id": "pylint-dev__pylint-4661",
+      "repetition": 1,
+      "primary_ordinary": true,
+      "direction": "same_success",
+      "baseline_sequence": 17,
+      "action_sequence": 19,
+      "baseline_passed": false,
+      "action_passed": false,
+      "baseline_failure": "pytest execution failed",
+      "action_failure": "pytest execution failed",
+      "baseline_termination": "agent_completed",
+      "action_termination": "agent_completed",
+      "input_delta_action_minus_baseline": -109712,
+      "output_delta_action_minus_baseline": -1452,
+      "agent_seconds_delta_action_minus_baseline": -18.85899999999674,
+      "first_post_request_observable_difference": {
+        "request_ordinal": 1,
+        "stage": "assistant_decision",
+        "baseline_event_line": 9,
+        "action_event_line": 9,
+        "baseline_sha256": "f6d6345dc6d9de514b0c58a16773a695c5304f37b5c3d1f9e120008a9bfb6262",
+        "action_sha256": "d517c76610d2f1493bf7aa90fcec7ad9ac640f5c3063b3a51b8b77fd9ef09150"
+      },
+      "content_marker_count_changes": {
+        "missing_exception_class": {
+          "baseline": 0,
+          "action": 1
+        },
+        "tool_results": {
+          "baseline": 26,
+          "action": 13
+        },
+        "tool_results_shortened": {
+          "baseline": 0,
+          "action": 13
+        }
+      },
+      "evidence": [
+        {
+          "sequence": 17,
+          "trace_sha256": "880aaec47b3c61d1b5a1ba215405f348c8c877286926201a465393644bc2e2be",
+          "run_result_sha256": "734d1b9b82b1ac6117b6b225de4e3b867f45d06be9c62ffc29f86818af3d2b54"
+        },
+        {
+          "sequence": 19,
+          "trace_sha256": "92eff6ff90be0ccde9b8f04536250ede25b75b245aa339d06da60e94e2ea2fcf",
+          "run_result_sha256": "53aeee59c750531fa242ff82e78e3356a69ebdd83100ad2463cad2209ab2df08"
+        }
+      ],
+      "interpretation": "observable_association_only; no causal or model-motive claim"
+    },
+    {
+      "task_id": "pylint-dev__pylint-4661",
+      "repetition": 2,
+      "primary_ordinary": true,
+      "direction": "same_success",
+      "baseline_sequence": 60,
+      "action_sequence": 58,
+      "baseline_passed": false,
+      "action_passed": false,
+      "baseline_failure": "pytest execution failed",
+      "action_failure": "pytest execution failed",
+      "baseline_termination": "agent_completed",
+      "action_termination": "agent_completed",
+      "input_delta_action_minus_baseline": -113256,
+      "output_delta_action_minus_baseline": -550,
+      "agent_seconds_delta_action_minus_baseline": -54.76600000000326,
+      "first_post_request_observable_difference": {
+        "request_ordinal": 1,
+        "stage": "tool_results",
+        "baseline_event_line": 13,
+        "action_event_line": 13,
+        "baseline_sha256": "3d086e2e46b33e224d70ec663495abcc4876f429bd8a2cfc5883e3f5b3fc4516",
+        "action_sha256": "854502431d66c8f806d34de1bceee6cff13f40ebd4ba66f6200d66a18848b8f4"
+      },
+      "content_marker_count_changes": {
+        "missing_assertion_keyword": {
+          "baseline": 0,
+          "action": 2
+        },
+        "missing_exception_class": {
+          "baseline": 0,
+          "action": 1
+        },
+        "tool_results": {
+          "baseline": 34,
+          "action": 14
+        },
+        "tool_results_shortened": {
+          "baseline": 0,
+          "action": 14
+        }
+      },
+      "evidence": [
+        {
+          "sequence": 60,
+          "trace_sha256": "7b9c224a7a0109d907fcd5102e456c1466da4e150e5456d6943910d3a58055b1",
+          "run_result_sha256": "e0e0fdfe5eddff2e7dbfbc9e1012a84bdc82b349e23eee82f1cbaa60bbbd4a8f"
+        },
+        {
+          "sequence": 58,
+          "trace_sha256": "94817acd0cfdc21eb640fbd5ea1b4f4b0dfc45508c3285f6ec24bf5a5490f18e",
+          "run_result_sha256": "76a05dcf8ba1afb344e972f195f533c6322cdc642f971c67e055ee0fbc9dd2a0"
+        }
+      ],
+      "interpretation": "observable_association_only; no causal or model-motive claim"
+    },
+    {
+      "task_id": "pylint-dev__pylint-4661",
+      "repetition": 3,
+      "primary_ordinary": true,
+      "direction": "same_success",
+      "baseline_sequence": 99,
+      "action_sequence": 97,
+      "baseline_passed": false,
+      "action_passed": false,
+      "baseline_failure": "empty_agent_patch",
+      "action_failure": "pytest execution failed",
+      "baseline_termination": "normal_trial_budget_stop",
+      "action_termination": "agent_completed",
+      "input_delta_action_minus_baseline": -217775,
+      "output_delta_action_minus_baseline": -236,
+      "agent_seconds_delta_action_minus_baseline": -2.232999999949243,
+      "first_post_request_observable_difference": {
+        "request_ordinal": 1,
+        "stage": "assistant_decision",
+        "baseline_event_line": 9,
+        "action_event_line": 9,
+        "baseline_sha256": "d517c76610d2f1493bf7aa90fcec7ad9ac640f5c3063b3a51b8b77fd9ef09150",
+        "action_sha256": "fad176160340c54b7a7f65c06793d3c7cb8065ddeff44b948cd783ef9875a0bd"
+      },
+      "content_marker_count_changes": {
+        "missing_assertion_keyword": {
+          "baseline": 0,
+          "action": 2
+        },
+        "missing_exception_class": {
+          "baseline": 0,
+          "action": 1
+        },
+        "tool_results": {
+          "baseline": 43,
+          "action": 14
+        },
+        "tool_results_shortened": {
+          "baseline": 0,
+          "action": 14
+        }
+      },
+      "evidence": [
+        {
+          "sequence": 99,
+          "trace_sha256": "fc3244c26477ca1e2082f267a3b2e11d6001fd329a82b7b0e3fa623c10900657",
+          "run_result_sha256": "56014ea71d5bf0f340dffa9db6a303be13db6807319d7dc1bf8e156fc69f0abb"
+        },
+        {
+          "sequence": 97,
+          "trace_sha256": "fcd1a08a63e556eb3ca68d7f6b8fa1ce66c36ad71126df003a2d19c6567fffc6",
+          "run_result_sha256": "927fe39feb397fc80ba498fb570d1446222e129a652a74043904f0c019b52317"
+        }
+      ],
+      "interpretation": "observable_association_only; no causal or model-motive claim"
+    },
+    {
+      "task_id": "pytest-dev__pytest-10051",
+      "repetition": 1,
+      "primary_ordinary": true,
+      "direction": "regression",
+      "baseline_sequence": 24,
+      "action_sequence": 22,
+      "baseline_passed": true,
+      "action_passed": false,
+      "baseline_failure": "passed",
+      "action_failure": "pytest execution failed",
+      "baseline_termination": "step_limit_exceeded",
+      "action_termination": "agent_completed",
+      "input_delta_action_minus_baseline": -159499,
+      "output_delta_action_minus_baseline": -2139,
+      "agent_seconds_delta_action_minus_baseline": -19.65700000000652,
+      "first_post_request_observable_difference": {
+        "request_ordinal": 1,
+        "stage": "tool_results",
+        "baseline_event_line": 13,
+        "action_event_line": 13,
+        "baseline_sha256": "fa77b53b94380fc0e0bc07255b7181ff9db3063257d425ebf7747b3006934243",
+        "action_sha256": "fc1affde8265403f62054a8812b0f10ebed1c10217bac33a64b43f1ddc755a03"
+      },
+      "content_marker_count_changes": {
+        "missing_repository_path": {
+          "baseline": 1,
+          "action": 0
+        },
+        "tool_results": {
+          "baseline": 27,
+          "action": 12
+        },
+        "tool_results_shortened": {
+          "baseline": 0,
+          "action": 12
+        }
+      },
+      "evidence": [
+        {
+          "sequence": 24,
+          "trace_sha256": "7f6931a4fc5f63855e80715f42c67bfe7c87724a8953186d8012c2428acf520f",
+          "run_result_sha256": "9aac072d63e3dc38bd20eb0910e42516815df173c2f1d7f9e35723df5500106b"
+        },
+        {
+          "sequence": 22,
+          "trace_sha256": "0266da95d19f998a602c3b87ba625cdacd503efe5f0ce5f0b830f66a79415060",
+          "run_result_sha256": "83aa2e6b8996b89712d11d2c64a937dba0fb6fc51167a9fa285d5ecf62bf5adb"
+        }
+      ],
+      "interpretation": "observable_association_only; no causal or model-motive claim"
+    },
+    {
+      "task_id": "pytest-dev__pytest-10051",
+      "repetition": 2,
+      "primary_ordinary": true,
+      "direction": "same_success",
+      "baseline_sequence": 63,
+      "action_sequence": 61,
+      "baseline_passed": false,
+      "action_passed": false,
+      "baseline_failure": "pytest execution failed",
+      "action_failure": "pytest execution failed",
+      "baseline_termination": "agent_completed",
+      "action_termination": "agent_completed",
+      "input_delta_action_minus_baseline": -27816,
+      "output_delta_action_minus_baseline": -716,
+      "agent_seconds_delta_action_minus_baseline": -4.108000000007451,
+      "first_post_request_observable_difference": {
+        "request_ordinal": 1,
+        "stage": "tool_results",
+        "baseline_event_line": 13,
+        "action_event_line": 13,
+        "baseline_sha256": "fa77b53b94380fc0e0bc07255b7181ff9db3063257d425ebf7747b3006934243",
+        "action_sha256": "baa5d0670b7a22175bc12debcf8ed244cf3db2a00610210531aecd84651ccd27"
+      },
+      "content_marker_count_changes": {
+        "tool_results": {
+          "baseline": 15,
+          "action": 10
+        },
+        "tool_results_shortened": {
+          "baseline": 0,
+          "action": 10
+        }
+      },
+      "evidence": [
+        {
+          "sequence": 63,
+          "trace_sha256": "e51c175509f28d57063086c13bd8bf694fcf0190dd9184ddcf7df41b46a87ea9",
+          "run_result_sha256": "f39b93ad8ffa53691c8172f5953466580cbfcdb6ec4d40f793d1fe2c632be7da"
+        },
+        {
+          "sequence": 61,
+          "trace_sha256": "36268e280f0758e8a9ad5219e8dcb37e6967097a89945ffa1b5cacad7f33b446",
+          "run_result_sha256": "3448bff3cdf00bb3ab3d3a6638e99c05703cf013df0db551e91c25ffdb484e4c"
+        }
+      ],
+      "interpretation": "observable_association_only; no causal or model-motive claim"
+    },
+    {
+      "task_id": "pytest-dev__pytest-10051",
+      "repetition": 3,
+      "primary_ordinary": true,
+      "direction": "same_success",
+      "baseline_sequence": 102,
+      "action_sequence": 104,
+      "baseline_passed": false,
+      "action_passed": false,
+      "baseline_failure": "pytest execution failed",
+      "action_failure": "pytest execution failed",
+      "baseline_termination": "agent_completed",
+      "action_termination": "agent_completed",
+      "input_delta_action_minus_baseline": -69135,
+      "output_delta_action_minus_baseline": -911,
+      "agent_seconds_delta_action_minus_baseline": -7.26600000000326,
+      "first_post_request_observable_difference": {
+        "request_ordinal": 1,
+        "stage": "tool_results",
+        "baseline_event_line": 13,
+        "action_event_line": 13,
+        "baseline_sha256": "40fa2f69c7300fb568ce2a17b3c74a07683ae41862021cb9c61a4349dea3374e",
+        "action_sha256": "24b7ace18693d93c0f9fa9fd8baab28ed06d8b25cef028fb8d3afcf0d28b1404"
+      },
+      "content_marker_count_changes": {
+        "tool_results": {
+          "baseline": 19,
+          "action": 11
+        },
+        "tool_results_shortened": {
+          "baseline": 0,
+          "action": 11
+        }
+      },
+      "evidence": [
+        {
+          "sequence": 102,
+          "trace_sha256": "b6e5a7b3224a52b77457b52825d933938c7a2f30a97195a54630670857794069",
+          "run_result_sha256": "adeea6f988c5d62db20d1a2be5a7df7aefe43f517c7908232e3c88a1eef73fc3"
+        },
+        {
+          "sequence": 104,
+          "trace_sha256": "1e511b0768dfb93056305f8bd66d38111c44a9241a6c4f295be0f6584eb5f313",
+          "run_result_sha256": "ae67059f3434efde90a5daebc3b49ceb05219b0be493c53bcca87ca88245c953"
+        }
+      ],
+      "interpretation": "observable_association_only; no causal or model-motive claim"
+    },
+    {
+      "task_id": "pytest-dev__pytest-10081",
+      "repetition": 1,
+      "primary_ordinary": true,
+      "direction": "regression",
+      "baseline_sequence": 27,
+      "action_sequence": 25,
+      "baseline_passed": true,
+      "action_passed": false,
+      "baseline_failure": "passed",
+      "action_failure": "empty_agent_patch",
+      "baseline_termination": "normal_trial_budget_stop",
+      "action_termination": "step_limit_exceeded",
+      "input_delta_action_minus_baseline": -51380,
+      "output_delta_action_minus_baseline": 601,
+      "agent_seconds_delta_action_minus_baseline": 1.5790000000270084,
+      "first_post_request_observable_difference": {
+        "request_ordinal": 1,
+        "stage": "tool_results",
+        "baseline_event_line": 13,
+        "action_event_line": 13,
+        "baseline_sha256": "883b043f114de0792689c580cee56268f56450427a7b5fae243a15c57f53a896",
+        "action_sha256": "a86ad65d6c92c23dccd7b0bf06cb9f4d294a18f8b224952cfd645fd693d14d48"
+      },
+      "content_marker_count_changes": {
+        "missing_assertion_keyword": {
+          "baseline": 0,
+          "action": 2
+        },
+        "missing_exception_class": {
+          "baseline": 0,
+          "action": 1
+        },
+        "missing_repository_path": {
+          "baseline": 0,
+          "action": 10
+        },
+        "tool_results": {
+          "baseline": 29,
+          "action": 26
+        },
+        "tool_results_shortened": {
+          "baseline": 0,
+          "action": 26
+        }
+      },
+      "evidence": [
+        {
+          "sequence": 27,
+          "trace_sha256": "2f2a5ab5b0e4303997a90083b6c65a75736dd71e7a164b0ef7de2daa30a1d796",
+          "run_result_sha256": "e9ac2a7991cedbd9bce1962ab72057638867c9ffda9609546e52c18987fd30fa"
+        },
+        {
+          "sequence": 25,
+          "trace_sha256": "59bbf8743466d25d1fae1b684ea78b1a1e2ae2025bc1410527446d3b7a1f17d9",
+          "run_result_sha256": "5461859dbe52065cd851a8f7a0c78dee87f4f2cd392e7172fb51ace2cf26b283"
+        }
+      ],
+      "interpretation": "observable_association_only; no causal or model-motive claim"
+    },
+    {
+      "task_id": "pytest-dev__pytest-10081",
+      "repetition": 2,
+      "primary_ordinary": true,
+      "direction": "same_success",
+      "baseline_sequence": 66,
+      "action_sequence": 68,
+      "baseline_passed": false,
+      "action_passed": false,
+      "baseline_failure": "pytest execution failed",
+      "action_failure": "empty_agent_patch",
+      "baseline_termination": "normal_trial_budget_stop",
+      "action_termination": "step_limit_exceeded",
+      "input_delta_action_minus_baseline": -52989,
+      "output_delta_action_minus_baseline": -60,
+      "agent_seconds_delta_action_minus_baseline": -11.530999999959022,
+      "first_post_request_observable_difference": {
+        "request_ordinal": 1,
+        "stage": "assistant_decision",
+        "baseline_event_line": 9,
+        "action_event_line": 9,
+        "baseline_sha256": "9e0be5e25d4b8cc4d6838ddabc0195a7347afdcba08496c3357e8ac95b70586a",
+        "action_sha256": "d0775df58f8ea92d6ba2b61a04367475d8a0505708c481c5deebe39928b0f5b8"
+      },
+      "content_marker_count_changes": {
+        "missing_assertion_keyword": {
+          "baseline": 0,
+          "action": 1
+        },
+        "missing_exception_class": {
+          "baseline": 0,
+          "action": 1
+        },
+        "missing_repository_path": {
+          "baseline": 0,
+          "action": 9
+        },
+        "tool_results": {
+          "baseline": 26,
+          "action": 25
+        },
+        "tool_results_shortened": {
+          "baseline": 0,
+          "action": 25
+        }
+      },
+      "evidence": [
+        {
+          "sequence": 66,
+          "trace_sha256": "6c50c589a2a212929996cb04f81af54aa25ecfe25623c016a9ddfb1ae7889f17",
+          "run_result_sha256": "ba6f829652c1e5ff801f3de5069377bcc0e52f234704364af385a526a483a4d7"
+        },
+        {
+          "sequence": 68,
+          "trace_sha256": "5100585a478a94eb7b82a25bcc53a703e68adaae6cf2bbb8f3187523ef3cf6b5",
+          "run_result_sha256": "b22333593f8a6b3f66e0d77cb46e78c17bd25e5cacb2553b44a462917f00be6e"
+        }
+      ],
+      "interpretation": "observable_association_only; no causal or model-motive claim"
+    },
+    {
+      "task_id": "pytest-dev__pytest-10081",
+      "repetition": 3,
+      "primary_ordinary": true,
+      "direction": "same_success",
+      "baseline_sequence": 105,
+      "action_sequence": 107,
+      "baseline_passed": true,
+      "action_passed": true,
+      "baseline_failure": "passed",
+      "action_failure": "passed",
+      "baseline_termination": "normal_trial_budget_stop",
+      "action_termination": "agent_completed",
+      "input_delta_action_minus_baseline": -100429,
+      "output_delta_action_minus_baseline": -925,
+      "agent_seconds_delta_action_minus_baseline": 16.0,
+      "first_post_request_observable_difference": {
+        "request_ordinal": 1,
+        "stage": "tool_results",
+        "baseline_event_line": 13,
+        "action_event_line": 13,
+        "baseline_sha256": "3efe081bdbcd982806cb9f57c4a04e73e45e4f6797ee2fd328db578a4f4fb782",
+        "action_sha256": "13f647cc4a4758b06f23013498c597989747c555c798d66777a6d5fbe33bac24"
+      },
+      "content_marker_count_changes": {
+        "missing_assertion_keyword": {
+          "baseline": 0,
+          "action": 2
+        },
+        "missing_exception_class": {
+          "baseline": 0,
+          "action": 1
+        },
+        "missing_repository_path": {
+          "baseline": 0,
+          "action": 10
+        },
+        "tool_results": {
+          "baseline": 27,
+          "action": 23
+        },
+        "tool_results_shortened": {
+          "baseline": 0,
+          "action": 23
+        }
+      },
+      "evidence": [
+        {
+          "sequence": 105,
+          "trace_sha256": "44905908b9ce372ae9780048fff4e4daacd3a0c5688bcf82c52776b0b14c5abb",
+          "run_result_sha256": "27bec085061b14fd2270c2c844baff02e0d4bbc370adacf76513574865801883"
+        },
+        {
+          "sequence": 107,
+          "trace_sha256": "e0b3ee92c8e5cc0165bdae7484e9c27ccf2acfd5902e7cc086891686b78792bf",
+          "run_result_sha256": "b2b85f0f0f16f1036a6d9894f522106e51700a9213ca63ee5a3a537ba290370c"
+        }
+      ],
+      "interpretation": "observable_association_only; no causal or model-motive claim"
+    },
+    {
+      "task_id": "pytest-dev__pytest-10356",
+      "repetition": 1,
+      "primary_ordinary": true,
+      "direction": "same_success",
+      "baseline_sequence": 30,
+      "action_sequence": 32,
+      "baseline_passed": false,
+      "action_passed": false,
+      "baseline_failure": "pytest execution failed",
+      "action_failure": "pytest execution failed",
+      "baseline_termination": "normal_trial_budget_stop",
+      "action_termination": "step_limit_exceeded",
+      "input_delta_action_minus_baseline": -63159,
+      "output_delta_action_minus_baseline": 867,
+      "agent_seconds_delta_action_minus_baseline": -12.561999999976251,
+      "first_post_request_observable_difference": {
+        "request_ordinal": 1,
+        "stage": "tool_results",
+        "baseline_event_line": 13,
+        "action_event_line": 13,
+        "baseline_sha256": "e3a75ebeff6b61c53d29ffb95224b5dc0b616e4303f1547f8a74ad9434e65d58",
+        "action_sha256": "29e89573b0b619ab2f19304d3ae0a54365e1dd793d35965273ecd0611fbc3008"
+      },
+      "content_marker_count_changes": {
+        "missing_repository_path": {
+          "baseline": 0,
+          "action": 7
+        },
+        "tool_results_shortened": {
+          "baseline": 0,
+          "action": 29
+        }
+      },
+      "evidence": [
+        {
+          "sequence": 30,
+          "trace_sha256": "d398781ef9a8850796930b98435d4b2be4b899d2df4e322448abc6bebdf894a2",
+          "run_result_sha256": "07ed1ad9fdc48686a38e5cadacf8476601b708af2876bd1c62c4147fe67b92c4"
+        },
+        {
+          "sequence": 32,
+          "trace_sha256": "9312e5a935c93264a1e40a0a2ae9cb70f7699b54ddb367b29585cb44ffe4f686",
+          "run_result_sha256": "c6bbd7694942a4e6395aa291511b54f3d179590f0b88d2061d0dd45e9b5f82d4"
+        }
+      ],
+      "interpretation": "observable_association_only; no causal or model-motive claim"
+    },
+    {
+      "task_id": "pytest-dev__pytest-10356",
+      "repetition": 2,
+      "primary_ordinary": true,
+      "direction": "same_success",
+      "baseline_sequence": 69,
+      "action_sequence": 71,
+      "baseline_passed": false,
+      "action_passed": false,
+      "baseline_failure": "pytest execution failed",
+      "action_failure": "pytest execution failed",
+      "baseline_termination": "step_limit_exceeded",
+      "action_termination": "test_limit_exceeded",
+      "input_delta_action_minus_baseline": -74222,
+      "output_delta_action_minus_baseline": 725,
+      "agent_seconds_delta_action_minus_baseline": 5.672000000020489,
+      "first_post_request_observable_difference": {
+        "request_ordinal": 1,
+        "stage": "assistant_decision",
+        "baseline_event_line": 9,
+        "action_event_line": 9,
+        "baseline_sha256": "fa88a128bebedf97afe4d2235c11cab1881f9873c24dcbf34e9a2d81ba98f465",
+        "action_sha256": "f64773f869b070c8a6fd9e53dc000b3675d103171c3150c32a8b36354c40fb17"
+      },
+      "content_marker_count_changes": {
+        "missing_assertion_keyword": {
+          "baseline": 0,
+          "action": 1
+        },
+        "missing_repository_path": {
+          "baseline": 1,
+          "action": 9
+        },
+        "missing_test_node": {
+          "baseline": 0,
+          "action": 9
+        },
+        "tool_results": {
+          "baseline": 30,
+          "action": 28
+        },
+        "tool_results_shortened": {
+          "baseline": 0,
+          "action": 28
+        }
+      },
+      "evidence": [
+        {
+          "sequence": 69,
+          "trace_sha256": "ce8a0d19877c0aaca75cc80e826015a4222caf4e86c77eb2b0e1e7e899c45eb5",
+          "run_result_sha256": "941be41c8043ef05f849ca95aab540be5959c79e091d01828e14822d63578007"
+        },
+        {
+          "sequence": 71,
+          "trace_sha256": "8b003a3b080eeda12471d7f8898c36647aa1c77c8fcf975608a28aced35cbc60",
+          "run_result_sha256": "b03e9889fcb71cfb7ee94173da4f9a77a89a405c8eb6b79814991b0a88766eda"
+        }
+      ],
+      "interpretation": "observable_association_only; no causal or model-motive claim"
+    },
+    {
+      "task_id": "pytest-dev__pytest-10356",
+      "repetition": 3,
+      "primary_ordinary": true,
+      "direction": "regression",
+      "baseline_sequence": 112,
+      "action_sequence": 110,
+      "baseline_passed": true,
+      "action_passed": false,
+      "baseline_failure": "passed",
+      "action_failure": "pytest execution failed",
+      "baseline_termination": "step_limit_exceeded",
+      "action_termination": "step_limit_exceeded",
+      "input_delta_action_minus_baseline": -73586,
+      "output_delta_action_minus_baseline": 1306,
+      "agent_seconds_delta_action_minus_baseline": 3.1880000000237487,
+      "first_post_request_observable_difference": {
+        "request_ordinal": 1,
+        "stage": "tool_results",
+        "baseline_event_line": 13,
+        "action_event_line": 13,
+        "baseline_sha256": "45469069c0a30ae429f0993c1c946868732a1b198513a5dfbc6c0ad0bb59db13",
+        "action_sha256": "4d6735640642e0628fcd48ae6b7e94aa663f410cb655a58b54fb0f25ee95d5dc"
+      },
+      "content_marker_count_changes": {
+        "missing_repository_path": {
+          "baseline": 0,
+          "action": 6
+        },
+        "tool_results": {
+          "baseline": 28,
+          "action": 26
+        },
+        "tool_results_shortened": {
+          "baseline": 0,
+          "action": 26
+        }
+      },
+      "evidence": [
+        {
+          "sequence": 112,
+          "trace_sha256": "eb07157a26e7094506c2deed6a0f31528f06cc2adb59eb8a91e6144e5173d305",
+          "run_result_sha256": "9988a7e89b5185bc11bc31e265821943c1762f224bcb81842e409983855b217a"
+        },
+        {
+          "sequence": 110,
+          "trace_sha256": "80e3f3590ba1484dc6aebe23c95f1c3cbb5b82c619ec8f8d5375edc29c571f78",
+          "run_result_sha256": "61fec57dbcf566edc80ade27876cda31d595c05b9060ea7c63b5ffed25c19400"
+        }
+      ],
+      "interpretation": "observable_association_only; no causal or model-motive claim"
+    },
+    {
+      "task_id": "sphinx-doc__sphinx-10435",
+      "repetition": 1,
+      "primary_ordinary": true,
+      "direction": "regression",
+      "baseline_sequence": 33,
+      "action_sequence": 35,
+      "baseline_passed": true,
+      "action_passed": false,
+      "baseline_failure": "passed",
+      "action_failure": "pytest execution failed",
+      "baseline_termination": "normal_trial_budget_stop",
+      "action_termination": "agent_completed",
+      "input_delta_action_minus_baseline": -117909,
+      "output_delta_action_minus_baseline": -5619,
+      "agent_seconds_delta_action_minus_baseline": 7.686999999976251,
+      "first_post_request_observable_difference": {
+        "request_ordinal": 1,
+        "stage": "assistant_decision",
+        "baseline_event_line": 9,
+        "action_event_line": 9,
+        "baseline_sha256": "05ea17016bd9d69895c462a4402d6aa3b70e978c6cf91faf19e810700be6678f",
+        "action_sha256": "8b9ccea8550e9a6ed1f4fa2501e1e96354576b17c2a0160711771e594393931e"
+      },
+      "content_marker_count_changes": {
+        "missing_assertion_keyword": {
+          "baseline": 0,
+          "action": 2
+        },
+        "missing_repository_path": {
+          "baseline": 0,
+          "action": 6
+        },
+        "tool_results": {
+          "baseline": 27,
+          "action": 19
+        },
+        "tool_results_shortened": {
+          "baseline": 0,
+          "action": 19
+        }
+      },
+      "evidence": [
+        {
+          "sequence": 33,
+          "trace_sha256": "5dfbddd1bc3a3abc468fa10dafd44563c8a4a72ed490d78c43e2a29cef5f0903",
+          "run_result_sha256": "2d935b8c89823505adf518d3fd719d84e4edd1f18a33361ffbc68c47bf7caa02"
+        },
+        {
+          "sequence": 35,
+          "trace_sha256": "24fbb7aadb2ecbb119ae8133baf49d59f94b810baa47937c22892f5e1c8d06e1",
+          "run_result_sha256": "10b8d5fcf142903357d7d59fb240f54357ccc700d6c067e6ec7ee2a99ebd7e36"
+        }
+      ],
+      "interpretation": "observable_association_only; no causal or model-motive claim"
+    },
+    {
+      "task_id": "sphinx-doc__sphinx-10435",
+      "repetition": 2,
+      "primary_ordinary": true,
+      "direction": "regression",
+      "baseline_sequence": 76,
+      "action_sequence": 74,
+      "baseline_passed": true,
+      "action_passed": false,
+      "baseline_failure": "passed",
+      "action_failure": "pytest execution failed",
+      "baseline_termination": "normal_trial_budget_stop",
+      "action_termination": "step_limit_exceeded",
+      "input_delta_action_minus_baseline": -19776,
+      "output_delta_action_minus_baseline": 2821,
+      "agent_seconds_delta_action_minus_baseline": -0.7349999999860302,
+      "first_post_request_observable_difference": {
+        "request_ordinal": 1,
+        "stage": "assistant_decision",
+        "baseline_event_line": 9,
+        "action_event_line": 9,
+        "baseline_sha256": "8b9ccea8550e9a6ed1f4fa2501e1e96354576b17c2a0160711771e594393931e",
+        "action_sha256": "dd274f845d9c0d74316c588c4ad5d13954c804656a4aaab11bc022a197c7ff37"
+      },
+      "content_marker_count_changes": {
+        "missing_assertion_keyword": {
+          "baseline": 0,
+          "action": 2
+        },
+        "missing_repository_path": {
+          "baseline": 0,
+          "action": 7
+        },
+        "missing_test_node": {
+          "baseline": 0,
+          "action": 1
+        },
+        "tool_results_shortened": {
+          "baseline": 0,
+          "action": 26
+        }
+      },
+      "evidence": [
+        {
+          "sequence": 76,
+          "trace_sha256": "160ed1a217388ec632c329d472c03f2620be8e92913281364104fe9cb24f79b6",
+          "run_result_sha256": "aa31f1d02dca167596fb9e492de4c2b68120732d0f4c75567833a203acb5a433"
+        },
+        {
+          "sequence": 74,
+          "trace_sha256": "80f837ee40f40ae00991569df44ad11420752bb509b43813c018d3adf6907843",
+          "run_result_sha256": "54833441e8c3b9349b5ae14b7763c91dd5a0b8490fec293c81499c501d945f63"
+        }
+      ],
+      "interpretation": "observable_association_only; no causal or model-motive claim"
+    },
+    {
+      "task_id": "sphinx-doc__sphinx-10435",
+      "repetition": 3,
+      "primary_ordinary": true,
+      "direction": "reverse",
+      "baseline_sequence": 115,
+      "action_sequence": 113,
+      "baseline_passed": false,
+      "action_passed": true,
+      "baseline_failure": "pytest execution failed",
+      "action_failure": "passed",
+      "baseline_termination": "normal_trial_budget_stop",
+      "action_termination": "step_limit_exceeded",
+      "input_delta_action_minus_baseline": -18860,
+      "output_delta_action_minus_baseline": -1600,
+      "agent_seconds_delta_action_minus_baseline": 52.875,
+      "first_post_request_observable_difference": {
+        "request_ordinal": 1,
+        "stage": "tool_results",
+        "baseline_event_line": 13,
+        "action_event_line": 13,
+        "baseline_sha256": "7bc78e41283052fd8bb3420ea55e80a8a05bb9efff545474bd313f6cbe63c366",
+        "action_sha256": "42a70903529939b29461c6d69402f6839fa56d94c6243a4a32e66207f7288243"
+      },
+      "content_marker_count_changes": {
+        "missing_assertion_keyword": {
+          "baseline": 0,
+          "action": 4
+        },
+        "missing_exception_class": {
+          "baseline": 0,
+          "action": 1
+        },
+        "missing_repository_path": {
+          "baseline": 0,
+          "action": 11
+        },
+        "missing_test_node": {
+          "baseline": 0,
+          "action": 2
+        },
+        "tool_results": {
+          "baseline": 28,
+          "action": 26
+        },
+        "tool_results_shortened": {
+          "baseline": 0,
+          "action": 26
+        }
+      },
+      "evidence": [
+        {
+          "sequence": 115,
+          "trace_sha256": "cf6fbc696d98f3f547cd3862882981b7ac5914a9ec3233466a33e6bb268da937",
+          "run_result_sha256": "25ff1d9eaec017afbb1d4ce1086155f323596cd1316a4a4c961f45953169076b"
+        },
+        {
+          "sequence": 113,
+          "trace_sha256": "f396bc579acde752f0896ed8acecbac32c6ca8843c6015fcbb5be43009aeb478",
+          "run_result_sha256": "f556cbbac6095adccd5d9c0d80e9f1234a2a77c6512208504c9a974823ab8dfe"
+        }
+      ],
+      "interpretation": "observable_association_only; no causal or model-motive claim"
+    },
+    {
+      "task_id": "sphinx-doc__sphinx-10449",
+      "repetition": 1,
+      "primary_ordinary": true,
+      "direction": "same_success",
+      "baseline_sequence": 40,
+      "action_sequence": 38,
+      "baseline_passed": true,
+      "action_passed": true,
+      "baseline_failure": "passed",
+      "action_failure": "passed",
+      "baseline_termination": "normal_trial_budget_stop",
+      "action_termination": "agent_completed",
+      "input_delta_action_minus_baseline": -18701,
+      "output_delta_action_minus_baseline": 604,
+      "agent_seconds_delta_action_minus_baseline": 1.577999999979511,
+      "first_post_request_observable_difference": {
+        "request_ordinal": 1,
+        "stage": "assistant_decision",
+        "baseline_event_line": 9,
+        "action_event_line": 9,
+        "baseline_sha256": "6a4df8ac43fe91f18dc8ec54d064168abd58dfd464d54301cf67eaf87b1437ee",
+        "action_sha256": "4136afe0a4fb2a6f584c7b7b245a6b8bdcd204df213fbd673b2f27c848d45c66"
+      },
+      "content_marker_count_changes": {
+        "tool_results": {
+          "baseline": 23,
+          "action": 22
+        },
+        "tool_results_shortened": {
+          "baseline": 0,
+          "action": 22
+        }
+      },
+      "evidence": [
+        {
+          "sequence": 40,
+          "trace_sha256": "46bca7fa8fe963f8628984ca0996ebe1d39c4a4a529a5b81960985376cb7de42",
+          "run_result_sha256": "d08ab9f46cb1f0b9b6b5b0af13ddc0da075232ef9fd500ea8b13667bb9640f29"
+        },
+        {
+          "sequence": 38,
+          "trace_sha256": "d09622efece90663d562d6ed87dbf33b6d6e3a987b971d7967e7a595230ae0ee",
+          "run_result_sha256": "5e7862cdfc3210856ba2874664c9952a3e93660ea0f9c2e16cdf48433634539b"
+        }
+      ],
+      "interpretation": "observable_association_only; no causal or model-motive claim"
+    },
+    {
+      "task_id": "sphinx-doc__sphinx-10449",
+      "repetition": 2,
+      "primary_ordinary": true,
+      "direction": "reverse",
+      "baseline_sequence": 79,
+      "action_sequence": 77,
+      "baseline_passed": false,
+      "action_passed": true,
+      "baseline_failure": "empty_agent_patch",
+      "action_failure": "passed",
+      "baseline_termination": "normal_trial_budget_stop",
+      "action_termination": "agent_completed",
+      "input_delta_action_minus_baseline": -105327,
+      "output_delta_action_minus_baseline": 4253,
+      "agent_seconds_delta_action_minus_baseline": 7.812999999965541,
+      "first_post_request_observable_difference": {
+        "request_ordinal": 1,
+        "stage": "assistant_decision",
+        "baseline_event_line": 9,
+        "action_event_line": 9,
+        "baseline_sha256": "6a4df8ac43fe91f18dc8ec54d064168abd58dfd464d54301cf67eaf87b1437ee",
+        "action_sha256": "f357b92edc18a7b29ce7a467a90a685de63e1d636a96b20907dd28cb2059c478"
+      },
+      "content_marker_count_changes": {
+        "missing_exception_class": {
+          "baseline": 0,
+          "action": 1
+        },
+        "missing_repository_path": {
+          "baseline": 0,
+          "action": 1
+        },
+        "tool_results": {
+          "baseline": 22,
+          "action": 18
+        },
+        "tool_results_shortened": {
+          "baseline": 0,
+          "action": 18
+        }
+      },
+      "evidence": [
+        {
+          "sequence": 79,
+          "trace_sha256": "b1d3d8051a139a151f2dcc67774a800f835951ee73de122fe559a31c77c23a0e",
+          "run_result_sha256": "92822a643ba052cf1bedc8843ab1fbca63cebecec1d9ca5e8d723b8580a505bc"
+        },
+        {
+          "sequence": 77,
+          "trace_sha256": "55838734b3210ae8278d6d32734ac3984a59bb29251d61200642e29a71abdb07",
+          "run_result_sha256": "c7197d504ef43c06861228fbb107049bd429ac1affce883a15bc5282d133bb1e"
+        }
+      ],
+      "interpretation": "observable_association_only; no causal or model-motive claim"
+    },
+    {
+      "task_id": "sphinx-doc__sphinx-10449",
+      "repetition": 3,
+      "primary_ordinary": true,
+      "direction": "reverse",
+      "baseline_sequence": 118,
+      "action_sequence": 120,
+      "baseline_passed": false,
+      "action_passed": true,
+      "baseline_failure": "empty_agent_patch",
+      "action_failure": "passed",
+      "baseline_termination": "normal_trial_budget_stop",
+      "action_termination": "agent_completed",
+      "input_delta_action_minus_baseline": -166193,
+      "output_delta_action_minus_baseline": -2791,
+      "agent_seconds_delta_action_minus_baseline": -27.35999999998603,
+      "first_post_request_observable_difference": {
+        "request_ordinal": 1,
+        "stage": "assistant_decision",
+        "baseline_event_line": 9,
+        "action_event_line": 9,
+        "baseline_sha256": "0c8e86a687cbcaeb1fe46bd6ed677393f5f3ab8c9c0723c142483131233681ae",
+        "action_sha256": "6a4df8ac43fe91f18dc8ec54d064168abd58dfd464d54301cf67eaf87b1437ee"
+      },
+      "content_marker_count_changes": {
+        "tool_results": {
+          "baseline": 28,
+          "action": 15
+        },
+        "tool_results_shortened": {
+          "baseline": 0,
+          "action": 15
+        }
+      },
+      "evidence": [
+        {
+          "sequence": 118,
+          "trace_sha256": "c9e7534c2c88e8d0a596b7fd528c224bd6350b46a3f301ed38a446838ea41798",
+          "run_result_sha256": "08f23fdb840bb22cdeeea92937f95841b191dfe296b983da58915722a255dd63"
+        },
+        {
+          "sequence": 120,
+          "trace_sha256": "f4a636a92d3efc81feb6166217ba730f90ae2a930593e35138cdd1cfc05c7ae1",
+          "run_result_sha256": "02f85fddacb72b519617885c5b705cadfcfdaf4d5dc93c055fb2156ff2cac118"
+        }
+      ],
+      "interpretation": "observable_association_only; no causal or model-motive claim"
+    }
+  ]
+}
