@@ -11,5 +11,5 @@ RUN python -m pip install --no-cache-dir --require-hashes \
     && chown -R 10001:10001 /input /work /opt/tracefix
 
 USER 10001:10001
-WORKDIR /work/agent
+WORKDIR /
 CMD ["sleep", "infinity"]
