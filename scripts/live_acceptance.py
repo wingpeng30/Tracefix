@@ -58,7 +58,7 @@ def main() -> int:
     parser.add_argument("--test-target")
     parser.add_argument("--source-import")
     parser.add_argument("--skills-root", type=Path)
-    parser.add_argument("--context-trigger", type=int, default=4800)
+    parser.add_argument("--context-trigger", type=int)
     parser.add_argument("--env-file", type=Path, default=Path(".env"))
     parser.add_argument("--prepare-only", action="store_true")
     args = parser.parse_args()
@@ -103,6 +103,7 @@ def main() -> int:
         ["git", "rev-parse", "HEAD"], cwd=Path(__file__).resolve().parents[1],
         capture_output=True, text=True, check=True,
     ).stdout.strip()
+    context_trigger = args.context_trigger or (4800 if args.stage == "smoke" else 32000)
     config = RunConfig(
         repo=repo, task=task, model_name="deepseek/deepseek-flash",
         output_dir=root / "runs", env_file=args.env_file.resolve(),
@@ -114,8 +115,8 @@ def main() -> int:
             max_steps=max_steps, max_input_tokens=max_input, max_output_tokens=max_output,
             max_test_runs=max_tests, wall_time_seconds=wall, record_request_views=True,
             skills_enabled=args.skills_root is not None,
-            context={"context_window_tokens": 6000 if args.stage == "smoke" else 20000,
-                     "compaction_trigger_tokens": args.context_trigger},
+            context={"context_window_tokens": 6000 if args.stage == "smoke" else 100000,
+                     "compaction_trigger_tokens": context_trigger},
         ),
     )
     config_hash = hashlib.sha256(config.model_dump_json().encode("utf-8")).hexdigest()
