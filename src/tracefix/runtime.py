@@ -34,6 +34,7 @@ from tracefix.exceptions import (
     WorkspaceError,
     sanitize_payload,
 )
+from tracefix.mcp_serena import SerenaMCP
 from tracefix.messages import Message, MessageHistory, ToolCall
 from tracefix.models import BaseLLM, LiteLLMAdapter, LLMConfig
 from tracefix.provenance import (
@@ -102,6 +103,7 @@ class RunConfig(BaseModel):
     test_target: str | None = None
     source_import: str | None = None
     skills_root: Path | None = None
+    mcp_serena_image_id: str | None = None
     environment_recipe: EnvironmentRecipe | None = None
     test_environment_variables: dict[str, str] = Field(default_factory=dict)
     execution_backend: Literal["local", "docker"] = "local"
@@ -141,6 +143,8 @@ class RunConfig(BaseModel):
             raise ValueError("Docker execution requires a task ID and input root")
         if self.execution_backend == "docker" and self.skills_root is not None:
             raise ValueError("custom Skills directories are supported only by local execution")
+        if self.execution_backend == "docker" and self.mcp_serena_image_id is not None:
+            raise ValueError("Serena MCP is supported only with the local Agent backend")
         if self.execution_backend != "docker" and (
             self.docker_profile != "frozen" or self.docker_image_id is not None
         ):
@@ -440,6 +444,12 @@ class TraceFixRunner:
                 pytest_config=None,
                 test_environment_variables=config.test_environment_variables,
             )
+            mcp_manager = None
+            if config.mcp_serena_image_id is not None:
+                mcp_manager = SerenaMCP(workspace, root, config.mcp_serena_image_id)
+                mcp_manager.preflight()
+                for tool in mcp_manager.tools():
+                    tools.register(tool)
             tool_hash = hashlib.sha256(json.dumps(
                 [spec.model_dump(mode="json") for spec in tools.specs()],
                 sort_keys=True, ensure_ascii=False,
@@ -497,7 +507,11 @@ class TraceFixRunner:
                     }, sequence=sequence)
 
                 agent.checkpoint_callback = save_checkpoint
-                state = agent.resume(snapshot.payload["agent"])
+                try:
+                    state = agent.resume(snapshot.payload["agent"])
+                finally:
+                    if mcp_manager is not None:
+                        mcp_manager.close()
             patch, changed_files = self._collect_diff(workspace, protected_dirs)
             diff_path = root / "patch.diff"
             diff_path.write_text(patch, encoding="utf-8")
@@ -572,6 +586,7 @@ class TraceFixRunner:
         source_commit: str | None = None
         workspace: Path | None = None
         docker_backend: DockerToolBackend | None = None
+        mcp_manager: SerenaMCP | None = None
         tools = None
         workspace_preparation: dict[str, JsonValue] = {}
         state = AgentState(
@@ -703,7 +718,6 @@ class TraceFixRunner:
                     )
                 )
 
-            llm = self._llm_factory(llm_config)
             if tools is None:
                 assert workspace is not None
                 tools = create_default_tool_registry(
@@ -723,6 +737,13 @@ class TraceFixRunner:
                     ),
                     test_environment_variables=config.test_environment_variables,
                 )
+            if config.mcp_serena_image_id is not None:
+                assert workspace is not None
+                mcp_manager = SerenaMCP(workspace, run_dir, config.mcp_serena_image_id)
+                mcp_manager.preflight()
+                for tool in mcp_manager.tools():
+                    tools.register(tool)
+            llm = self._llm_factory(llm_config)
             agent = MinimalAgent(
                 llm,
                 tools,
@@ -816,6 +837,14 @@ class TraceFixRunner:
             error = self._serialize_error(exc)
             self._write_runner_error(sink, run_id, error)
         finally:
+            if mcp_manager is not None:
+                try:
+                    mcp_manager.close()
+                except Exception as exc:
+                    if error is None:
+                        error = self._serialize_error(exc)
+                        state.status = AgentStatus.FAILED
+                        state.stop_reason = "mcp_cleanup_error"
             if docker_backend is not None:
                 try:
                     if docker_backend.session is None:

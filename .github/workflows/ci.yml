@@ -218,3 +218,39 @@ jobs:
             ${{ runner.temp }}/tracefix-pagination/*/runs/*/test-evidence/*.json
             ${{ runner.temp }}/tracefix-pagination/docker-audit.json
           if-no-files-found: warn
+
+  mcp-serena-zero-call:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install pinned optional MCP host dependencies
+        run: |
+          python -m pip install --require-hashes -r requirements/locks/build-tools.txt
+          python -m pip install --require-hashes -r requirements/locks/mcp-py311.txt
+          python -m pip install --no-deps --no-build-isolation -e .
+      - name: Build isolated Serena image and record immutable ID
+        run: |
+          docker build --pull=true -f docker/serena-mcp.Dockerfile -t tracefix-serena-mcp:${{ github.sha }} .
+          docker image inspect --format '{{.Id}}' tracefix-serena-mcp:${{ github.sha }} > "$RUNNER_TEMP/tracefix-serena-image-id.txt"
+      - name: Replay a full Agent repair with real MCP symbol queries
+        run: |
+          set -euo pipefail
+          image_id="$(cat "$RUNNER_TEMP/tracefix-serena-image-id.txt")"
+          python examples/replay_ordinary.py --output "$RUNNER_TEMP/tracefix-mcp-replay" --mcp-serena-image-id "$image_id" | tee "$RUNNER_TEMP/tracefix-mcp-summary.json"
+          test -z "$(docker ps -a --filter 'name=tracefix-mcp-' --format '{{.ID}}')"
+      - name: Preserve MCP evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mcp-serena-zero-call-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/tracefix-serena-image-id.txt
+            ${{ runner.temp }}/tracefix-mcp-summary.json
+            ${{ runner.temp }}/tracefix-mcp-replay/runs/*/result.json
+            ${{ runner.temp }}/tracefix-mcp-replay/runs/*/trajectory.jsonl
+            ${{ runner.temp }}/tracefix-mcp-replay/runs/*/patch.diff
+          if-no-files-found: warn

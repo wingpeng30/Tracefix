@@ -25,6 +25,7 @@ benchmark = [
     "datasets>=2.19,<4",
 ]
 docker = ["cryptography==48.0.0"]
+mcp = ["mcp==1.28.1"]
 
 dev = [
     "pytest>=8.0",

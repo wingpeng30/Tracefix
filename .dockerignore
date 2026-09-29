@@ -6,3 +6,6 @@
 !requirements/
 !requirements/locks/
 !requirements/locks/reproduction-py311.txt
+!requirements/locks/mcp-serena-image-py313.txt
+!docker/
+!docker/tracefix-serena-mcp
