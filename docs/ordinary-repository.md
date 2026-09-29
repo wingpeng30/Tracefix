@@ -27,11 +27,11 @@ test_python = "../my-python-project/.venv/Scripts/python.exe"
 test_target = "tests/test_widget.py"
 source_import = "my_package"
 output_dir = "./runs"
-model = "deepseek/deepseek-v4-flash"
+model = "deepseek/deepseek-flash"
 env_file = "./.env"
 ```
 
-`repo` 必须是 Git 根目录且工作树干净。**输出目录必须位于源仓库之外**；如果在目标仓库内启动命令，请显式设置仓库外的 `--output-dir`。`source_import` 是安装后应从 TraceFix 新 checkout 导入的模块名；探针在构造模型客户端之前执行。`test_target` 是该 checkout 中已有的相对测试文件或 pytest node ID。目标虚拟环境如安装了旧版项目，必须先排除路径冲突；探针会拒绝导入来源落在 checkout 外的结果。模型调用可能付费，运行 `doctor` 不会发送供应商请求。
+`repo` 必须是 Git 根目录且工作树干净。**输出目录必须位于源仓库之外**；如果在目标仓库内启动命令，请显式设置仓库外的 `--output-dir`。`source_import` 是安装后应从 TraceFix 新 checkout 导入的模块名；探针在构造模型客户端之前执行。`test_target` 是该 checkout 中已有的相对测试文件或 pytest node ID。目标虚拟环境如安装了旧版项目，必须先排除路径冲突；探针会拒绝导入来源落在 checkout 外的结果。配置示例使用 DeepSeek [当前官方模型名 `deepseek-flash`](https://api-docs.deepseek.com/quick_start/pricing/)；本版本尚未完成该模型的付费端到端验收。运行 `doctor` 不会发送供应商请求。
 
 本地受审核的技能目录可在仓库外设置为 `[run].skills_dir = "./approved-skills"`，并通过 `tracefix run --skills` 显式启用。TraceFix 不会自动信任目标仓库里的技能；恢复时逐份复核已加载正文和参考文本的身份与累计字节数。
 

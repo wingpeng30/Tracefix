@@ -137,6 +137,20 @@ def test_image_preparation_blocks_unusable_runtime(tmp_path, monkeypatch, failur
     assert not manifest.exists()
 
 
+def test_image_preparation_records_docker_start_failure(tmp_path, monkeypatch):
+    monkeypatch.setattr("tracefix.ordinary_docker.shutil.which", lambda _name: "docker")
+
+    def denied(*_args, **_kwargs):
+        raise OSError("daemon unavailable")
+
+    monkeypatch.setattr("tracefix.ordinary_docker.subprocess.run", denied)
+    manifest = tmp_path / "blocked.json"
+    with pytest.raises(ValueError, match="could not complete"):
+        prepare_image(None, manifest)
+    assert not manifest.exists()
+    assert "daemon unavailable" in manifest.with_suffix(".build.log").read_text()
+
+
 def test_ordinary_docker_refuses_wrong_image_and_reports_cleanup_failure(tmp_path, monkeypatch):
     with pytest.raises(Exception, match="fixed image ID"):
         DockerToolBackend(
@@ -229,6 +243,7 @@ def test_independent_docker_validation_binds_patch_source_image_and_test(
     class FakeBackend:
         def __init__(self, **kwargs):
             assert kwargs["image_id"] == _IMAGE_ID
+            self.run_dir = kwargs["run_dir"]
             self.workspace_preparation = {"container_id": "new-container"}
 
         def prepare(self, *_args, **kwargs):
@@ -240,6 +255,9 @@ def test_independent_docker_validation_binds_patch_source_image_and_test(
 
         def export_evidence(self):
             calls.append("export_evidence")
+            evidence = self.run_dir / "test-evidence"
+            evidence.mkdir()
+            (evidence / "audit.json").write_text('{"passed":true}')
 
         def close(self, *, remove):
             assert remove
@@ -251,6 +269,7 @@ def test_independent_docker_validation_binds_patch_source_image_and_test(
     assert record["image_id"] == _IMAGE_ID
     assert calls == ["apply_patch", "run_tests", "export_evidence", "close"]
     assert json.loads((run_dir / "independent-validation.json").read_text())["passed"]
+    assert (run_dir / "independent-validation-evidence" / "audit.json").is_file()
     with pytest.raises(ValueError, match="already exists"):
         verify_docker_patch(run_dir, config, manifest, result, patch)
     (run_dir / "independent-validation.json").unlink()
@@ -416,3 +435,9 @@ def test_ordinary_doctor_uses_image_and_disposable_container(tmp_path, monkeypat
         "ModuleNotFoundError" in item["detail"]
         for item in failed["checks"] if item["name"] == "prepared_checkout"
     )
+    wrong_image = {**settings, "docker_image_id": "sha256:" + "b" * 64}
+    blocked = doctor(wrong_image, prepare=True)
+    assert blocked["ok"] is False
+    assert any(item["name"] == "docker_image" and not item["ok"]
+               for item in blocked["checks"])
+    assert closed == [True, True]
