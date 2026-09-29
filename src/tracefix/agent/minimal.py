@@ -351,10 +351,15 @@ class MinimalAgent(BaseAgent):
                 self._add_usage_dict(usage)
             else:
                 self.state.cost_complete = False
+            self.state.usage_complete = all(
+                type(usage.get(key)) is int and usage[key] >= 0
+                for key in ("input_tokens", "output_tokens", "total_tokens")
+            ) if isinstance(usage, dict) else False
             raise
         except Exception:
             # A timed-out request may already have reached the provider and incurred cost.
             self.state.cost_complete = False
+            self.state.usage_complete = False
             raise
 
         self._add_usage(response.usage)
@@ -1237,6 +1242,11 @@ class MinimalAgent(BaseAgent):
 
     def _add_usage_dict(self, usage: dict[str, Any]) -> None:
         """从格式错误上下文中尽力恢复可计费的 usage。"""
+        if not all(
+            type(usage.get(key)) is int and usage[key] >= 0
+            for key in ("input_tokens", "output_tokens", "total_tokens")
+        ):
+            self.state.usage_complete = False
         for key, state_field in (
             ("input_tokens", "input_tokens"),
             ("output_tokens", "output_tokens"),

@@ -190,6 +190,8 @@ def render_report(run: Path, output: Path | None = None) -> Path:
     usage = (
         "脚本运行，不适用"
         if offline
+        else "未完整记录（已知部分见结果文件）"
+        if result.get("usage_complete") is False
         else (
             f"输入 {_label(result.get('input_tokens'))} / "
             f"输出 {_label(result.get('output_tokens'))}"

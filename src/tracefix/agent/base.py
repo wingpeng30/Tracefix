@@ -90,6 +90,7 @@ class AgentState(BaseModel):
     output_tokens: int = Field(default=0, ge=0)
     cost_usd: float = Field(default=0.0, ge=0)
     cost_complete: bool = True
+    usage_complete: bool = True
     test_runs: int = Field(default=0, ge=0)
     rejected_test_calls: int = Field(default=0, ge=0)
     search_calls: int = Field(default=0, ge=0)

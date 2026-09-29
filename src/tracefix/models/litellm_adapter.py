@@ -76,9 +76,18 @@ class LiteLLMAdapter(BaseLLM):
         try:
             usage = self._parse_usage(client, response)
         except Exception as exc:
+            partial_usage: dict[str, int] = {}
+            provider_usage = _get(response, "usage")
+            for source, target in (
+                ("prompt_tokens", "input_tokens"),
+                ("completion_tokens", "output_tokens"),
+            ):
+                value = _get(provider_usage, source)
+                if type(value) is int and value >= 0:
+                    partial_usage[target] = value
             raise LLMResponseFormatError(
                 f"invalid LiteLLM usage data: {exc}",
-                context={"usage": {}, "raw_response": raw_response},
+                context={"usage": partial_usage, "raw_response": raw_response},
             ) from exc
 
         try:
@@ -237,10 +246,20 @@ class LiteLLMAdapter(BaseLLM):
         )
 
     def _parse_usage(self, client: Any, response: Any) -> TokenUsage:
-        usage = _get(response, "usage", {}) or {}
-        input_tokens = int(_get(usage, "prompt_tokens", 0) or 0)
-        output_tokens = int(_get(usage, "completion_tokens", 0) or 0)
-        total_tokens = int(_get(usage, "total_tokens", input_tokens + output_tokens) or 0)
+        usage = _get(response, "usage")
+        if usage is None:
+            raise ValueError("provider usage is missing")
+        values: dict[str, int] = {}
+        for name in ("prompt_tokens", "completion_tokens", "total_tokens"):
+            value = _get(usage, name)
+            if type(value) is not int or value < 0:
+                raise ValueError(f"provider usage {name} is missing or invalid")
+            values[name] = value
+        input_tokens = values["prompt_tokens"]
+        output_tokens = values["completion_tokens"]
+        total_tokens = values["total_tokens"]
+        if total_tokens < input_tokens + output_tokens:
+            raise ValueError("provider total tokens are smaller than input plus output")
         cost = self._calculate_cost(
             client,
             response,

@@ -150,8 +150,26 @@ def test_malformed_usage_is_a_structured_format_error() -> None:
     with pytest.raises(LLMResponseFormatError) as captured:
         adapter.complete([Message(role=MessageRole.USER, content="hello")])
 
-    assert captured.value.context["usage"] == {}
+    assert captured.value.context["usage"] == {"output_tokens": 4}
     assert captured.value.context["raw_response"]["usage"]["prompt_tokens"] == "not-a-number"
+
+
+@pytest.mark.parametrize("missing", ["usage", "prompt_tokens", "completion_tokens", "total_tokens"])
+def test_missing_provider_usage_fails_closed_with_known_partial_tokens(missing: str) -> None:
+    response = make_response()
+    if missing == "usage":
+        del response["usage"]
+    else:
+        del response["usage"][missing]
+    adapter = LiteLLMAdapter(
+        LLMConfig(model_name="provider/model"), client=FakeLiteLLM(response)
+    )
+
+    with pytest.raises(LLMResponseFormatError) as captured:
+        adapter.complete([Message(role=MessageRole.USER, content="hello")])
+
+    assert "usage" in str(captured.value)
+    assert "cost_usd" not in captured.value.context["usage"]
 
 
 def test_provider_exception_is_mapped_and_chained() -> None:
