@@ -1,8 +1,6 @@
 # TraceFix 持续维护约定
 
-2026-09-28 最新产品顺序：先完成普通受信任 Python 仓库的本地运行闭环与系统审查，再推进任务记忆/会话恢复、可选 MCP 和普通仓库 Docker 契约。演示与历史报告保留；简历材料和精选案例包装后置。首批使用说明见 [`docs/ordinary-repository.md`](docs/ordinary-repository.md)，能力边界见 [`docs/reviews/2026-09-28-system-review.md`](docs/reviews/2026-09-28-system-review.md)。下文的作品集顺序作为历史记录，不再覆盖此顺序。
-
-2026-09-28 最新产品顺序：先完成普通受信任 Python 仓库的本地运行闭环与系统审查，再推进任务记忆/会话恢复、可选 MCP 和普通仓库 Docker 契约。演示与历史报告保留；简历材料和精选案例包装后置。首批使用说明见 [`docs/ordinary-repository.md`](docs/ordinary-repository.md)，能力边界见 [`docs/reviews/2026-09-28-system-review.md`](docs/reviews/2026-09-28-system-review.md)。下文的作品集顺序作为历史记录，不再覆盖此顺序。
+2026-09-29 当前产品顺序：普通受信任 Python 仓库的本地闭环已交付；后续按 [`docs/tasks/2026-09-29-agent-harness-completion.md`](docs/tasks/2026-09-29-agent-harness-completion.md) 依次完成 A 任务事实与会话恢复、B 普通用户与模型验收、C 可选只读 MCP、D 普通仓库 Docker。演示与历史报告保留；简历材料和案例包装后置。首批使用说明见 [`docs/ordinary-repository.md`](docs/ordinary-repository.md)，能力边界见 [`docs/reviews/2026-09-28-system-review.md`](docs/reviews/2026-09-28-system-review.md)。下文作品集顺序作为历史记录。
 
 开始工作前阅读 [`docs/roadmap.md`](docs/roadmap.md) 与最近的开发、实验记录。
 当前跨会话交接入口：[`docs/handoffs/2026-09-17-v084.md`](docs/handoffs/2026-09-17-v084.md)。
