@@ -2,7 +2,7 @@
 
 ## 2026-09-29 当前执行计划
 
-普通受信任 Python/pytest 仓库的本地安装、预检、运行、报告与补丁导出已在 PR #1 保存并通过 CI。A 任务事实与安全恢复、B 普通用户路径、C 可选只读 MCP、D 普通仓库 Docker 已分别在堆叠 PR #2–#5 实现并通过工程门槛。真实模型小批验收与计量／压缩修复在 PR #6，8/8 次已执行，结果见 [`experiments/2026-09-29-live-model-acceptance.md`](experiments/2026-09-29-live-model-acceptance.md)。合并前这些分支仍不是主线版本。具体边界见 [`tasks/2026-09-29-agent-harness-completion.md`](tasks/2026-09-29-agent-harness-completion.md)。
+普通受信任 Python/pytest 仓库的本地闭环、A 任务事实与安全恢复、B 普通用户路径、C 可选只读 MCP、D 普通仓库 Docker，以及真实模型验收与计量／压缩修复，已按 PR #1–#6 顺序以 merge commit 合入 `main`（`7a28687f897821b9600cc4a9e8bf8da583ec7d45`）。8/8 次真实运行结果见 [`experiments/2026-09-29-live-model-acceptance.md`](experiments/2026-09-29-live-model-acceptance.md)。具体边界见 [`tasks/2026-09-29-agent-harness-completion.md`](tasks/2026-09-29-agent-harness-completion.md)。
 
 进展更新：A–D 的工程验证已通过；C 的隔离查询原始证据见 [`experiments/2026-09-29-serena-mcp-zero-call.md`](experiments/2026-09-29-serena-mcp-zero-call.md)，D 的普通仓库容器证据见 [`experiments/2026-09-29-ordinary-docker-zero-call.md`](experiments/2026-09-29-ordinary-docker-zero-call.md)。PR #6 的 [CI #50](https://github.com/wingpeng30/Tracefix/actions/runs/36588295467) 五个 job 全部通过。真实模型 8 次运行包含预算停止、Skills 加载、恢复和压缩触发；小样本不代表总体修复成功率。
 
