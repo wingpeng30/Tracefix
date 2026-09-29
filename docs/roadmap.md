@@ -4,6 +4,8 @@
 
 普通受信任 Python/pytest 仓库的本地安装、预检、运行、报告与补丁导出已在 PR #1 保存并通过 CI。后续按 A 任务事实与安全恢复、B 普通用户和真实模型验收、C 可选只读 MCP、D 普通仓库 Docker 顺序执行；每批独立验收并保留零供应商调用基线。具体入口、验收和边界见 [`tasks/2026-09-29-agent-harness-completion.md`](tasks/2026-09-29-agent-harness-completion.md)。真实模型请求仍需先冻结付费方案并取得授权。
 
+进展更新：A 的安全 checkpoint／恢复见 PR #2，B 的预检与独立公开测试复跑见 PR #3，均有通过的 Windows 双版本与 Linux Docker CI。C 的只读 Serena MCP 在 PR #4；Linux 零调用隔离服务与两个真实符号工具已通过，证据见 [`experiments/2026-09-29-serena-mcp-zero-call.md`](experiments/2026-09-29-serena-mcp-zero-call.md)。C 的最终全门槛仍以 PR 当前提交 CI 为准。D 普通仓库 Docker 尚未实现。付费真实模型验收仍待授权，不能由离线回放替代。
+
 ## 2026-09-28 当前执行顺序
 
 用户已将重点转为系统本身：首先交付普通受信任 Python/pytest 仓库的安装、配置、预检、运行、报告与补丁导出；随后完成任务事实与 checkpoint/恢复；再评估可选只读 MCP 和普通仓库 Docker 执行契约。此前作品集优先的条目保留为历史状态。当前能力边界见 [`reviews/2026-09-28-system-review.md`](reviews/2026-09-28-system-review.md)，入门流程见 [`ordinary-repository.md`](ordinary-repository.md)。

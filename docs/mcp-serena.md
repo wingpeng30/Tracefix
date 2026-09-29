@@ -43,4 +43,4 @@ python examples/replay_ordinary.py --output runs/mcp-replay --mcp-serena-image-i
 
 版本身份：官方 MCP Python SDK `1.28.1`，Serena `1.7.0`，Pyright `1.1.403`，宿主与镜像依赖分别锁在 `requirements/locks/mcp-py311.txt` 和 `requirements/locks/mcp-serena-image-py313.txt`。Serena `1.7.0` 的许可为 MIT；当前上游主分支许可不同，所以不使用浮动主分支。已核验的 Serena wheel SHA-256 为 `6dbf1459670d96fb0595f84932adef34260a6fe14ba5135b901fdb3c8c76e891`，官方 MCP SDK wheel SHA-256 为 `2726bca5e7193f61c5dde8b12500a6de2d9acf6d1a1c0be9e8c2e706437991df`。
 
-当前 Windows Docker Desktop daemon 不可用，容器路径以 Linux CI 为验收；本机只完成官方协议与真实 Serena 进程的直接探针。普通本地运行默认关闭 MCP；未安装可选依赖或 Docker 时不受影响。显式启用时预检失败会在模型构造前停止，并将原因保存到结果中。服务中断或清理失败作为工具或运行错误记录，不自动重试不确定结果。
+Linux CI 已通过真实隔离容器的两次符号查询和后续离线修复，原始证据见 [2026-09-29 验收记录](experiments/2026-09-29-serena-mcp-zero-call.md)。当前 Windows Docker Desktop daemon 不可用，Windows 容器路径未验证。普通本地运行默认关闭 MCP；未安装可选依赖或 Docker 时不受影响。显式启用时预检失败会在模型构造前停止，并将原因保存到结果中。服务中断或清理失败作为工具或运行错误记录，不自动重试不确定结果。
