@@ -8,10 +8,12 @@
 
 从 GitHub 获取本仓库后，使用独立虚拟环境安装。PowerShell 示例：
 
+当前 A–D 功能仍在堆叠 PR 中，下面临时使用最新 `codex/ordinary-docker` 分支；各 PR 进入主线后改从稳定标签安装。
+
 ```powershell
 git clone https://github.com/wingpeng30/Tracefix.git
 cd Tracefix
-git switch codex/p0-checkpoint-p1-review
+git switch codex/ordinary-docker
 py -3.12 -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -e '.[llm]'
 .\.venv\Scripts\tracefix.exe --help

@@ -37,7 +37,7 @@ Token 预算下，通过仓库结构检索、动态上下文和测试驱动的�
 
 - Pydantic 强类型消息、模型响应、工具调用、运行配置与评测结果。
 - 可运行的 `MinimalAgent` 单 Agent Loop。
-- LiteLLM 模型适配层，默认接入 `deepseek/deepseek-v4-flash`。
+- LiteLLM 模型适配层，默认配置为 `deepseek/deepseek-flash`（当前供应商名称；付费端到端验收待做）。
 - `search_code`、`read_file`、`apply_patch`、`run_tests`、`get_git_diff` 五个工具。
 - 独立 Git 克隆、干净源仓库校验和源 commit 记录。
 - UTF-8 JSONL 轨迹、最终 `patch.diff` 和 `result.json`。
@@ -125,7 +125,7 @@ Copy-Item .env.example .env
 ```dotenv
 DEEPSEEK_API_KEY=你的密钥
 DEEPSEEK_API_BASE=https://api.deepseek.com
-TRACEFIX_MODEL=deepseek/deepseek-v4-flash
+TRACEFIX_MODEL=deepseek/deepseek-flash
 TRACEFIX_USD_CNY_RATE=7.20
 TRACEFIX_CONTEXT_ENABLED=true
 TRACEFIX_CONTEXT_WINDOW_TOKENS=1000000

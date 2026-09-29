@@ -7,7 +7,7 @@
 在 Linux 主机上安装 TraceFix、Git 和 Docker，确认 Docker daemon 可用。对没有额外依赖的纯 Python 项目：
 
 ```bash
-python -m pip install -e .
+python -m pip install -e '.[llm]'
 tracefix docker-prepare --output ./ordinary-image.json
 ```
 

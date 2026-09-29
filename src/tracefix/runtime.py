@@ -47,7 +47,7 @@ from tracefix.repository import RepoMap, RepositoryIndexer
 from tracefix.tools import GetGitDiffTool, create_default_tool_registry
 from tracefix.tracing import JSONLTraceSink, TraceEvent, TraceEventType
 
-DEFAULT_MODEL_NAME = "deepseek/deepseek-v4-flash"
+DEFAULT_MODEL_NAME = "deepseek/deepseek-flash"
 DEFAULT_USD_CNY_RATE = 7.20
 DEFAULT_DEEPSEEK_API_BASE = "https://api.deepseek.com"
 

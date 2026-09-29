@@ -95,6 +95,11 @@ def test_run_config_defaults_to_local_runs_root(monkeypatch) -> None:
     assert RunConfig(repo=Path("."), task="platform default").output_dir == Path("runs")
 
 
+def test_default_model_uses_current_deepseek_name_without_provider_call() -> None:
+    config = RunConfig(repo=Path("."), task="model default")
+    assert config.model_name == "deepseek/deepseek-flash"
+
+
 @pytest.mark.parametrize("module", ["absent_module", "json"])
 def test_ordinary_source_probe_rejects_wrong_import_before_model(tmp_path, module) -> None:
     repo = _make_repo(tmp_path)

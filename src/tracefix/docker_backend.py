@@ -1,7 +1,7 @@
-"""Linux Docker workspace and RPC-backed repository tools.
+"""Docker workspace and RPC-backed repository tools for fixed execution profiles.
 
-This backend deliberately accepts only the three frozen, offline task recipes.
-It never mounts the host repository or forwards the host environment to Docker.
+Frozen tasks use audited recipes; ordinary Python tasks require a prepared immutable
+image ID. Neither profile mounts the host repository or forwards its environment.
 """
 
 from __future__ import annotations
@@ -361,7 +361,7 @@ class _RemoteTool(BaseTool):
 
 
 class DockerToolBackend:
-    """Own one task container and expose the existing five tools over JSONL."""
+    """Own one task container and expose repository tools over JSONL."""
 
     def __init__(
         self,
