@@ -8,7 +8,7 @@
 
 从 GitHub 获取本仓库后，使用独立虚拟环境安装。PowerShell 示例：
 
-以下命令面向本轮合并后的 `main`；合并完成前，请使用 `codex/live-model-acceptance` 分支验证最新功能。本项目尚未发布稳定版本。
+以下命令使用已合入 PR #1–#6 的 `main`（核验提交 `7a28687f897821b9600cc4a9e8bf8da583ec7d45`）。本项目尚未发布稳定版本。
 
 ```powershell
 git clone https://github.com/wingpeng30/Tracefix.git
