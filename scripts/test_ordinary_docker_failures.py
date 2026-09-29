@@ -58,7 +58,7 @@ def main() -> int:
             id="timeout-test", name="run_tests",
             arguments={"command": "pytest -q tests/test_slow.py", "timeout_seconds": 1},
         ))
-        assert not timeout.success and timeout.output.get("test_status") == "timed_out"
+        assert not timeout.success and timeout.output.get("timed_out") is True
         outcome["timeout"] = timeout.model_dump(mode="json")
         assert backend.session is not None
         backend.session.close(force=True)

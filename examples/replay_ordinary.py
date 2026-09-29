@@ -188,6 +188,12 @@ def main() -> int:
         ):
             raise AssertionError("isolated Serena queries did not both succeed")
     report = render_report(Path(result.result_path).parent)
+    source_clean = not subprocess.run(
+        ["git", "status", "--porcelain"], cwd=repo, capture_output=True,
+        text=True, check=True,
+    ).stdout.strip()
+    if not source_clean:
+        raise AssertionError("ordinary replay modified its source repository")
     print(
         json.dumps(
             {
@@ -197,6 +203,7 @@ def main() -> int:
                 "docker_image_id": args.docker_ordinary_image_id,
                 "result": result.result_path,
                 "report": str(report),
+                "source_clean": source_clean,
             },
             ensure_ascii=False,
         )

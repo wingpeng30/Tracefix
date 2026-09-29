@@ -277,9 +277,12 @@ jobs:
           tracefix docker-prepare --output "$RUNNER_TEMP/ordinary-image.json"
           image_id="$(python -c 'import json,os; print(json.load(open(os.environ["RUNNER_TEMP"]+"/ordinary-image.json"))["image_id"])')"
           python examples/replay_ordinary.py --output "$RUNNER_TEMP/ordinary-one" --docker-ordinary-image-id "$image_id" | tee "$RUNNER_TEMP/ordinary-one-summary.json"
+          python -c 'import json,pathlib,sys; p=pathlib.Path(sys.argv[1]); p.write_text(p.read_text()+"\nexecution_backend = \"docker\"\ndocker_profile = \"ordinary\"\ndocker_image_id = \""+sys.argv[2]+"\"\n")' "$RUNNER_TEMP/ordinary-one/config.toml" "$image_id"
+          tracefix doctor --config "$RUNNER_TEMP/ordinary-one/config.toml" --prepare --json | tee "$RUNNER_TEMP/ordinary-doctor.json"
           python examples/replay_ordinary.py --output "$RUNNER_TEMP/ordinary-two" --docker-ordinary-image-id "$image_id" | tee "$RUNNER_TEMP/ordinary-two-summary.json"
           first_run="$(find "$RUNNER_TEMP/ordinary-one/runs" -mindepth 1 -maxdepth 1 -type d | head -n 1)"
           tracefix verify --run "$first_run" | tee "$RUNNER_TEMP/ordinary-verification.json"
+          tracefix report --run "$first_run"
           tracefix export --run "$first_run" --output "$RUNNER_TEMP/ordinary-export.patch"
           python -c 'import json,sys; d=json.load(open(sys.argv[1])); assert d["passed"] and d["image_id"].startswith("sha256:")' "$RUNNER_TEMP/ordinary-verification.json"
           python scripts/test_ordinary_docker_failures.py --image-id "$image_id" --output "$RUNNER_TEMP/ordinary-failures"
@@ -294,6 +297,7 @@ jobs:
             ${{ runner.temp }}/ordinary-image.build.log
             ${{ runner.temp }}/ordinary-*summary.json
             ${{ runner.temp }}/ordinary-verification.json
+            ${{ runner.temp }}/ordinary-doctor.json
             ${{ runner.temp }}/ordinary-failures/failure-audit.json
             ${{ runner.temp }}/ordinary-failures/ordinary-timeout-disconnect/tool-events.jsonl
             ${{ runner.temp }}/ordinary-failures/ordinary-import-error/docker-run-state.json
@@ -302,6 +306,7 @@ jobs:
             ${{ runner.temp }}/ordinary-one/runs/*/session.json
             ${{ runner.temp }}/ordinary-one/runs/*/trajectory.jsonl
             ${{ runner.temp }}/ordinary-one/runs/*/patch.diff
+            ${{ runner.temp }}/ordinary-one/runs/*/report.html
             ${{ runner.temp }}/ordinary-one/runs/*/independent-validation.json
             ${{ runner.temp }}/ordinary-one/runs/*/docker-run-state.json
             ${{ runner.temp }}/ordinary-two/runs/*/result.json

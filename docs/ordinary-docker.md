@@ -37,11 +37,15 @@ docker_image_id = "sha256:此处填写ordinary-image.json中的完整ID"
 ```
 
 ```bash
+tracefix doctor --config ./config.toml --json
+tracefix doctor --config ./config.toml --prepare --json
 tracefix run --config ./config.toml
 tracefix verify --run ./runs/<run-id>
 tracefix report --run ./runs/<run-id>
 tracefix export --run ./runs/<run-id> --output ./fix.patch
 ```
+
+快速 `doctor` 检查 Docker CLI、镜像精确 ID、Git 仓库和测试目标；`doctor --prepare` 在临时容器中执行与运行相同的源码导入探针，完成后清理，不构造供应商客户端。
 
 `run` 把指定提交的 Git archive 复制到独立容器，探测 `source_import` 是否来自该 checkout，然后才开始模型循环。容器为非 root、只读根文件系统、独立 tmpfs、无网络、无宿主源码挂载或 Docker socket，限制 CPU、内存和进程数。测试目标应是仓库中现有的 pytest 目标；TraceFix 不会替用户准备外部服务或复杂构建环境。`verify` 使用同一镜像 ID 建立**新容器**，重新应用结果中的补丁并执行记录的公开测试，保存与源码提交、补丁哈希、镜像 ID 绑定的独立证据。原仓库不会被修改。
 

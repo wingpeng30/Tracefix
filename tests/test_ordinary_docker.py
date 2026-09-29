@@ -13,6 +13,7 @@ import pytest
 from tracefix.cli import _ordinary_settings, build_parser
 from tracefix.docker_backend import DockerToolBackend
 from tracefix.exceptions import WorkspaceError
+from tracefix.onboarding import doctor
 from tracefix.ordinary_docker import prepare_image, verify_docker_patch
 from tracefix.runtime import RunConfig
 from tracefix.tools.base import ToolResult
@@ -302,3 +303,55 @@ def test_ordinary_backend_prepares_isolated_bridge_and_source_probe(tmp_path, mo
     assert all(command[1] != "cp" for command, _ in calls if command[0] == "docker")
     backend.close(remove=True)
     assert any(command[:3] == ["docker", "rm", "-f"] for command, _ in calls)
+
+
+def test_ordinary_doctor_uses_image_and_disposable_container(tmp_path, monkeypatch):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "widget.py").write_text("value = 1\n", encoding="utf-8")
+    (repo / "tests").mkdir()
+    (repo / "tests" / "test_widget.py").write_text("def test_ok(): pass\n")
+    for args in (("init", "-q"), ("add", "--all"),
+                 ("-c", "user.name=Test", "-c", "user.email=test@invalid.local",
+                  "commit", "-qm", "base")):
+        subprocess.run(["git", *args], cwd=repo, check=True, capture_output=True)
+    import tracefix.onboarding as module
+
+    original_which = module.shutil.which
+    monkeypatch.setattr(module.shutil, "which", lambda name: (
+        "docker" if name == "docker" else original_which(name)
+    ))
+    original_run = subprocess.run
+
+    def fake_run(command, **kwargs):
+        if command[:3] == ["docker", "image", "inspect"]:
+            return SimpleNamespace(returncode=0, stdout=_IMAGE_ID + "\n")
+        return original_run(command, **kwargs)
+
+    monkeypatch.setattr(module.subprocess, "run", fake_run)
+    closed = []
+
+    class Backend:
+        def __init__(self, **kwargs):
+            assert kwargs["image_id"] == _IMAGE_ID
+            self.workspace_preparation = {"success": True,
+                                          "source_import_probe": {"valid": True}}
+
+        def prepare(self, *_args, **kwargs):
+            assert kwargs["source_import_probe"] == "widget"
+
+        def close(self, *, remove):
+            closed.append(remove)
+
+    monkeypatch.setattr("tracefix.docker_backend.DockerToolBackend", Backend)
+    settings = {
+        "repo": repo, "execution_backend": "docker", "docker_profile": "ordinary",
+        "docker_image_id": _IMAGE_ID, "test_python_executable": tmp_path / "absent-python",
+        "test_target": "tests/test_widget.py", "source_import": "widget",
+        "skills_root": None, "output_dir": tmp_path / "runs",
+        "model_name": "offline/replay", "env_file": None,
+    }
+    outcome = doctor(settings, prepare=True)
+    assert outcome["ok"] is True
+    assert closed == [True]
+    assert not any(item["name"] == "test_python" for item in outcome["checks"])

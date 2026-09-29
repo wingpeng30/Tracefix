@@ -5,12 +5,14 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
 import tempfile
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 from tracefix.messages import ToolCall
 from tracefix.provenance import inspect_test_environment
@@ -28,6 +30,10 @@ def doctor(settings: dict[str, Any], *, prepare: bool = False) -> dict[str, Any]
     git = shutil.which("git")
     add("git", git is not None, git or "Git 未安装", "安装 Git 并加入 PATH")
     repo = settings["repo"]
+    ordinary_docker = (
+        settings.get("execution_backend") == "docker"
+        and settings.get("docker_profile") == "ordinary"
+    )
     if repo is None:
         add("repository", False, "缺少仓库路径", "设置 [run].repo 或 --repo")
     elif git:
@@ -38,8 +44,32 @@ def doctor(settings: dict[str, Any], *, prepare: bool = False) -> dict[str, Any]
             add("repository", False, str(exc), "提交或清理 Git 仓库后重试")
     python = settings["test_python_executable"] or Path(sys.executable)
     python = Path(python).expanduser().resolve()
-    add("test_python", python.is_file(), str(python), "指定含 pytest 与项目依赖的 --test-python")
-    if python.is_file():
+    if ordinary_docker:
+        docker = shutil.which("docker")
+        add("docker_cli", docker is not None, docker or "Docker CLI 未安装", "安装 Docker")
+        image_id = settings.get("docker_image_id")
+        valid_image = isinstance(image_id, str) and re.fullmatch(
+            r"sha256:[0-9a-f]{64}", image_id
+        ) is not None
+        if docker and valid_image:
+            try:
+                inspected = subprocess.run(
+                    [docker, "image", "inspect", "--format", "{{.Id}}", image_id],
+                    capture_output=True, text=True, timeout=15, check=False,
+                )
+                valid_image = inspected.returncode == 0 and inspected.stdout.strip() == image_id
+            except (OSError, subprocess.SubprocessError):
+                valid_image = False
+        add("docker_image", valid_image, str(image_id or "未配置"),
+            "运行 tracefix docker-prepare 并配置返回的完整 image_id")
+        if settings.get("skills_root") is not None:
+            add("docker_skills", False, "普通 Docker 首版不支持宿主自定义 Skills 目录")
+    else:
+        add(
+            "test_python", python.is_file(), str(python),
+            "指定含 pytest 与项目依赖的 --test-python",
+        )
+    if not ordinary_docker and python.is_file():
         try:
             completed = subprocess.run(
                 [str(python), "-c", "import pytest; print(pytest.__version__)"],
@@ -56,7 +86,7 @@ def doctor(settings: dict[str, Any], *, prepare: bool = False) -> dict[str, Any]
             )
         except (OSError, subprocess.SubprocessError) as exc:
             add("pytest", False, str(exc), "检查测试解释器")
-    else:
+    elif not ordinary_docker:
         add("pytest", False, "测试解释器不存在")
     target = settings["test_target"]
     if target is not None:
@@ -118,22 +148,33 @@ def doctor(settings: dict[str, Any], *, prepare: bool = False) -> dict[str, Any]
                 # preparation as run, without constructing a model client.
                 with tempfile.TemporaryDirectory(prefix="tracefix-doctor-") as temporary:
                     root = Path(temporary)
-                    workspace = TraceFixRunner._clone_repository(Path(repo), root / "workspace")
-                    config = RunConfig(
-                        repo=Path(repo),
-                        task="TraceFix environment preflight",
-                        test_python_executable=python,
-                        test_target=target,
-                        source_import=module,
-                    )
-                    result = TraceFixRunner._prepare_workspace(config, workspace, root)
+                    if ordinary_docker:
+                        from tracefix.docker_backend import DockerToolBackend
+
+                        backend = DockerToolBackend(
+                            task_id="tracefix-ordinary", input_root=root,
+                            run_dir=root, run_id=f"doctor-{uuid4().hex}",
+                            profile="ordinary", image_id=settings["docker_image_id"],
+                        )
+                        try:
+                            backend.prepare(commit, Path(repo),
+                                            Path(__file__).resolve().parents[2],
+                                            source_import_probe=module)
+                            result = backend.workspace_preparation
+                        finally:
+                            backend.close(remove=True)
+                    else:
+                        workspace = TraceFixRunner._clone_repository(Path(repo), root / "workspace")
+                        config = RunConfig(
+                            repo=Path(repo), task="TraceFix environment preflight",
+                            test_python_executable=python, test_target=target,
+                            source_import=module,
+                        )
+                        result = TraceFixRunner._prepare_workspace(config, workspace, root)
                     probe = result.get("source_import_probe")
-                    add(
-                        "prepared_checkout",
-                        result.get("success") is True,
+                    add("prepared_checkout", result.get("success") is True,
                         json.dumps(probe or result, ensure_ascii=False),
-                        "检查测试解释器的项目依赖及源码导入位置",
-                    )
+                        "检查任务镜像、pytest 和源码导入位置")
             except Exception as exc:
                 add("prepared_checkout", False, str(exc), "检查仓库、解释器和项目依赖")
         else:
