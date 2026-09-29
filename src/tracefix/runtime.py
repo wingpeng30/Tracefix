@@ -188,6 +188,7 @@ class RunResult(BaseModel):
     cached_tool_calls: int = Field(default=0, ge=0)
     cost_usd: float = Field(default=0.0, ge=0)
     cost_complete: bool
+    usage_complete: bool = True
     usd_cny_rate: float = Field(gt=0)
     cost_cny_estimate: float | None = Field(default=None, ge=0)
     started_at: datetime
@@ -544,6 +545,7 @@ class TraceFixRunner:
                 cached_tool_calls=state.cached_tool_calls,
                 cost_usd=state.cost_usd,
                 cost_complete=state.cost_complete,
+                usage_complete=state.usage_complete,
                 usd_cny_rate=config.usd_cny_rate,
                 cost_cny_estimate=(
                     round(state.cost_usd * config.usd_cny_rate, 8)
@@ -968,6 +970,7 @@ class TraceFixRunner:
             cached_tool_calls=state.cached_tool_calls,
             cost_usd=state.cost_usd,
             cost_complete=state.cost_complete,
+            usage_complete=state.usage_complete,
             usd_cny_rate=config.usd_cny_rate,
             cost_cny_estimate=cost_cny,
             started_at=started_at,
