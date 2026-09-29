@@ -2,14 +2,18 @@
 
 from __future__ import annotations
 
+import asyncio
+import hashlib
 import subprocess
+import sys
+from contextlib import asynccontextmanager
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
 from tracefix import RunConfig, TraceFixRunner
-from tracefix.mcp_serena import SerenaMCP
+from tracefix.mcp_serena import SerenaMCP, _content_text
 from tracefix.messages import ToolCall
 from tracefix.tools.base import ToolRegistry
 
@@ -149,3 +153,143 @@ def test_runner_mcp_preflight_stops_before_model_construction(tmp_path, monkeypa
     assert result.status.value == "failed"
     assert "isolated image unavailable" in str(result.error)
     assert not constructed
+
+
+def test_serena_preflight_checks_sdk_cli_and_exact_image(tmp_path, monkeypatch):
+    manager = SerenaMCP(tmp_path, tmp_path, "sha256:" + "a" * 64)
+    monkeypatch.setitem(sys.modules, "mcp", SimpleNamespace(ClientSession=object))
+    monkeypatch.setattr("tracefix.mcp_serena.shutil.which", lambda name: None)
+    with pytest.raises(RuntimeError, match="Docker CLI"):
+        manager.preflight()
+    monkeypatch.setattr("tracefix.mcp_serena.shutil.which", lambda name: "/usr/bin/docker")
+    monkeypatch.setattr(
+        "tracefix.mcp_serena.subprocess.run",
+        lambda *_args, **_kwargs: SimpleNamespace(returncode=0, stdout="sha256:" + "b" * 64),
+    )
+    with pytest.raises(RuntimeError, match="changed"):
+        manager.preflight()
+    monkeypatch.setattr(
+        "tracefix.mcp_serena.subprocess.run",
+        lambda *_args, **_kwargs: SimpleNamespace(returncode=0, stdout=manager.image_id),
+    )
+    manager.preflight()
+
+
+def test_serena_cleanup_is_bounded_and_reports_unremoved_container(tmp_path, monkeypatch):
+    manager = SerenaMCP(tmp_path, tmp_path, "sha256:" + "a" * 64)
+    manager._active.add("tracefix-mcp-test")
+    monkeypatch.setattr(
+        "tracefix.mcp_serena.subprocess.run",
+        lambda *_args, **_kwargs: SimpleNamespace(returncode=1, stderr=b"daemon offline"),
+    )
+    with pytest.raises(RuntimeError, match="cleanup failed"):
+        manager.close()
+    assert manager._active
+    monkeypatch.setattr(
+        "tracefix.mcp_serena.subprocess.run",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            returncode=1, stderr=b"No such container: tracefix-mcp-test"
+        ),
+    )
+    manager.close()
+    assert not manager._active
+    manager._active.add("tracefix-mcp-second")
+
+    def timed_out(*_args, **_kwargs):
+        raise subprocess.TimeoutExpired("docker", 10)
+
+    monkeypatch.setattr("tracefix.mcp_serena.subprocess.run", timed_out)
+    assert not manager._remove_container("tracefix-mcp-second")
+
+
+def test_serena_snapshot_bounds_and_text_blocks(tmp_path, monkeypatch):
+    repo = _repo(tmp_path / "source")
+    manager = SerenaMCP(repo, tmp_path, "sha256:" + "a" * 64)
+    monkeypatch.setattr(
+        "tracefix.mcp_serena.subprocess.run",
+        lambda *_args, **_kwargs: SimpleNamespace(stdout=b"../outside.py\0"),
+    )
+    with pytest.raises(ValueError, match="escaped"):
+        manager._snapshot(tmp_path / "snapshot")
+    monkeypatch.setattr(
+        "tracefix.mcp_serena.subprocess.run",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            stdout=b"\0".join(f"file-{n}.py".encode() for n in range(5001)) + b"\0"
+        ),
+    )
+    with pytest.raises(ValueError, match="5,000"):
+        manager._snapshot(tmp_path / "snapshot")
+    assert _content_text(SimpleNamespace(content=[
+        SimpleNamespace(type="image"), SimpleNamespace(type="text", text="symbol")
+    ])) == "symbol"
+
+
+def test_serena_official_session_handshake_and_whitelist(tmp_path, monkeypatch):
+    manager = SerenaMCP(tmp_path, tmp_path, "sha256:" + "a" * 64, timeout_seconds=2)
+    stages = []
+
+    class Session:
+        async def __aenter__(self):
+            stages.append("session_open")
+            return self
+
+        async def __aexit__(self, *_args):
+            stages.append("session_close")
+
+        async def initialize(self):
+            stages.append("initialize")
+
+        async def list_tools(self):
+            return SimpleNamespace(tools=[SimpleNamespace(name="get_symbols_overview")])
+
+        async def call_tool(self, method, arguments):
+            stages.append((method, arguments))
+            return _result("next_page")
+
+    @asynccontextmanager
+    async def stdio(_params):
+        stages.append("stdio_open")
+        yield object(), object()
+        stages.append("stdio_close")
+
+    monkeypatch.setitem(sys.modules, "mcp", SimpleNamespace(
+        ClientSession=lambda *_args: Session(),
+        StdioServerParameters=lambda **kwargs: SimpleNamespace(**kwargs),
+    ))
+    monkeypatch.setitem(sys.modules, "mcp.client", SimpleNamespace())
+    monkeypatch.setitem(sys.modules, "mcp.client.stdio", SimpleNamespace(stdio_client=stdio))
+    response = asyncio.run(manager._call_async(
+        "tracefix-mcp-test", tmp_path, "get_symbols_overview", {"relative_path": "widget.py"}
+    ))
+    assert _content_text(response) == "next_page"
+    assert stages == [
+        "stdio_open", "session_open", "initialize",
+        ("get_symbols_overview", {"relative_path": "widget.py"}),
+        "session_close", "stdio_close",
+    ]
+    with pytest.raises(RuntimeError, match="unavailable"):
+        asyncio.run(manager._call_async("tracefix-mcp-test", tmp_path, "write_memory", {}))
+
+
+def test_serena_missing_sdk_and_deleted_tracked_file(tmp_path, monkeypatch):
+    repo = _repo(tmp_path / "source")
+    manager = SerenaMCP(repo, tmp_path, "sha256:" + "a" * 64)
+    monkeypatch.setitem(sys.modules, "mcp", None)
+    with pytest.raises(RuntimeError, match="tracefix-agent\\[mcp\\]"):
+        manager.preflight()
+    (repo / "widget.py").unlink()
+    target = tmp_path / "snapshot"
+    target.mkdir()
+    assert manager._snapshot(target) == hashlib.sha256().hexdigest()
+
+
+def test_serena_rejects_tool_name_and_long_or_windows_path(tmp_path):
+    manager = SerenaMCP(tmp_path, tmp_path, "sha256:" + "a" * 64)
+    tool = manager.tools()[0]
+    for call in (
+        ToolCall(id="wrong", name="write_memory", arguments={"relative_path": "widget.py"}),
+        ToolCall(id="long", name=tool.spec.name, arguments={"relative_path": "a" * 501}),
+        ToolCall(id="path", name=tool.spec.name, arguments={"relative_path": "foo\\bar.py"}),
+    ):
+        result = tool.execute(call)
+        assert not result.success and result.call_id == call.id
