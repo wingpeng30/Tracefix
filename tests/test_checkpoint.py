@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from tracefix.checkpoint import CheckpointError, CheckpointStore, ProcessLock
+from tracefix.runtime import TraceFixRunner
 
 
 @pytest.fixture
@@ -89,6 +90,31 @@ def test_process_lock_is_exclusive_and_released(checkpoint_dir: Path) -> None:
         pass
 
 
+def test_process_lock_rejects_reentrant_acquire_and_release_is_idempotent(
+    checkpoint_dir: Path,
+) -> None:
+    lock = ProcessLock(checkpoint_dir)
+    lock.acquire()
+    try:
+        with pytest.raises(CheckpointError, match="already held"):
+            lock.acquire()
+    finally:
+        lock.release()
+    lock.release()
+    with ProcessLock(checkpoint_dir):
+        pass
+
+
+def test_missing_or_malformed_local_session_cannot_resume(checkpoint_dir: Path) -> None:
+    missing = TraceFixRunner.inspect(checkpoint_dir)
+    assert missing["resumable"] is False
+    assert "session manifest is missing" in missing["reasons"]
+    (checkpoint_dir / "session.json").write_text("{truncated", encoding="utf-8")
+    malformed = TraceFixRunner.inspect(checkpoint_dir)
+    assert malformed["resumable"] is False
+    assert malformed["reasons"]
+
+
 @pytest.mark.parametrize(
     ("mutation", "reason"),
     [
@@ -141,5 +167,15 @@ def test_checkpoint_rejects_non_json_and_non_object_payloads(checkpoint_dir: Pat
     with pytest.raises(CheckpointError):
         store.save({"cost": float("nan")}, sequence=1)
     with pytest.raises(CheckpointError):
+        store.save({"state": {1, 2}}, sequence=1)
+    with pytest.raises(CheckpointError):
         store.save({"state": "safe"}, sequence=0)
     assert store.inspect().reasons == ("checkpoint_missing",)
+
+
+def test_checkpoint_invalid_current_identity_fails_closed(checkpoint_dir: Path) -> None:
+    store = CheckpointStore(checkpoint_dir, {"run_id": "run-1"})
+    store.save({"state": "safe"}, sequence=1)
+    inspection = store.inspect(current_identity={"cost": float("nan")})
+    assert inspection.resumable is False
+    assert "invalid_current_identity" in inspection.reasons

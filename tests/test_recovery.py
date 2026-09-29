@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import subprocess
 import sys
@@ -65,6 +66,33 @@ def test_resume_after_completed_tool_batch(tmp_path: Path, monkeypatch) -> None:
     assert first.status.value == "interrupted"
     run_dir = Path(first.result_path).parent
     assert TraceFixRunner.inspect(run_dir)["resumable"] is True
+    saved_checkpoint = (run_dir / "checkpoint.json").read_bytes()
+
+    def altered_checkpoint(change) -> list[str]:
+        envelope = json.loads(saved_checkpoint)
+        change(envelope["payload"])
+        canonical = json.dumps(
+            envelope["payload"], ensure_ascii=False, sort_keys=True,
+            separators=(",", ":"), allow_nan=False,
+        ).encode("utf-8")
+        envelope["payload_sha256"] = hashlib.sha256(canonical).hexdigest()
+        (run_dir / "checkpoint.json").write_text(json.dumps(envelope), encoding="utf-8")
+        reasons = TraceFixRunner.inspect(run_dir)["reasons"]
+        (run_dir / "checkpoint.json").write_bytes(saved_checkpoint)
+        return reasons
+
+    assert "checkpoint protected directory state is invalid" in altered_checkpoint(
+        lambda payload: payload.update(protected_dirs=["outside"])
+    )
+    assert "checkpoint runtime memory is incomplete" in altered_checkpoint(
+        lambda payload: payload["agent"]["memory"].pop("_last_test_evidence")
+    )
+    saved_result = (run_dir / "result.json").read_bytes()
+    finished = json.loads(saved_result)
+    finished["status"] = "completed"
+    (run_dir / "result.json").write_text(json.dumps(finished), encoding="utf-8")
+    assert "run is not interrupted" in TraceFixRunner.inspect(run_dir)["reasons"]
+    (run_dir / "result.json").write_bytes(saved_result)
     checkout_file = run_dir / "workspace" / "widget.py"
     original = checkout_file.read_bytes()
     checkout_file.write_bytes(original + b"\n# changed externally\n")

@@ -13,5 +13,7 @@
 - `python -m ruff check src/tracefix tests/test_recovery.py tests/test_checkpoint.py examples/replay_resume.py` 与对应 `compileall` 均返回 0。
 - 中间全量工程进程 `E:\TFP\engineering-recovery-a-20260929` 在代码更新后手动停止，不作为验收。`E:\TFP\engineering-recovery-final-20260929` 中 686 项测试通过，但覆盖率仅 89.47%，工程门槛未通过。随后新增 checkpoint 格式、未知调用及 Skills 恢复故障测试，修复 Windows 换行造成的 Skills 内容哈希误判。
 - 最终本机工程检查：`python scripts/check_engineering.py --output E:\TFP\engineering-recovery-gate2-20260929 --python python --diff-base 1bc3e50a3dd9ffd61d1b14061c32fc6949aa12a1`；原始 `summary.json`、`pytest.log`、`coverage.json`、JUnit、Ruff／compileall／Diff 日志均在该目录。退出 0，`accepted=true`，708 passed，纯 pytest 分支覆盖率 90.06088168414875%；Ruff、compileall、Diff 退出码均为 0。运行时工作树未提交，代码提交 SHA 须以最终提交为准。
+- GitHub CI #24 对 `33885c7`：Windows 3.11／3.12 均 708 passed、0 skipped，editable/wheel smoke 均通过，Linux Docker job 通过；但两版覆盖率均为 89.94351940145236%，低于 90%，因此整体失败。原始日志及工程 artifact 位于 Actions run 36530202786。随后增补进程锁重入、损坏会话及 checkpoint 内部状态拒绝测试，并修复缺失任务记忆字段时检查接口返回泛化错误的问题；后续门槛与提交结果另行记录。
+- 修复后的本机门槛：`python scripts/check_engineering.py --output E:\TFP\engineering-recovery-gate3-20260929 --python python --diff-base 1bc3e50a3dd9ffd61d1b14061c32fc6949aa12a1`；`summary.json` 中 `accepted=true`，711 passed，纯 pytest 分支覆盖率 90.17090882417664%，Ruff、compileall、Diff 均退出 0。Windows 3.11／3.12 的最终 CI 仍需新提交运行证明。
 
 下一步：推送 A 批并确认 Windows 双版本 CI、仓库外 wheel 安装；再进入 B 批的统一配置、准备预检及独立验证。真实模型验收仍需独立付费方案和授权。

@@ -376,7 +376,7 @@ class TraceFixRunner:
                     if inspection.resumable else None
                 ),
                 "last_test_evidence": (
-                    snapshot.payload["agent"]["memory"]["_last_test_evidence"]
+                    snapshot.payload["agent"].get("memory", {}).get("_last_test_evidence")
                     if inspection.resumable else None
                 ),
                 "workspace_diff_sha256": (
