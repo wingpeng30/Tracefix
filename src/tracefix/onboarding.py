@@ -8,14 +8,18 @@ import os
 import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 from typing import Any
 
+from tracefix.messages import ToolCall
+from tracefix.provenance import inspect_test_environment
 from tracefix.report import _read_run
-from tracefix.runtime import TraceFixRunner, load_environment_file
+from tracefix.runtime import RunConfig, TraceFixRunner, load_environment_file
+from tracefix.tools.builtin import ApplyPatchTool, RunTestsTool
 
 
-def doctor(settings: dict[str, Any]) -> dict[str, Any]:
+def doctor(settings: dict[str, Any], *, prepare: bool = False) -> dict[str, Any]:
     checks: list[dict[str, Any]] = []
 
     def add(name: str, ok: bool, detail: str, fix: str = "") -> None:
@@ -69,6 +73,16 @@ def doctor(settings: dict[str, Any]) -> dict[str, Any]:
         part.isidentifier() for part in module.split(".")
     )
     add("source_import", valid_module, str(module or "未配置"), "指定待测包的导入名，例如 catalog")
+    skills_root = settings.get("skills_root")
+    if skills_root is not None:
+        approved = Path(skills_root).expanduser().resolve()
+        outside_repo = not (repo and approved.is_relative_to(Path(repo).expanduser().resolve()))
+        add(
+            "skills_directory",
+            approved.is_dir() and outside_repo,
+            str(approved),
+            "指定已审核且位于目标仓库之外的 Skills 目录",
+        )
     output = settings["output_dir"] or Path(os.getenv("TRACEFIX_RUNS_ROOT") or "runs")
     output = Path(output).expanduser().resolve()
     if repo is not None and output.is_relative_to(Path(repo).expanduser().resolve()):
@@ -97,6 +111,33 @@ def doctor(settings: dict[str, Any]) -> dict[str, Any]:
             )
         except Exception as exc:
             add("credential", False, str(exc), "检查 --env-file 和 llm 依赖")
+    if prepare:
+        if all(item["ok"] for item in checks):
+            try:
+                # A temporary clone exercises the same checkout and source-import
+                # preparation as run, without constructing a model client.
+                with tempfile.TemporaryDirectory(prefix="tracefix-doctor-") as temporary:
+                    root = Path(temporary)
+                    workspace = TraceFixRunner._clone_repository(Path(repo), root / "workspace")
+                    config = RunConfig(
+                        repo=Path(repo),
+                        task="TraceFix environment preflight",
+                        test_python_executable=python,
+                        test_target=target,
+                        source_import=module,
+                    )
+                    result = TraceFixRunner._prepare_workspace(config, workspace, root)
+                    probe = result.get("source_import_probe")
+                    add(
+                        "prepared_checkout",
+                        result.get("success") is True,
+                        json.dumps(probe or result, ensure_ascii=False),
+                        "检查测试解释器的项目依赖及源码导入位置",
+                    )
+            except Exception as exc:
+                add("prepared_checkout", False, str(exc), "检查仓库、解释器和项目依赖")
+        else:
+            add("prepared_checkout", False, "基础预检未通过，未创建临时 checkout")
     return {"ok": all(item["ok"] for item in checks), "checks": checks}
 
 
@@ -126,3 +167,71 @@ def export_patch(run: Path, output: Path) -> Path:
     digest = hashlib.sha256(data).hexdigest()
     checksum.write_text(f"{digest}  {destination.name}\n", encoding="ascii")
     return destination
+
+
+def verify_patch(run: Path) -> dict[str, Any]:
+    """Reapply a saved patch in a fresh local checkout and rerun its public test."""
+    run_dir = _read_run(run)
+    manifest_path = run_dir / "session.json"
+    if not manifest_path.is_file():
+        raise ValueError("运行缺少可核验的 session.json 配置")
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    config = RunConfig.model_validate(manifest["config"])
+    if hashlib.sha256(config.model_dump_json().encode("utf-8")).hexdigest() != (
+        manifest["identity"].get("config_sha256")
+    ):
+        raise ValueError("运行配置身份与 session.json 不符")
+    if config.execution_backend != "local" or not config.test_target or not config.source_import:
+        raise ValueError("独立验证仅支持记录了测试目标与源码导入的普通本地运行")
+    environment_sha = inspect_test_environment(
+        config.test_python_executable or sys.executable,
+        pythonpath_entries=config.test_pythonpath_entries,
+    ).fingerprint_sha256
+    if environment_sha != manifest["identity"].get("test_environment_sha256"):
+        raise ValueError("测试解释器及依赖身份与原运行不符")
+    result = json.loads((run_dir / "result.json").read_text(encoding="utf-8"))
+    patch = (run_dir / "patch.diff").read_bytes()
+    patch_sha = hashlib.sha256(patch).hexdigest()
+    if not patch or patch_sha != result.get("patch_sha256"):
+        raise ValueError("补丁为空或与 result.json 身份不符")
+    source, commit = TraceFixRunner._validate_source_repository(config.repo)
+    if commit != result.get("source_commit") or commit != manifest["identity"]["source_commit"]:
+        raise ValueError("源仓库提交与运行记录不符")
+    validation_path = run_dir / "independent-validation.json"
+    if validation_path.exists():
+        raise ValueError("独立验证结果已存在；请保留原始证据")
+    evidence_dir = run_dir / "independent-validation-evidence"
+    with tempfile.TemporaryDirectory(prefix="tracefix-verify-") as temporary:
+        temporary_root = Path(temporary)
+        workspace = TraceFixRunner._clone_repository(source, temporary_root / "workspace")
+        preparation = TraceFixRunner._prepare_workspace(config, workspace, temporary_root)
+        if preparation.get("success") is not True:
+            raise ValueError(f"独立验证环境预检失败: {preparation.get('failure')}")
+        patch_result = ApplyPatchTool(workspace).execute(ToolCall(
+            id="independent-patch", name="apply_patch",
+            arguments={"patch": patch.decode("utf-8")},
+        ))
+        if not patch_result.success:
+            raise ValueError(f"补丁无法应用于原始提交: {patch_result.error}")
+        test_result = RunTestsTool(
+            workspace,
+            python_executable=config.test_python_executable,
+            pythonpath_entries=config.test_pythonpath_entries,
+            evidence_dir=evidence_dir,
+        ).execute(ToolCall(
+            id="independent-test", name="run_tests",
+            arguments={"command": f"pytest -q {config.test_target}"},
+        ))
+        record = {
+            "schema_version": 1,
+            "source_commit": commit,
+            "patch_sha256": patch_sha,
+            "test_target": config.test_target,
+            "test_python": str(config.test_python_executable or Path(sys.executable)),
+            "test_environment_sha256": environment_sha,
+            "preparation": preparation,
+            "test": test_result.model_dump(mode="json"),
+            "passed": test_result.success and test_result.output.get("test_status") == "passed",
+        }
+    validation_path.write_text(json.dumps(record, ensure_ascii=False, indent=2), encoding="utf-8")
+    return record

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import shutil
 from pathlib import Path
@@ -74,6 +75,24 @@ def test_report_can_be_regenerated_after_copy(tmp_path):
     target = render_report(tmp_path / "copied", tmp_path / "elsewhere" / "report.html")
     assert target.is_file()
     assert "公开测试失败" in target.read_text(encoding="utf-8")
+
+
+def test_report_distinguishes_independent_public_test_rerun(tmp_path):
+    run = _saved_run(tmp_path)
+    result_path = run / "result.json"
+    result = json.loads(result_path.read_text(encoding="utf-8"))
+    patch_sha = hashlib.sha256((run / "patch.diff").read_bytes()).hexdigest()
+    result["patch_sha256"] = patch_sha
+    result_path.write_text(json.dumps(result), encoding="utf-8")
+    validation_path = run / "independent-validation.json"
+    validation_path.write_text(json.dumps({
+        "source_commit": "abc123", "patch_sha256": patch_sha, "passed": True,
+    }), encoding="utf-8")
+    assert "独立验收：公开测试隔离复跑通过" in render_report(run).read_text(encoding="utf-8")
+    validation_path.write_text(json.dumps({
+        "source_commit": "abc123", "patch_sha256": "b" * 64, "passed": True,
+    }), encoding="utf-8")
+    assert "记录身份与当前补丁不符" in render_report(run).read_text(encoding="utf-8")
 
 
 def test_report_rejects_missing_and_ambiguous_runs(tmp_path):

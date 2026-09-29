@@ -19,7 +19,7 @@ from tracefix.context import ContextConfig
 from tracefix.detailed_ablation import write_detailed_ablation_diagnostic
 from tracefix.exceptions import BenchmarkError, TraceFixError
 from tracefix.holdout import freeze_holdout, freeze_long_context_mechanism
-from tracefix.onboarding import doctor, export_patch
+from tracefix.onboarding import doctor, export_patch, verify_patch
 from tracefix.p2_protocol import (
     P2FormalRunRequirements,
     P2ProtocolConfig,
@@ -145,6 +145,7 @@ def _add_shared_options(parser: argparse.ArgumentParser) -> None:
         help="启用按需加载 TraceFix 内置 skills",
     )
     parser.add_argument("--skills-max-active", type=int, help="最多激活的技能数（默认 4）")
+    parser.add_argument("--skills-dir", type=Path, help="显式审核的本地 Skills 目录")
     parser.add_argument("--skills-max-bytes", type=int, help="单个技能正文 UTF-8 字节上限")
     parser.add_argument("--skills-max-reference-bytes", type=int, help="单份参考文本字节上限")
     parser.add_argument("--skills-max-total-bytes", type=int, help="技能与参考文本累计字节上限")
@@ -251,10 +252,18 @@ def build_parser() -> argparse.ArgumentParser:
     doctor_parser.add_argument("--env-file", type=Path)
     doctor_parser.add_argument("--output-dir", type=Path)
     doctor_parser.add_argument("--json", action="store_true")
+    doctor_parser.add_argument(
+        "--prepare", action="store_true",
+        help="在临时独立 checkout 中核查源码导入，不安装依赖或调用模型",
+    )
 
     export_parser = subparsers.add_parser("export", help="校验并导出已保存的补丁")
     export_parser.add_argument("--run", type=Path, required=True)
     export_parser.add_argument("--output", type=Path, required=True)
+    verify_parser = subparsers.add_parser(
+        "verify", help="在新 checkout 中应用补丁并独立复跑记录的公开测试"
+    )
+    verify_parser.add_argument("--run", type=Path, required=True)
 
     eval_parser = subparsers.add_parser("eval", help="串行运行合成基准任务")
     eval_parser.add_argument(
@@ -846,6 +855,13 @@ def _ordinary_settings(args: argparse.Namespace) -> dict[str, Any]:
             "output_dir",
             "model",
             "env_file",
+            "skills_dir",
+            "max_steps", "max_input_tokens", "max_output_tokens", "wall_time_seconds",
+            "max_test_runs", "context_window_tokens", "context_trigger_tokens",
+            "context_retain_ratio", "record_request_views", "no_context_compaction",
+            "skills", "skills_max_active", "skills_max_bytes",
+            "skills_max_reference_bytes", "skills_max_total_bytes",
+            "llm_timeout_seconds", "llm_max_retries", "per_request_output_tokens",
         }
         unknown = set(data["run"]) - allowed
         if unknown:
@@ -886,6 +902,16 @@ def _ordinary_settings(args: argparse.Namespace) -> dict[str, Any]:
         "output_dir": path_value("output_dir", args.output_dir, "TRACEFIX_OUTPUT_DIR"),
         "model_name": choose("model", args.model, "TRACEFIX_MODEL") or DEFAULT_MODEL_NAME,
         "env_file": path_value("env_file", args.env_file, "TRACEFIX_ENV_FILE") or Path(".env"),
+        "skills_root": path_value(
+            "skills_dir", getattr(args, "skills_dir", None), "TRACEFIX_SKILLS_DIR"
+        ),
+        "shared_toml": {
+            key: value for key, value in values.items()
+            if key in allowed - {
+                "repo", "task", "test_python", "test_target", "source_import",
+                "output_dir", "model", "env_file", "skills_dir",
+            }
+        },
     }
 
 
@@ -915,7 +941,7 @@ def main(argv: list[str] | None = None) -> int:
             return 0 if result.status is AgentStatus.COMPLETED else 2
         if args.command == "doctor":
             settings = _ordinary_settings(args)
-            checks = doctor(settings)
+            checks = doctor(settings, prepare=args.prepare)
             if args.json:
                 _print_json(checks)
             else:
@@ -924,6 +950,10 @@ def main(argv: list[str] | None = None) -> int:
                     if not check["ok"] and check["fix"]:
                         print(f"  修复建议: {check['fix']}")
             return 0 if checks["ok"] else 2
+        if args.command == "verify":
+            verification = verify_patch(args.run)
+            _print_json(verification)
+            return 0 if verification["passed"] else 2
         if args.command == "validate-real-tasks":
             tasks = load_real_issue_tasks(args.tasks, task_ids=tuple(args.task_id))
             validations = []
@@ -1291,6 +1321,13 @@ def main(argv: list[str] | None = None) -> int:
 
         if args.command == "run":
             settings = _ordinary_settings(args)
+            for field, value in settings["shared_toml"].items():
+                env_name = {
+                    "skills": "TRACEFIX_SKILLS_ENABLED",
+                    "no_context_compaction": "TRACEFIX_CONTEXT_ENABLED",
+                }.get(field, "TRACEFIX_" + field.upper())
+                if getattr(args, field) is None and os.getenv(env_name) is None:
+                    setattr(args, field, value)
             for field, value in (
                 ("model", settings["model_name"]),
                 ("env_file", settings["env_file"]),
@@ -1311,7 +1348,7 @@ def main(argv: list[str] | None = None) -> int:
             shared.update(
                 {
                     key: settings[key]
-                    for key in ("test_python_executable", "output_dir")
+                    for key in ("test_python_executable", "output_dir", "skills_root")
                     if settings[key] is not None
                 }
             )

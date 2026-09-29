@@ -603,7 +603,12 @@ def test_docker_runner_persists_result_before_terminal_phase(tmp_path, monkeypat
             self.repo_map = None
             self.workspace_preparation = {"success": True, "backend": "docker"}
 
-        def prepare(self, *args, **kwargs):
+        def prepare(
+            self, source_commit, source_repo, tracefix_root, *, repo_map_task=None,
+            repo_map_config=None, skills_enabled=False, skill_limits=None,
+        ):
+            assert source_commit and source_repo == repo
+            assert tracefix_root.is_dir()
             return ToolRegistry()
 
         def set_phase(self, phase):
