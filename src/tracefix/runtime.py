@@ -774,6 +774,25 @@ class TraceFixRunner:
                 repository_map=repository_map.text if repository_map else None,
                 repository_candidates=(repository_map.candidate_files if repository_map else ()),
             )
+            if config.execution_backend == "docker" and config.docker_profile == "ordinary":
+                (run_dir / "session.json").write_text(
+                    json.dumps(
+                        {
+                            "schema_version": 1,
+                            "checkpoint_supported": False,
+                            "config": config.model_dump(mode="json"),
+                            "identity": {
+                                "source_commit": source_commit,
+                                "config_sha256": hashlib.sha256(
+                                    config.model_dump_json().encode("utf-8")
+                                ).hexdigest(),
+                                "image_id": config.docker_image_id,
+                            },
+                            "workspace_preparation": workspace_preparation,
+                        },
+                        ensure_ascii=False, indent=2,
+                    ), encoding="utf-8",
+                )
             if (
                 config.execution_backend == "local"
                 and config.environment_recipe is None

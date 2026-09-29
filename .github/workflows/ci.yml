@@ -282,6 +282,7 @@ jobs:
           tracefix verify --run "$first_run" | tee "$RUNNER_TEMP/ordinary-verification.json"
           tracefix export --run "$first_run" --output "$RUNNER_TEMP/ordinary-export.patch"
           python -c 'import json,sys; d=json.load(open(sys.argv[1])); assert d["passed"] and d["image_id"].startswith("sha256:")' "$RUNNER_TEMP/ordinary-verification.json"
+          python scripts/test_ordinary_docker_failures.py --image-id "$image_id" --output "$RUNNER_TEMP/ordinary-failures"
           test -z "$(docker ps -a --filter 'name=tracefix-' --format '{{.ID}}')"
       - name: Preserve ordinary Docker evidence
         if: always()
@@ -293,8 +294,12 @@ jobs:
             ${{ runner.temp }}/ordinary-image.build.log
             ${{ runner.temp }}/ordinary-*summary.json
             ${{ runner.temp }}/ordinary-verification.json
+            ${{ runner.temp }}/ordinary-failures/failure-audit.json
+            ${{ runner.temp }}/ordinary-failures/ordinary-timeout-disconnect/tool-events.jsonl
+            ${{ runner.temp }}/ordinary-failures/ordinary-import-error/docker-run-state.json
             ${{ runner.temp }}/ordinary-export.patch
             ${{ runner.temp }}/ordinary-one/runs/*/result.json
+            ${{ runner.temp }}/ordinary-one/runs/*/session.json
             ${{ runner.temp }}/ordinary-one/runs/*/trajectory.jsonl
             ${{ runner.temp }}/ordinary-one/runs/*/patch.diff
             ${{ runner.temp }}/ordinary-one/runs/*/independent-validation.json
