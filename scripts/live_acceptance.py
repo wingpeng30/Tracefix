@@ -12,6 +12,7 @@ import tempfile
 from pathlib import Path
 
 from tracefix.agent.base import AgentConfig
+from tracefix.checkpoint import CheckpointStore
 from tracefix.live_budget import LiveBudgetAdapter
 from tracefix.onboarding import doctor
 from tracefix.runtime import RunConfig, TraceFixRunner
@@ -145,7 +146,36 @@ def main() -> int:
         llm_config, ledger_path=root / "requests.json", limit_cny=20.0,
     )
     try:
-        result = TraceFixRunner(llm_factory=adapter).run(config)
+        runner = TraceFixRunner(llm_factory=adapter)
+        if args.stage == "multi-resume":
+            original_save = CheckpointStore.save
+            paused = False
+
+            def pause_after_batch(self, payload, *, sequence, pending_calls=()):
+                nonlocal paused
+                saved = original_save(
+                    self, payload, sequence=sequence, pending_calls=pending_calls
+                )
+                if sequence == 3 and not paused:
+                    paused = True
+                    raise KeyboardInterrupt
+                return saved
+
+            CheckpointStore.save = pause_after_batch
+            try:
+                first = runner.run(config)
+            finally:
+                CheckpointStore.save = original_save
+            run_dir = Path(first.result_path).parent
+            inspection = runner.inspect(run_dir)
+            record["first_status"] = first.status.value
+            record["first_resumable"] = inspection.get("resumable")
+            _write_json(manifest_path, manifest)
+            if not paused or first.status.value != "interrupted" or not inspection["resumable"]:
+                raise RuntimeError("controlled interruption did not reach a resumable batch")
+            result = runner.resume(run_dir)
+        else:
+            result = runner.run(config)
     except BaseException:
         # The manifest remains started: an unknown result must be reviewed manually.
         raise
