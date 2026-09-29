@@ -96,6 +96,7 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--mcp-serena-image-id")
+    parser.add_argument("--docker-ordinary-image-id")
     args = parser.parse_args()
     output = args.output.expanduser().resolve()
     if output.exists():
@@ -160,10 +161,15 @@ def main() -> int:
             model_name=settings["model_name"],
             output_dir=settings["output_dir"],
             env_file=None,
-            test_python_executable=Path(sys.executable),
+            test_python_executable=(
+                None if args.docker_ordinary_image_id else Path(sys.executable)
+            ),
             test_target=settings["test_target"],
             source_import=settings["source_import"],
             mcp_serena_image_id=args.mcp_serena_image_id,
+            execution_backend="docker" if args.docker_ordinary_image_id else "local",
+            docker_profile="ordinary" if args.docker_ordinary_image_id else "frozen",
+            docker_image_id=args.docker_ordinary_image_id,
         )
     )
     mcp_queries = []
@@ -188,6 +194,7 @@ def main() -> int:
                 "status": result.status.value,
                 "model_requests": client.calls,
                 "mcp_queries": len(mcp_queries),
+                "docker_image_id": args.docker_ordinary_image_id,
                 "result": result.result_path,
                 "report": str(report),
             },

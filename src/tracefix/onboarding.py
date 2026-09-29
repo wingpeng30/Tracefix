@@ -181,6 +181,12 @@ def verify_patch(run: Path) -> dict[str, Any]:
         manifest["identity"].get("config_sha256")
     ):
         raise ValueError("运行配置身份与 session.json 不符")
+    if config.execution_backend == "docker" and config.docker_profile == "ordinary":
+        from tracefix.ordinary_docker import verify_docker_patch
+
+        result = json.loads((run_dir / "result.json").read_text(encoding="utf-8"))
+        patch = (run_dir / "patch.diff").read_bytes()
+        return verify_docker_patch(run_dir, config, manifest, result, patch)
     if config.execution_backend != "local" or not config.test_target or not config.source_import:
         raise ValueError("独立验证仅支持记录了测试目标与源码导入的普通本地运行")
     environment_sha = inspect_test_environment(

@@ -34,7 +34,10 @@ dev = [
 ]
 
 [tool.setuptools.package-data]
-tracefix = ["skills/*/SKILL.md", "skills/*/references/*.md"]
+tracefix = [
+    "skills/*/SKILL.md", "skills/*/references/*.md",
+    "docker/ordinary.Dockerfile", "docker/ordinary-base.lock",
+]
 
 [project.scripts]
 tracefix = "tracefix.cli:main"

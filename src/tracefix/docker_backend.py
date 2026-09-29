@@ -383,7 +383,13 @@ class DockerToolBackend:
             raise RunConfigurationError(
                 "synthetic Docker runs require their fixed task ID and image ID"
             )
-        if profile not in {"frozen", "synthetic"}:
+        if profile == "ordinary" and (
+            task_id != "tracefix-ordinary"
+            or image_id is None
+            or re.fullmatch(r"sha256:[0-9a-f]{64}", image_id) is None
+        ):
+            raise RunConfigurationError("ordinary Docker requires its own fixed image ID")
+        if profile not in {"frozen", "synthetic", "ordinary"}:
             raise RunConfigurationError("unknown Docker execution profile")
         self.profile = profile
         self.requested_image_id = image_id
@@ -411,34 +417,41 @@ class DockerToolBackend:
         repo_map_config: RepoMapConfig | None = None,
         skills_enabled: bool = False,
         skill_limits: SkillLimits | None = None,
+        source_import_probe: str | None = None,
     ) -> ToolRegistry:
-        stage = self.input_root / self.task_id
-        bundle = stage / "source.bundle"
-        recipe_path = stage / "recipes" / f"{self.task_id}.json"
-        manifest_path = stage / "input-manifest.json"
-        if not bundle.is_file() or not recipe_path.is_file() or not manifest_path.is_file():
-            raise WorkspaceError("frozen Docker task input is incomplete")
-        self.recipe = json.loads(recipe_path.read_text(encoding="utf-8"))
-        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
         self.source_commit = source_commit
-        self.input_manifest_sha256 = hashlib.sha256(manifest_path.read_bytes()).hexdigest()
-        if (
-            manifest.get("task_id") != self.task_id
-            or manifest.get("source_commit") != source_commit
-        ):
-            raise WorkspaceError("frozen Docker input identity mismatch")
-        if self.profile == "synthetic":
-            _validate_synthetic_profile(self.task_id, self.recipe, manifest)
-        for relative, expected in manifest.get("files", {}).items():
-            path = (stage / relative).resolve(strict=True)
-            if stage.resolve() not in path.parents or not path.is_file():
-                raise WorkspaceError("frozen Docker input path escaped its root")
-            if hashlib.sha256(path.read_bytes()).hexdigest() != expected:
-                raise WorkspaceError(
-                    "frozen Docker input hash mismatch", context={"path": relative}
-                )
+        if self.profile == "ordinary":
+            if not source_import_probe:
+                raise WorkspaceError("ordinary Docker requires a source import probe")
+            self.recipe = {"source_import_probe": source_import_probe}
+            manifest = {}
+        else:
+            stage = self.input_root / self.task_id
+            bundle = stage / "source.bundle"
+            recipe_path = stage / "recipes" / f"{self.task_id}.json"
+            manifest_path = stage / "input-manifest.json"
+            if not bundle.is_file() or not recipe_path.is_file() or not manifest_path.is_file():
+                raise WorkspaceError("frozen Docker task input is incomplete")
+            self.recipe = json.loads(recipe_path.read_text(encoding="utf-8"))
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            self.input_manifest_sha256 = hashlib.sha256(manifest_path.read_bytes()).hexdigest()
+            if (
+                manifest.get("task_id") != self.task_id
+                or manifest.get("source_commit") != source_commit
+            ):
+                raise WorkspaceError("frozen Docker input identity mismatch")
+            if self.profile == "synthetic":
+                _validate_synthetic_profile(self.task_id, self.recipe, manifest)
+            for relative, expected in manifest.get("files", {}).items():
+                path = (stage / relative).resolve(strict=True)
+                if stage.resolve() not in path.parents or not path.is_file():
+                    raise WorkspaceError("frozen Docker input path escaped its root")
+                if hashlib.sha256(path.read_bytes()).hexdigest() != expected:
+                    raise WorkspaceError(
+                        "frozen Docker input hash mismatch", context={"path": relative}
+                    )
         source = self._source_archive(source_repo, source_commit)
-        if self.profile == "synthetic":
+        if self.profile in {"synthetic", "ordinary"}:
             assert self.requested_image_id is not None
             expected_image, self.python = self.requested_image_id, "/usr/local/bin/python"
         else:
@@ -453,13 +466,16 @@ class DockerToolBackend:
                 context={"expected": expected_image, "actual": actual_id},
             )
         self.image_id = actual_id
-        tag_result = _run(
-            ["git", "-C", str(source_repo), "describe", "--tags", "--abbrev=0", source_commit]
-        )
-        self.source_tag = tag_result.stdout.decode("utf-8", "replace").strip()
-        if not self.source_tag:
-            raise WorkspaceError("cannot determine version tag for frozen source commit")
-        self._check_storage()
+        if self.profile == "ordinary":
+            self.source_tag = f"tracefix-source-{source_commit[:12]}"
+        else:
+            tag_result = _run(
+                ["git", "-C", str(source_repo), "describe", "--tags", "--abbrev=0", source_commit]
+            )
+            self.source_tag = tag_result.stdout.decode("utf-8", "replace").strip()
+            if not self.source_tag:
+                raise WorkspaceError("cannot determine version tag for frozen source commit")
+            self._check_storage()
         _run(
             [
                 self.docker,
@@ -475,9 +491,18 @@ class DockerToolBackend:
                 "--cap-drop",
                 "ALL",
                 "--pids-limit",
-                "512",
+                "256" if self.profile == "ordinary" else "512",
                 "--memory",
-                "6g",
+                "2g" if self.profile == "ordinary" else "6g",
+                *(
+                    [
+                        "--cpus", "1", "--read-only", "--user", "10001:10001",
+                        "--tmpfs", "/tmp:rw,nosuid,size=512m,uid=10001,gid=10001",
+                        "--tmpfs", "/input:rw,nosuid,size=256m,uid=10001,gid=10001",
+                        "--tmpfs", "/work:rw,nosuid,size=1g,uid=10001,gid=10001",
+                        "--tmpfs", "/opt/tracefix:rw,nosuid,size=128m,uid=10001,gid=10001",
+                    ] if self.profile == "ordinary" else []
+                ),
                 "--env",
                 "HTTP_PROXY=",
                 "--env",
@@ -519,6 +544,17 @@ class DockerToolBackend:
                     [self.docker, "inspect", "--format", "{{json .Mounts}}", self.container_id]
                 ).stdout.decode("utf-8", "strict")
             )
+            host_config = json.loads(
+                _run(
+                    [self.docker, "inspect", "--format", "{{json .HostConfig}}", self.container_id]
+                ).stdout.decode("utf-8", "strict")
+            ) if self.profile == "ordinary" else None
+            container_user = (
+                _run(
+                    [self.docker, "inspect", "--format", "{{.Config.User}}", self.container_id]
+                ).stdout.decode("utf-8", "strict").strip()
+                if self.profile == "ordinary" else None
+            )
         except (UnicodeDecodeError, json.JSONDecodeError) as exc:
             raise WorkspaceError(
                 "could not verify Docker container network and mounts",
@@ -529,13 +565,29 @@ class DockerToolBackend:
                 "synthetic Docker container must have networking disabled",
                 context={"network_mode": network_mode},
             )
-        if mounts != []:
+        if any(item.get("Type") != "tmpfs" for item in mounts):
             raise WorkspaceError(
-                "synthetic Docker container must not have host mounts",
+                "Docker task container must not have host mounts",
                 context={"mounts": mounts},
             )
+        if self.profile == "ordinary" and (
+            container_user != "10001:10001"
+            or host_config.get("ReadonlyRootfs") is not True
+            or host_config.get("PidsLimit") != 256
+            or host_config.get("Memory") != 2 * 1024**3
+            or host_config.get("NanoCpus") != 1_000_000_000
+        ):
+            raise WorkspaceError("ordinary Docker resource or user contract changed")
         self._write_run_state("container_created")
         _run([self.docker, "start", self.container_name])
+        container_interpreter: dict[str, str] | None = None
+        if self.profile == "ordinary":
+            probe_result = _run([
+                self.docker, "exec", self.container_name, self.python,
+                "-c", "import json,platform,pytest; print(json.dumps({"
+                "'python':platform.python_version(),'pytest':pytest.__version__}))",
+            ])
+            container_interpreter = json.loads(probe_result.stdout.decode("utf-8"))
         _run(
             [
                 self.docker,
@@ -874,16 +926,28 @@ class DockerToolBackend:
         self.workspace_preparation = {
             "success": True,
             "backend": "docker",
+            "profile": self.profile,
             "image_id": actual_id,
             "container_id": self.container_id,
             "container_network_mode": network_mode,
             "container_mounts": mounts,
+            "container_user": container_user,
+            "container_limits": {
+                "pids": host_config.get("PidsLimit"),
+                "memory_bytes": host_config.get("Memory"),
+                "nano_cpus": host_config.get("NanoCpus"),
+                "read_only_root": host_config.get("ReadonlyRootfs"),
+                "tmpfs": host_config.get("Tmpfs"),
+            } if host_config else None,
             "source_commit": source_commit,
             "source_version_tag": self.source_tag,
             "agent_only_sentinel_sha256": hashlib.sha256(sentinel.read_bytes()).hexdigest(),
-            "recipe_fingerprint": self._recipe_fingerprint(),
+            "recipe_fingerprint": self._recipe_fingerprint()
+            if self.profile != "ordinary" else None,
+            "test_target": self.recipe.get("test_target"),
             "build_steps": steps,
             "source_import_probe": probe_data,
+            "container_interpreter": container_interpreter,
             "local_service": service_info,
             "protocol": 1,
         }
@@ -988,11 +1052,12 @@ class DockerToolBackend:
                 (self.run_dir / "httpbin-service.log").write_bytes(service_log.stdout)
 
     def close(self, *, remove: bool = True) -> None:
+        errors: list[str] = []
         if self.session is not None:
             try:
                 self.session.close()
-            except Exception:
-                pass
+            except Exception as exc:
+                errors.append(f"bridge close: {exc}")
             self.session = None
         if remove and self.container_id:
             try:
@@ -1007,5 +1072,12 @@ class DockerToolBackend:
                 )
                 if inspected.stdout.decode().strip() == self.run_id:
                     _run([self.docker, "rm", "-f", self.container_id])
-            except Exception:
-                pass
+                else:
+                    errors.append("container ownership label changed; removal refused")
+            except Exception as exc:
+                errors.append(f"container removal: {exc}")
+        if errors and self.profile == "ordinary":
+            raise WorkspaceError(
+                "ordinary Docker cleanup was incomplete",
+                context={"container_id": self.container_id, "errors": errors},
+            )
