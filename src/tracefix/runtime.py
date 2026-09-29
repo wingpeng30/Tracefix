@@ -647,7 +647,6 @@ class TraceFixRunner:
                     repo_map_config=config.agent_config.repo_map,
                     skills_enabled=config.agent_config.skills_enabled,
                     skill_limits=config.agent_config.skill_limits,
-                    skills_root=config.skills_root,
                 )
                 workspace_preparation = docker_backend.workspace_preparation
                 repository_map = docker_backend.repo_map

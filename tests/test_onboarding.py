@@ -250,7 +250,8 @@ def test_doctor_prepare_uses_temporary_checkout_without_model(tmp_path, monkeypa
     monkeypatch.setattr("tracefix.models.litellm_adapter.LiteLLMAdapter.__init__", never)
     argv = [
         "doctor", "--prepare", "--repo", str(repo), "--source-import", "sample",
-        "--test-target", "test_sample.py", "--test-python", sys.executable, "--json",
+        "--test-target", "test_sample.py", "--test-python", sys.executable,
+        "--model", "offline/replay", "--json",
     ]
     assert main(argv) == 0
     report = json.loads(capsys.readouterr().out)
