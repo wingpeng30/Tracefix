@@ -28,6 +28,11 @@ class LiveBudgetAdapter(LiteLLMAdapter):
         super().__init__(config, client=client)
         if config.model_name != "deepseek/deepseek-flash" or config.max_retries != 0:
             raise ValueError("live budget requires DeepSeek Flash with zero automatic retries")
+        if config.extra_kwargs != {
+            "api_base": "https://api.deepseek.com",
+            "extra_body": {"thinking": {"type": "disabled"}},
+        }:
+            raise ValueError("live budget requires the official non-thinking DeepSeek endpoint")
         if config.max_output_tokens is None or limit_cny <= 0:
             raise ValueError("live budget requires bounded output and positive CNY limit")
         self.ledger_path = ledger_path.resolve()

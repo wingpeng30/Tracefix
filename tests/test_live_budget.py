@@ -30,7 +30,10 @@ def _adapter(tmp_path, client: Client, *, limit: float = 20.0) -> LiveBudgetAdap
     return LiveBudgetAdapter(
         LLMConfig(
             model_name="deepseek/deepseek-flash", max_output_tokens=512,
-            max_retries=0, extra_kwargs={"extra_body": {"thinking": {"type": "disabled"}}},
+            max_retries=0, extra_kwargs={
+                "api_base": "https://api.deepseek.com",
+                "extra_body": {"thinking": {"type": "disabled"}},
+            },
         ),
         ledger_path=tmp_path / "ledger.json", limit_cny=limit, client=client,
     )
@@ -72,3 +75,31 @@ def test_live_budget_rejects_request_before_provider_when_reservation_exceeds_li
     with pytest.raises(LLMProviderError, match="budget"):
         adapter.complete([Message(role=MessageRole.USER, content="hello")])
     assert client.calls == 0
+
+
+def test_live_budget_rejects_nonofficial_or_thinking_endpoint(tmp_path) -> None:
+    config = LLMConfig(
+        model_name="deepseek/deepseek-flash", max_output_tokens=512,
+        max_retries=0, extra_kwargs={"api_base": "https://example.invalid"},
+    )
+    with pytest.raises(ValueError, match="official non-thinking"):
+        LiveBudgetAdapter(config, ledger_path=tmp_path / "ledger.json")
+
+
+def test_live_budget_rejects_retries_and_changed_ledger_identity(tmp_path) -> None:
+    retried = LLMConfig(
+        model_name="deepseek/deepseek-flash", max_output_tokens=512, max_retries=1,
+    )
+    with pytest.raises(ValueError, match="zero automatic retries"):
+        LiveBudgetAdapter(retried, ledger_path=tmp_path / "ledger.json")
+
+    client = Client(usage={"prompt_tokens": 100, "completion_tokens": 20, "total_tokens": 120})
+    adapter = _adapter(tmp_path, client)
+    message = [Message(role=MessageRole.USER, content="hello")]
+    adapter.complete(message)
+    adapter.complete(message)
+    assert client.calls == 2
+    changed_limit = _adapter(tmp_path, client, limit=19.0)
+    with pytest.raises(LLMProviderError, match="identity changed"):
+        changed_limit.complete(message)
+    assert client.calls == 2
