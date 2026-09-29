@@ -205,6 +205,25 @@ def render_report(run: Path, output: Path | None = None) -> Path:
         else "未记录"
     )
     independent_text = "未记录"
+    independent_path = run_dir / "independent-validation.json"
+    if independent_path.is_file():
+        try:
+            independent = _read_json(independent_path)
+            if (
+                independent.get("patch_sha256") == result.get("patch_sha256")
+                and independent.get("patch_sha256") == hashlib.sha256(
+                    patch_path.read_bytes()
+                ).hexdigest()
+                and independent.get("source_commit") == result.get("source_commit")
+            ):
+                independent_text = (
+                    "公开测试隔离复跑通过" if independent.get("passed") is True
+                    else "公开测试隔离复跑未通过"
+                )
+            else:
+                independent_text = "记录身份与当前补丁不符"
+        except (OSError, ValueError, TypeError, KeyError):
+            independent_text = "记录无法读取"
     resume_segments = sum(
         event.get("event_type") == "session_resumed" for event in events
     )

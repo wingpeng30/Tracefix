@@ -33,14 +33,18 @@ env_file = "./.env"
 
 `repo` 必须是 Git 根目录且工作树干净。**输出目录必须位于源仓库之外**；如果在目标仓库内启动命令，请显式设置仓库外的 `--output-dir`。`source_import` 是安装后应从 TraceFix 新 checkout 导入的模块名；探针在构造模型客户端之前执行。`test_target` 是该 checkout 中已有的相对测试文件或 pytest node ID。目标虚拟环境如安装了旧版项目，必须先排除路径冲突；探针会拒绝导入来源落在 checkout 外的结果。模型调用可能付费，运行 `doctor` 不会发送供应商请求。
 
+本地受审核的技能目录可在仓库外设置为 `[run].skills_dir = "./approved-skills"`，并通过 `tracefix run --skills` 显式启用。TraceFix 不会自动信任目标仓库里的技能；恢复时逐份复核已加载正文和参考文本的身份与累计字节数。
+
 ```powershell
 .\.venv\Scripts\tracefix.exe doctor --config config.toml --json
+.\.venv\Scripts\tracefix.exe doctor --config config.toml --prepare --json
 .\.venv\Scripts\tracefix.exe run --config config.toml
+.\.venv\Scripts\tracefix.exe verify --run .\runs\<run-id>
 .\.venv\Scripts\tracefix.exe report --run .\runs\<run-id>
 .\.venv\Scripts\tracefix.exe export --run .\runs\<run-id> --output .\fix.patch
 ```
 
-命令行参数优先于 `TRACEFIX_*` 环境变量，后者优先于 TOML，最后使用默认值；密钥仅从进程环境或 `.env` 读取。`doctor` 返回检查项、布尔结果和修复建议，失败退出码为 2。`run` 的终态、结果目录及补丁路径会打印到终端。`report` 生成单文件 HTML；`export` 只复制补丁和校验文件，不会将补丁应用于原仓库。输出目录默认是当前目录下的 `runs`；可用 `TRACEFIX_RUNS_ROOT` 或 `--output-dir` 覆盖。
+命令行参数优先于 `TRACEFIX_*` 环境变量，后者优先于 TOML，最后使用默认值；密钥仅从进程环境或 `.env` 读取。快速 `doctor` 返回检查项、布尔结果和修复建议；`doctor --prepare` 额外在临时独立 checkout 中执行与运行一致的 pytest／源码导入探针，结束后清理，仍不调用模型或安装依赖。失败退出码为 2。`run` 的终态、结果目录及补丁路径会打印到终端。`verify` 在新的临时 checkout 应用保存补丁并隔离复跑记录的公开测试，生成 `independent-validation.json` 和审计文件；它不能证明隐藏测试或完整修复正确性。`report` 生成单文件 HTML；`export` 只复制补丁和校验文件，不会将补丁应用于原仓库。输出目录默认是当前目录下的 `runs`；可用 `TRACEFIX_RUNS_ROOT` 或 `--output-dir` 覆盖。
 
 没有 Key 时先运行公开离线演示，验证安装、工具、Skills 与报告：
 
@@ -58,4 +62,4 @@ python examples/replay_ordinary.py --output runs/ordinary-replay
 
 该脚本生成自己的干净 Git 仓库和独立运行目录；输出中的 `result` 路径可传给 `tracefix export --run <result 所在目录> --output fix.patch`。它不调用供应商，原仓库保持干净。
 
-演示使用脚本模型，不能证明当前版本真实模型的端到端修复质量。普通 `run` 的测试通过只说明其公开测试有通过证据，不等于独立验收。产物中的完整历史、请求视图、估算 Token、供应商 usage 和成本各有不同含义；请求视图默认不记录。TraceFix 当前没有 Agent 会话 checkpoint，进程中断后不能直接继续原会话。
+演示使用脚本模型，不能证明当前版本真实模型的端到端修复质量。普通 `run` 的测试通过只说明其公开测试有通过证据，不等于独立验收。产物中的完整历史、请求视图、估算 Token、供应商 usage 和成本各有不同含义；请求视图默认不记录。普通本地运行支持符合身份约束的 checkpoint 与安全恢复，详见 [`recovery.md`](recovery.md)。

@@ -8,10 +8,13 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 from examples.replay_ordinary import ReplayClient
 from tracefix.checkpoint import CheckpointStore
 from tracefix.messages import ToolCall
 from tracefix.models.litellm_adapter import LiteLLMAdapter
+from tracefix.onboarding import verify_patch
 from tracefix.runtime import RunConfig, TraceFixRunner
 from tracefix.tools.builtin import RunTestsTool
 
@@ -129,6 +132,49 @@ def test_resume_after_completed_tool_batch(tmp_path: Path, monkeypatch) -> None:
         for message in client.requests[-1]["messages"]
     )
     assert "return page + 1" in Path(second.diff_path).read_text(encoding="utf-8")
+    independent = verify_patch(run_dir)
+    assert independent["passed"] is True
+    assert independent["patch_sha256"] == second.patch_sha256
+    verified_output = independent["test"]["output"]
+    assert verified_output["source_sha256_before"] == verified_output["source_sha256_after"]
+    with pytest.raises(ValueError, match="结果已存在"):
+        verify_patch(run_dir)
+    manifest_path = run_dir / "session.json"
+    saved_manifest = manifest_path.read_bytes()
+    changed_manifest = json.loads(saved_manifest)
+    changed_manifest["config"]["test_target"] = "tests/other.py"
+    manifest_path.write_text(json.dumps(changed_manifest), encoding="utf-8")
+    with pytest.raises(ValueError, match="运行配置身份"):
+        verify_patch(run_dir)
+    manifest_path.write_bytes(saved_manifest)
+    changed_manifest = json.loads(saved_manifest)
+    changed_manifest["identity"]["test_environment_sha256"] = "different"
+    manifest_path.write_text(json.dumps(changed_manifest), encoding="utf-8")
+    with pytest.raises(ValueError, match="测试解释器及依赖身份"):
+        verify_patch(run_dir)
+    manifest_path.write_bytes(saved_manifest)
+    changed_manifest = json.loads(saved_manifest)
+    changed_manifest["config"]["source_import"] = None
+    normalized = RunConfig.model_validate(changed_manifest["config"])
+    changed_manifest["identity"]["config_sha256"] = hashlib.sha256(
+        normalized.model_dump_json().encode("utf-8")
+    ).hexdigest()
+    manifest_path.write_text(json.dumps(changed_manifest), encoding="utf-8")
+    with pytest.raises(ValueError, match="仅支持记录了测试目标"):
+        verify_patch(run_dir)
+    manifest_path.write_bytes(saved_manifest)
+    changed_manifest = json.loads(saved_manifest)
+    changed_manifest["identity"]["source_commit"] = "0" * 40
+    manifest_path.write_text(json.dumps(changed_manifest), encoding="utf-8")
+    with pytest.raises(ValueError, match="源仓库提交"):
+        verify_patch(run_dir)
+    manifest_path.write_bytes(saved_manifest)
+    patch_path = run_dir / "patch.diff"
+    saved_patch = patch_path.read_bytes()
+    patch_path.write_bytes(saved_patch + b"\n# tampered\n")
+    with pytest.raises(ValueError, match="补丁为空或"):
+        verify_patch(run_dir)
+    patch_path.write_bytes(saved_patch)
     assert subprocess.run(["git", "status", "--porcelain"], cwd=source,
                           capture_output=True, text=True, check=True).stdout == ""
     assert TraceFixRunner.inspect(run_dir)["resumable"] is False

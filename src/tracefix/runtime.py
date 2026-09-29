@@ -101,6 +101,7 @@ class RunConfig(BaseModel):
     test_pythonpath_entries: tuple[Path, ...] = ()
     test_target: str | None = None
     source_import: str | None = None
+    skills_root: Path | None = None
     environment_recipe: EnvironmentRecipe | None = None
     test_environment_variables: dict[str, str] = Field(default_factory=dict)
     execution_backend: Literal["local", "docker"] = "local"
@@ -138,6 +139,8 @@ class RunConfig(BaseModel):
             not self.docker_task_id or not self.docker_input_root
         ):
             raise ValueError("Docker execution requires a task ID and input root")
+        if self.execution_backend == "docker" and self.skills_root is not None:
+            raise ValueError("custom Skills directories are supported only by local execution")
         if self.execution_backend != "docker" and (
             self.docker_profile != "frozen" or self.docker_image_id is not None
         ):
@@ -299,6 +302,7 @@ class TraceFixRunner:
                     protected_dirs=set(protected),
                     skills_enabled=config.agent_config.skills_enabled,
                     skill_limits=config.agent_config.skill_limits,
+                    skills_root=config.skills_root,
                     test_timeout_seconds=min(120.0, float(config.agent_config.wall_time_seconds)),
                     test_python_executable=config.test_python_executable,
                     test_pythonpath_entries=config.test_pythonpath_entries,
@@ -429,6 +433,7 @@ class TraceFixRunner:
                 protected_dirs=protected_dirs,
                 skills_enabled=config.agent_config.skills_enabled,
                 skill_limits=config.agent_config.skill_limits,
+                skills_root=config.skills_root,
                 test_timeout_seconds=min(120.0, float(config.agent_config.wall_time_seconds)),
                 test_python_executable=config.test_python_executable,
                 test_pythonpath_entries=config.test_pythonpath_entries,
@@ -642,6 +647,7 @@ class TraceFixRunner:
                     repo_map_config=config.agent_config.repo_map,
                     skills_enabled=config.agent_config.skills_enabled,
                     skill_limits=config.agent_config.skill_limits,
+                    skills_root=config.skills_root,
                 )
                 workspace_preparation = docker_backend.workspace_preparation
                 repository_map = docker_backend.repo_map
@@ -707,6 +713,7 @@ class TraceFixRunner:
                     protected_dirs=internal_artifacts,
                     skills_enabled=config.agent_config.skills_enabled,
                     skill_limits=config.agent_config.skill_limits,
+                    skills_root=config.skills_root,
                     test_timeout_seconds=min(120.0, float(config.agent_config.wall_time_seconds)),
                     test_python_executable=config.test_python_executable,
                     test_pythonpath_entries=config.test_pythonpath_entries,

@@ -8,8 +8,9 @@ from pathlib import Path
 
 import pytest
 
+from tracefix.agent.base import AgentStatus
 from tracefix.cli import _ordinary_settings, build_parser, main
-from tracefix.onboarding import doctor, export_patch
+from tracefix.onboarding import doctor, export_patch, verify_patch
 
 
 def _repo(root: Path) -> Path:
@@ -58,6 +59,75 @@ def test_toml_paths_and_cli_precedence(tmp_path, monkeypatch):
     assert _ordinary_settings(args)["output_dir"] == tmp_path / "cli"
 
 
+def test_toml_approved_skills_directory_resolves_outside_repository(tmp_path):
+    repo = _repo(tmp_path / "repo")
+    skills = tmp_path / "approved skills"
+    skills.mkdir()
+    config = tmp_path / "config.toml"
+    config.write_text(
+        '[run]\nrepo = "repo"\ntask = "fix"\nsource_import = "sample"\n'
+        'test_target = "test_sample.py"\nskills_dir = "approved skills"\n',
+        encoding="utf-8",
+    )
+    args = build_parser().parse_args(["run", "--config", str(config), "--skills"])
+    assert _ordinary_settings(args)["skills_root"] == skills
+    settings = _ordinary_settings(args)
+    settings["test_python_executable"] = Path(sys.executable)
+    settings["output_dir"] = tmp_path / "runs"
+    assert next(
+        item for item in doctor(settings)["checks"] if item["name"] == "skills_directory"
+    )["ok"]
+    assert repo.is_dir()
+
+
+def test_toml_exposes_budget_context_and_skills_settings(tmp_path):
+    config = tmp_path / "config.toml"
+    config.write_text(
+        '[run]\nrepo = "."\ntask = "fix"\nmax_steps = 4\n'
+        'context_trigger_tokens = 1000\nrecord_request_views = true\n'
+        'skills = true\nskills_max_active = 2\n', encoding="utf-8",
+    )
+    args = build_parser().parse_args(["run", "--config", str(config)])
+    assert _ordinary_settings(args)["shared_toml"] == {
+        "max_steps": 4,
+        "context_trigger_tokens": 1000,
+        "record_request_views": True,
+        "skills": True,
+        "skills_max_active": 2,
+    }
+
+
+def test_run_applies_toml_then_environment_then_cli_to_effective_config(
+    tmp_path, monkeypatch,
+):
+    repo = _repo(tmp_path / "repo")
+    config = tmp_path / "config.toml"
+    config.write_text(
+        f'[run]\nrepo = "{repo.as_posix()}"\ntask = "fix"\n'
+        'source_import = "sample"\ntest_target = "test_sample.py"\n'
+        'max_steps = 4\ncontext_trigger_tokens = 1000\n'
+        'record_request_views = true\nskills = true\n', encoding="utf-8",
+    )
+    seen = []
+    monkeypatch.setattr(
+        "tracefix.cli.TraceFixRunner.run",
+        lambda _self, value: seen.append(value) or type(
+            "Completed", (), {"status": AgentStatus.COMPLETED}
+        )(),
+    )
+    monkeypatch.setattr("tracefix.cli._print_run_result", lambda _result: None)
+    assert main(["run", "--config", str(config)]) == 0
+    assert seen[-1].agent_config.max_steps == 4
+    assert seen[-1].agent_config.context.compaction_trigger_tokens == 1000
+    assert seen[-1].agent_config.record_request_views is True
+    assert seen[-1].agent_config.skills_enabled is True
+    monkeypatch.setenv("TRACEFIX_MAX_STEPS", "6")
+    assert main(["run", "--config", str(config)]) == 0
+    assert seen[-1].agent_config.max_steps == 6
+    assert main(["run", "--config", str(config), "--max-steps", "8"]) == 0
+    assert seen[-1].agent_config.max_steps == 8
+
+
 @pytest.mark.parametrize(
     "content, message",
     [
@@ -78,7 +148,7 @@ def test_toml_rejects_invalid_or_ambiguous_configuration(tmp_path, content, mess
 def test_doctor_text_shows_blocker_and_fix(monkeypatch, capsys):
     monkeypatch.setattr(
         "tracefix.cli.doctor",
-        lambda _settings: {
+        lambda _settings, **_kwargs: {
             "ok": False,
             "checks": [
                 {"name": "pytest", "ok": False, "detail": "missing", "fix": "install pytest"}
@@ -171,6 +241,79 @@ def test_doctor_is_zero_provider_call_and_detects_dirty_repository(tmp_path, mon
     assert "test-only-key" not in json.dumps(report)
 
 
+def test_doctor_prepare_uses_temporary_checkout_without_model(tmp_path, monkeypatch, capsys):
+    repo = _repo(tmp_path / "source with spaces")
+
+    def never(*args, **kwargs):
+        raise AssertionError("provider client must not be constructed")
+
+    monkeypatch.setattr("tracefix.models.litellm_adapter.LiteLLMAdapter.__init__", never)
+    argv = [
+        "doctor", "--prepare", "--repo", str(repo), "--source-import", "sample",
+        "--test-target", "test_sample.py", "--test-python", sys.executable, "--json",
+    ]
+    assert main(argv) == 0
+    report = json.loads(capsys.readouterr().out)
+    assert next(c for c in report["checks"] if c["name"] == "prepared_checkout")["ok"]
+    assert subprocess.run(
+        ["git", "status", "--porcelain"], cwd=repo, capture_output=True,
+        text=True, check=True,
+    ).stdout == ""
+
+
+def test_doctor_prepare_rejects_dependency_that_cannot_import(tmp_path):
+    repo = _repo(tmp_path / "source")
+    (repo / "sample.py").write_text("import absent_tracefix_fixture_dependency\n", encoding="utf-8")
+    subprocess.run(["git", "add", "--all"], cwd=repo, check=True)
+    subprocess.run(
+        ["git", "-c", "user.name=Test", "-c", "user.email=test@example.invalid",
+         "commit", "-qm", "missing dependency"], cwd=repo, check=True,
+    )
+    checks = doctor(
+        {
+            "repo": repo, "test_python_executable": Path(sys.executable),
+            "test_target": "test_sample.py", "source_import": "sample",
+            "output_dir": tmp_path / "runs", "model_name": "offline/replay", "env_file": None,
+        },
+        prepare=True,
+    )
+    prepared = next(c for c in checks["checks"] if c["name"] == "prepared_checkout")
+    assert not prepared["ok"]
+    assert (
+        "source import probe" in prepared["detail"]
+        or "absent_tracefix_fixture_dependency" in prepared["detail"]
+    )
+
+
+def test_doctor_prepare_supports_src_layout_and_rejects_installed_copy(tmp_path):
+    repo = tmp_path / "src project"
+    (repo / "src" / "sample").mkdir(parents=True)
+    (repo / "src" / "sample" / "__init__.py").write_text(
+        "VALUE = 1\n", encoding="utf-8"
+    )
+    (repo / "test_sample.py").write_text(
+        "from sample import VALUE\n\ndef test_value():\n    assert VALUE == 1\n",
+        encoding="utf-8",
+    )
+    subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+    subprocess.run(["git", "add", "--all"], cwd=repo, check=True)
+    subprocess.run(
+        ["git", "-c", "user.name=Test", "-c", "user.email=test@example.invalid",
+         "commit", "-qm", "src fixture"], cwd=repo, check=True,
+    )
+    settings = {
+        "repo": repo, "test_python_executable": Path(sys.executable),
+        "test_target": "test_sample.py", "source_import": "sample",
+        "output_dir": tmp_path / "runs", "model_name": "offline/replay", "env_file": None,
+    }
+    good = doctor(settings, prepare=True)
+    assert next(c for c in good["checks"] if c["name"] == "prepared_checkout")["ok"]
+    outside = doctor({**settings, "source_import": "pytest"}, prepare=True)
+    assert not next(
+        c for c in outside["checks"] if c["name"] == "prepared_checkout"
+    )["ok"]
+
+
 def test_doctor_reports_missing_test_environment(tmp_path):
     repo = _repo(tmp_path / "repo")
     checks = doctor(
@@ -186,6 +329,32 @@ def test_doctor_reports_missing_test_environment(tmp_path):
     )
     failed = {item["name"] for item in checks["checks"] if not item["ok"]}
     assert {"test_python", "pytest", "test_target"} <= failed
+
+
+def test_independent_verification_requires_saved_session_identity(tmp_path):
+    run = tmp_path / "older-run"
+    run.mkdir()
+    (run / "result.json").write_text("{}", encoding="utf-8")
+    with pytest.raises(ValueError, match="session.json"):
+        verify_patch(run)
+
+
+def test_doctor_prepare_does_not_clone_when_basic_checks_fail(tmp_path, monkeypatch):
+    def never(*_args, **_kwargs):
+        raise AssertionError("invalid input must not be cloned")
+
+    monkeypatch.setattr("tracefix.onboarding.TraceFixRunner._clone_repository", never)
+    result = doctor(
+        {
+            "repo": None, "test_python_executable": tmp_path / "missing-python",
+            "test_target": "missing.py", "source_import": "missing",
+            "output_dir": tmp_path / "runs", "model_name": "offline/replay",
+            "env_file": None, "skills_root": tmp_path / "unapproved-skills",
+        },
+        prepare=True,
+    )
+    failed = {item["name"] for item in result["checks"] if not item["ok"]}
+    assert {"repository", "skills_directory", "prepared_checkout"} <= failed
 
 
 def test_export_checks_hash_and_does_not_touch_source(tmp_path):

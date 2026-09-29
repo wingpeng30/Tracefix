@@ -121,7 +121,11 @@ jobs:
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
             & (Join-Path $wheelEnv "Scripts/tracefix.exe") doctor --repo (Join-Path $ordinary "source") --test-python $wheelPython --test-target tests/test_widget.py --source-import widget --model offline/replay --json
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            & (Join-Path $wheelEnv "Scripts/tracefix.exe") doctor --prepare --repo (Join-Path $ordinary "source") --test-python $wheelPython --test-target tests/test_widget.py --source-import widget --model offline/replay --json
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
             $ordinaryRun = (Get-ChildItem -LiteralPath (Join-Path $ordinary "runs") -Directory | Select-Object -First 1).FullName
+            & (Join-Path $wheelEnv "Scripts/tracefix.exe") verify --run $ordinaryRun
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
             & (Join-Path $wheelEnv "Scripts/tracefix.exe") export --run $ordinaryRun --output (Join-Path $ordinary "export.patch")
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
             & $wheelPython (Join-Path $env:GITHUB_WORKSPACE "examples/replay_resume.py") --output (Join-Path $wheelSmoke "recovery")
