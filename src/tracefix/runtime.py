@@ -24,6 +24,7 @@ from tracefix.agent import (
     MinimalAgent,
     ToolPresentationMetrics,
 )
+from tracefix.checkpoint import CheckpointError, CheckpointStore, ProcessLock
 from tracefix.context import ContextMetrics
 from tracefix.docker_backend import DockerToolBackend
 from tracefix.exceptions import (
@@ -33,7 +34,7 @@ from tracefix.exceptions import (
     WorkspaceError,
     sanitize_payload,
 )
-from tracefix.messages import ToolCall
+from tracefix.messages import Message, MessageHistory, ToolCall
 from tracefix.models import BaseLLM, LiteLLMAdapter, LLMConfig
 from tracefix.provenance import (
     RunProvenance,
@@ -212,6 +213,335 @@ class TraceFixRunner:
     def __init__(self, llm_factory: LLMFactory | None = None) -> None:
         # 注入工厂让自动测试可以替换真实供应商，同时生产默认仍使用 LiteLLM。
         self._llm_factory = llm_factory or LiteLLMAdapter
+
+    @classmethod
+    def inspect(cls, run_dir: Path) -> dict[str, Any]:
+        """Read a local session without constructing a model or modifying its checkout."""
+        root = run_dir.expanduser().resolve()
+        manifest_path = root / "session.json"
+        if not manifest_path.is_file():
+            return {"resumable": False, "reasons": ["session manifest is missing"]}
+        try:
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            config = RunConfig.model_validate(manifest["config"])
+            recorded = manifest["identity"]
+            actual = dict(recorded)
+            actual["config_sha256"] = hashlib.sha256(
+                config.model_dump_json().encode("utf-8")
+            ).hexdigest()
+            actual["implementation_sha256"] = cls._implementation_sha256()
+            actual["test_environment_sha256"] = inspect_test_environment(
+                config.test_python_executable or sys.executable,
+                pythonpath_entries=config.test_pythonpath_entries,
+            ).fingerprint_sha256
+            reasons: list[str] = []
+            source, commit = cls._validate_source_repository(config.repo)
+            if (
+                str(source) != str(config.repo.expanduser().resolve())
+                or commit != recorded["source_commit"]
+            ):
+                reasons.append("source repository identity changed")
+            workspace = root / "workspace"
+            if not workspace.is_dir():
+                reasons.append("original checkout is missing")
+            else:
+                head = subprocess.run(
+                    ["git", "rev-parse", "HEAD"], cwd=workspace,
+                    capture_output=True, text=True, check=False,
+                )
+                if head.returncode != 0 or head.stdout.strip() != recorded["source_commit"]:
+                    reasons.append("checkout commit changed")
+            repo_map_path = root / "repo-map.json"
+            map_data = (
+                json.loads(repo_map_path.read_text(encoding="utf-8"))
+                if repo_map_path.is_file() else None
+            )
+            actual["repo_map_sha256"] = hashlib.sha256(
+                (RepoMap.model_validate(map_data).text if map_data else "").encode("utf-8")
+            ).hexdigest()
+            store = CheckpointStore(root, recorded)
+            inspection = store.inspect(current_identity=actual)
+            reasons.extend(inspection.reasons)
+            if inspection.resumable and workspace.is_dir():
+                snapshot = store.load(current_identity=actual)
+                protected = snapshot.payload.get("protected_dirs")
+                if not isinstance(protected, list) or not all(
+                    isinstance(name, str) for name in protected
+                ) or not set(protected).issubset({
+                    ".tracefix-build-tmp", ".tracefix-test-tmp"
+                }):
+                    reasons.append("checkpoint protected directory state is invalid")
+                    protected = [".tracefix-build-tmp"]
+                saved_agent = snapshot.payload.get("agent")
+                if not isinstance(saved_agent, dict):
+                    reasons.append("checkpoint agent state is invalid")
+                else:
+                    AgentState.model_validate(saved_agent["state"])
+                    history = MessageHistory(
+                        Message.model_validate(item) for item in saved_agent["history"]
+                    )
+                    if history.pending_tool_call_ids:
+                        reasons.append("checkpoint message history has pending calls")
+                    memory = saved_agent["memory"]
+                    if not isinstance(memory, dict) or any(
+                        name not in memory for name in MinimalAgent._RECOVERY_FIELDS
+                    ):
+                        reasons.append("checkpoint runtime memory is incomplete")
+                patch, _ = cls._collect_diff(workspace, set(protected))
+                if ".tracefix-test-tmp" in protected and (
+                    not (workspace / ".tracefix-test-tmp").is_dir()
+                    or (workspace / ".tracefix-test-tmp").is_symlink()
+                ):
+                    reasons.append("test temporary directory changed")
+                registry = create_default_tool_registry(
+                    workspace,
+                    evidence_dir=root / "test-evidence",
+                    protected_dirs=set(protected),
+                    skills_enabled=config.agent_config.skills_enabled,
+                    skill_limits=config.agent_config.skill_limits,
+                    test_timeout_seconds=min(120.0, float(config.agent_config.wall_time_seconds)),
+                    test_python_executable=config.test_python_executable,
+                    test_pythonpath_entries=config.test_pythonpath_entries,
+                    test_environment_variables=config.test_environment_variables,
+                )
+                tool_sha = hashlib.sha256(json.dumps(
+                    [spec.model_dump(mode="json") for spec in registry.specs()],
+                    sort_keys=True, ensure_ascii=False,
+                ).encode("utf-8")).hexdigest()
+                if tool_sha != recorded["tool_sha256"]:
+                    reasons.append("tool definitions changed")
+                if config.agent_config.skills_enabled:
+                    try:
+                        registry.get("load_skill").restore_recovery_state(
+                            snapshot.payload["skills"]
+                        )
+                    except TraceFixError:
+                        reasons.append("skill contents changed")
+                if hashlib.sha256(patch.encode("utf-8")).hexdigest() != snapshot.payload.get(
+                    "workspace_diff_sha256"
+                ):
+                    reasons.append("checkout patch changed since checkpoint")
+                fact = saved_agent["memory"].get("_last_test_evidence") if saved_agent else None
+                if isinstance(fact, dict) and fact.get("valid") is True and (
+                    fact.get("source_sha256") != snapshot.payload.get("workspace_diff_sha256")
+                ):
+                    reasons.append("passing test does not match checkpoint patch")
+                trace = (root / "trajectory.jsonl").read_bytes()
+                size = snapshot.payload.get("trace_size")
+                if not isinstance(size, int) or size > len(trace) or size < 0:
+                    reasons.append("trajectory prefix is missing")
+                elif (
+                    hashlib.sha256(trace[:size]).hexdigest()
+                    != snapshot.payload.get("trace_sha256")
+                ):
+                    reasons.append("trajectory prefix changed")
+                else:
+                    for line in trace[size:].splitlines():
+                        event = json.loads(line)
+                        if event.get("event_type") not in {
+                            TraceEventType.AGENT_STATE_CHANGED.value,
+                            TraceEventType.TASK_FINISHED.value,
+                        }:
+                            reasons.append("uncommitted model or tool outcome after checkpoint")
+                            break
+                        if event.get("event_type") == TraceEventType.TASK_FINISHED.value:
+                            terminal_state = event.get("payload", {}).get("state", {})
+                            if terminal_state.get("status") != AgentStatus.INTERRUPTED.value:
+                                reasons.append("run has a non-interrupted terminal event")
+                if (root / "result.json").is_file():
+                    result = RunResult.model_validate_json(
+                        (root / "result.json").read_text(encoding="utf-8")
+                    )
+                    if result.status is not AgentStatus.INTERRUPTED:
+                        reasons.append("run is not interrupted")
+            return {
+                "resumable": not reasons and inspection.resumable,
+                "reasons": reasons,
+                "sequence": inspection.sequence,
+                "run": str(root),
+                "step_count": (
+                    snapshot.payload["agent"]["state"]["step_count"]
+                    if inspection.resumable else None
+                ),
+                "task": (
+                    snapshot.payload["agent"]["state"]["task"]
+                    if inspection.resumable else None
+                ),
+                "phase": (
+                    snapshot.payload["agent"]["state"]["phase"]
+                    if inspection.resumable else None
+                ),
+                "validation_status": (
+                    snapshot.payload["agent"]["state"]["validation_status"]
+                    if inspection.resumable else None
+                ),
+                "last_test_evidence": (
+                    snapshot.payload["agent"].get("memory", {}).get("_last_test_evidence")
+                    if inspection.resumable else None
+                ),
+                "workspace_diff_sha256": (
+                    snapshot.payload.get("workspace_diff_sha256")
+                    if inspection.resumable else None
+                ),
+            }
+        except (OSError, ValueError, KeyError, TypeError, TraceFixError) as exc:
+            return {"resumable": False, "reasons": [str(exc)], "run": str(root)}
+
+    def resume(self, run_dir: Path) -> RunResult:
+        """Continue a validated local session in its original checkout."""
+        root = run_dir.expanduser().resolve()
+        manifest_path = root / "session.json"
+        if not manifest_path.is_file():
+            raise CheckpointError("session manifest is missing")
+        with ProcessLock(root):
+            inspection = self.inspect(root)
+            if not inspection["resumable"]:
+                raise CheckpointError(
+                    "run cannot be resumed", context={"reasons": inspection["reasons"]}
+                )
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            config = RunConfig.model_validate(manifest["config"])
+            if config.execution_backend != "local":
+                raise CheckpointError("Docker sessions cannot be resumed")
+            store = CheckpointStore(root, manifest["identity"])
+            snapshot = store.load()
+            workspace = root / "workspace"
+            protected = snapshot.payload.get("protected_dirs")
+            if not isinstance(protected, list) or not all(
+                isinstance(name, str) for name in protected
+            ) or not set(protected).issubset({
+                ".tracefix-build-tmp", ".tracefix-test-tmp"
+            }):
+                raise CheckpointError("checkpoint protected directory state is invalid")
+            protected_dirs = set(protected)
+            if ".tracefix-test-tmp" in protected_dirs and not (
+                workspace / ".tracefix-test-tmp"
+            ).is_dir() or (workspace / ".tracefix-test-tmp").is_symlink():
+                raise CheckpointError("test temporary directory changed since checkpoint")
+            repo_map_path = root / "repo-map.json"
+            repo_map = (
+                RepoMap.model_validate_json(repo_map_path.read_text(encoding="utf-8"))
+                if repo_map_path.is_file() else None
+            )
+            tools = create_default_tool_registry(
+                workspace,
+                evidence_dir=root / "test-evidence",
+                protected_dirs=protected_dirs,
+                skills_enabled=config.agent_config.skills_enabled,
+                skill_limits=config.agent_config.skill_limits,
+                test_timeout_seconds=min(120.0, float(config.agent_config.wall_time_seconds)),
+                test_python_executable=config.test_python_executable,
+                test_pythonpath_entries=config.test_pythonpath_entries,
+                pytest_config=None,
+                test_environment_variables=config.test_environment_variables,
+            )
+            tool_hash = hashlib.sha256(json.dumps(
+                [spec.model_dump(mode="json") for spec in tools.specs()],
+                sort_keys=True, ensure_ascii=False,
+            ).encode("utf-8")).hexdigest()
+            if tool_hash != manifest["identity"]["tool_sha256"]:
+                raise CheckpointError("tool definitions changed since checkpoint")
+            skill_tool = tools.get("load_skill") if config.agent_config.skills_enabled else None
+            if skill_tool is not None:
+                skill_tool.restore_recovery_state(snapshot.payload["skills"])
+            load_environment_file(config.env_file)
+            self._validate_credentials(config.model_name)
+            llm_config = LLMConfig(
+                model_name=config.model_name,
+                temperature=0.0,
+                max_output_tokens=config.per_request_output_tokens,
+                timeout_seconds=config.llm_timeout_seconds,
+                max_retries=config.llm_max_retries,
+                extra_kwargs=self._provider_kwargs(config.model_name),
+            )
+            trace_path = root / "trajectory.jsonl"
+            result_path = root / "result.json"
+            old_result = result_path.read_bytes() if result_path.is_file() else None
+            if old_result is not None:
+                (root / f"result-before-resume-{snapshot.sequence}.json").write_bytes(old_result)
+            sequence = snapshot.sequence
+            with JSONLTraceSink(trace_path, append=True) as sink:
+                sink.write(TraceEvent(
+                    event_type=TraceEventType.SESSION_RESUMED,
+                    task_id=root.name,
+                    step=int(snapshot.payload["agent"]["state"]["step_count"]),
+                    payload={"checkpoint_sequence": sequence},
+                ))
+                agent = MinimalAgent(
+                    self._llm_factory(llm_config), tools,
+                    config=config.agent_config.model_copy(deep=True),
+                    trace_sink=sink,
+                    repository_map=repo_map.text if repo_map else None,
+                    repository_candidates=repo_map.candidate_files if repo_map else (),
+                )
+
+                def save_checkpoint(active: MinimalAgent) -> None:
+                    nonlocal sequence
+                    patch, _ = self._collect_diff(workspace, protected_dirs)
+                    patch_sha = hashlib.sha256(patch.encode("utf-8")).hexdigest()
+                    active.verify_test_source(patch_sha)
+                    trace = trace_path.read_bytes()
+                    sequence += 1
+                    store.save({
+                        "agent": active.checkpoint_payload(),
+                        "workspace_diff_sha256": patch_sha,
+                        "trace_size": len(trace),
+                        "trace_sha256": hashlib.sha256(trace).hexdigest(),
+                        "skills": skill_tool.recovery_state() if skill_tool else None,
+                        "protected_dirs": sorted(protected_dirs),
+                    }, sequence=sequence)
+
+                agent.checkpoint_callback = save_checkpoint
+                state = agent.resume(snapshot.payload["agent"])
+            patch, changed_files = self._collect_diff(workspace, protected_dirs)
+            diff_path = root / "patch.diff"
+            diff_path.write_text(patch, encoding="utf-8")
+            provenance = collect_run_provenance(config.task, llm_config)
+            result = RunResult(
+                run_id=root.name,
+                source_repo=str(config.repo.expanduser().resolve()),
+                source_commit=manifest["identity"]["source_commit"],
+                workspace=str(workspace),
+                model_name=config.model_name,
+                status=state.status,
+                stop_reason=state.stop_reason,
+                agent_validation_status=state.validation_status,
+                final_output=state.final_output,
+                step_count=state.step_count,
+                input_tokens=state.input_tokens,
+                output_tokens=state.output_tokens,
+                test_runs=state.test_runs,
+                search_calls=state.search_calls,
+                file_read_calls=state.file_read_calls,
+                cached_tool_calls=state.cached_tool_calls,
+                cost_usd=state.cost_usd,
+                cost_complete=state.cost_complete,
+                usd_cny_rate=config.usd_cny_rate,
+                cost_cny_estimate=(
+                    round(state.cost_usd * config.usd_cny_rate, 8)
+                    if state.cost_complete else None
+                ),
+                started_at=state.started_at or datetime.now(UTC),
+                finished_at=state.finished_at or datetime.now(UTC),
+                duration_seconds=max(0.0, time.monotonic() - agent._started_monotonic),
+                model_request_seconds=state.model_request_seconds,
+                tool_execution_seconds=state.tool_execution_seconds,
+                context_preparation_seconds=state.context_preparation_seconds,
+                changed_files=changed_files,
+                trace_path=str(trace_path),
+                diff_path=str(diff_path),
+                patch_sha256=hashlib.sha256(diff_path.read_bytes()).hexdigest(),
+                result_path=str(result_path),
+                agent_config=config.agent_config.model_copy(deep=True),
+                context_metrics=state.context_metrics.model_copy(deep=True),
+                presentation_metrics=state.presentation_metrics.model_copy(deep=True),
+                repo_map=repo_map,
+                repo_map_path=str(repo_map_path) if repo_map else None,
+                provenance=provenance,
+                workspace_preparation=manifest["workspace_preparation"],
+            )
+            result_path.write_text(result.model_dump_json(indent=2), encoding="utf-8")
+            return result
 
     def run(self, config: RunConfig) -> RunResult:
         """执行任务并保证成功、预算终止或异常时都保存结构化结果。"""
@@ -395,6 +725,67 @@ class TraceFixRunner:
                 repository_map=repository_map.text if repository_map else None,
                 repository_candidates=(repository_map.candidate_files if repository_map else ()),
             )
+            if (
+                config.execution_backend == "local"
+                and config.environment_recipe is None
+                and not config.test_environment_variables
+            ):
+                checkpoint_identity = {
+                    "source_commit": source_commit,
+                    "config_sha256": hashlib.sha256(
+                        config.model_dump_json().encode("utf-8")
+                    ).hexdigest(),
+                    "tool_sha256": hashlib.sha256(
+                        json.dumps(
+                            [spec.model_dump(mode="json") for spec in tools.specs()],
+                            sort_keys=True, ensure_ascii=False,
+                        ).encode("utf-8")
+                    ).hexdigest(),
+                    "repo_map_sha256": hashlib.sha256(
+                        (repository_map.text if repository_map else "").encode("utf-8")
+                    ).hexdigest(),
+                    "implementation_sha256": self._implementation_sha256(),
+                    "test_environment_sha256": inspect_test_environment(
+                        config.test_python_executable or sys.executable,
+                        pythonpath_entries=config.test_pythonpath_entries,
+                    ).fingerprint_sha256,
+                }
+                manifest_path = run_dir / "session.json"
+                manifest_path.write_text(
+                    json.dumps(
+                        {"schema_version": 1, "config": config.model_dump(mode="json"),
+                         "identity": checkpoint_identity,
+                         "workspace_preparation": workspace_preparation},
+                        ensure_ascii=False, indent=2,
+                    ), encoding="utf-8",
+                )
+                store = CheckpointStore(run_dir, checkpoint_identity)
+                sequence = 0
+
+                def save_checkpoint(active: MinimalAgent) -> None:
+                    nonlocal sequence
+                    assert workspace is not None
+                    current_diff, _ = self._collect_diff(workspace, internal_artifacts)
+                    current_sha = hashlib.sha256(current_diff.encode("utf-8")).hexdigest()
+                    active.verify_test_source(current_sha)
+                    trace_bytes = trace_path.read_bytes()
+                    skill_tool = (
+                        tools.get("load_skill") if config.agent_config.skills_enabled else None
+                    )
+                    sequence += 1
+                    store.save(
+                        {
+                            "agent": active.checkpoint_payload(),
+                            "workspace_diff_sha256": current_sha,
+                            "trace_size": len(trace_bytes),
+                            "trace_sha256": hashlib.sha256(trace_bytes).hexdigest(),
+                            "skills": skill_tool.recovery_state() if skill_tool else None,
+                            "protected_dirs": sorted(internal_artifacts),
+                        },
+                        sequence=sequence,
+                    )
+
+                agent.checkpoint_callback = save_checkpoint
             if docker_backend is not None:
                 docker_backend.set_phase("agent_running")
             agent_task = config.task
@@ -550,6 +941,16 @@ class TraceFixRunner:
         """生成便于按时间排序且几乎不会冲突的运行标识。"""
         timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
         return f"{timestamp}-{uuid4().hex[:8]}"
+
+    @staticmethod
+    def _implementation_sha256() -> str:
+        """Bind local checkpoints to the exact installed Python implementation."""
+        root = Path(__file__).resolve().parent
+        digest = hashlib.sha256()
+        for path in sorted(root.rglob("*.py")):
+            digest.update(path.relative_to(root).as_posix().encode("utf-8"))
+            digest.update(hashlib.sha256(path.read_bytes()).digest())
+        return digest.hexdigest()
 
     @staticmethod
     def _validate_credentials(model_name: str) -> None:

@@ -35,6 +35,7 @@ class TraceEventType(StrEnum):
     AGENT_PHASE_CHANGED = "agent_phase_changed"
     ERROR = "error"
     TASK_FINISHED = "task_finished"
+    SESSION_RESUMED = "session_resumed"
 
 
 class TraceEvent(BaseModel):

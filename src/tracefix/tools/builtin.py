@@ -874,6 +874,7 @@ class RunTestsTool(_WorkspaceTool):
                     f"--junitxml={junit_path}",
                 ]
             )
+            source_sha_before = self._product_diff_sha()
             process = subprocess.Popen(
                 command,
                 cwd=self.workspace,
@@ -956,6 +957,9 @@ class RunTestsTool(_WorkspaceTool):
                 test_status = "invalid_test_run"
             else:
                 test_status = "passed"
+            source_sha_after = self._product_diff_sha()
+            if test_status == "passed" and source_sha_before != source_sha_after:
+                test_status = "invalid_test_run"
             passed = test_status == "passed"
             return ToolResult(
                 call_id=call.id,
@@ -973,6 +977,8 @@ class RunTestsTool(_WorkspaceTool):
                     "junit_path": str(junit_path),
                     "audit": audit,
                     "diagnostic": audit_issue or junit_issue or phase_issue,
+                    "source_sha256_before": source_sha_before,
+                    "source_sha256_after": source_sha_after,
                 },
                 error=(
                     None
@@ -1026,6 +1032,18 @@ class RunTestsTool(_WorkspaceTool):
         command = self._parse_command(args.command, self.python_executable)
         self._validate_pytest_config()
         return command, args.timeout_seconds or self.default_timeout_seconds
+
+    def _product_diff_sha(self) -> str:
+        """Bind public test evidence to the product diff before and after pytest."""
+        diff_tool = GetGitDiffTool(
+            self.workspace, max_output_chars=10_000_000,
+            protected_dirs=self.protected_dirs,
+        )
+        result = diff_tool.execute(ToolCall(id=uuid4().hex, name="get_git_diff"))
+        output = result.output if isinstance(result.output, dict) else {}
+        if not result.success or output.get("truncated") or not isinstance(output.get("diff"), str):
+            raise ToolValidationError("cannot establish source identity for test run")
+        return hashlib.sha256(output["diff"].encode("utf-8")).hexdigest()
 
     def _validate_pytest_config(self) -> None:
         test_tmp = self.workspace / ".tracefix-test-tmp"

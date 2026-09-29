@@ -10,6 +10,7 @@ import re
 from pathlib import Path
 from typing import Any
 
+from tracefix.checkpoint import CheckpointStore
 from tracefix.exceptions import sanitize_payload
 
 
@@ -204,6 +205,29 @@ def render_report(run: Path, output: Path | None = None) -> Path:
         else "未记录"
     )
     independent_text = "未记录"
+    resume_segments = sum(
+        event.get("event_type") == "session_resumed" for event in events
+    )
+    checkpoint_text = "未记录"
+    test_fact_text = "未记录"
+    session_path = run_dir / "session.json"
+    if session_path.is_file():
+        try:
+            manifest = _read_json(session_path)
+            store = CheckpointStore(run_dir, manifest["identity"])
+            saved = store.inspect()
+            if saved.resumable:
+                snapshot = store.load()
+                checkpoint_text = f"序号 {snapshot.sequence}，SHA-256 {snapshot.payload_sha256}"
+                fact = snapshot.payload.get("agent", {}).get("memory", {}).get(
+                    "_last_test_evidence"
+                )
+                if isinstance(fact, dict):
+                    test_fact_text = _clean(fact)
+            else:
+                checkpoint_text = "不可核验：" + ", ".join(saved.reasons)
+        except (OSError, KeyError, TypeError, ValueError):
+            checkpoint_text = "不可核验"
     agent_config = result.get("agent_config")
     request_view_text = (
         "配置开启；实际内容请核对轨迹"
@@ -278,6 +302,8 @@ ul{{padding-left:20px}}footer{{color:var(--muted);font-size:13px}}
 <p>停止原因：{_label(result.get("stop_reason"))}</p>
 <p>测试解释器及环境：{_label(result.get("workspace_preparation"))}</p>
 <p>模型请求视图：{_clean(request_view_text)}</p>
+<p>恢复段：{resume_segments} · Checkpoint：{_clean(checkpoint_text)}</p>
+<p>最近测试事实：{test_fact_text}</p>
 <p>运行错误：{_label(result.get("error"))}</p>
 <p>Agent 结束表示控制流结束；公开测试结果和独立验收分别列示，
 不由结束状态推断修复成功。</p></section>

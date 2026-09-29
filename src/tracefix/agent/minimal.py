@@ -6,6 +6,7 @@ import json
 import re
 import shlex
 import time
+from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any
 from uuid import uuid4
@@ -35,6 +36,78 @@ from tracefix.tracing.base import TraceEvent, TraceEventType
 
 class MinimalAgent(BaseAgent):
     """使用原生工具调用完成“分析—执行—反馈”闭环的最小 Agent。"""
+
+    checkpoint_callback: Callable[[MinimalAgent], None] | None = None
+
+    _RECOVERY_FIELDS = (
+        "_failed_apply_calls", "_invalid_test_signatures", "_consecutive_apply_failures",
+        "_patch_recovery_reminder_sent", "_no_effect_patch_reminder_sent",
+        "_last_patch_failure_reason", "_no_effect_patch_targets",
+        "_repeated_no_effect_patch_signature", "_fresh_read_required_for_patch",
+        "_fresh_target_reads", "_tests_passed", "_diff_nonempty",
+        "_finish_reminder_sent", "_unverified_finish_reminder_sent",
+        "_repo_map_candidate_reads", "_exploration_reminder_sent",
+        "_patch_action_reminder_sent", "_budget_guidance_sent",
+        "_late_targeted_retrievals",
+        "_last_test_evidence",
+    )
+
+    def checkpoint_payload(self) -> dict[str, Any]:
+        """Capture only deterministic state at a complete message boundary."""
+        if self.history.pending_tool_call_ids:
+            raise AgentError("cannot checkpoint with pending tool calls")
+        memory = {name: getattr(self, name) for name in self._RECOVERY_FIELDS}
+        memory["_repo_map_candidate_reads"] = sorted(self._repo_map_candidate_reads)
+        memory["_budget_guidance_sent"] = sorted(self._budget_guidance_sent)
+        return {
+            "state": self.state.model_dump(mode="json"),
+            "history": [message.model_dump(mode="json") for message in self.history.snapshot()],
+            "memory": json.loads(json.dumps(memory, ensure_ascii=False)),
+            "task_id": self._task_id,
+            "active_seconds": max(0.0, time.monotonic() - self._started_monotonic),
+        }
+
+    def verify_test_source(self, source_sha256: str) -> None:
+        """Invalidate a passing test if the checkout diff has since changed."""
+        evidence = self._last_test_evidence
+        if (
+            evidence is not None
+            and evidence.get("valid") is True
+            and isinstance(evidence.get("source_sha256"), str)
+            and evidence["source_sha256"] != source_sha256
+        ):
+            evidence["valid"] = False
+            evidence["invalidated_by"] = "checkout_changed_after_test"
+            self._tests_passed = False
+            self.state.validation_status = "unverified"
+
+    def resume(self, payload: dict[str, Any]) -> AgentState:
+        """Continue a previously validated local checkpoint without resetting history."""
+        from tracefix.messages import MessageHistory
+
+        self.state = AgentState.model_validate(payload["state"])
+        self.history = MessageHistory(Message.model_validate(item) for item in payload["history"])
+        if self.history.pending_tool_call_ids:
+            raise AgentError("checkpoint contains pending tool calls")
+        memory = payload["memory"]
+        for name in self._RECOVERY_FIELDS:
+            if name not in memory:
+                raise AgentError(f"checkpoint missing runtime state: {name}")
+            setattr(self, name, memory[name])
+        self._repo_map_candidate_reads = set(memory["_repo_map_candidate_reads"])
+        self._budget_guidance_sent = set(memory["_budget_guidance_sent"])
+        self._successful_tool_cache = {}
+        self._visible_tool_result_ids = set()
+        self._task_id = str(payload["task_id"])
+        self._started_monotonic = time.monotonic() - float(payload["active_seconds"])
+        self._presenter = ToolResultPresenter(self.config.presentation.model_copy(
+            update={"enabled": self.config.presentation.enabled
+                    and self._feature_enabled(self.config.tool_result_presentation_enabled)}
+        ))
+        self.state.status = AgentStatus.RUNNING
+        self.state.finished_at = None
+        self.state.stop_reason = None
+        return self._run_initialized(self.state.task or "", resume=True)
 
     def run(self, task: str) -> AgentState:
         """初始化消息历史并运行，正常完成或预算终止时返回最终状态。"""
@@ -68,6 +141,7 @@ class MinimalAgent(BaseAgent):
         # 否则必须重新执行读取，避免“指向已被折叠历史”的空引用。
         self._visible_tool_result_ids: set[str] = set()
         self._late_targeted_retrievals = 0
+        self._last_test_evidence: dict[str, Any] | None = None
         presentation_config = self.config.presentation.model_copy(
             update={
                 "enabled": (
@@ -92,14 +166,15 @@ class MinimalAgent(BaseAgent):
             self.state.finished_at = datetime.now(UTC)
             raise
 
-    def _run_initialized(self, task: str) -> AgentState:
+    def _run_initialized(self, task: str, *, resume: bool = False) -> AgentState:
         """运行已经完成状态初始化的任务，并集中处理控制流异常。"""
-        self._emit(TraceEventType.TASK_STARTED, {"task": task})
-        self._emit_state()
-        self._append_message(
+        if not resume:
+            self._emit(TraceEventType.TASK_STARTED, {"task": task})
+            self._emit_state()
+            self._append_message(
             Message(role=MessageRole.SYSTEM, content=self.config.system_prompt)
-        )
-        if self.config.skills_enabled:
+            )
+        if not resume and self.config.skills_enabled:
             catalog = self.tools.skill_catalog
             if catalog:
                 entries = "\n".join(
@@ -121,7 +196,7 @@ class MinimalAgent(BaseAgent):
                     TraceEventType.SKILL_CATALOG_EXPOSED,
                     {"skills": [entry.model_dump(mode="json") for entry in catalog]},
                 )
-        if self.repository_map:
+        if not resume and self.repository_map:
             # 将静态地图作为 system 锚点加入完整历史：压缩器会永久保留它，模型请求视图
             # 与 JSONL 审计也能明确区分“索引提供的候选”和 Agent 自己确认的事实。
             self._append_message(
@@ -135,11 +210,16 @@ class MinimalAgent(BaseAgent):
                 TraceEventType.REPO_MAP_ADDED,
                 {"chars": len(self.repository_map)},
             )
-        self._append_message(Message(role=MessageRole.USER, content=task))
+        if not resume:
+            self._append_message(Message(role=MessageRole.USER, content=task))
+        if not resume and self.checkpoint_callback is not None:
+            self.checkpoint_callback(self)
 
         try:
             while self.state.status is AgentStatus.RUNNING:
                 self.step()
+                if self.checkpoint_callback is not None:
+                    self.checkpoint_callback(self)
         except AgentCompleted as exc:
             reason = exc.code
             if self.config.require_tested_completion and self.state.validation_status != "verified":
@@ -180,7 +260,23 @@ class MinimalAgent(BaseAgent):
         self.state.step_count += 1
         tool_specs = self.tools.specs()
         context_started = time.perf_counter()
-        context_view = self.context_manager.prepare(self.history.snapshot(), tool_specs)
+        full_history = self.history.snapshot()
+        request_history = full_history
+        if self._last_test_evidence is not None:
+            fact = {
+                "source": "tool_result",
+                "latest_test": self._last_test_evidence,
+                "validation_status": self.state.validation_status,
+            }
+            anchor = Message(
+                role=MessageRole.SYSTEM,
+                content="[TraceFix 已核验任务事实]\n" + json.dumps(
+                    fact, ensure_ascii=False, sort_keys=True
+                ),
+                metadata={"kind": "task_fact_anchor"},
+            )
+            request_history = (full_history[0], anchor, *full_history[1:])
+        context_view = self.context_manager.prepare(request_history, tool_specs)
         self.state.context_preparation_seconds += time.perf_counter() - context_started
         self._visible_tool_result_ids = {
             message.tool_call_id
@@ -253,6 +349,12 @@ class MinimalAgent(BaseAgent):
             usage = exc.context.get("usage")
             if isinstance(usage, dict):
                 self._add_usage_dict(usage)
+            else:
+                self.state.cost_complete = False
+            raise
+        except Exception:
+            # A timed-out request may already have reached the provider and incurred cost.
+            self.state.cost_complete = False
             raise
 
         self._add_usage(response.usage)
@@ -705,6 +807,9 @@ class MinimalAgent(BaseAgent):
                 self._tests_passed = False
                 self._diff_nonempty = False
                 self.state.validation_status = "unverified"
+                if self._last_test_evidence is not None:
+                    self._last_test_evidence["valid"] = False
+                    self._last_test_evidence["invalidated_by"] = call.id
                 self._finish_reminder_sent = False
                 self._last_patch_failure_reason = None
             else:
@@ -725,6 +830,18 @@ class MinimalAgent(BaseAgent):
             # 测试本身可能生成文件、刷新缓存或改变临时配置，因此所有只读缓存都失效。
             self._successful_tool_cache.clear()
             self._tests_passed = result.success
+            output = result.output if isinstance(result.output, dict) else {}
+            self._last_test_evidence = {
+                "call_id": call.id,
+                "success": result.success,
+                "valid": result.success,
+                "command": output.get("command"),
+                "test_status": output.get("test_status"),
+                "returncode": output.get("returncode"),
+                "source_sha256": output.get("source_sha256_after"),
+                "audit_path": output.get("audit_path"),
+                "junit_path": output.get("junit_path"),
+            }
             if result.success:
                 if self._diff_nonempty:
                     self.state.validation_status = "verified"

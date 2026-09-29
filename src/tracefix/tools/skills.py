@@ -56,6 +56,68 @@ class SkillActivationTool(BaseTool):
             for name, item in sorted(self.catalog.items())
         )
 
+    def recovery_state(self) -> dict[str, object]:
+        """Persist activation identity and byte usage without instruction copies."""
+        return {
+            "catalog": [item.model_dump(mode="json") for item in self.skill_catalog],
+            "activated": sorted(self._activated),
+            "loaded": [
+                {"name": name, "path": path, "version": version, "sha256": digest}
+                for (name, path), (version, digest) in sorted(self._loaded.items())
+            ],
+            "loaded_bytes": self._loaded_bytes,
+        }
+
+    def restore_recovery_state(self, state: dict[str, object]) -> None:
+        """Fail closed if approved text changed since the saved run."""
+        if state.get("catalog") != [
+            item.model_dump(mode="json") for item in self.skill_catalog
+        ]:
+            raise ToolExecutionError("skill catalog changed since checkpoint")
+        loaded = state.get("loaded")
+        activated = state.get("activated")
+        if not isinstance(loaded, list) or not isinstance(activated, list):
+            raise ToolExecutionError("checkpoint skill state is invalid")
+        verified: dict[tuple[str, str], tuple[str, str]] = {}
+        total = 0
+        for entry in loaded:
+            if not isinstance(entry, dict):
+                raise ToolExecutionError("checkpoint skill entry is invalid")
+            name, relative = entry.get("name"), entry.get("path")
+            if (
+                not isinstance(name, str)
+                or not isinstance(relative, str)
+                or name not in self.catalog
+            ):
+                raise ToolExecutionError("checkpoint skill identity is invalid")
+            path = (self.root / name / relative).resolve()
+            if not path.is_relative_to(self.root) or not path.is_file() or path.is_symlink():
+                raise ToolExecutionError("checkpoint skill path changed")
+            # Match execute(): read_text normalizes platform newlines before
+            # hashing and charging the UTF-8 content budget.
+            try:
+                data = path.read_text(encoding="utf-8").encode("utf-8")
+            except (OSError, UnicodeError) as exc:
+                raise ToolExecutionError("checkpoint skill text could not be read") from exc
+            digest = hashlib.sha256(data).hexdigest()
+            if (
+                digest != entry.get("sha256")
+                or entry.get("version") != self.catalog[name]["version"]
+            ):
+                raise ToolExecutionError("checkpoint skill content changed")
+            key = (name, relative)
+            if key in verified:
+                raise ToolExecutionError("checkpoint skill entry is duplicated")
+            verified[key] = (str(entry["version"]), digest)
+            total += len(data)
+        if total != state.get("loaded_bytes") or total > self.limits.max_total_bytes:
+            raise ToolExecutionError("checkpoint skill byte usage is invalid")
+        if set(activated) != {name for (name, path) in verified if path == "SKILL.md"}:
+            raise ToolExecutionError("checkpoint skill activation set is invalid")
+        self._loaded = verified
+        self._activated = set(activated)
+        self._loaded_bytes = total
+
     @property
     def spec(self) -> ToolSpec:
         names = sorted(self.catalog)

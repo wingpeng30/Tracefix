@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from threading import Lock
 from types import TracebackType
@@ -13,11 +14,11 @@ from tracefix.tracing.base import TraceEvent
 class JSONLTraceSink:
     """把每条轨迹事件写成一行 UTF-8 JSON，并在每次写入后刷新。"""
 
-    def __init__(self, path: str | Path) -> None:
+    def __init__(self, path: str | Path, *, append: bool = False) -> None:
         self.path = Path(path).expanduser().resolve()
         self.path.parent.mkdir(parents=True, exist_ok=True)
         try:
-            self._stream = self.path.open("w", encoding="utf-8", newline="\n")
+            self._stream = self.path.open("a" if append else "w", encoding="utf-8", newline="\n")
         except OSError as exc:
             raise TraceProtocolError(
                 f"cannot open JSONL trace file: {exc}",
@@ -43,6 +44,7 @@ class JSONLTraceSink:
                 self._stream.write(event.model_dump_json() + "\n")
                 # 实时刷新能在进程异常退出时尽量保住已经完成的轨迹。
                 self._stream.flush()
+                os.fsync(self._stream.fileno())
             except OSError as exc:
                 raise TraceProtocolError(
                     f"cannot write JSONL trace event: {exc}",
