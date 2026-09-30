@@ -178,6 +178,17 @@ def render_report(run: Path, output: Path | None = None) -> Path:
         warnings.append("离线模式的供应商请求证据缺失或不为零。")
     result_status = str(result.get("status") or "未知")
     validation = str(result.get("agent_validation_status") or "unverified")
+    gate_status = result.get("validation_gate_status")
+    gate_results = result.get("validation_gate_results") or []
+    gate_text = "未启用"
+    if isinstance(gate_status, str):
+        gate_text = gate_status
+    gate_rows = [
+        f"{_clean(row.get('target'))}：{_clean(row.get('outcome'))} "
+        f"({_clean(row.get('status'))})"
+        for row in gate_results if isinstance(row, dict)
+    ]
+    gate_html = "".join(f"<li>{row}</li>" for row in gate_rows)
     time_value = result.get("duration_seconds")
     time_text = f"{time_value:.2f} 秒" if isinstance(time_value, (float, int)) else "未记录"
     cost = (
@@ -229,6 +240,7 @@ def render_report(run: Path, output: Path | None = None) -> Path:
     regression_text = "未执行"
     regression_rows: list[str] = []
     regression_statuses: list[str] = []
+    regression_independent_statuses: list[str] = []
     regression_root = run_dir / "regression-verifications"
     if regression_root.is_dir():
         session_identity: dict[str, Any] = {}
@@ -263,6 +275,7 @@ def render_report(run: Path, output: Path | None = None) -> Path:
                     regression_statuses.append("incomplete")
                     continue
                 regression_statuses.append(str(check.get("status")))
+                regression_independent_statuses.append(str(check.get("status")))
                 regression_rows.append(
                     f"{_clean(check.get('status'))}；原目标 {_clean(check.get('original_target'))} "
                     f"({_clean(check.get('original_status'))})"
@@ -284,6 +297,13 @@ def render_report(run: Path, output: Path | None = None) -> Path:
         regression_text += "；仍有失败"
     elif regression_statuses:
         regression_text += "；所列目标通过"
+    if regression_independent_statuses:
+        latest = regression_independent_statuses[-1]
+        independent_text = (
+            "原目标及追加目标在新 checkout 中复跑通过"
+            if latest == "passed"
+            else "追加目标新 checkout 复跑未通过"
+        )
     regression_html = "".join(f"<li>{row}</li>" for row in regression_rows)
     resume_segments = sum(
         event.get("event_type") == "session_resumed" for event in events
@@ -389,7 +409,9 @@ ul{{padding-left:20px}}footer{{color:var(--muted);font-size:13px}}
 <p>Agent 结束表示控制流结束；公开测试结果和独立验收分别列示，
 不由结束状态推断修复成功。</p></section>
 <section><h2>修复时间线</h2><ol class="timeline">{rows}</ol></section>
-<section><h2>测试与补丁</h2><ul>{test_html}</ul><p>独立验收：{independent_text}</p>
+<section><h2>测试与补丁</h2><ul>{test_html}</ul>
+<p>结束前任务验收：{_clean(gate_text)}</p><ul>{gate_html}</ul>
+<p>独立验收：{independent_text}</p>
 <p>追加回归验证：{regression_text}</p><ul>{regression_html}</ul>{_diff(patch)}</section>
 <section><h2>资源与 Skills</h2>
 <p>模型 usage：{usage} · 费用：{cost} · 上下文折叠：{compacted} 次</p>

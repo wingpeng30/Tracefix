@@ -36,6 +36,10 @@ class TraceEventType(StrEnum):
     ERROR = "error"
     TASK_FINISHED = "task_finished"
     SESSION_RESUMED = "session_resumed"
+    VALIDATION_GATE_STARTED = "validation_gate_started"
+    VALIDATION_GATE_COMPLETED = "validation_gate_completed"
+    VALIDATION_BASELINE_STARTED = "validation_baseline_started"
+    VALIDATION_BASELINE_COMPLETED = "validation_baseline_completed"
 
 
 class TraceEvent(BaseModel):

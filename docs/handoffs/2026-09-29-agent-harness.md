@@ -1,5 +1,7 @@
 # 2026-09-29 Agent/harness 产品交接
 
+2026-09-30 PR #9（`codex/gated-regression-feedback`）CI #72 在精确 head `9501ee65c523f129074756f10573c2de518f4479` 全部通过：Windows Python 3.11/3.12 覆盖率均为 90.0006666%，Ruff、compileall、editable/wheel smoke、Linux 冻结 Docker/普通 Docker/Serena MCP 均通过；没有未解决审查意见。新路径增加 pytest 证据缺失/errors fail-closed 断言及 harness-owned 测试调用事件与预算计数验证。离线示例：`python examples/replay_ordinary.py --validation-gate-example --output runs/validation-gate-replay`。完整状态和证据见 [`../tasks/2026-09-30-validation-feedback-gate.md`](../tasks/2026-09-30-validation-feedback-gate.md)。
+
 2026-09-30 更新：追加回归目标验证与 Boltons 派生审计见 [`../experiments/2026-09-30-regression-verification.md`](../experiments/2026-09-30-regression-verification.md)。普通本地 `verify` 可对冻结源码和保存补丁运行相同的已有 pytest 目标，识别回归、修复、仍失败及证据不完整；Docker 的追加目标尚未接入。提交 `a6609c9` 的 [CI #63](https://github.com/wingpeng30/Tracefix/actions/runs/36672415601) 五个 job 均通过。该批次独立于下述 2026-09-29 主线基线。
 
 当前路线以 [`../tasks/2026-09-29-agent-harness-completion.md`](../tasks/2026-09-29-agent-harness-completion.md) 为准。[#1](https://github.com/wingpeng30/Tracefix/pull/1) 普通仓库首批、[#2](https://github.com/wingpeng30/Tracefix/pull/2) A checkpoint／恢复、[#3](https://github.com/wingpeng30/Tracefix/pull/3) B 预检与独立验证、[#4](https://github.com/wingpeng30/Tracefix/pull/4) C Serena MCP、[#5](https://github.com/wingpeng30/Tracefix/pull/5) D 普通仓库 Docker、[#6](https://github.com/wingpeng30/Tracefix/pull/6) 真实模型验收与修复已按序以 merge commit 合入 `main`，主线提交 `7a28687f897821b9600cc4a9e8bf8da583ec7d45`；各原提交保留。

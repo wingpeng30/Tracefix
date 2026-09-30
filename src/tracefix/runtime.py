@@ -5,9 +5,11 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import shlex
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 from collections.abc import Callable
 from datetime import UTC, datetime
@@ -45,6 +47,7 @@ from tracefix.provenance import (
 from tracefix.real_recipes import EnvironmentRecipe
 from tracefix.repository import RepoMap, RepositoryIndexer
 from tracefix.tools import GetGitDiffTool, create_default_tool_registry
+from tracefix.tools.builtin import RunTestsTool
 from tracefix.tracing import JSONLTraceSink, TraceEvent, TraceEventType
 
 DEFAULT_MODEL_NAME = "deepseek/deepseek-flash"
@@ -84,6 +87,21 @@ def default_output_root() -> Path:
     return Path("runs")
 
 
+def config_identity_sha256(
+    config: RunConfig, manifest_config: dict[str, Any] | None = None,
+) -> str:
+    """Hash effective configuration, preserving identity for manifests predating gate targets."""
+    legacy_empty_targets = (
+        manifest_config is not None
+        and "regression_targets" not in manifest_config
+        and not config.regression_targets
+    )
+    exclude = {"regression_targets"} if legacy_empty_targets else None
+    return hashlib.sha256(
+        config.model_dump_json(exclude=exclude).encode("utf-8")
+    ).hexdigest()
+
+
 class RunConfig(BaseModel):
     """运行一个真实 TraceFix 任务需要的完整、可序列化配置。"""
 
@@ -101,6 +119,7 @@ class RunConfig(BaseModel):
     test_python_executable: Path | None = None
     test_pythonpath_entries: tuple[Path, ...] = ()
     test_target: str | None = None
+    regression_targets: tuple[str, ...] = ()
     source_import: str | None = None
     skills_root: Path | None = None
     mcp_serena_image_id: str | None = None
@@ -137,6 +156,24 @@ class RunConfig(BaseModel):
                 or "\r" in self.test_target
             ):
                 raise ValueError("test_target must be a relative pytest path or node ID")
+        if len(set(self.regression_targets)) != len(self.regression_targets):
+            raise ValueError("regression_targets must not contain duplicates")
+        if self.test_target in self.regression_targets:
+            raise ValueError("regression_targets must be distinct from test_target")
+        if self.regression_targets and (
+            self.execution_backend != "local" or not self.test_target or not self.source_import
+        ):
+            raise ValueError(
+                "regression_targets require a local backend, test target, and source import"
+            )
+        for target in self.regression_targets:
+            target_path = Path(target.split("::", 1)[0])
+            if (
+                not target_path.parts or target_path.is_absolute()
+                or ".." in target_path.parts or "\n" in target or "\r" in target
+                or target.startswith("-") or "\x00" in target
+            ):
+                raise ValueError("regression target must be a relative pytest path or node ID")
         if self.execution_backend == "docker" and self.docker_profile != "ordinary" and (
             not self.docker_task_id or not self.docker_input_root
         ):
@@ -178,6 +215,8 @@ class RunResult(BaseModel):
     status: AgentStatus
     stop_reason: str | None = None
     agent_validation_status: Literal["unverified", "verified"] = "unverified"
+    validation_gate_status: Literal["passed", "failed", "incomplete"] | None = None
+    validation_gate_results: list[dict[str, JsonValue]] = Field(default_factory=list)
     final_output: str | None = None
     step_count: int = Field(default=0, ge=0)
     input_tokens: int = Field(default=0, ge=0)
@@ -243,15 +282,32 @@ class TraceFixRunner:
             config = RunConfig.model_validate(manifest["config"])
             recorded = manifest["identity"]
             actual = dict(recorded)
-            actual["config_sha256"] = hashlib.sha256(
-                config.model_dump_json().encode("utf-8")
-            ).hexdigest()
+            actual["config_sha256"] = config_identity_sha256(config, manifest["config"])
             actual["implementation_sha256"] = cls._implementation_sha256()
             actual["test_environment_sha256"] = inspect_test_environment(
                 config.test_python_executable or sys.executable,
                 pythonpath_entries=config.test_pythonpath_entries,
             ).fingerprint_sha256
             reasons: list[str] = []
+            if config.regression_targets:
+                baseline_path = root / "validation-baseline.json"
+                if not baseline_path.is_file():
+                    reasons.append("regression validation baseline is missing")
+                elif hashlib.sha256(baseline_path.read_bytes()).hexdigest() != recorded.get(
+                    "validation_baseline_sha256"
+                ):
+                    reasons.append("regression validation baseline identity changed")
+                else:
+                    baseline = json.loads(baseline_path.read_text(encoding="utf-8"))
+                    if (
+                        baseline.get("complete") is not True
+                        or [row.get("target") for row in baseline.get("targets", [])]
+                        != list(config.regression_targets)
+                        or baseline.get("source_commit") != recorded.get("source_commit")
+                        or baseline.get("test_environment_sha256")
+                        != actual.get("test_environment_sha256")
+                    ):
+                        reasons.append("regression validation baseline does not match the run")
             source, commit = cls._validate_source_repository(config.repo)
             if (
                 str(source) != str(config.repo.expanduser().resolve())
@@ -500,6 +556,29 @@ class TraceFixRunner:
                     repository_candidates=repo_map.candidate_files if repo_map else (),
                 )
 
+                if config.regression_targets:
+                    baseline_path = root / "validation-baseline.json"
+                    baseline_bytes = baseline_path.read_bytes()
+                    if hashlib.sha256(baseline_bytes).hexdigest() != manifest["identity"].get(
+                        "validation_baseline_sha256"
+                    ):
+                        raise CheckpointError("regression validation baseline identity changed")
+                    baseline_data = json.loads(baseline_bytes.decode("utf-8"))
+                    agent.validation_targets = config.regression_targets
+                    agent.configured_original_target = config.test_target
+                    agent.validation_baseline = {
+                        row["target"]: row["status"] for row in baseline_data["targets"]
+                    }
+
+                    def resumed_checkout_identity() -> tuple[str, bool]:
+                        current_patch, _ = self._collect_diff(workspace, protected_dirs)
+                        return (
+                            hashlib.sha256(current_patch.encode("utf-8")).hexdigest(),
+                            bool(current_patch.strip()),
+                        )
+
+                    agent.validation_source_identity = resumed_checkout_identity
+
                 def save_checkpoint(active: MinimalAgent) -> None:
                     nonlocal sequence
                     patch, _ = self._collect_diff(workspace, protected_dirs)
@@ -535,6 +614,8 @@ class TraceFixRunner:
                 status=state.status,
                 stop_reason=state.stop_reason,
                 agent_validation_status=state.validation_status,
+                validation_gate_status=state.validation_gate_status,
+                validation_gate_results=[dict(row) for row in state.validation_gate_results],
                 final_output=state.final_output,
                 step_count=state.step_count,
                 input_tokens=state.input_tokens,
@@ -767,6 +848,28 @@ class TraceFixRunner:
                 mcp_manager.preflight()
                 for tool in mcp_manager.tools():
                     tools.register(tool)
+
+            regression_baseline: dict[str, str] = {}
+            regression_baseline_seconds = 0.0
+            if config.regression_targets:
+                if workspace is None or config.test_target is None:
+                    raise RunConfigurationError(
+                        "end-of-task regression validation requires local execution"
+                    )
+                required_processes = 2 * len(config.regression_targets) + 1
+                if config.agent_config.max_test_runs < required_processes:
+                    raise RunConfigurationError(
+                        "test budget cannot cover regression baselines and final validation",
+                        context={
+                            "minimum_test_runs": required_processes,
+                            "configured_test_runs": config.agent_config.max_test_runs,
+                        },
+                    )
+                baseline_started = time.monotonic()
+                regression_baseline = self._prepare_regression_baseline(
+                    config, source, run_dir, sink, run_id
+                )
+                regression_baseline_seconds = time.monotonic() - baseline_started
             llm = self._llm_factory(llm_config)
             agent = MinimalAgent(
                 llm,
@@ -776,6 +879,22 @@ class TraceFixRunner:
                 repository_map=repository_map.text if repository_map else None,
                 repository_candidates=(repository_map.candidate_files if repository_map else ()),
             )
+            if config.regression_targets:
+                assert workspace is not None
+                agent.validation_targets = config.regression_targets
+                agent.configured_original_target = config.test_target
+                agent.validation_baseline = regression_baseline
+                agent.validation_baseline_runs = len(config.regression_targets)
+                agent.validation_baseline_seconds = regression_baseline_seconds
+
+                def checkout_identity() -> tuple[str, bool]:
+                    current_patch, _ = self._collect_diff(workspace, internal_artifacts)
+                    return (
+                        hashlib.sha256(current_patch.encode("utf-8")).hexdigest(),
+                        bool(current_patch.strip()),
+                    )
+
+                agent.validation_source_identity = checkout_identity
             if config.execution_backend == "docker" and config.docker_profile == "ordinary":
                 (run_dir / "session.json").write_text(
                     json.dumps(
@@ -785,9 +904,7 @@ class TraceFixRunner:
                             "config": config.model_dump(mode="json"),
                             "identity": {
                                 "source_commit": source_commit,
-                                "config_sha256": hashlib.sha256(
-                                    config.model_dump_json().encode("utf-8")
-                                ).hexdigest(),
+                                "config_sha256": config_identity_sha256(config),
                                 "image_id": config.docker_image_id,
                             },
                             "workspace_preparation": workspace_preparation,
@@ -802,9 +919,7 @@ class TraceFixRunner:
             ):
                 checkpoint_identity = {
                     "source_commit": source_commit,
-                    "config_sha256": hashlib.sha256(
-                        config.model_dump_json().encode("utf-8")
-                    ).hexdigest(),
+                    "config_sha256": config_identity_sha256(config),
                     "tool_sha256": hashlib.sha256(
                         json.dumps(
                             [spec.model_dump(mode="json") for spec in tools.specs()],
@@ -820,6 +935,11 @@ class TraceFixRunner:
                         pythonpath_entries=config.test_pythonpath_entries,
                     ).fingerprint_sha256,
                 }
+                if config.regression_targets:
+                    baseline_path = run_dir / "validation-baseline.json"
+                    checkpoint_identity["validation_baseline_sha256"] = hashlib.sha256(
+                        baseline_path.read_bytes()
+                    ).hexdigest()
                 manifest_path = run_dir / "session.json"
                 manifest_path.write_text(
                     json.dumps(
@@ -863,6 +983,15 @@ class TraceFixRunner:
                 agent_task += (
                     f"\n\n指定公开测试：pytest -q {config.test_target}。"
                     "请先运行，修改后重跑并检查 Diff。"
+                )
+            if config.regression_targets:
+                agent_task += (
+                    "\n\n结束前强制验收目标（不可修改或删除）：\n"
+                    + "\n".join(
+                        f"- pytest -q {target}" for target in
+                        (config.test_target, *config.regression_targets)
+                    )
+                    + "\n系统将在你提交最终答复前运行全部目标；失败时会提供结果并允许继续修复。"
                 )
             state = agent.run(agent_task)
         except KeyboardInterrupt:
@@ -960,6 +1089,8 @@ class TraceFixRunner:
             status=state.status,
             stop_reason=state.stop_reason,
             agent_validation_status=state.validation_status,
+            validation_gate_status=state.validation_gate_status,
+            validation_gate_results=[dict(row) for row in state.validation_gate_results],
             final_output=state.final_output,
             step_count=state.step_count,
             input_tokens=state.input_tokens,
@@ -1069,6 +1200,146 @@ class TraceFixRunner:
             "api_base": api_base,
             "extra_body": {"thinking": {"type": "disabled"}},
         }
+
+    @classmethod
+    def _prepare_regression_baseline(
+        cls, config: RunConfig, source: Path, run_dir: Path,
+        sink: JSONLTraceSink, run_id: str,
+    ) -> dict[str, str]:
+        """Record each declared target against an isolated, frozen source checkout."""
+        from tracefix.messages import ToolCall
+
+        baseline_path = run_dir / "validation-baseline.json"
+        if baseline_path.exists():
+            raise RunConfigurationError("validation baseline already exists")
+        original = config.test_target
+        if original is None:
+            raise RunConfigurationError("end-of-task regression validation requires test_target")
+        for required in (original, *config.regression_targets):
+            name = required.split("::", 1)[0]
+            relative = Path(name)
+            candidate = (source / relative).resolve()
+            if (
+                not name or relative.is_absolute() or ".." in relative.parts
+                or required.startswith("-") or "\n" in required or "\r" in required
+                or not candidate.is_relative_to(source.resolve()) or not candidate.is_file()
+            ):
+                raise RunConfigurationError(
+                    "validation target does not exist as a safe relative path in the frozen source",
+                    context={"target": required},
+                )
+            try:
+                RunTestsTool._parse_command(f"pytest -q {shlex.quote(required)}")
+            except Exception as exc:
+                raise RunConfigurationError(
+                    "validation target is not allowed by the pytest command policy",
+                    context={"target": required, "reason": str(exc)},
+                ) from exc
+        rows: list[dict[str, Any]] = []
+        evidence_root = run_dir / "validation-baseline-evidence"
+        for index, target in enumerate(config.regression_targets):
+            name = target.split("::", 1)[0]
+            relative = Path(name)
+            candidate = (source / relative).resolve()
+            if not candidate.is_relative_to(source.resolve()) or not candidate.is_file():
+                raise RunConfigurationError(
+                    "regression target does not exist in the frozen source",
+                    context={"target": target},
+                )
+            with tempfile.TemporaryDirectory(prefix="tracefix-baseline-") as temporary:
+                root = Path(temporary)
+                checkout = cls._clone_repository(source, root / "checkout")
+                preparation = cls._prepare_workspace(config, checkout, root)
+                if preparation.get("success") is not True:
+                    raise WorkspaceError(
+                        "regression baseline checkout preparation failed",
+                        context={"target": target, "preparation": preparation},
+                    )
+                call = ToolCall(
+                    id=uuid4().hex,
+                    name="run_tests",
+                    arguments={"command": f"pytest -q {shlex.quote(target)}"},
+                )
+                sink.write(TraceEvent(
+                    event_type=TraceEventType.VALIDATION_BASELINE_STARTED,
+                    task_id=run_id,
+                    step=0,
+                    payload={"target": target, "call_id": call.id, "origin": "validation_baseline"},
+                ))
+                result = RunTestsTool(
+                    checkout,
+                    default_timeout_seconds=min(
+                        120.0, float(config.agent_config.wall_time_seconds)
+                    ),
+                    python_executable=config.test_python_executable,
+                    pythonpath_entries=config.test_pythonpath_entries,
+                    pytest_config=(
+                        config.environment_recipe.pytest_config
+                        if config.environment_recipe is not None else None
+                    ),
+                    environment_variables=config.test_environment_variables,
+                    evidence_dir=evidence_root / str(index),
+                ).execute(call).model_dump(mode="json")
+            output = result.get("output") if isinstance(result.get("output"), dict) else {}
+            if result.get("success") is True and output.get("test_status") == "passed":
+                status = "passed"
+            elif (
+                output.get("test_status") == "test_failure"
+                and output.get("returncode") == 1
+                and (output.get("test_counts") or {}).get("failures", 0) > 0
+                and (output.get("test_counts") or {}).get("errors", 0) == 0
+            ):
+                status = "failed"
+            else:
+                status = "incomplete"
+            sink.write(TraceEvent(
+                event_type=TraceEventType.VALIDATION_BASELINE_COMPLETED,
+                task_id=run_id,
+                step=0,
+                payload={
+                    "target": target, "call_id": result.get("call_id"),
+                    "status": status, "origin": "validation_baseline",
+                },
+            ))
+            if status == "incomplete":
+                progress = {
+                    "schema_version": 1,
+                    "source_commit": cls._run_git(
+                        ["rev-parse", "HEAD"], cwd=source, purpose="read baseline commit"
+                    ).stdout.strip(),
+                    "targets": [*rows, {"target": target, "status": status, "test": result}],
+                    "complete": False,
+                }
+                (run_dir / "validation-baseline-progress.json").write_text(
+                    json.dumps(progress, ensure_ascii=False, indent=2), encoding="utf-8"
+                )
+                raise WorkspaceError(
+                    "regression baseline could not be verified",
+                    context={"target": target, "test": result,
+                             "diagnostic_path": str(run_dir / "validation-baseline-progress.json")},
+                )
+            rows.append({"target": target, "status": status, "test": result})
+            (run_dir / "validation-baseline-progress.json").write_text(
+                json.dumps({"schema_version": 1, "targets": rows, "complete": False},
+                           ensure_ascii=False, indent=2), encoding="utf-8"
+            )
+        payload = {
+            "schema_version": 1,
+            "source_commit": cls._run_git(
+                ["rev-parse", "HEAD"], cwd=source, purpose="read baseline commit"
+            ).stdout.strip(),
+            "test_environment_sha256": inspect_test_environment(
+                config.test_python_executable or sys.executable,
+                pythonpath_entries=config.test_pythonpath_entries,
+            ).fingerprint_sha256,
+            "targets": rows,
+            "complete": True,
+        }
+        baseline_path.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+        (run_dir / "validation-baseline-progress.json").unlink(missing_ok=True)
+        return {row["target"]: row["status"] for row in rows}
 
     @staticmethod
     def _prepare_workspace(

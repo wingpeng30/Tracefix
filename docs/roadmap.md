@@ -2,6 +2,8 @@
 
 ## 2026-09-29 当前执行计划
 
+2026-09-30 PR #9 `codex/gated-regression-feedback` 的 CI #72 已在 head `9501ee65c523f129074756f10573c2de518f4479` 全部通过：Windows 双版本覆盖率同为 90.0006666%，Ruff、compileall、editable/wheel smoke 及三个 Linux Docker/MCP job 通过；审查列表为空。验证结束前自动回归门与 Agent 反馈闭环，准备合入主线。机制默认关闭、零供应商请求；不宣称总体修复率提升。计划和状态见 [`tasks/2026-09-30-validation-feedback-gate.md`](tasks/2026-09-30-validation-feedback-gate.md)。
+
 2026-09-30 下一批聚焦补丁验收可信度：普通本地运行支持在原始与补丁 checkout 中追加公开回归目标，并在报告中显式展示发现的回归。Boltons 真实运行的派生诊断纠正了对旧 `count` 参数的过度判断；该差异属任务未规定的接口行为。实现与边界见 [`experiments/2026-09-30-regression-verification.md`](experiments/2026-09-30-regression-verification.md)。
 
 普通受信任 Python/pytest 仓库的本地闭环、A 任务事实与安全恢复、B 普通用户路径、C 可选只读 MCP、D 普通仓库 Docker，以及真实模型验收与计量／压缩修复，已按 PR #1–#6 顺序以 merge commit 合入 `main`（`7a28687f897821b9600cc4a9e8bf8da583ec7d45`）。8/8 次真实运行结果见 [`experiments/2026-09-29-live-model-acceptance.md`](experiments/2026-09-29-live-model-acceptance.md)。具体边界见 [`tasks/2026-09-29-agent-harness-completion.md`](tasks/2026-09-29-agent-harness-completion.md)。

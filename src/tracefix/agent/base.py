@@ -7,7 +7,7 @@ from datetime import datetime
 from enum import StrEnum
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, JsonValue, model_validator
 
 from tracefix.agent.presentation import ToolPresentationConfig, ToolPresentationMetrics
 from tracefix.context import ContextConfig, ContextManager, ContextMetrics
@@ -102,6 +102,8 @@ class AgentState(BaseModel):
     stop_reason: str | None = None
     final_output: str | None = None
     validation_status: Literal["unverified", "verified"] = "unverified"
+    validation_gate_status: Literal["passed", "failed", "incomplete"] | None = None
+    validation_gate_results: list[dict[str, JsonValue]] = Field(default_factory=list)
     context_metrics: ContextMetrics = Field(default_factory=ContextMetrics)
     presentation_metrics: ToolPresentationMetrics = Field(default_factory=ToolPresentationMetrics)
     model_request_seconds: float = Field(default=0.0, ge=0)

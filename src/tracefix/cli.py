@@ -219,6 +219,10 @@ def build_parser() -> argparse.ArgumentParser:
     run_parser.add_argument("--config", type=Path, help="普通本地运行的 TOML 配置")
     run_parser.add_argument("--repo", type=Path, help="干净的本地 Git 仓库")
     run_parser.add_argument("--test-target", help="pytest 相对测试路径或 node ID")
+    run_parser.add_argument(
+        "--regression-target", action="append", default=None,
+        help="结束前验收的已有 pytest 路径或 node ID；可重复传入",
+    )
     run_parser.add_argument("--source-import", help="必须从隔离 checkout 导入的 Python 模块")
     run_parser.add_argument(
         "--mcp-serena-image-id", help="可选只读 Serena MCP 镜像的不可变 sha256 ID"
@@ -256,6 +260,8 @@ def build_parser() -> argparse.ArgumentParser:
     doctor_parser.add_argument("--test-python", type=Path)
     doctor_parser.add_argument("--source-import")
     doctor_parser.add_argument("--test-target")
+    doctor_parser.add_argument("--regression-target", action="append", default=None)
+    doctor_parser.add_argument("--max-test-runs", type=int)
     doctor_parser.add_argument("--model")
     doctor_parser.add_argument("--env-file", type=Path)
     doctor_parser.add_argument("--output-dir", type=Path)
@@ -845,6 +851,13 @@ def _print_run_result(result: Any) -> None:
     print(f"结果文件: {result.result_path}")
     print(f"补丁文件: {result.diff_path}")
     print(f"报告命令: tracefix report --run {Path(result.result_path).parent}")
+    if getattr(result, "validation_gate_status", None):
+        print(f"结束前任务验收: {result.validation_gate_status}")
+        for item in result.validation_gate_results:
+            print(
+                f"  {item.get('target')}: {item.get('outcome')} "
+                f"({item.get('status')})"
+            )
     if result.final_output:
         print(f"Agent: {result.final_output}")
     error = getattr(result, "error", None)
@@ -871,6 +884,7 @@ def _ordinary_settings(args: argparse.Namespace) -> dict[str, Any]:
             "task",
             "test_python",
             "test_target",
+            "regression_targets",
             "source_import",
             "output_dir",
             "model",
@@ -897,6 +911,14 @@ def _ordinary_settings(args: argparse.Namespace) -> dict[str, Any]:
             return os.environ[env]
         return values.get(key)
 
+    regression_targets = getattr(args, "regression_target", None)
+    if regression_targets is None:
+        regression_targets = values.get("regression_targets", ())
+    if not isinstance(regression_targets, (list, tuple)) or not all(
+        isinstance(target, str) and target.strip() for target in regression_targets
+    ):
+        raise ValueError("regression_targets 必须是非空字符串数组")
+
     def path_value(key: str, cli: Any, env: str | None = None) -> Path | None:
         value = choose(key, cli, env)
         if value is None:
@@ -920,6 +942,10 @@ def _ordinary_settings(args: argparse.Namespace) -> dict[str, Any]:
             "test_python", args.test_python, "TRACEFIX_TEST_PYTHON"
         ),
         "test_target": choose("test_target", args.test_target, "TRACEFIX_TEST_TARGET"),
+        "regression_targets": tuple(regression_targets),
+        "max_test_runs": int(choose(
+            "max_test_runs", getattr(args, "max_test_runs", None), "TRACEFIX_MAX_TEST_RUNS"
+        ) or 8),
         "source_import": choose("source_import", args.source_import, "TRACEFIX_SOURCE_IMPORT"),
         "output_dir": path_value("output_dir", args.output_dir, "TRACEFIX_OUTPUT_DIR"),
         "model_name": choose("model", args.model, "TRACEFIX_MODEL") or DEFAULT_MODEL_NAME,
@@ -946,6 +972,7 @@ def _ordinary_settings(args: argparse.Namespace) -> dict[str, Any]:
             key: value for key, value in values.items()
             if key in allowed - {
                 "repo", "task", "test_python", "test_target", "source_import",
+                "regression_targets",
                 "output_dir", "model", "env_file", "skills_dir",
                 "mcp_serena_image_id",
                 "execution_backend", "docker_profile", "docker_image_id",
@@ -1418,6 +1445,7 @@ def main(argv: list[str] | None = None) -> int:
                     if args.task is not None or args.task_file is not None
                     else settings["task"],
                     test_target=settings["test_target"],
+                    regression_targets=settings["regression_targets"],
                     source_import=settings["source_import"],
                     **shared,
                 )

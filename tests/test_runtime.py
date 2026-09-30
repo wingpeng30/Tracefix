@@ -3,6 +3,7 @@ import os
 import subprocess
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -292,6 +293,357 @@ def test_runner_clones_runs_agent_writes_artifacts_and_converts_cost(tmp_path, m
     assert event_types[2] == "repository_indexed"
     assert "repo_map_added" in event_types
     assert event_types[-1] == "task_finished"
+
+
+def test_end_of_task_regression_gate_feedback_repairs_before_independent_verify(
+    tmp_path,
+) -> None:
+    repo = _make_repo(tmp_path)
+    (repo / "sample.py").write_text(
+        'def next_page(page): return page\ndef identity(value): return value\n',
+        encoding="utf-8",
+    )
+    tests = repo / "tests"
+    tests.mkdir()
+    (tests / "test_primary.py").write_text(
+        "from sample import next_page\n\n"
+        "def test_next_page_advances():\n    assert next_page(1) == 2\n",
+        encoding="utf-8",
+    )
+    (tests / "test_existing.py").write_text(
+        "from sample import identity, next_page\n\n"
+        "def test_negative_sentinel_is_unchanged():\n    assert next_page(-1) == -1\n\n"
+        "def test_identity_is_preserved():\n    assert identity(7) == 7\n",
+        encoding="utf-8",
+    )
+    _git(repo, "add", "--all")
+    _git(
+        repo, "-c", "user.name=Tests", "-c", "user.email=tests@example.invalid",
+        "commit", "--quiet", "-m", "add validation contract",
+    )
+    first_patch = """diff --git a/sample.py b/sample.py
+--- a/sample.py
++++ b/sample.py
+@@ -1,2 +1,2 @@
+-def next_page(page): return page
+-def identity(value): return value
++def next_page(page): return page + 1
++def identity(value): return value + 1
+"""
+    repair_patch = """diff --git a/sample.py b/sample.py
+--- a/sample.py
++++ b/sample.py
+@@ -1,2 +1,4 @@
+-def next_page(page): return page + 1
+-def identity(value): return value + 1
++def next_page(page):
++    if page < 0: return page
++    return page + 1
++def identity(value): return value
+"""
+    responses = [
+        _response(None, tool_calls=(ToolCall(
+            id="first-patch", name="apply_patch", arguments={"patch": first_patch},
+        ),)),
+        _response("第一版已修复主目标。"),
+        _response(None, tool_calls=(ToolCall(
+            id="repair-patch", name="apply_patch", arguments={"patch": repair_patch},
+        ),)),
+        _response("回归已修复并通过验收。"),
+    ]
+    result = TraceFixRunner(
+        lambda config: ScriptedLLM(config, responses)
+    ).run(RunConfig(
+        repo=repo,
+        task="分页从 1 开始，并保留负数哨兵与 identity 行为。",
+        model_name="offline/gated",
+        output_dir=tmp_path / "runs",
+        env_file=None,
+        test_python_executable=Path(sys.executable),
+        test_target="tests/test_primary.py",
+        regression_targets=("tests/test_existing.py",),
+        source_import="sample",
+        agent_config=AgentConfig(max_test_runs=6),
+    ))
+
+    assert result.status is AgentStatus.COMPLETED
+    assert result.validation_gate_status == "passed"
+    assert result.validation_gate_results[0]["target"] == "tests/test_primary.py"
+    assert result.validation_gate_results[0]["status"] == "passed"
+    assert result.validation_gate_results[1]["baseline_status"] == "passed"
+    assert result.validation_gate_results[1]["outcome"] == "preserved"
+    assert result.test_runs == 5  # baseline plus two end-gate batches
+    assert (repo / "sample.py").read_text(encoding="utf-8").endswith(
+        "def identity(value): return value\n"
+    )
+    trace = [json.loads(line) for line in Path(result.trace_path).read_text(
+        encoding="utf-8"
+    ).splitlines()]
+    gate_calls = [
+        event for event in trace
+        if event["event_type"] == "tool_called"
+        and event["payload"].get("origin") == "validation_gate"
+    ]
+    assert len(gate_calls) == 4  # failed first gate and successful repair gate
+    assert all(call["payload"]["call"]["id"] for call in gate_calls)
+
+    from tracefix.onboarding import verify_patch
+    from tracefix.report import render_report
+
+    run_dir = Path(result.result_path).parent
+    verification = verify_patch(run_dir)
+    assert verification["passed"] is True
+    report = render_report(run_dir).read_text(encoding="utf-8")
+    assert "结束前任务验收：passed" in report
+    assert "独立验收：原目标及追加目标在新 checkout 中复跑通过" in report
+    assert _git(repo, "status", "--porcelain").stdout.strip() == ""
+
+
+def _regression_baseline_config(repo: Path, targets: tuple[str, ...]) -> RunConfig:
+    tests = repo / "tests"
+    tests.mkdir(exist_ok=True)
+    for target in ("tests/test_primary.py", *targets):
+        test_path = repo / target.split("::", 1)[0]
+        test_path.parent.mkdir(parents=True, exist_ok=True)
+        test_path.write_text("def test_sample():\n    assert True\n", encoding="utf-8")
+    _git(repo, "add", "--all")
+    _git(
+        repo, "-c", "user.name=Tests", "-c", "user.email=tests@example.invalid",
+        "commit", "--quiet", "-m", "add validation targets",
+    )
+    return RunConfig(
+        repo=repo, task="validate frozen baseline", model_name="offline/replay",
+        output_dir=repo.parent / "runs", env_file=None,
+        test_python_executable=Path(sys.executable), test_target="tests/test_primary.py",
+        source_import="sample", regression_targets=targets,
+        agent_config=AgentConfig(max_test_runs=2 * len(targets) + 2),
+    )
+
+
+def _stub_baseline_execution(monkeypatch, responses: list[tuple[bool, str, int]]) -> list[str]:
+    from tracefix.tools.builtin import RunTestsTool as BuiltinRunTestsTool
+
+    calls: list[str] = []
+    monkeypatch.setattr(
+        TraceFixRunner, "_clone_repository",
+        staticmethod(lambda source, _destination: source),
+    )
+    monkeypatch.setattr(
+        TraceFixRunner, "_prepare_workspace",
+        staticmethod(lambda _config, _workspace, _run_dir: {"success": True}),
+    )
+
+    def execute(_tool, call):
+        success, status, returncode = responses[len(calls)]
+        calls.append(call.arguments["command"])
+        output = {
+            "test_status": status,
+            "returncode": returncode,
+            "test_counts": {
+                "failures": 1 if status == "test_failure" else 0,
+                "errors": 0,
+            },
+        }
+        return SimpleNamespace(model_dump=lambda mode: {
+            "call_id": call.id, "tool_name": "run_tests", "success": success,
+            "output": output,
+        })
+
+    monkeypatch.setattr(BuiltinRunTestsTool, "execute", execute)
+    return calls
+
+
+def test_regression_baseline_records_pass_and_preexisting_assertion_failure(
+    tmp_path, monkeypatch,
+) -> None:
+    repo = _make_repo(tmp_path)
+    config = _regression_baseline_config(
+        repo, ("tests/test_existing.py", "tests/test_other.py")
+    )
+    calls = _stub_baseline_execution(
+        monkeypatch, [(False, "test_failure", 1), (True, "passed", 0)]
+    )
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+
+    result = TraceFixRunner._prepare_regression_baseline(
+        config, repo, run_dir, MemoryTraceSink(), "run-id"
+    )
+
+    assert result == {
+        "tests/test_existing.py": "failed", "tests/test_other.py": "passed"
+    }
+    assert len(calls) == 2
+    assert "tests/test_existing.py" in calls[0]
+    baseline = json.loads((run_dir / "validation-baseline.json").read_text())
+    assert baseline["complete"] is True
+    assert [row["status"] for row in baseline["targets"]] == ["failed", "passed"]
+    assert not (run_dir / "validation-baseline-progress.json").exists()
+
+
+def test_regression_baseline_incomplete_result_persists_diagnostic(
+    tmp_path, monkeypatch,
+) -> None:
+    repo = _make_repo(tmp_path)
+    config = _regression_baseline_config(repo, ("tests/test_existing.py",))
+    _stub_baseline_execution(monkeypatch, [(False, "timed_out", -1)])
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+
+    with pytest.raises(WorkspaceError, match="could not be verified"):
+        TraceFixRunner._prepare_regression_baseline(
+            config, repo, run_dir, MemoryTraceSink(), "run-id"
+        )
+
+    progress = json.loads(
+        (run_dir / "validation-baseline-progress.json").read_text()
+    )
+    assert progress["complete"] is False
+    assert progress["targets"][0]["status"] == "incomplete"
+
+
+def test_regression_baseline_rejects_existing_snapshot_and_missing_primary_target(
+    tmp_path,
+) -> None:
+    repo = _make_repo(tmp_path)
+    config = _regression_baseline_config(repo, ("tests/test_existing.py",))
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    baseline_path = run_dir / "validation-baseline.json"
+    baseline_path.write_text("{}", encoding="utf-8")
+
+    with pytest.raises(RunConfigurationError, match="already exists"):
+        TraceFixRunner._prepare_regression_baseline(
+            config, repo, run_dir, MemoryTraceSink(), "run-id"
+        )
+
+    baseline_path.unlink()
+    config = config.model_copy(update={"test_target": None})
+    with pytest.raises(RunConfigurationError, match="requires test_target"):
+        TraceFixRunner._prepare_regression_baseline(
+            config, repo, run_dir, MemoryTraceSink(), "run-id"
+        )
+
+
+def test_regression_baseline_rechecks_target_and_rejects_checkout_preparation_failure(
+    tmp_path, monkeypatch,
+) -> None:
+    repo = _make_repo(tmp_path)
+    config = _regression_baseline_config(repo, ("tests/test_existing.py",))
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    target_path = (repo / "tests/test_existing.py").resolve()
+    original_is_file = Path.is_file
+    target_checks = 0
+
+    def disappear_between_checks(path: Path) -> bool:
+        nonlocal target_checks
+        if path.resolve() == target_path:
+            target_checks += 1
+            return target_checks == 1
+        return original_is_file(path)
+
+    monkeypatch.setattr(Path, "is_file", disappear_between_checks)
+    with pytest.raises(RunConfigurationError, match="does not exist in the frozen source"):
+        TraceFixRunner._prepare_regression_baseline(
+            config, repo, run_dir, MemoryTraceSink(), "run-id"
+        )
+    assert target_checks == 2
+
+    monkeypatch.setattr(Path, "is_file", original_is_file)
+    monkeypatch.setattr(
+        TraceFixRunner, "_clone_repository", staticmethod(lambda source, _dest: source)
+    )
+    monkeypatch.setattr(
+        TraceFixRunner, "_prepare_workspace",
+        staticmethod(lambda _config, _checkout, _run_dir: {"success": False}),
+    )
+    with pytest.raises(WorkspaceError, match="checkout preparation failed"):
+        TraceFixRunner._prepare_regression_baseline(
+            config, repo, run_dir, MemoryTraceSink(), "run-id"
+        )
+
+
+@pytest.mark.parametrize(
+    ("overrides", "message"),
+    [
+        (
+            {"regression_targets": ("tests/test_existing.py", "tests/test_existing.py")},
+            "duplicates",
+        ),
+        ({"regression_targets": ("tests/test_primary.py",)}, "distinct from test_target"),
+        ({"execution_backend": "docker"}, "require a local backend"),
+        ({"source_import": None}, "require a local backend"),
+        ({"test_target": None}, "require a local backend"),
+        ({"regression_targets": ("-k",)}, "relative pytest path"),
+    ],
+)
+def test_run_config_validates_regression_contract(tmp_path, overrides, message) -> None:
+    repo = _make_repo(tmp_path)
+    baseline = {
+        "repo": repo,
+        "task": "exercise the declared validation contract",
+        "model_name": "offline/replay",
+        "output_dir": tmp_path / "runs",
+        "env_file": None,
+        "test_python_executable": Path(sys.executable),
+        "test_target": "tests/test_primary.py",
+        "source_import": "sample",
+        "regression_targets": ("tests/test_existing.py",),
+    }
+
+    with pytest.raises(ValueError, match=message):
+        RunConfig(**(baseline | overrides))
+
+
+def test_regression_baseline_rejects_pytest_policy_target(tmp_path) -> None:
+    repo = _make_repo(tmp_path)
+    target = "tests/test_policy;name.py"
+    (repo / "tests").mkdir()
+    (repo / target).write_text("def test_sample():\n    assert True\n", encoding="utf-8")
+    _git(repo, "add", "--all")
+    _git(
+        repo, "-c", "user.name=Tests", "-c", "user.email=tests@example.invalid",
+        "commit", "--quiet", "-m", "add policy target",
+    )
+    config = _regression_baseline_config(repo, (target,))
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+
+    with pytest.raises(RunConfigurationError, match="pytest command policy"):
+        TraceFixRunner._prepare_regression_baseline(
+            config, repo, run_dir, MemoryTraceSink(), "run-id"
+        )
+
+
+@pytest.mark.parametrize(
+    "target",
+    ["../outside.py", "-k", "tests/test_existing.py;echo unsafe"],
+)
+def test_regression_baseline_rejects_unsafe_targets_before_checkout(
+    tmp_path, target,
+) -> None:
+    repo = _make_repo(tmp_path)
+    config = _regression_baseline_config(repo, ("tests/test_existing.py",))
+    config = config.model_copy(update={"regression_targets": (target,)})
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+
+    with pytest.raises(RunConfigurationError, match="validation target"):
+        TraceFixRunner._prepare_regression_baseline(
+            config, repo, run_dir, MemoryTraceSink(), "run-id"
+        )
+
+
+class MemoryTraceSink:
+    def __init__(self) -> None:
+        self.events = []
+
+    def write(self, event) -> None:
+        self.events.append(event)
+
+    def close(self) -> None:
+        pass
 
 
 def test_runner_builds_agent_checkout_and_verifies_source_import_before_model(
