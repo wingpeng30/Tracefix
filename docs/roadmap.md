@@ -2,7 +2,7 @@
 
 ## 2026-09-29 当前执行计划
 
-2026-09-30 当前分支 `codex/gated-regression-feedback` 实现结束前回归验收：从冻结源码记录基线；模型完成时运行原目标和追加目标；失败反馈继续修复；通过后可在新 checkout 独立复验。上一批运行后追加验证仍可用。机制默认关闭、零供应商请求；不宣称总体修复率提升。计划和状态见 [`tasks/2026-09-30-validation-feedback-gate.md`](tasks/2026-09-30-validation-feedback-gate.md)。
+2026-09-30 PR #9 分支 `codex/gated-regression-feedback` 已实现结束前回归验收与 Agent 反馈；CI 中两个 Windows 版本的完整 pytest 通过，但总覆盖率 89.5322% 未达 90%。随后定向测试暴露并修复“基线缺失仍接受”的状态 bug，新增负例回归，需用 CI 复验。机制默认关闭、零供应商请求；不宣称总体修复率提升。计划和状态见 [`tasks/2026-09-30-validation-feedback-gate.md`](tasks/2026-09-30-validation-feedback-gate.md)。
 
 2026-09-30 下一批聚焦补丁验收可信度：普通本地运行支持在原始与补丁 checkout 中追加公开回归目标，并在报告中显式展示发现的回归。Boltons 真实运行的派生诊断纠正了对旧 `count` 参数的过度判断；该差异属任务未规定的接口行为。实现与边界见 [`experiments/2026-09-30-regression-verification.md`](experiments/2026-09-30-regression-verification.md)。
 

@@ -630,8 +630,15 @@ class MinimalAgent(BaseAgent):
             })
             raise
 
-        passed = all(row["status"] == "passed" for row in outcomes)
-        incomplete = any(row["status"] == "incomplete" for row in outcomes)
+        accepted_outcomes = {"passed", "preserved", "fixed"}
+        passed = all(
+            row["status"] == "passed" and row["outcome"] in accepted_outcomes
+            for row in outcomes
+        )
+        incomplete = any(
+            row["status"] == "incomplete" or row["outcome"] == "incomplete"
+            for row in outcomes
+        )
         self.state.validation_gate_status = (
             "passed" if passed else "incomplete" if incomplete else "failed"
         )

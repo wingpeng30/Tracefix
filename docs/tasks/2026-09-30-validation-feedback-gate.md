@@ -1,9 +1,10 @@
 # 结束前回归验收与 Agent 反馈闭环
 
 日期：2026-09-30
-状态：实现已提交；首轮 CI 找到兼容性缺陷并已在本地修复，等待修复提交及复验 CI
+状态：功能实现已提交；修复旧 checkpoint 后 CI 的测试全通过但覆盖率未达门槛；新增行为测试并修复基线不完整时误接受的问题，等待定向复验与 CI
 分支：`codex/gated-regression-feedback`
 基线：`bc18a57a8dc16be1c8f2e934ca1dde06b19e07ed`
+PR：[#9](https://github.com/wingpeng30/Tracefix/pull/9)
 
 ## 目标与边界
 
@@ -26,7 +27,9 @@
 - `tests/test_runtime.py::test_end_of_task_regression_gate_feedback_repairs_before_independent_verify`：1 passed；最终联测与分类用例 2 passed。
 - 相关回归、运行、CLI、doctor、报告测试合计首轮 89 passed、1 failed。失败指出显式重复目标曾被新逻辑静默去重，现已修复为拒绝重复目标；针对性复验 `tests/test_regression.py::test_regression_verification_preserves_distinct_outcomes`：1 passed。
 - PR #9 首轮 CI（提交 `3194081be1921c6b2f3ea59cac2917159cf7390f`，run `36684436884`）发现旧 checkpoint 直接恢复路径没有结束验收字段，导致完整 pytest `762 passed、1 failed`；覆盖率为语句 `10355/11287`、分支 `3068/3720`，总覆盖率 `13423/15007 = 89.44492570133937%`。修复为门控默认关闭时兼容未经过新 run 初始化的旧 Agent；随后同时修复配置身份比较，使旧 TOML 形状继续按旧哈希核验。
-- 修复后的定向联测 `test_end_of_task_regression_gate_feedback_repairs_before_independent_verify`、`test_resume_after_completed_tool_batch`、`test_regression_verification_preserves_distinct_outcomes`：3 passed in 112.00s；相关 Ruff、compileall 和 diff 检查通过。全量覆盖率需等待新 CI 结果。
+- 修复提交 `d4f44c13107648f336f80d99f342949f04b9d807` 的 CI #67（run `36687781517`，合并检出 `c9e2aea127917bb1ef0e6730246a03eaa122917a`）确认 Windows Python 3.11/3.12 各 `763 passed、0 failed、0 skipped`，但覆盖率为语句 `10368/11288`、分支 `3069/3720`，合计 `13437/15008 = 89.53224946695096%`，因此工程门槛仍失败。失败原因仅为覆盖率；Linux Docker、MCP 与普通 Docker 三个 job 通过，editable/wheel smoke 通过。
+- 为填补实际验收分支而新增的 14 项本机定向行为测试覆盖 gate 的空补丁、重复源码状态、无效基线、已存在基线、基线断言失败／超时和安全目标拒绝。测试发现：当前回归目标通过但基线缺失或不完整时，汇总逻辑仍会接受整组任务。已将整组通过判定改为同时要求每项目标状态通过且验收结果为 `passed`、`preserved` 或 `fixed`；任何 `incomplete` 结果均阻断接受。这是本轮新增的正确性修复，不是单纯覆盖率补测。
+- 相关本机定向验证 `python -m pytest -q tests/test_runtime.py tests/test_minimal_agent.py -k 'regression_baseline or validation_gate' --disable-warnings --basetemp=tests/.validation-gate-focused-temp`：`14 passed, 64 deselected`。Ruff 首次检查发现新导入顺序，已修正；需重跑 Ruff。此前另起的完整本机检查在 35 分钟仍运行时中止，不能作为通过或失败证据；CI #67 的完整 pytest 结果仍有效。
 - Ruff 对变更的源码、示例和测试文件通过；`compileall` 对源码与示例通过；`git diff --check` 通过；最新录制闭环回放退出码 0。
 - 首轮 CI 中 Linux `docker-zero-call`、`mcp-serena-zero-call`、`docker-ordinary-zero-call` 均通过；Windows 3.11/3.12 工程步骤因同一恢复测试失败而未通过，wheel smoke 步骤也返回失败，需在修复后重新核验其具体结果。Artifact：3.11 `sha256:83af7a7695df3179611628ec5e3ab0f5e76e3c0c93d26728ac3545498da50214`，3.12 `sha256:a5ab860edf20b5d0146b1bfb85eb6a0535366a97b2cb92ca5808d2e07d5af169`。本机原始复现 `runs/ci-repro-20260930/summary.json` 与 `pytest.log`；pytest log SHA-256 `16a6e3280cc9a5875b3c198f9476eaf91f78f6502cc6b37e19a64d3a8b2e9468`。
 
@@ -36,4 +39,4 @@
 
 ## 后续
 
-完成完整相关测试和 PR CI，核对报告、恢复和预算边界；审查通过后按计划合入主线。之后冻结少量不同类型的公开任务，以失败分类决定下一项改进。真实模型实验需新的次数与金额授权。
+重跑相关 Ruff、compileall、diff 与定向测试，提交正确性修复和回归用例，等待 PR #9 的 Windows 双版本 90% 覆盖及 Linux CI 通过；复核 PR 审查意见与 wheel smoke 后再合入主线。之后冻结少量不同类型的公开任务，以失败分类决定下一项改进。真实模型实验需新的次数与金额授权。

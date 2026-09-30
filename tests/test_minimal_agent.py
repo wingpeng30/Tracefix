@@ -137,6 +137,121 @@ def test_agent_runs_tool_loop_and_accumulates_usage() -> None:
     assert len({event.task_id for event in sink.events}) == 1
 
 
+def _validation_result(status: str, *, success: bool | None = None) -> ToolResult:
+    if success is None:
+        success = status == "passed"
+    output = {
+        "test_status": status,
+        "returncode": 0 if status == "passed" else 1 if status == "test_failure" else -1,
+        "test_counts": {
+            "passed": 1 if status == "passed" else 0,
+            "failures": 1 if status == "test_failure" else 0,
+            "errors": 0,
+        },
+        "audit_path": f"{status}.json",
+        "junit_path": f"{status}.xml",
+    }
+    return ToolResult(
+        call_id=f"{status}-call", tool_name="run_tests", success=success,
+        error=None if success else f"test returned {status}", output=output,
+    )
+
+
+def _validation_agent(
+    outcomes: dict[str, ToolResult], baseline: dict[str, str | None], *,
+    source_sha: str = "source-state-1", nonempty: bool = True,
+) -> MinimalAgent:
+    agent = MinimalAgent(ScriptedLLM([]))
+    agent._validation_gate_attempted_sha = None
+    agent.validation_source_identity = lambda: (source_sha, nonempty)
+    agent.configured_original_target = "tests/test_original.py"
+    agent.validation_targets = tuple(
+        target for target in outcomes if target != "tests/test_original.py"
+    )
+    agent.validation_baseline = baseline
+    agent._execute_validation_test = lambda target: outcomes[target]
+    return agent
+
+
+@pytest.mark.parametrize(
+    ("baseline_status", "current_status", "expected_outcome", "expected_gate"),
+    [
+        ("passed", "test_failure", "regression", "failed"),
+        ("failed", "passed", "fixed", "passed"),
+        ("failed", "test_failure", "still_failed", "failed"),
+        ("incomplete", "passed", "incomplete", "incomplete"),
+        (None, "passed", "incomplete", "incomplete"),
+        ("passed", "timed_out", "incomplete", "incomplete"),
+    ],
+)
+def test_validation_gate_classifies_baseline_and_current_evidence(
+    baseline_status: str | None,
+    current_status: str,
+    expected_outcome: str,
+    expected_gate: str,
+) -> None:
+    original = "tests/test_original.py"
+    regression = "tests/test_regression.py"
+    results = {
+        original: _validation_result("passed"),
+        regression: _validation_result(current_status),
+    }
+    baseline = {} if baseline_status is None else {regression: baseline_status}
+    agent = _validation_agent(results, baseline)
+
+    accepted = agent._finish_through_validation_gate("done")
+
+    assert accepted is (expected_gate == "passed")
+    assert agent.state.validation_gate_status == expected_gate
+    assert agent.state.validation_gate_results[1]["outcome"] == expected_outcome
+    if expected_gate == "passed":
+        assert agent.state.validation_status == "verified"
+        assert agent.state.final_output == "done"
+    else:
+        assert agent.state.validation_status == "unverified"
+        feedback = agent.history.snapshot()[-1]
+        assert feedback.role is MessageRole.USER
+        assert feedback.metadata["kind"] == "validation_gate_feedback"
+        assert expected_outcome in feedback.content
+
+
+def test_validation_gate_rejects_empty_or_repeated_source_state() -> None:
+    results = {"tests/test_original.py": _validation_result("passed")}
+    empty = _validation_agent(results, {}, nonempty=False)
+    assert not empty._finish_through_validation_gate("done")
+    assert empty.state.stop_reason == "validation_gate_failed"
+    assert "补丁为空" in empty.state.final_output
+
+    repeated = _validation_agent(results, {})
+    repeated._validation_gate_attempted_sha = "source-state-1"
+    assert not repeated._finish_through_validation_gate("done")
+    assert "未重复运行测试" in repeated.state.final_output
+
+
+def test_validation_gate_propagates_test_budget_exhaustion_and_missing_target() -> None:
+    from tracefix.exceptions import TestLimitExceeded
+
+    agent = _validation_agent({}, {})
+    agent._execute_validation_test = lambda _target: (_ for _ in ()).throw(
+        TestLimitExceeded("test budget exhausted")
+    )
+    with pytest.raises(TestLimitExceeded):
+        agent._finish_through_validation_gate("done")
+    assert agent.state.validation_gate_status == "incomplete"
+
+    missing = _validation_agent({}, {})
+    missing.configured_original_target = None
+    with pytest.raises(AgentError, match="original test target"):
+        missing._finish_through_validation_gate("done")
+
+
+def test_validation_gate_requires_checkout_identity_provider() -> None:
+    agent = _validation_agent({}, {})
+    agent.validation_source_identity = None
+    with pytest.raises(AgentError, match="checkout identity provider"):
+        agent._finish_through_validation_gate("done")
+
+
 def test_duplicate_successful_read_uses_compact_cache_and_prompts_patch() -> None:
     """重复只读调用不应再次执行工具，读取候选后应从探索转入修改。"""
     tool = RecordingTool(name="read_file")
