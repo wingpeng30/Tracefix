@@ -294,6 +294,110 @@ def test_runner_clones_runs_agent_writes_artifacts_and_converts_cost(tmp_path, m
     assert event_types[-1] == "task_finished"
 
 
+def test_end_of_task_regression_gate_feedback_repairs_before_independent_verify(
+    tmp_path,
+) -> None:
+    repo = _make_repo(tmp_path)
+    (repo / "sample.py").write_text(
+        'def next_page(page): return page\ndef identity(value): return value\n',
+        encoding="utf-8",
+    )
+    tests = repo / "tests"
+    tests.mkdir()
+    (tests / "test_primary.py").write_text(
+        "from sample import next_page\n\n"
+        "def test_next_page_advances():\n    assert next_page(1) == 2\n",
+        encoding="utf-8",
+    )
+    (tests / "test_existing.py").write_text(
+        "from sample import identity, next_page\n\n"
+        "def test_negative_sentinel_is_unchanged():\n    assert next_page(-1) == -1\n\n"
+        "def test_identity_is_preserved():\n    assert identity(7) == 7\n",
+        encoding="utf-8",
+    )
+    _git(repo, "add", "--all")
+    _git(
+        repo, "-c", "user.name=Tests", "-c", "user.email=tests@example.invalid",
+        "commit", "--quiet", "-m", "add validation contract",
+    )
+    first_patch = """diff --git a/sample.py b/sample.py
+--- a/sample.py
++++ b/sample.py
+@@ -1,2 +1,2 @@
+-def next_page(page): return page
+-def identity(value): return value
++def next_page(page): return page + 1
++def identity(value): return value + 1
+"""
+    repair_patch = """diff --git a/sample.py b/sample.py
+--- a/sample.py
++++ b/sample.py
+@@ -1,2 +1,4 @@
+-def next_page(page): return page + 1
+-def identity(value): return value + 1
++def next_page(page):
++    if page < 0: return page
++    return page + 1
++def identity(value): return value
+"""
+    responses = [
+        _response(None, tool_calls=(ToolCall(
+            id="first-patch", name="apply_patch", arguments={"patch": first_patch},
+        ),)),
+        _response("第一版已修复主目标。"),
+        _response(None, tool_calls=(ToolCall(
+            id="repair-patch", name="apply_patch", arguments={"patch": repair_patch},
+        ),)),
+        _response("回归已修复并通过验收。"),
+    ]
+    result = TraceFixRunner(
+        lambda config: ScriptedLLM(config, responses)
+    ).run(RunConfig(
+        repo=repo,
+        task="分页从 1 开始，并保留负数哨兵与 identity 行为。",
+        model_name="offline/gated",
+        output_dir=tmp_path / "runs",
+        env_file=None,
+        test_python_executable=Path(sys.executable),
+        test_target="tests/test_primary.py",
+        regression_targets=("tests/test_existing.py",),
+        source_import="sample",
+        agent_config=AgentConfig(max_test_runs=6),
+    ))
+
+    assert result.status is AgentStatus.COMPLETED
+    assert result.validation_gate_status == "passed"
+    assert result.validation_gate_results[0]["target"] == "tests/test_primary.py"
+    assert result.validation_gate_results[0]["status"] == "passed"
+    assert result.validation_gate_results[1]["baseline_status"] == "passed"
+    assert result.validation_gate_results[1]["outcome"] == "preserved"
+    assert result.test_runs == 5  # baseline plus two end-gate batches
+    assert (repo / "sample.py").read_text(encoding="utf-8").endswith(
+        "def identity(value): return value\n"
+    )
+    trace = [json.loads(line) for line in Path(result.trace_path).read_text(
+        encoding="utf-8"
+    ).splitlines()]
+    gate_calls = [
+        event for event in trace
+        if event["event_type"] == "tool_called"
+        and event["payload"].get("origin") == "validation_gate"
+    ]
+    assert len(gate_calls) == 4  # failed first gate and successful repair gate
+    assert all(call["payload"]["call"]["id"] for call in gate_calls)
+
+    from tracefix.onboarding import verify_patch
+    from tracefix.report import render_report
+
+    run_dir = Path(result.result_path).parent
+    verification = verify_patch(run_dir)
+    assert verification["passed"] is True
+    report = render_report(run_dir).read_text(encoding="utf-8")
+    assert "结束前任务验收：passed" in report
+    assert "独立验收：原目标及追加目标在新 checkout 中复跑通过" in report
+    assert _git(repo, "status", "--porcelain").stdout.strip() == ""
+
+
 def test_runner_builds_agent_checkout_and_verifies_source_import_before_model(
     tmp_path, monkeypatch
 ) -> None:

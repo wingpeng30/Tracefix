@@ -17,7 +17,12 @@ from uuid import uuid4
 from tracefix.messages import ToolCall
 from tracefix.provenance import inspect_test_environment
 from tracefix.report import _read_run
-from tracefix.runtime import RunConfig, TraceFixRunner, load_environment_file
+from tracefix.runtime import (
+    RunConfig,
+    TraceFixRunner,
+    config_identity_sha256,
+    load_environment_file,
+)
 from tracefix.tools.builtin import ApplyPatchTool, RunTestsTool
 
 
@@ -98,6 +103,36 @@ def doctor(settings: dict[str, Any], *, prepare: bool = False) -> dict[str, Any]
         )
         exists = bool(repo and safe and (Path(repo) / candidate).is_file())
         add("test_target", exists, str(target), "指定仓库内已有的相对 pytest 文件")
+    regression_targets = tuple(settings.get("regression_targets", ()))
+    execution_backend = settings.get("execution_backend") or "local"
+    max_test_runs = int(settings.get("max_test_runs", 8))
+    regression_minimum = 2 * len(regression_targets) + 1
+    if regression_targets:
+        valid_gate = (
+            execution_backend == "local" and target is not None
+            and settings.get("source_import") is not None
+            and max_test_runs >= regression_minimum
+        )
+        add(
+            "regression_gate",
+            valid_gate,
+            (
+                f"{len(regression_targets)} 个追加目标；最低测试进程 {regression_minimum}，"
+                f"配置上限 {max_test_runs}"
+            ),
+            "使用本地后端，配置 --test-target、--source-import，并提高 --max-test-runs",
+        )
+        for index, regression_target in enumerate(regression_targets):
+            candidate = str(regression_target).split("::", 1)[0]
+            safe = (
+                bool(candidate) and not Path(candidate).is_absolute()
+                and ".." not in Path(candidate).parts and not candidate.startswith("-")
+            )
+            exists = bool(repo and safe and (Path(repo) / candidate).is_file())
+            add(
+                f"regression_target_{index + 1}", exists,
+                str(regression_target), "指定冻结源码中已有的相对 pytest 目标",
+            )
     module = settings["source_import"]
     valid_module = isinstance(module, str) and all(
         part.isidentifier() for part in module.split(".")
@@ -217,17 +252,21 @@ def verify_patch(
     run: Path, *, regression_targets: tuple[str, ...] = (),
 ) -> dict[str, Any]:
     """Reapply a saved patch in a fresh local checkout and rerun its public test."""
-    if regression_targets:
-        from tracefix.regression import verify_regressions
-
-        return verify_regressions(run, regression_targets)
     run_dir = _read_run(run)
     manifest_path = run_dir / "session.json"
     if not manifest_path.is_file():
         raise ValueError("运行缺少可核验的 session.json 配置")
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     config = RunConfig.model_validate(manifest["config"])
-    if hashlib.sha256(config.model_dump_json().encode("utf-8")).hexdigest() != (
+    saved_regression_targets = tuple(config.regression_targets)
+    if len(set(regression_targets)) != len(regression_targets):
+        raise ValueError("追加回归目标不能重复")
+    combined_targets = tuple(dict.fromkeys((*saved_regression_targets, *regression_targets)))
+    if combined_targets:
+        from tracefix.regression import verify_regressions
+
+        return verify_regressions(run, combined_targets)
+    if config_identity_sha256(config) != (
         manifest["identity"].get("config_sha256")
     ):
         raise ValueError("运行配置身份与 session.json 不符")

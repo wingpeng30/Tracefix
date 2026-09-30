@@ -27,11 +27,44 @@ PATCH = """diff --git a/widget.py b/widget.py
 +    return page + 1
 """
 
+GATE_FIRST_PATCH = """diff --git a/widget.py b/widget.py
+--- a/widget.py
++++ b/widget.py
+@@ -1,2 +1,2 @@
+ def next_page(page):
+-    return page
++    return page + 1
+diff --git a/identity.py b/identity.py
+--- a/identity.py
++++ b/identity.py
+@@ -1 +1 @@
+-def same(value): return value
++def same(value): return value + 1
+"""
+
+GATE_REPAIR_PATCH = """diff --git a/widget.py b/widget.py
+--- a/widget.py
++++ b/widget.py
+@@ -1,2 +1,4 @@
+ def next_page(page):
+-    return page + 1
++    if page < 0:
++        return page
++    return page + 1
+diff --git a/identity.py b/identity.py
+--- a/identity.py
++++ b/identity.py
+@@ -1 +1 @@
+-def same(value): return value + 1
++def same(value): return value
+"""
+
 
 class ReplayClient:
-    def __init__(self, *, mcp_enabled: bool = False) -> None:
+    def __init__(self, *, mcp_enabled: bool = False, validation_gate: bool = False) -> None:
         self.calls = 0
         self.mcp_enabled = mcp_enabled
+        self.validation_gate = validation_gate
         self.sequence = (
             [
                 ("mcp_serena_symbols", {"relative_path": "widget.py"}),
@@ -39,13 +72,18 @@ class ReplayClient:
                     "name_path_pattern": "next_page", "relative_path": "widget.py",
                 }),
             ] if mcp_enabled else []
-        ) + [
+        ) + ([
+            ("apply_patch", {"patch": GATE_FIRST_PATCH}),
+            None,
+            ("apply_patch", {"patch": GATE_REPAIR_PATCH}),
+            None,
+        ] if validation_gate else [
             ("run_tests", {"command": "pytest -q tests/test_widget.py"}),
             ("read_file", {"path": "widget.py"}),
             ("apply_patch", {"patch": PATCH}),
             ("run_tests", {"command": "pytest -q tests/test_widget.py"}),
             ("get_git_diff", {"context_lines": 3}),
-        ]
+        ])
 
     def token_counter(self, **_kwargs):
         return 100
@@ -99,6 +137,7 @@ def main() -> int:
     parser.add_argument("--mcp-serena-image-id")
     parser.add_argument("--docker-ordinary-image-id")
     parser.add_argument("--regression-example", action="store_true")
+    parser.add_argument("--validation-gate-example", action="store_true")
     args = parser.parse_args()
     output = args.output.expanduser().resolve()
     if output.exists():
@@ -113,7 +152,7 @@ def main() -> int:
         "from widget import next_page\n\ndef test_next_page():\n    assert next_page(1) == 2\n",
         encoding="utf-8",
     )
-    if args.regression_example:
+    if args.regression_example or args.validation_gate_example:
         (repo / "identity.py").write_text("def same(value):\n    return value\n", encoding="utf-8")
         (tests / "test_backward.py").write_text(
             "from widget import next_page\n\n"
@@ -121,6 +160,7 @@ def main() -> int:
             "    assert next_page(-1) == -1\n",
             encoding="utf-8",
         )
+    if args.regression_example:
         (tests / "test_preserved.py").write_text(
             "from identity import same\n\n"
             "def test_identity():\n    assert same(7) == 7\n", encoding="utf-8",
@@ -129,6 +169,14 @@ def main() -> int:
             "from widget import next_page\n\n"
             "def test_unrelated_expectation():\n    assert next_page(2) == 99\n",
             encoding="utf-8",
+        )
+    if args.validation_gate_example:
+        (repo / "identity.py").write_text(
+            "def same(value): return value\n", encoding="utf-8",
+        )
+        (tests / "test_identity.py").write_text(
+            "from identity import same\n\n"
+            "def test_identity():\n    assert same(7) == 7\n", encoding="utf-8",
         )
     _git(repo, "init", "-q")
     _git(repo, "add", "--all")
@@ -150,7 +198,9 @@ def main() -> int:
         'test_target = "tests/test_widget.py"\n'
         'source_import = "widget"\n'
         'model = "offline/replay"\n'
-        'output_dir = "runs"\n',
+        'output_dir = "runs"\n'
+        + ('regression_targets = ["tests/test_backward.py", "tests/test_identity.py"]\n'
+           if args.validation_gate_example else ""),
         encoding="utf-8",
     )
     settings = _ordinary_settings(
@@ -172,7 +222,10 @@ def main() -> int:
             ]
         )
     )
-    client = ReplayClient(mcp_enabled=args.mcp_serena_image_id is not None)
+    client = ReplayClient(
+        mcp_enabled=args.mcp_serena_image_id is not None,
+        validation_gate=args.validation_gate_example,
+    )
     result = TraceFixRunner(llm_factory=lambda config: LiteLLMAdapter(config, client=client)).run(
         RunConfig(
             repo=settings["repo"],
@@ -184,6 +237,7 @@ def main() -> int:
                 None if args.docker_ordinary_image_id else Path(sys.executable)
             ),
             test_target=settings["test_target"],
+            regression_targets=settings["regression_targets"],
             source_import=settings["source_import"],
             mcp_serena_image_id=args.mcp_serena_image_id,
             execution_backend="docker" if args.docker_ordinary_image_id else "local",
@@ -207,12 +261,22 @@ def main() -> int:
         ):
             raise AssertionError("isolated Serena queries did not both succeed")
     regression = None
+    validation_verification = None
     if args.regression_example:
         regression = verify_patch(
             Path(result.result_path).parent,
             regression_targets=("tests/test_backward.py",),
         )
+    if args.validation_gate_example:
+        validation_verification = verify_patch(Path(result.result_path).parent)
+        if validation_verification["passed"] is not True:
+            raise AssertionError("independent regression verification did not pass")
     report = render_report(Path(result.result_path).parent)
+    if args.validation_gate_example:
+        if result.validation_gate_status != "passed" or client.calls != 4:
+            raise AssertionError(
+                "offline regression feedback gate did not complete its repair replay"
+            )
     source_clean = not subprocess.run(
         ["git", "status", "--porcelain"], cwd=repo, capture_output=True,
         text=True, check=True,
@@ -231,6 +295,11 @@ def main() -> int:
                 "source_clean": source_clean,
                 "regression_status": regression["status"] if regression else None,
                 "regression_record": regression["record_path"] if regression else None,
+                "validation_gate_status": result.validation_gate_status,
+                "validation_gate_results": result.validation_gate_results,
+                "validation_verification_status": (
+                    validation_verification["status"] if validation_verification else None
+                ),
             },
             ensure_ascii=False,
         )

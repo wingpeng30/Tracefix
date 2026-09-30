@@ -50,6 +50,7 @@ class MinimalAgent(BaseAgent):
         "_patch_action_reminder_sent", "_budget_guidance_sent",
         "_late_targeted_retrievals",
         "_last_test_evidence",
+        "_validation_gate_attempted_sha",
     )
 
     def checkpoint_payload(self) -> dict[str, Any]:
@@ -114,6 +115,12 @@ class MinimalAgent(BaseAgent):
         if not task.strip():
             raise AgentError("task cannot be empty")
 
+        validation_targets = getattr(self, "validation_targets", ())
+        validation_baseline = getattr(self, "validation_baseline", {})
+        validation_source_identity = getattr(self, "validation_source_identity", None)
+        original_target = getattr(self, "configured_original_target", None)
+        baseline_runs = getattr(self, "validation_baseline_runs", 0)
+        baseline_seconds = getattr(self, "validation_baseline_seconds", 0.0)
         self.reset()
         # 以下运行期记忆只服务于确定性失败恢复，不进入持久化 AgentState。
         self._failed_apply_calls: dict[str, str] = {}
@@ -142,6 +149,14 @@ class MinimalAgent(BaseAgent):
         self._visible_tool_result_ids: set[str] = set()
         self._late_targeted_retrievals = 0
         self._last_test_evidence: dict[str, Any] | None = None
+        self._validation_gate_attempted_sha: str | None = None
+        self.validation_targets = validation_targets
+        self.validation_baseline = validation_baseline
+        self.validation_source_identity = validation_source_identity
+        self.configured_original_target = original_target
+        self.validation_baseline_runs = baseline_runs
+        self.validation_baseline_seconds = baseline_seconds
+        self.state.test_runs = baseline_runs
         presentation_config = self.config.presentation.model_copy(
             update={
                 "enabled": (
@@ -152,7 +167,7 @@ class MinimalAgent(BaseAgent):
         )
         self._presenter = ToolResultPresenter(presentation_config)
         self._task_id = uuid4().hex
-        self._started_monotonic = time.monotonic()
+        self._started_monotonic = time.monotonic() - baseline_seconds
         self.state.task = task
         self.state.status = AgentStatus.RUNNING
         self.state.started_at = datetime.now(UTC)
@@ -210,6 +225,19 @@ class MinimalAgent(BaseAgent):
                 TraceEventType.REPO_MAP_ADDED,
                 {"chars": len(self.repository_map)},
             )
+        if not resume and self.validation_targets:
+            self._append_message(Message(
+                role=MessageRole.SYSTEM,
+                content=(
+                    "TraceFix 验收契约：必须保留并通过原测试目标与以下已有回归目标；"
+                    "不得修改测试来规避失败。自动结束前验收失败时，按工具反馈继续修复。\n"
+                    + "\n".join(
+                        f"- {target}" for target in
+                        (self.configured_original_target, *self.validation_targets)
+                    )
+                ),
+                metadata={"kind": "validation_gate_contract"},
+            ))
         if not resume:
             self._append_message(Message(role=MessageRole.USER, content=task))
         if not resume and self.checkpoint_callback is not None:
@@ -378,6 +406,10 @@ class MinimalAgent(BaseAgent):
             raise budget_error
 
         if not response.message.tool_calls:
+            if self.validation_targets and not self._finish_through_validation_gate(
+                response.message.content or ""
+            ):
+                return
             if (
                 self.config.require_tested_completion
                 and self.state.validation_status != "verified"
@@ -503,9 +535,185 @@ class MinimalAgent(BaseAgent):
         self._append_finish_reminder_if_ready()
         self._check_time_budget()
 
-    def _execute_tool(self, call: ToolCall) -> ToolResult:
+    def _finish_through_validation_gate(self, candidate: str) -> bool:
+        """Run the configured acceptance targets before accepting a model's final answer."""
+        if self.validation_source_identity is None:
+            raise AgentError("validation gate has no checkout identity provider")
+        source_sha, nonempty = self.validation_source_identity()
+        if not nonempty:
+            self.state.validation_gate_status = "failed"
+            self.state.validation_gate_results = []
+            message = "自动验收未运行：当前补丁为空。"
+            self._emit(TraceEventType.VALIDATION_GATE_COMPLETED, {
+                "status": "failed", "source_sha256": source_sha, "reason": "empty_patch",
+            })
+            self._finish(AgentStatus.INTERRUPTED, "validation_gate_failed")
+            self.state.final_output = f"{candidate}\n\n{message}".strip()
+            return False
+
+        if self._validation_gate_attempted_sha == source_sha:
+            self._finish(AgentStatus.INTERRUPTED, "validation_gate_failed")
+            self.state.final_output = (
+                f"{candidate}\n\n任务验收仍未通过；该源码状态已验收过，未重复运行测试。"
+            ).strip()
+            return False
+
+        self._validation_gate_attempted_sha = source_sha
+        self.state.validation_gate_status = "incomplete"
+        self.state.validation_gate_results = []
+        self._emit(TraceEventType.VALIDATION_GATE_STARTED, {
+            "source_sha256": source_sha,
+            "targets": [self.configured_original_target, *self.validation_targets],
+        })
+        if self.checkpoint_callback is not None:
+            self.checkpoint_callback(self)
+
+        outcomes: list[dict[str, Any]] = []
+        targets = (self.configured_original_target, *self.validation_targets)
+        try:
+            for target in targets:
+                if target is None:
+                    raise AgentError("validation gate requires the original test target")
+                result = self._execute_validation_test(target)
+                output = result.output if isinstance(result.output, dict) else {}
+                passed = (
+                    result.success is True and output.get("test_status") == "passed"
+                    and output.get("returncode") == 0
+                )
+                counts = output.get("test_counts")
+                counts = counts if isinstance(counts, dict) else {}
+                assertion_failure = (
+                    output.get("test_status") == "test_failure"
+                    and output.get("returncode") == 1
+                    and counts.get("failures", 0) > 0
+                    and counts.get("errors", 0) == 0
+                )
+                current_status = (
+                    "passed" if passed else "failed" if assertion_failure else "incomplete"
+                )
+                baseline = self.validation_baseline.get(target)
+                if current_status == "incomplete":
+                    outcome = "incomplete"
+                elif target == self.configured_original_target:
+                    outcome = "passed" if passed else "failed"
+                elif baseline is None or baseline == "incomplete":
+                    outcome = "incomplete"
+                elif baseline == "passed" and not passed:
+                    outcome = "regression"
+                elif baseline == "failed" and passed:
+                    outcome = "fixed"
+                elif baseline == "failed":
+                    outcome = "still_failed"
+                else:
+                    outcome = "preserved" if passed else "regression"
+                item = {
+                    "target": target,
+                    "baseline_status": baseline,
+                    "status": current_status,
+                    "outcome": outcome,
+                    "returncode": output.get("returncode"),
+                    "audit_path": output.get("audit_path"),
+                    "junit_path": output.get("junit_path"),
+                    "diagnostic": output.get("diagnostic"),
+                }
+                outcomes.append(item)
+                self.state.validation_gate_results = [dict(row) for row in outcomes]
+                if self.checkpoint_callback is not None:
+                    self.checkpoint_callback(self)
+        except AgentLimitExceeded:
+            self.state.validation_gate_status = "incomplete"
+            self.state.validation_status = "unverified"
+            self._emit(TraceEventType.VALIDATION_GATE_COMPLETED, {
+                "status": "incomplete", "source_sha256": source_sha,
+                "results": outcomes,
+            })
+            raise
+
+        passed = all(row["status"] == "passed" for row in outcomes)
+        incomplete = any(row["status"] == "incomplete" for row in outcomes)
+        self.state.validation_gate_status = (
+            "passed" if passed else "incomplete" if incomplete else "failed"
+        )
+        self.state.validation_status = "verified" if passed else "unverified"
+        self._emit(TraceEventType.VALIDATION_GATE_COMPLETED, {
+            "status": self.state.validation_gate_status,
+            "source_sha256": source_sha,
+            "results": outcomes,
+        })
+        if passed:
+            self.state.final_output = candidate
+            return True
+
+        feedback = [
+            "自动验收未通过。请依据以下结果修改代码；不要修改或删除已约定的测试目标。",
+            json.dumps(outcomes, ensure_ascii=False, indent=2),
+            "各目标的完整 pytest 输出与审计文件位于轨迹记录的 evidence 路径。",
+        ]
+        self._append_message(Message(
+            role=MessageRole.USER,
+            content="\n\n".join(feedback),
+            metadata={"kind": "validation_gate_feedback", "source_sha256": source_sha},
+        ))
+        if self.checkpoint_callback is not None:
+            self.checkpoint_callback(self)
+        return False
+
+    def _execute_validation_test(self, target: str) -> ToolResult:
+        """Run one harness-owned pytest call with normal tool pairing and budgets."""
+        self._check_time_budget()
+        if self.state.test_runs >= self.config.max_test_runs:
+            raise TestLimitExceeded(
+                "test run budget exhausted before end-of-task validation",
+                context={"actual": self.state.test_runs, "limit": self.config.max_test_runs},
+            )
+        call = ToolCall(
+            id=uuid4().hex,
+            name=ReservedToolName.RUN_TESTS.value,
+            arguments={"command": f"pytest -q {shlex.quote(target)}"},
+        )
+        self._append_message(Message(
+            role=MessageRole.ASSISTANT,
+            tool_calls=(call,),
+            metadata={"origin": "validation_gate"},
+        ))
+        self._emit(TraceEventType.TOOL_CALLED, {
+            "call": call.model_dump(mode="json"), "origin": "validation_gate",
+        })
+        tool = self.tools.get(call.name)
+        prepare = getattr(tool, "prepare", None)
+        process_started = False
+
+        def record_start() -> None:
+            nonlocal process_started
+            process_started = True
+            self.state.test_runs += 1
+            self._emit(TraceEventType.TEST_PROCESS_STARTED, {
+                "call_id": call.id, "test_runs": self.state.test_runs,
+                "origin": "validation_gate",
+            })
+
+        if prepare is not None:
+            prepare(call)
+            tool.on_process_started = record_start
+        result = self._execute_tool(call, origin="validation_gate", emit_call=False)
+        if not process_started:
+            record_start()
+        result = result.model_copy(update={
+            "metadata": {**result.metadata, "origin": "validation_gate"},
+        })
+        self._append_tool_result(result)
+        self._check_time_budget()
+        return result
+
+    def _execute_tool(
+        self, call: ToolCall, *, origin: str | None = None, emit_call: bool = True
+    ) -> ToolResult:
         """执行一个工具；可恢复错误会被转换成结构化失败结果。"""
-        self._emit(TraceEventType.TOOL_CALLED, {"call": call.model_dump(mode="json")})
+        if emit_call:
+            self._emit(TraceEventType.TOOL_CALLED, {
+                "call": call.model_dump(mode="json"),
+                **({"origin": origin} if origin else {}),
+            })
         started = time.monotonic()
         signature = self._tool_signature(call)
 
@@ -812,6 +1020,8 @@ class MinimalAgent(BaseAgent):
                 self._tests_passed = False
                 self._diff_nonempty = False
                 self.state.validation_status = "unverified"
+                self.state.validation_gate_status = None
+                self.state.validation_gate_results = []
                 if self._last_test_evidence is not None:
                     self._last_test_evidence["valid"] = False
                     self._last_test_evidence["invalidated_by"] = call.id
@@ -1101,6 +1311,8 @@ class MinimalAgent(BaseAgent):
 
     def _append_finish_reminder_if_ready(self) -> None:
         """测试通过且已有改动时提示模型收尾，避免解决后继续消耗步骤。"""
+        if self.validation_targets and self.state.validation_gate_status != "passed":
+            return
         if not (self._tests_passed and self._diff_nonempty) or self._finish_reminder_sent:
             return
         self._append_message(
