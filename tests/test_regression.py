@@ -29,7 +29,7 @@ def test_regression_verification_preserves_distinct_outcomes(
     summary = json.loads(completed.stdout)
     run = Path(summary["result"]).parent
     first = json.loads(Path(summary["regression_record"]).read_text(encoding="utf-8"))
-    assert first["status"] == "regression"
+    assert first["status"] == "regression", first
     assert first["original_status"] == "passed"
     assert first["targets"][0]["outcome"] == "regression"
     assert "追加回归验证：已保存 1 次" in Path(summary["report"]).read_text(encoding="utf-8")
