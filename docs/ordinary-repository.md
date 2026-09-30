@@ -42,11 +42,12 @@ env_file = "./.env"
 .\.venv\Scripts\tracefix.exe doctor --config config.toml --prepare --json
 .\.venv\Scripts\tracefix.exe run --config config.toml
 .\.venv\Scripts\tracefix.exe verify --run .\runs\<run-id>
+.\.venv\Scripts\tracefix.exe verify --run .\runs\<run-id> --regression-target tests/test_existing_behavior.py
 .\.venv\Scripts\tracefix.exe report --run .\runs\<run-id>
 .\.venv\Scripts\tracefix.exe export --run .\runs\<run-id> --output .\fix.patch
 ```
 
-命令行参数优先于 `TRACEFIX_*` 环境变量，后者优先于 TOML，最后使用默认值；密钥仅从进程环境或 `.env` 读取。快速 `doctor` 返回检查项、布尔结果和修复建议；`doctor --prepare` 额外在临时独立 checkout 中执行与运行一致的 pytest／源码导入探针，结束后清理，仍不调用模型或安装依赖。失败退出码为 2。`run` 的终态、结果目录及补丁路径会打印到终端。`verify` 在新的临时 checkout 应用保存补丁并隔离复跑记录的公开测试，生成 `independent-validation.json` 和审计文件；它不能证明隐藏测试或完整修复正确性。`report` 生成单文件 HTML；`export` 只复制补丁和校验文件，不会将补丁应用于原仓库。输出目录默认是当前目录下的 `runs`；可用 `TRACEFIX_RUNS_ROOT` 或 `--output-dir` 覆盖。
+命令行参数优先于 `TRACEFIX_*` 环境变量，后者优先于 TOML，最后使用默认值；密钥仅从进程环境或 `.env` 读取。快速 `doctor` 返回检查项、布尔结果和修复建议；`doctor --prepare` 额外在临时独立 checkout 中执行与运行一致的 pytest／源码导入探针，结束后清理，仍不调用模型或安装依赖。失败退出码为 2。`run` 的终态、结果目录及补丁路径会打印到终端。`verify` 在新的临时 checkout 应用保存补丁并隔离复跑记录的公开测试，生成 `independent-validation.json` 和审计文件；追加一个或多个 `--regression-target` 时，还会对冻结源码及补丁分别运行目标，保存独立且不可覆盖的记录。它不能证明隐藏测试或完整修复正确性；追加回归仅支持普通本地后端，详见 [`experiments/2026-09-30-regression-verification.md`](experiments/2026-09-30-regression-verification.md)。`report` 生成单文件 HTML；`export` 只复制补丁和校验文件，不会将补丁应用于原仓库。输出目录默认是当前目录下的 `runs`；可用 `TRACEFIX_RUNS_ROOT` 或 `--output-dir` 覆盖。
 
 没有 Key 时先运行公开离线演示，验证安装、工具、Skills 与报告：
 

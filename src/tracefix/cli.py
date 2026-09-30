@@ -272,6 +272,10 @@ def build_parser() -> argparse.ArgumentParser:
         "verify", help="在新 checkout 中应用补丁并独立复跑记录的公开测试"
     )
     verify_parser.add_argument("--run", type=Path, required=True)
+    verify_parser.add_argument(
+        "--regression-target", action="append", default=[],
+        help="在原始与补丁 checkout 中复跑的已有相对 pytest 目标；可重复",
+    )
 
     docker_prepare = subparsers.add_parser(
         "docker-prepare", help="显式构建普通 Python 仓库的无运行期联网镜像"
@@ -986,7 +990,9 @@ def main(argv: list[str] | None = None) -> int:
                         print(f"  修复建议: {check['fix']}")
             return 0 if checks["ok"] else 2
         if args.command == "verify":
-            verification = verify_patch(args.run)
+            verification = verify_patch(
+                args.run, regression_targets=tuple(args.regression_target),
+            )
             _print_json(verification)
             return 0 if verification["passed"] else 2
         if args.command == "docker-prepare":

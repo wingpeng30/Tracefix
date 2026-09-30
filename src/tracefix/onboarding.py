@@ -213,8 +213,14 @@ def export_patch(run: Path, output: Path) -> Path:
     return destination
 
 
-def verify_patch(run: Path) -> dict[str, Any]:
+def verify_patch(
+    run: Path, *, regression_targets: tuple[str, ...] = (),
+) -> dict[str, Any]:
     """Reapply a saved patch in a fresh local checkout and rerun its public test."""
+    if regression_targets:
+        from tracefix.regression import verify_regressions
+
+        return verify_regressions(run, regression_targets)
     run_dir = _read_run(run)
     manifest_path = run_dir / "session.json"
     if not manifest_path.is_file():
