@@ -1,7 +1,7 @@
 # 结束前回归验收与 Agent 反馈闭环
 
 日期：2026-09-30
-状态：功能实现与基线完整性修复已提交；CI #71 的功能测试通过但覆盖率差 3 点；新增 harness-owned 测试调用配对验证，等待 CI #72 复验
+状态：CI #72 已在精确 PR head `9501ee65c523f129074756f10573c2de518f4479` 全部通过；无未解决审查意见，准备合入主线
 分支：`codex/gated-regression-feedback`
 基线：`bc18a57a8dc16be1c8f2e934ca1dde06b19e07ed`
 PR：[#9](https://github.com/wingpeng30/Tracefix/pull/9)
@@ -35,6 +35,7 @@ PR：[#9](https://github.com/wingpeng30/Tracefix/pull/9)
 - CI #69（提交 `1094398041519fbb41da7152cca9d0c60bfbcaa5`）两版本均 `777 passed、0 failed、0 skipped`，Ruff、compileall、editable smoke、wheel smoke 及三个 Linux Docker/MCP job 通过；唯一失败是覆盖率 `13502/15009 = 89.95935771870211%`，距离门槛 7 个合并语句／分支点。覆盖报告确认基线循环第二次执行的路径形状与 pytest 策略检查是重复校验，统一前置循环已对原目标和所有回归目标完成相同检查；现保留每个目标实际执行前的路径存在性及 checkout containment 复查，删去不可达的重复策略分支。变更后定向 25 项、Ruff、compileall 与 diff 检查通过，待 CI #70 确认。
 - CI #70（提交 `ce61fe41f2546e6e4ff0f47c4b5c1475c6b638b9`）两版本均 `777 passed、0 failed、0 skipped`，Ruff、compileall、editable/wheel smoke 及三个 Linux Docker/MCP job 通过；唯一失败是覆盖率 `13498/15001 = 89.98066795546964%`，距离门槛 3 个合并点。新增门控负例覆盖 pytest 证据缺失和 pytest errors：二者都必须标记为 `incomplete`，不能被当成普通断言失败或通过；本机定向 27 项通过，等待 CI #71。
 - CI #71（提交 `e7a675d646d7fb6fd8d4bb83949b71d12caa5d17`）继续确认两版本完整 pytest `777 passed、0 failed、0 skipped`，三个 Linux job 通过，覆盖率仍为 `13498/15001 = 89.98066795546964%`。新增 harness-owned 的真实工具注册路径检查，验证验收测试调用会生成配对工具事件、启动事件、预算计数与无悬空调用；本机定向 28 项、Ruff、compileall 与 diff 检查通过，待 CI #72。
+- CI #72（run `36699916374`，精确 PR head `9501ee65c523f129074756f10573c2de518f4479`）五个 job 全部成功。Windows Python 3.11 与 3.12 的完整工程检查均为 `coverage 13501/15001 = 90.00066662222518%`，Ruff、compileall、editable 零调用 smoke 和仓库外 wheel smoke 通过；Linux 冻结 Docker、普通 Docker、Serena MCP 三个零调用 job 通过。工程制品：3.11 `sha256:2364132e18b3c95247ad98cc4728aa495f482bbb0c923f6d53c4706a7806a999`，3.12 `sha256:1b5f42af1a593f9863241b0809066bdec9d9f4142f16de902c4574091c0178d7`；MCP `sha256:c6e195af72a9d5513b8452b09de5c76023b8deda71cf28337976f1d0cb66aba7`；普通 Docker `sha256:25b538610f091ec876be95971d7732500fc73eb3d2d6a61a5c0bcdba5efaf4f7`；冻结 Docker `sha256:93e853a665c19f19a6cf17e5f1820d1ab2ceff7c8df26773da40dde1df71ec5c`。审查列表和行内讨论为空，PR 可合并。
 - Ruff 对变更的源码、示例和测试文件通过；`compileall` 对源码与示例通过；`git diff --check` 通过；最新录制闭环回放退出码 0。
 - 首轮 CI 中 Linux `docker-zero-call`、`mcp-serena-zero-call`、`docker-ordinary-zero-call` 均通过；Windows 3.11/3.12 工程步骤因同一恢复测试失败而未通过，wheel smoke 步骤也返回失败，需在修复后重新核验其具体结果。Artifact：3.11 `sha256:83af7a7695df3179611628ec5e3ab0f5e76e3c0c93d26728ac3545498da50214`，3.12 `sha256:a5ab860edf20b5d0146b1bfb85eb6a0535366a97b2cb92ca5808d2e07d5af169`。本机原始复现 `runs/ci-repro-20260930/summary.json` 与 `pytest.log`；pytest log SHA-256 `16a6e3280cc9a5875b3c198f9476eaf91f78f6502cc6b37e19a64d3a8b2e9468`。
 
