@@ -1,7 +1,7 @@
 # 结束前回归验收与 Agent 反馈闭环
 
 日期：2026-09-30
-状态：功能实现与基线完整性修复已提交；CI #68 测试通过但覆盖率未达门槛；新增配置、准备失败和预算边界测试，等待 CI 复验
+状态：功能实现与基线完整性修复已提交；CI #69 测试和工程检查通过但覆盖率差 7 点；已移除重复且不可达的二次策略校验，等待 CI #70 复验
 分支：`codex/gated-regression-feedback`
 基线：`bc18a57a8dc16be1c8f2e934ca1dde06b19e07ed`
 PR：[#9](https://github.com/wingpeng30/Tracefix/pull/9)
@@ -32,6 +32,7 @@ PR：[#9](https://github.com/wingpeng30/Tracefix/pull/9)
 - 相关本机定向验证 `python -m pytest -q tests/test_runtime.py tests/test_minimal_agent.py -k 'regression_baseline or validation_gate' --disable-warnings --basetemp=tests/.validation-gate-focused-temp`：`14 passed, 64 deselected`。Ruff 首次检查发现新导入顺序并已修正；后续 Ruff 已通过。此前另起的完整本机检查在 35 分钟仍运行时中止，不能作为通过或失败证据；CI #67 的完整 pytest 结果仍有效。
 - CI #68（提交 `10776e7df93c8571c6767426016de6cc2e1f02a8`）两个 Windows 版本均再次完整测试通过：Python 3.11/3.12 各 `777 passed、0 failed、0 skipped`；综合覆盖率均为 `13482/15009 = 89.82610433739757%`，低于门槛，故 workflow 失败。三个 Linux Docker/MCP job、editable smoke 与仓库外 wheel smoke 均通过。
 - 针对覆盖空缺补充了冻结基线重复/缺失原目标、目标二次检查、checkout 准备失败、pytest 命令策略拒绝、回归配置契约六种无效组合、Agent 验收检查点和测试预算耗尽用例。定向命令 `python -m pytest -q tests/test_runtime.py tests/test_minimal_agent.py -k 'regression_baseline or validation_gate or run_config_validates_regression_contract' --disable-warnings --basetemp=tests/.validation-gate-focused-temp5`：`25 passed, 64 deselected`。Ruff、compileall 与 `git diff --check` 均通过。全量 pytest 覆盖率只会由新提交 CI 确认。
+- CI #69（提交 `1094398041519fbb41da7152cca9d0c60bfbcaa5`）两版本均 `777 passed、0 failed、0 skipped`，Ruff、compileall、editable smoke、wheel smoke 及三个 Linux Docker/MCP job 通过；唯一失败是覆盖率 `13502/15009 = 89.95935771870211%`，距离门槛 7 个合并语句／分支点。覆盖报告确认基线循环第二次执行的路径形状与 pytest 策略检查是重复校验，统一前置循环已对原目标和所有回归目标完成相同检查；现保留每个目标实际执行前的路径存在性及 checkout containment 复查，删去不可达的重复策略分支。变更后定向 25 项、Ruff、compileall 与 diff 检查通过，待 CI #70 确认。
 - Ruff 对变更的源码、示例和测试文件通过；`compileall` 对源码与示例通过；`git diff --check` 通过；最新录制闭环回放退出码 0。
 - 首轮 CI 中 Linux `docker-zero-call`、`mcp-serena-zero-call`、`docker-ordinary-zero-call` 均通过；Windows 3.11/3.12 工程步骤因同一恢复测试失败而未通过，wheel smoke 步骤也返回失败，需在修复后重新核验其具体结果。Artifact：3.11 `sha256:83af7a7695df3179611628ec5e3ab0f5e76e3c0c93d26728ac3545498da50214`，3.12 `sha256:a5ab860edf20b5d0146b1bfb85eb6a0535366a97b2cb92ca5808d2e07d5af169`。本机原始复现 `runs/ci-repro-20260930/summary.json` 与 `pytest.log`；pytest log SHA-256 `16a6e3280cc9a5875b3c198f9476eaf91f78f6502cc6b37e19a64d3a8b2e9468`。
 
