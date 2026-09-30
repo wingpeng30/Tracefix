@@ -87,9 +87,16 @@ def default_output_root() -> Path:
     return Path("runs")
 
 
-def config_identity_sha256(config: RunConfig) -> str:
-    """Hash effective configuration while keeping pre-gate manifests readable."""
-    exclude = {"regression_targets"} if not config.regression_targets else None
+def config_identity_sha256(
+    config: RunConfig, manifest_config: dict[str, Any] | None = None,
+) -> str:
+    """Hash effective configuration, preserving identity for manifests predating gate targets."""
+    legacy_empty_targets = (
+        manifest_config is not None
+        and "regression_targets" not in manifest_config
+        and not config.regression_targets
+    )
+    exclude = {"regression_targets"} if legacy_empty_targets else None
     return hashlib.sha256(
         config.model_dump_json(exclude=exclude).encode("utf-8")
     ).hexdigest()
@@ -275,7 +282,7 @@ class TraceFixRunner:
             config = RunConfig.model_validate(manifest["config"])
             recorded = manifest["identity"]
             actual = dict(recorded)
-            actual["config_sha256"] = config_identity_sha256(config)
+            actual["config_sha256"] = config_identity_sha256(config, manifest["config"])
             actual["implementation_sha256"] = cls._implementation_sha256()
             actual["test_environment_sha256"] = inspect_test_environment(
                 config.test_python_executable or sys.executable,

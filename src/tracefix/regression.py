@@ -69,7 +69,7 @@ def verify_regressions(run: Path, targets: tuple[str, ...]) -> dict[str, Any]:
     identity = manifest["identity"]
     if config.execution_backend != "local" or not config.test_target or not config.source_import:
         raise ValueError("追加回归验证仅支持普通本地运行")
-    if config_identity_sha256(config) != identity.get("config_sha256"):
+    if config_identity_sha256(config, manifest["config"]) != identity.get("config_sha256"):
         raise ValueError("运行配置身份与 session.json 不符")
     environment_sha = inspect_test_environment(
         config.test_python_executable or sys.executable,

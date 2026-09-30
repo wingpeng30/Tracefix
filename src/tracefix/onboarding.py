@@ -266,7 +266,7 @@ def verify_patch(
         from tracefix.regression import verify_regressions
 
         return verify_regressions(run, combined_targets)
-    if config_identity_sha256(config) != (
+    if config_identity_sha256(config, manifest["config"]) != (
         manifest["identity"].get("config_sha256")
     ):
         raise ValueError("运行配置身份与 session.json 不符")

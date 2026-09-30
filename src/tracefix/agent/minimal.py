@@ -225,7 +225,7 @@ class MinimalAgent(BaseAgent):
                 TraceEventType.REPO_MAP_ADDED,
                 {"chars": len(self.repository_map)},
             )
-        if not resume and self.validation_targets:
+        if not resume and getattr(self, "validation_targets", ()):
             self._append_message(Message(
                 role=MessageRole.SYSTEM,
                 content=(
@@ -406,8 +406,9 @@ class MinimalAgent(BaseAgent):
             raise budget_error
 
         if not response.message.tool_calls:
-            if self.validation_targets and not self._finish_through_validation_gate(
-                response.message.content or ""
+            if (
+                getattr(self, "validation_targets", ())
+                and not self._finish_through_validation_gate(response.message.content or "")
             ):
                 return
             if (
@@ -1311,7 +1312,10 @@ class MinimalAgent(BaseAgent):
 
     def _append_finish_reminder_if_ready(self) -> None:
         """测试通过且已有改动时提示模型收尾，避免解决后继续消耗步骤。"""
-        if self.validation_targets and self.state.validation_gate_status != "passed":
+        if (
+            getattr(self, "validation_targets", ())
+            and self.state.validation_gate_status != "passed"
+        ):
             return
         if not (self._tests_passed and self._diff_nonempty) or self._finish_reminder_sent:
             return

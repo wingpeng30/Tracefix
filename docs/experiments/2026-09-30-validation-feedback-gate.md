@@ -28,6 +28,8 @@ python examples/replay_ordinary.py --validation-gate-example --output runs/valid
 - 端到端反馈及独立验证测试：1 passed；最终联测与 outcome 分类测试：2 passed。
 - 涉及运行、doctor、CLI、回归和报告的相关测试：首轮 89 passed、1 failed。已根据失败修复显式重复追加目标被静默合并的问题。
 - 修复后重复目标结果分类测试：1 passed。
+- 首轮 GitHub CI（run `36684436884`，commit `3194081be1921c6b2f3ea59cac2917159cf7390f`）发现旧 checkpoint 恢复没有新门控运行态字段，完整 pytest 为 762 passed、1 failed，整体覆盖率为 89.44492570133937%。本机完整脚本复现的 pytest log SHA-256 为 `16a6e3280cc9a5875b3c198f9476eaf91f78f6502cc6b37e19a64d3a8b2e9468`，摘要位于 `runs/ci-repro-20260930/summary.json`。已修复旧恢复路径和配置身份兼容。
+- 修复后端到端、旧 checkpoint、追加验证 outcome 联测为 3 passed in 112.00s；完整覆盖率与 wheel 需等待修复提交后的 CI。
 - 变更文件 Ruff、源码和示例 `compileall`、`git diff --check` 通过；最新离线闭环命令退出码 0。
 - PR 全量覆盖率门槛与跨平台 CI 尚未完成，不能记作通过。
 
