@@ -36,3 +36,7 @@ python examples/replay_ordinary.py --output runs/regression-example --regression
 本机全量工程脚本在 `runs/quality-regression-20260930-final/` 长时间运行且没有完成 pytest 原始报告，本轮停止该次本机尝试；它**不计作全量通过**。最终 Windows 双版本、精确覆盖率及 Linux 门槛以本批 PR 的 GitHub CI 原始结果为准。
 
 首两轮 PR CI [#60](https://github.com/wingpeng30/Tracefix/actions/runs/36670346143)、[#61](https://github.com/wingpeng30/Tracefix/actions/runs/36671218407) 的三项 Linux job 均通过；Windows 各 762 项测试有 1 项新增用例失败，覆盖率 12988/14597 = 88.97718709323834%，不满足门槛。原始失败记录在 #61 的 Windows 3.12 工程 artifact 中，具体为深层临时 checkout 的 Git 补丁状态检查失败。随后将临时 checkout 放到较浅的运行根目录，模拟 CI 深层、带空格路径的离线复现得到 `regression_status: regression`，聚焦 2 passed。修订后的全量门槛仍须由新提交 CI 判定；上述失败不删除或改写。
+
+短路径修订的 [CI #62](https://github.com/wingpeng30/Tracefix/actions/runs/36672045787) 在 Windows 3.11 上 762 项测试全部通过，但精确覆盖率 13136/14597 = 89.99109406042338%，低于 90%。新增配置、环境、源码身份和故障边界行为测试后，提交 `a6609c95908f3639f962e91c09d9eda29fd44539` 的 [CI #63](https://github.com/wingpeng30/Tracefix/actions/runs/36672415601) 五个 job 全部通过：Windows 3.11／3.12 各 762 tests、0 failures／errors／skips，纯 pytest 综合覆盖率均为 13152/14597 = 90.10070562444338%；Ruff、compileall、Diff、editable 与仓库外 wheel 通过，Linux 冻结 Docker、普通 Docker 和 Serena MCP 通过。该结果验证工程门槛及特定离线场景，不代表真实模型总体修复率提升。
+
+本批仍只支持受信任普通本地仓库的追加目标；Docker 普通 profile 的原有单目标独立验证继续可用。下一步优先在新的公开真实任务上测试目标选择的质量，并将每个追加目标与实际回归契约一同冻结；不据这一次合成反例推断模型效果。
