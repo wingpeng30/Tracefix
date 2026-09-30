@@ -252,6 +252,40 @@ def test_validation_gate_requires_checkout_identity_provider() -> None:
         agent._finish_through_validation_gate("done")
 
 
+def test_validation_gate_checkpoints_each_completed_batch_and_feedback() -> None:
+    original = "tests/test_original.py"
+    regression = "tests/test_regression.py"
+    agent = _validation_agent(
+        {
+            original: _validation_result("passed"),
+            regression: _validation_result("test_failure"),
+        },
+        {regression: "passed"},
+    )
+    snapshots = []
+    agent.checkpoint_callback = lambda current: snapshots.append(
+        (current.state.validation_gate_status, len(current.state.validation_gate_results))
+    )
+
+    assert not agent._finish_through_validation_gate("try again")
+
+    assert snapshots == [("incomplete", 0), ("incomplete", 1), ("incomplete", 2), ("failed", 2)]
+    assert agent.history.snapshot()[-1].metadata["kind"] == "validation_gate_feedback"
+
+
+def test_validation_gate_does_not_start_test_after_budget_is_exhausted() -> None:
+    from tracefix.exceptions import TestLimitExceeded
+
+    agent = _validation_agent({}, {})
+    del agent._execute_validation_test
+    agent.state.test_runs = agent.config.max_test_runs
+
+    with pytest.raises(TestLimitExceeded, match="budget exhausted"):
+        agent._execute_validation_test("tests/test_regression.py")
+
+    assert agent.state.test_runs == agent.config.max_test_runs
+
+
 def test_duplicate_successful_read_uses_compact_cache_and_prompts_patch() -> None:
     """重复只读调用不应再次执行工具，读取候选后应从探索转入修改。"""
     tool = RecordingTool(name="read_file")

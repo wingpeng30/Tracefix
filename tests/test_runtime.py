@@ -502,6 +502,120 @@ def test_regression_baseline_incomplete_result_persists_diagnostic(
     assert progress["targets"][0]["status"] == "incomplete"
 
 
+def test_regression_baseline_rejects_existing_snapshot_and_missing_primary_target(
+    tmp_path,
+) -> None:
+    repo = _make_repo(tmp_path)
+    config = _regression_baseline_config(repo, ("tests/test_existing.py",))
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    baseline_path = run_dir / "validation-baseline.json"
+    baseline_path.write_text("{}", encoding="utf-8")
+
+    with pytest.raises(RunConfigurationError, match="already exists"):
+        TraceFixRunner._prepare_regression_baseline(
+            config, repo, run_dir, MemoryTraceSink(), "run-id"
+        )
+
+    baseline_path.unlink()
+    config = config.model_copy(update={"test_target": None})
+    with pytest.raises(RunConfigurationError, match="requires test_target"):
+        TraceFixRunner._prepare_regression_baseline(
+            config, repo, run_dir, MemoryTraceSink(), "run-id"
+        )
+
+
+def test_regression_baseline_rechecks_target_and_rejects_checkout_preparation_failure(
+    tmp_path, monkeypatch,
+) -> None:
+    repo = _make_repo(tmp_path)
+    config = _regression_baseline_config(repo, ("tests/test_existing.py",))
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    target_path = (repo / "tests/test_existing.py").resolve()
+    original_is_file = Path.is_file
+    target_checks = 0
+
+    def disappear_between_checks(path: Path) -> bool:
+        nonlocal target_checks
+        if path.resolve() == target_path:
+            target_checks += 1
+            return target_checks == 1
+        return original_is_file(path)
+
+    monkeypatch.setattr(Path, "is_file", disappear_between_checks)
+    with pytest.raises(RunConfigurationError, match="does not exist in the frozen source"):
+        TraceFixRunner._prepare_regression_baseline(
+            config, repo, run_dir, MemoryTraceSink(), "run-id"
+        )
+    assert target_checks == 2
+
+    monkeypatch.setattr(Path, "is_file", original_is_file)
+    monkeypatch.setattr(
+        TraceFixRunner, "_clone_repository", staticmethod(lambda source, _dest: source)
+    )
+    monkeypatch.setattr(
+        TraceFixRunner, "_prepare_workspace",
+        staticmethod(lambda _config, _checkout, _run_dir: {"success": False}),
+    )
+    with pytest.raises(WorkspaceError, match="checkout preparation failed"):
+        TraceFixRunner._prepare_regression_baseline(
+            config, repo, run_dir, MemoryTraceSink(), "run-id"
+        )
+
+
+@pytest.mark.parametrize(
+    ("overrides", "message"),
+    [
+        (
+            {"regression_targets": ("tests/test_existing.py", "tests/test_existing.py")},
+            "duplicates",
+        ),
+        ({"regression_targets": ("tests/test_primary.py",)}, "distinct from test_target"),
+        ({"execution_backend": "docker"}, "require a local backend"),
+        ({"source_import": None}, "require a local backend"),
+        ({"test_target": None}, "require a local backend"),
+        ({"regression_targets": ("-k",)}, "relative pytest path"),
+    ],
+)
+def test_run_config_validates_regression_contract(tmp_path, overrides, message) -> None:
+    repo = _make_repo(tmp_path)
+    baseline = {
+        "repo": repo,
+        "task": "exercise the declared validation contract",
+        "model_name": "offline/replay",
+        "output_dir": tmp_path / "runs",
+        "env_file": None,
+        "test_python_executable": Path(sys.executable),
+        "test_target": "tests/test_primary.py",
+        "source_import": "sample",
+        "regression_targets": ("tests/test_existing.py",),
+    }
+
+    with pytest.raises(ValueError, match=message):
+        RunConfig(**(baseline | overrides))
+
+
+def test_regression_baseline_rejects_pytest_policy_target(tmp_path) -> None:
+    repo = _make_repo(tmp_path)
+    target = "tests/test_policy;name.py"
+    (repo / "tests").mkdir()
+    (repo / target).write_text("def test_sample():\n    assert True\n", encoding="utf-8")
+    _git(repo, "add", "--all")
+    _git(
+        repo, "-c", "user.name=Tests", "-c", "user.email=tests@example.invalid",
+        "commit", "--quiet", "-m", "add policy target",
+    )
+    config = _regression_baseline_config(repo, (target,))
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+
+    with pytest.raises(RunConfigurationError, match="pytest command policy"):
+        TraceFixRunner._prepare_regression_baseline(
+            config, repo, run_dir, MemoryTraceSink(), "run-id"
+        )
+
+
 @pytest.mark.parametrize(
     "target",
     ["../outside.py", "-k", "tests/test_existing.py;echo unsafe"],
