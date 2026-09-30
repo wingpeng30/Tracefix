@@ -273,6 +273,41 @@ def test_validation_gate_checkpoints_each_completed_batch_and_feedback() -> None
     assert agent.history.snapshot()[-1].metadata["kind"] == "validation_gate_feedback"
 
 
+@pytest.mark.parametrize(
+    "result",
+    [
+        _validation_result("timed_out").model_copy(update={"output": None}),
+        _validation_result("test_failure").model_copy(update={
+            "output": {
+                "test_status": "test_failure", "returncode": 1,
+                "test_counts": {"failures": 1, "errors": 1},
+            },
+        }),
+    ],
+    ids=["missing-evidence", "pytest-error"],
+)
+def test_validation_gate_treats_missing_or_error_evidence_as_incomplete(
+    result: ToolResult,
+) -> None:
+    original = "tests/test_original.py"
+    regression = "tests/test_regression.py"
+    agent = _validation_agent(
+        {
+            original: _validation_result("passed"),
+            regression: result,
+        },
+        {regression: "passed"},
+    )
+
+    assert not agent._finish_through_validation_gate("candidate")
+
+    row = agent.state.validation_gate_results[1]
+    assert row["status"] == "incomplete"
+    assert row["outcome"] == "incomplete"
+    assert agent.state.validation_gate_status == "incomplete"
+    assert agent.state.validation_status == "unverified"
+
+
 def test_validation_gate_does_not_start_test_after_budget_is_exhausted() -> None:
     from tracefix.exceptions import TestLimitExceeded
 

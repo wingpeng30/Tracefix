@@ -1,6 +1,6 @@
 # 2026-09-29 Agent/harness 产品交接
 
-2026-09-30 PR #9（`codex/gated-regression-feedback`）已实现上述结束前验收。CI #69 的 Windows Python 3.11/3.12 完整 pytest 各 777 项通过，唯一未过项为覆盖率 89.9594%，低门槛 7 点；Linux Docker/MCP、Ruff、compileall 和 wheel smoke 均通过。覆盖审计后已删除基线流程重复且不可达的策略分支，保留执行前 checkout 路径复查；本机定向测试 25 passed，等待 CI #70。离线示例：`python examples/replay_ordinary.py --validation-gate-example --output runs/validation-gate-replay`。完整状态和证据见 [`../tasks/2026-09-30-validation-feedback-gate.md`](../tasks/2026-09-30-validation-feedback-gate.md)。
+2026-09-30 PR #9（`codex/gated-regression-feedback`）已实现上述结束前验收。CI #70 的 Windows Python 3.11/3.12 完整 pytest 各 777 项通过，唯一未过项为覆盖率 89.9807%，低门槛 3 点；Linux Docker/MCP、Ruff、compileall 和 wheel smoke 均通过。新增缺失 pytest 证据及 pytest error 的 fail-closed 用例，本机定向测试 27 passed，等待 CI #71。离线示例：`python examples/replay_ordinary.py --validation-gate-example --output runs/validation-gate-replay`。完整状态和证据见 [`../tasks/2026-09-30-validation-feedback-gate.md`](../tasks/2026-09-30-validation-feedback-gate.md)。
 
 2026-09-30 更新：追加回归目标验证与 Boltons 派生审计见 [`../experiments/2026-09-30-regression-verification.md`](../experiments/2026-09-30-regression-verification.md)。普通本地 `verify` 可对冻结源码和保存补丁运行相同的已有 pytest 目标，识别回归、修复、仍失败及证据不完整；Docker 的追加目标尚未接入。提交 `a6609c9` 的 [CI #63](https://github.com/wingpeng30/Tracefix/actions/runs/36672415601) 五个 job 均通过。该批次独立于下述 2026-09-29 主线基线。
 
