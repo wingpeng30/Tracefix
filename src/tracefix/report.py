@@ -226,6 +226,65 @@ def render_report(run: Path, output: Path | None = None) -> Path:
                 independent_text = "记录身份与当前补丁不符"
         except (OSError, ValueError, TypeError, KeyError):
             independent_text = "记录无法读取"
+    regression_text = "未执行"
+    regression_rows: list[str] = []
+    regression_statuses: list[str] = []
+    regression_root = run_dir / "regression-verifications"
+    if regression_root.is_dir():
+        session_identity: dict[str, Any] = {}
+        try:
+            session_identity = _read_json(run_dir / "session.json")["identity"]
+        except (OSError, ValueError, KeyError, TypeError):
+            pass
+        records = sorted(regression_root.glob("*/record.json"))
+        unfinished = [
+            folder for folder in regression_root.iterdir()
+            if folder.is_dir() and not (folder / "record.json").is_file()
+        ]
+        if records:
+            regression_text = f"已保存 {len(records)} 次"
+        if unfinished:
+            regression_text += f"；{len(unfinished)} 次缺少结果，验证不完整"
+        for path in records:
+            try:
+                check = _read_json(path)
+                matching = (
+                    check.get("source_commit") == result.get("source_commit")
+                    and check.get("patch_sha256")
+                    == hashlib.sha256(patch_path.read_bytes()).hexdigest()
+                    and check.get("patch_sha256") == result.get("patch_sha256")
+                    and check.get("config_sha256") == session_identity.get("config_sha256")
+                    and check.get("test_environment_sha256") == session_identity.get(
+                        "test_environment_sha256"
+                    )
+                )
+                if not matching:
+                    regression_rows.append("记录身份与当前补丁或环境不符")
+                    regression_statuses.append("incomplete")
+                    continue
+                regression_statuses.append(str(check.get("status")))
+                regression_rows.append(
+                    f"{_clean(check.get('status'))}；原目标 {_clean(check.get('original_target'))} "
+                    f"({_clean(check.get('original_status'))})"
+                )
+                for item in check.get("targets", []):
+                    regression_rows.append(
+                        f"{_clean(item.get('target'))}：原始 {_clean(item.get('base_status'))} "
+                        f"→ 补丁 {_clean(item.get('patched_status'))}；"
+                        f"{_clean(item.get('outcome'))}"
+                    )
+            except (OSError, ValueError, TypeError):
+                regression_rows.append("追加验证记录无法读取")
+                regression_statuses.append("incomplete")
+    if "regression" in regression_statuses:
+        regression_text += "；发现回归"
+    elif "incomplete" in regression_statuses:
+        regression_text += "；验证不完整"
+    elif "failed" in regression_statuses:
+        regression_text += "；仍有失败"
+    elif regression_statuses:
+        regression_text += "；所列目标通过"
+    regression_html = "".join(f"<li>{row}</li>" for row in regression_rows)
     resume_segments = sum(
         event.get("event_type") == "session_resumed" for event in events
     )
@@ -314,6 +373,7 @@ ul{{padding-left:20px}}footer{{color:var(--muted);font-size:13px}}
 <span class="badge">{_clean(mode)}</span></header>
 <div class="grid"><div class="card"><small>运行状态</small><b>{_clean(result_status)}</b></div>
 <div class="card"><small>Agent 验证</small><b>{_clean(validation)}</b></div>
+<div class="card"><small>追加回归</small><b>{_clean(regression_text)}</b></div>
 <div class="card"><small>耗时</small><b>{_clean(time_text)}</b></div>
 <div class="card"><small>模型请求 / 工具返回</small>
 <b>{model_requests} / {sum(1 for k, _, _ in timeline if k == "工具结果")}</b></div></div>
@@ -329,7 +389,8 @@ ul{{padding-left:20px}}footer{{color:var(--muted);font-size:13px}}
 <p>Agent 结束表示控制流结束；公开测试结果和独立验收分别列示，
 不由结束状态推断修复成功。</p></section>
 <section><h2>修复时间线</h2><ol class="timeline">{rows}</ol></section>
-<section><h2>测试与补丁</h2><ul>{test_html}</ul><p>独立验收：{independent_text}</p>{_diff(patch)}</section>
+<section><h2>测试与补丁</h2><ul>{test_html}</ul><p>独立验收：{independent_text}</p>
+<p>追加回归验证：{regression_text}</p><ul>{regression_html}</ul>{_diff(patch)}</section>
 <section><h2>资源与 Skills</h2>
 <p>模型 usage：{usage} · 费用：{cost} · 上下文折叠：{compacted} 次</p>
 <p>上下文成本：{context_text}</p>

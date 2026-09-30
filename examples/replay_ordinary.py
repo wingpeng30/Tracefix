@@ -15,6 +15,7 @@ from pathlib import Path
 from tracefix import RunConfig, TraceFixRunner
 from tracefix.cli import _ordinary_settings, build_parser
 from tracefix.models.litellm_adapter import LiteLLMAdapter
+from tracefix.onboarding import verify_patch
 from tracefix.report import render_report
 
 PATCH = """diff --git a/widget.py b/widget.py
@@ -97,6 +98,7 @@ def main() -> int:
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--mcp-serena-image-id")
     parser.add_argument("--docker-ordinary-image-id")
+    parser.add_argument("--regression-example", action="store_true")
     args = parser.parse_args()
     output = args.output.expanduser().resolve()
     if output.exists():
@@ -111,6 +113,23 @@ def main() -> int:
         "from widget import next_page\n\ndef test_next_page():\n    assert next_page(1) == 2\n",
         encoding="utf-8",
     )
+    if args.regression_example:
+        (repo / "identity.py").write_text("def same(value):\n    return value\n", encoding="utf-8")
+        (tests / "test_backward.py").write_text(
+            "from widget import next_page\n\n"
+            "def test_negative_sentinel_is_unchanged():\n"
+            "    assert next_page(-1) == -1\n",
+            encoding="utf-8",
+        )
+        (tests / "test_preserved.py").write_text(
+            "from identity import same\n\n"
+            "def test_identity():\n    assert same(7) == 7\n", encoding="utf-8",
+        )
+        (tests / "test_still_failed.py").write_text(
+            "from widget import next_page\n\n"
+            "def test_unrelated_expectation():\n    assert next_page(2) == 99\n",
+            encoding="utf-8",
+        )
     _git(repo, "init", "-q")
     _git(repo, "add", "--all")
     _git(
@@ -187,6 +206,12 @@ def main() -> int:
             item["success"] and item["output"].get("source_sha256") for item in mcp_queries
         ):
             raise AssertionError("isolated Serena queries did not both succeed")
+    regression = None
+    if args.regression_example:
+        regression = verify_patch(
+            Path(result.result_path).parent,
+            regression_targets=("tests/test_backward.py",),
+        )
     report = render_report(Path(result.result_path).parent)
     source_clean = not subprocess.run(
         ["git", "status", "--porcelain"], cwd=repo, capture_output=True,
@@ -204,6 +229,8 @@ def main() -> int:
                 "result": result.result_path,
                 "report": str(report),
                 "source_clean": source_clean,
+                "regression_status": regression["status"] if regression else None,
+                "regression_record": regression["record_path"] if regression else None,
             },
             ensure_ascii=False,
         )
