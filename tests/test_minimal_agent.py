@@ -321,6 +321,30 @@ def test_validation_gate_does_not_start_test_after_budget_is_exhausted() -> None
     assert agent.state.test_runs == agent.config.max_test_runs
 
 
+def test_validation_gate_test_execution_pairs_tool_and_started_events() -> None:
+    tool = RecordingTool(name="run_tests")
+    sink = MemorySink()
+    agent = MinimalAgent(
+        ScriptedLLM([response(content="ready")]),
+        ToolRegistry([tool]),
+        trace_sink=sink,
+    )
+    agent.run("initialize the local test harness")
+
+    result = agent._execute_validation_test("tests/test_regression.py")
+
+    assert result.success is True
+    assert result.metadata["origin"] == "validation_gate"
+    assert agent.state.test_runs == 1
+    assert agent.history.pending_tool_call_ids == frozenset()
+    assert [event.event_type for event in sink.events].count(
+        TraceEventType.TEST_PROCESS_STARTED
+    ) == 1
+    called = [event for event in sink.events if event.event_type is TraceEventType.TOOL_CALLED]
+    assert called[-1].payload["origin"] == "validation_gate"
+    assert called[-1].payload["call"]["id"] == result.call_id
+
+
 def test_duplicate_successful_read_uses_compact_cache_and_prompts_patch() -> None:
     """重复只读调用不应再次执行工具，读取候选后应从探索转入修改。"""
     tool = RecordingTool(name="read_file")

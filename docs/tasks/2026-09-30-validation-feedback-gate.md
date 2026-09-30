@@ -1,7 +1,7 @@
 # 结束前回归验收与 Agent 反馈闭环
 
 日期：2026-09-30
-状态：功能实现与基线完整性修复已提交；CI #70 的功能测试通过但覆盖率差 3 点；新增缺失／pytest error 证据负例，等待 CI #71 复验
+状态：功能实现与基线完整性修复已提交；CI #71 的功能测试通过但覆盖率差 3 点；新增 harness-owned 测试调用配对验证，等待 CI #72 复验
 分支：`codex/gated-regression-feedback`
 基线：`bc18a57a8dc16be1c8f2e934ca1dde06b19e07ed`
 PR：[#9](https://github.com/wingpeng30/Tracefix/pull/9)
@@ -34,6 +34,7 @@ PR：[#9](https://github.com/wingpeng30/Tracefix/pull/9)
 - 针对覆盖空缺补充了冻结基线重复/缺失原目标、目标二次检查、checkout 准备失败、pytest 命令策略拒绝、回归配置契约六种无效组合、Agent 验收检查点和测试预算耗尽用例。定向命令 `python -m pytest -q tests/test_runtime.py tests/test_minimal_agent.py -k 'regression_baseline or validation_gate or run_config_validates_regression_contract' --disable-warnings --basetemp=tests/.validation-gate-focused-temp5`：`25 passed, 64 deselected`。Ruff、compileall 与 `git diff --check` 均通过。全量 pytest 覆盖率只会由新提交 CI 确认。
 - CI #69（提交 `1094398041519fbb41da7152cca9d0c60bfbcaa5`）两版本均 `777 passed、0 failed、0 skipped`，Ruff、compileall、editable smoke、wheel smoke 及三个 Linux Docker/MCP job 通过；唯一失败是覆盖率 `13502/15009 = 89.95935771870211%`，距离门槛 7 个合并语句／分支点。覆盖报告确认基线循环第二次执行的路径形状与 pytest 策略检查是重复校验，统一前置循环已对原目标和所有回归目标完成相同检查；现保留每个目标实际执行前的路径存在性及 checkout containment 复查，删去不可达的重复策略分支。变更后定向 25 项、Ruff、compileall 与 diff 检查通过，待 CI #70 确认。
 - CI #70（提交 `ce61fe41f2546e6e4ff0f47c4b5c1475c6b638b9`）两版本均 `777 passed、0 failed、0 skipped`，Ruff、compileall、editable/wheel smoke 及三个 Linux Docker/MCP job 通过；唯一失败是覆盖率 `13498/15001 = 89.98066795546964%`，距离门槛 3 个合并点。新增门控负例覆盖 pytest 证据缺失和 pytest errors：二者都必须标记为 `incomplete`，不能被当成普通断言失败或通过；本机定向 27 项通过，等待 CI #71。
+- CI #71（提交 `e7a675d646d7fb6fd8d4bb83949b71d12caa5d17`）继续确认两版本完整 pytest `777 passed、0 failed、0 skipped`，三个 Linux job 通过，覆盖率仍为 `13498/15001 = 89.98066795546964%`。新增 harness-owned 的真实工具注册路径检查，验证验收测试调用会生成配对工具事件、启动事件、预算计数与无悬空调用；本机定向 28 项、Ruff、compileall 与 diff 检查通过，待 CI #72。
 - Ruff 对变更的源码、示例和测试文件通过；`compileall` 对源码与示例通过；`git diff --check` 通过；最新录制闭环回放退出码 0。
 - 首轮 CI 中 Linux `docker-zero-call`、`mcp-serena-zero-call`、`docker-ordinary-zero-call` 均通过；Windows 3.11/3.12 工程步骤因同一恢复测试失败而未通过，wheel smoke 步骤也返回失败，需在修复后重新核验其具体结果。Artifact：3.11 `sha256:83af7a7695df3179611628ec5e3ab0f5e76e3c0c93d26728ac3545498da50214`，3.12 `sha256:a5ab860edf20b5d0146b1bfb85eb6a0535366a97b2cb92ca5808d2e07d5af169`。本机原始复现 `runs/ci-repro-20260930/summary.json` 与 `pytest.log`；pytest log SHA-256 `16a6e3280cc9a5875b3c198f9476eaf91f78f6502cc6b37e19a64d3a8b2e9468`。
 
