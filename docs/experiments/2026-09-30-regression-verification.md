@@ -34,3 +34,5 @@ python examples/replay_ordinary.py --output runs/regression-example --regression
 实施验证（提交前工作树基线 `b26340d`）：聚焦真实 checkout 的 `tests/test_regression.py` 为 2 passed；`tests/test_report.py tests/test_onboarding.py` 为 29 passed；Ruff、compileall 和 `git diff --check` 通过。仓库外 wheel `tracefix_agent-0.8.4-py3-none-any.whl` 的 SHA-256 为 `49252ee921c2ae929bef2135b8ac486ffcfb228cc1c5e24fab226dcca9fbefae`；隔离虚拟环境确认从 wheel 的 `site-packages` 导入，并完成离线修复、回归识别、报告、导出，补丁 SHA-256 `8397482f559dd41b0cfb24e44485d7db607d590f112528f7e23509d24c772282`。原始目录为 `runs/regression-wheel-20260930/`。
 
 本机全量工程脚本在 `runs/quality-regression-20260930-final/` 长时间运行且没有完成 pytest 原始报告，本轮停止该次本机尝试；它**不计作全量通过**。最终 Windows 双版本、精确覆盖率及 Linux 门槛以本批 PR 的 GitHub CI 原始结果为准。
+
+首两轮 PR CI [#60](https://github.com/wingpeng30/Tracefix/actions/runs/36670346143)、[#61](https://github.com/wingpeng30/Tracefix/actions/runs/36671218407) 的三项 Linux job 均通过；Windows 各 762 项测试有 1 项新增用例失败，覆盖率 12988/14597 = 88.97718709323834%，不满足门槛。原始失败记录在 #61 的 Windows 3.12 工程 artifact 中，具体为深层临时 checkout 的 Git 补丁状态检查失败。随后将临时 checkout 放到较浅的运行根目录，模拟 CI 深层、带空格路径的离线复现得到 `regression_status: regression`，聚焦 2 passed。修订后的全量门槛仍须由新提交 CI 判定；上述失败不删除或改写。

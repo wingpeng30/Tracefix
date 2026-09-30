@@ -105,11 +105,11 @@ def verify_regressions(run: Path, targets: tuple[str, ...]) -> dict[str, Any]:
     }
     try:
         with tempfile.TemporaryDirectory(
-            prefix="tracefix-regression-", dir=record_dir,
+            prefix="tf-reg-", dir=run_dir.parent,
         ) as temporary:
             root = Path(temporary)
-            base = TraceFixRunner._clone_repository(source, root / "base")
-            patched = TraceFixRunner._clone_repository(source, root / "patched")
+            base = TraceFixRunner._clone_repository(source, root / "b")
+            patched = TraceFixRunner._clone_repository(source, root / "p")
             for workspace in (base, patched):
                 preparation = TraceFixRunner._prepare_workspace(config, workspace, root)
                 if preparation.get("success") is not True:
