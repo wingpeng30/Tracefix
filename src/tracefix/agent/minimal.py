@@ -18,6 +18,7 @@ from tracefix.exceptions import (
     AgentError,
     AgentLimitExceeded,
     LLMResponseFormatError,
+    PreRequestBudgetExceeded,
     StepLimitExceeded,
     TestLimitExceeded,
     TimeLimitExceeded,
@@ -372,6 +373,10 @@ class MinimalAgent(BaseAgent):
             response = self.llm.complete(context_view.messages, tool_specs)
             model_duration_seconds = time.perf_counter() - model_started
             self.state.model_request_seconds += model_duration_seconds
+        except PreRequestBudgetExceeded:
+            # This adapter contract guarantees no new supplier consumption;
+            # keep previous known/unknown accounting without fabricating usage.
+            raise
         except LLMResponseFormatError as exc:
             # 响应解析失败也可能已经产生费用；尽量从异常上下文追回 usage。
             usage = exc.context.get("usage")
