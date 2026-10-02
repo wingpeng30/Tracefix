@@ -2,7 +2,17 @@
 
 普通 Python 仓库的任务检查与恢复说明见 [docs/recovery.md](docs/recovery.md)。
 
-想在自己的受信任 Python/pytest 仓库运行？先看[普通仓库安装与使用指南](docs/ordinary-repository.md)：配置、零调用预检、隔离运行、HTML 报告和补丁导出均有可复制命令。[系统审查](docs/reviews/2026-09-28-system-review.md)列出首批能力边界。本地运行现提供确定边界的 `inspect`／`resume` 和独立公开测试复跑；[可选 Serena MCP 指南](docs/mcp-serena.md)说明隔离的只读符号查询。[普通仓库 Docker 指南](docs/ordinary-docker.md)提供预构建镜像与独立容器验证路径，其实测范围以最新 CI 证据为准；真实模型当前版本的付费端到端验收尚未完成。
+想在自己的受信任 Python/pytest 仓库运行？先看[普通仓库安装与使用指南](docs/ordinary-repository.md)：配置、零调用预检、隔离运行、HTML 报告和补丁导出均有可复制命令。[系统审查](docs/reviews/2026-09-28-system-review.md)列出首批能力边界。本地运行现提供确定边界的 `inspect`／`resume` 和独立公开测试复跑；[可选 Serena MCP 指南](docs/mcp-serena.md)说明隔离的只读符号查询。[普通仓库 Docker 指南](docs/ordinary-docker.md)提供预构建镜像与独立容器验证路径，其实测范围以最新 CI 证据为准；2026-09-29 已完成八次限定真实模型验收；最新结束前回归门仍以离线回放验证。范围见[证据索引](docs/evidence.md)。
+
+## 安装包内回归反馈闭环（零供应商调用）
+
+安装 TraceFix 与 pytest 后，无需仓库示例脚本：
+
+```powershell
+tracefix-reproduce --scenario regression-feedback --output "runs/regression feedback"
+```
+
+录制响应经生产 LiteLLM 适配器解析，首次补丁引入两个回归，harness 反馈后再修复。自动完成独立验证、报告和补丁导出；`reproduction.json` 记录路径与哈希，`source/` 保留以供后续检查。usage 是模拟数据，费用未知。这是控制流验证，不是模型自主修复。仅支持本地，不支持 Skills/Docker 组合。
 
 ## 两分钟修复演示（零供应商调用）
 
@@ -30,14 +40,14 @@ Token 预算下，通过仓库结构检索、动态上下文和测试驱动的�
 
 完整的版本代码说明与实验索引见 [`docs/README.md`](docs/README.md)。
 
-当前包版本为 **v0.8.4**（最新稳定标签以 GitHub Releases 为准）。它已经具备一条可真实运行的最小闭环，并新增确定性上下文管理：
+当前包版本为 **v0.8.4**（尚未发布稳定版本，以验证过的提交和 wheel 身份为准）。它已经具备一条可真实运行的最小闭环，并新增确定性上下文管理：
 完整轨迹始终保留，模型请求视图会按压力裁剪超长工具输出并折叠较早轮次。
 
 ## 当前能力
 
 - Pydantic 强类型消息、模型响应、工具调用、运行配置与评测结果。
 - 可运行的 `MinimalAgent` 单 Agent Loop。
-- LiteLLM 模型适配层，默认配置为 `deepseek/deepseek-flash`（当前供应商名称；付费端到端验收待做）。
+- LiteLLM 模型适配层，默认配置为 `deepseek/deepseek-flash`（已有限定场景真实调用证据）。
 - `search_code`、`read_file`、`apply_patch`、`run_tests`、`get_git_diff` 五个工具。
 - 独立 Git 克隆、干净源仓库校验和源 commit 记录。
 - UTF-8 JSONL 轨迹、最终 `patch.diff` 和 `result.json`。
@@ -80,6 +90,8 @@ RealIssueTask ── 固定 GitHub repo/base commit
     ├── test.patch（结束后隐藏验收）
     └── gold.patch（仅用于可解性校验）
 ```
+
+配置回归目标后，结束前自动验收会将失败反馈给 Agent，并计入 Agent 测试预算。最终独立验收另行执行。
 
 Agent 内部的测试调用用于获得修复反馈；评测器最后执行的测试只负责判断 `resolved`，不会
 反馈给 Agent，也不会占用 Agent 的测试次数预算。

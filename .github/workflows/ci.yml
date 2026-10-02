@@ -117,6 +117,8 @@ jobs:
             & (Join-Path $wheelEnv "Scripts/tracefix-reproduce.exe") --scenario pagination --skills-enabled --output (Join-Path $wheelSmoke "pagination-skills")
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
             $ordinary = Join-Path $wheelSmoke "ordinary"
+            & (Join-Path $wheelEnv "Scripts/tracefix-reproduce.exe") --scenario regression-feedback --output (Join-Path $wheelSmoke "regression feedback")
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
             & $wheelPython (Join-Path $env:GITHUB_WORKSPACE "examples/replay_ordinary.py") --output $ordinary
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
             & (Join-Path $wheelEnv "Scripts/tracefix.exe") doctor --repo (Join-Path $ordinary "source") --test-python $wheelPython --test-target tests/test_widget.py --source-import widget --model offline/replay --json

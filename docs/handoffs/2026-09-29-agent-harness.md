@@ -1,5 +1,9 @@
 # 2026-09-29 Agent/harness 产品交接
 
+## 2026-09-30 当前状态
+
+PR #9 已于 2026-09-30 合并：merge commit `b18958b8342b0642b7f4fe828c39852ada769319`，PR head `cb5571815a09f831cde0fd1f648059b6fdff6877` 的 CI #73 成功。当前后续从任务契约资格开始：本轮只读筛选优先预检 Sphinx-10323，暂缓有 HTTP 服务依赖/目标不一致风险的 Requests-1724 和有基线收集依赖的 Pylint-4604；目前没有多类型任务集通过新的 base/gold 复验。详情、SHA 和停止条件见 [`../tasks/2026-09-30-public-task-qualification.md`](../tasks/2026-09-30-public-task-qualification.md)。不要将筛选写成任务资格通过或模型效果证据；供应商调用需重新授权。
+
 2026-09-30 PR #9（`codex/gated-regression-feedback`）CI #72 在精确 head `9501ee65c523f129074756f10573c2de518f4479` 全部通过：Windows Python 3.11/3.12 覆盖率均为 90.0006666%，Ruff、compileall、editable/wheel smoke、Linux 冻结 Docker/普通 Docker/Serena MCP 均通过；没有未解决审查意见。新路径增加 pytest 证据缺失/errors fail-closed 断言及 harness-owned 测试调用事件与预算计数验证。离线示例：`python examples/replay_ordinary.py --validation-gate-example --output runs/validation-gate-replay`。完整状态和证据见 [`../tasks/2026-09-30-validation-feedback-gate.md`](../tasks/2026-09-30-validation-feedback-gate.md)。
 
 2026-09-30 更新：追加回归目标验证与 Boltons 派生审计见 [`../experiments/2026-09-30-regression-verification.md`](../experiments/2026-09-30-regression-verification.md)。普通本地 `verify` 可对冻结源码和保存补丁运行相同的已有 pytest 目标，识别回归、修复、仍失败及证据不完整；Docker 的追加目标尚未接入。提交 `a6609c9` 的 [CI #63](https://github.com/wingpeng30/Tracefix/actions/runs/36672415601) 五个 job 均通过。该批次独立于下述 2026-09-29 主线基线。
@@ -11,3 +15,5 @@ A 的 [CI #25](https://github.com/wingpeng30/Tracefix/actions/runs/36532867162) 
 2026-09-29 小批付费验收已执行 8/8 次、37 个已完成模型请求，无未决请求；保守高峰价成本 ¥0.33653，见 [`../experiments/2026-09-29-live-model-acceptance.md`](../experiments/2026-09-29-live-model-acceptance.md)。这不能推断总体修复成功率。不访问留出题，不改历史账本、评分或原始证据。Windows Docker Desktop 本机 daemon 不可用；既有冻结 Docker 流程、C 的隔离查询和 D 普通 Docker 由 Linux CI 验证。
 
 D 已提供普通仓库独立 Docker profile，预构建镜像和依赖身份、无网络／非 root／只读根文件系统的容器、新容器独立验证，以及 Linux CI 的重复运行与故障清理。首版不支持恢复丢失容器；Windows Docker Desktop 未实测。PR #6 最新提交的 [CI #51](https://github.com/wingpeng30/Tracefix/actions/runs/36590277947) 五个 job 已通过。下一步依真实失败分布提高普通任务可靠性，优先审查外部任务的 API 兼容边界，再决定是否扩展实验；20 道留出题继续保持未使用。
+
+2026-10-02 当前执行顺序更新：先交付安装包内 `regression-feedback` 入口，再冻结 more-itertools #462 空输入任务并执行资格矩阵；此前 Sphinx 初筛保留为历史，本批不重建环境。所有调用均离线，原八次付费额度不续用。执行记录见 `docs/tasks/2026-10-02-package-and-public-task.md`（文档内路径相对仓库根目录）。

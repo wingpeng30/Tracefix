@@ -463,8 +463,19 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--skills-enabled", action="store_true")
     parser.add_argument("--backend", choices=("local", "docker"), default="local")
     parser.add_argument("--image-id", help="full sha256 image ID required for Docker mode")
-    parser.add_argument("--scenario", choices=("smoke", "pagination"), default="smoke")
+    parser.add_argument(
+        "--scenario", choices=("smoke", "pagination", "regression-feedback"), default="smoke"
+    )
     args = parser.parse_args(argv)
+    if args.scenario == "regression-feedback":
+        if args.backend != "local" or args.skills_enabled or args.image_id:
+            parser.error(
+                "regression-feedback supports local backend only, without Skills or image ID"
+            )
+        from tracefix.regression_replay import run_regression_feedback
+
+        print(json.dumps(run_regression_feedback(args.output), ensure_ascii=False, indent=2))
+        return 0
     if args.backend == "docker" and not args.image_id:
         parser.error("--image-id is required with --backend docker")
     report = run_smoke(
