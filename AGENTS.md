@@ -1,5 +1,7 @@
 # TraceFix 持续维护约定
 
+2026-10-02 离线预算调查：27 个完成请求及一个未发送拒绝视图均可复现；重叠读取主要补取不可见证据，不能机械去重。两个候选均不直接采用，下一批优先定向读取可见性契约，不改普通运行默认策略、不放宽正式预算保护、不执行第五次付费运行。详见 [`docs/experiments/2026-10-02-offline-budget-investigation.md`](docs/experiments/2026-10-02-offline-budget-investigation.md)。
+
 2026-10-02 真实验收更新：新五次／五元授权执行四次后保守停止；more-itertools 独立验收通过，Markdown/Click 未完成，第四次请求前拒绝误标未知已离线修复，不改原结果，不执行第五次。当前优先处理读取与上下文的预算协作，原始账本与边界见 [`docs/experiments/2026-10-02-public-three-types-live.md`](docs/experiments/2026-10-02-public-three-types-live.md)。以下授权前状态保留为历史。
 
 2026-10-02 最终状态：三类公开任务已通过资格，PR #12、#13 均已合并；最新功能 merge 为 `47f2619f618dbaef658e3071309d34a5e10bc8a2`，精确 PR #13 head 的 CI #88 五项通过。下一步申请全新最多五次、人民币五元的真实模型验收，授权前只做离线准备。完整证据与未执行清单见 [`docs/tasks/2026-10-02-three-public-task-types.md`](docs/tasks/2026-10-02-three-public-task-types.md)。下列候选状态保留为历史。

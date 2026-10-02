@@ -1,5 +1,9 @@
 # 2026-09-29 Agent/harness 产品交接
 
+## 2026-10-02 预算调查交接
+
+当前新增离线调查入口 `scripts/analyze_live_history.py`：配对 27 个完成请求与一个未发送视图，并用真实工具验证补读、缓存失效、压缩和验收反馈。两个候选未达到采用标准；下一批只优先完善定向读取可见性。原账本及四次结果保持不变，不执行第五次。调查及复现命令见 [`../experiments/2026-10-02-offline-budget-investigation.md`](../experiments/2026-10-02-offline-budget-investigation.md)，历史交接保留。
+
 ## 2026-10-02 最新交接
 
 三类公开任务资格已完成，PR #12 merge `6b5af67`、PR #13 merge `47f2619`；后者精确 head `351b600` 的 CI #88 全部通过，Windows 3.11/3.12 各 820 tests、零 skips，纯 pytest 覆盖率 90.0502446%。任务失败、纠正参考、原始记录哈希和下一轮未授权五次／五元方案见 [`../tasks/2026-10-02-three-public-task-types.md`](../tasks/2026-10-02-three-public-task-types.md)。不要重用已耗尽八次授权，不要将参考回放称为模型自主修复。历史未跟踪材料未提交或清理。
