@@ -4,6 +4,7 @@ import importlib.util
 import json
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -153,6 +154,41 @@ def test_package_unrecorded_file_is_rejected(tmp_path):
     (tmp_path / "unexpected.py").write_text("unexpected")
     with pytest.raises(ValueError, match="unrecorded"):
         qualification.load_manifest(tmp_path)
+
+
+def test_missing_extension_metadata_is_preflight_blocker(monkeypatch):
+    monkeypatch.setattr(
+        qualification.subprocess,
+        "run",
+        lambda *_args, **_kwargs: SimpleNamespace(stdout='{"markdown.extensions": []}'),
+    )
+    with pytest.raises(ValueError, match="entry-point metadata"):
+        qualification.check_task_metadata(
+            Path(sys.executable),
+            {
+                "required_entry_points": {"markdown.extensions": ["attr_list"]},
+            },
+        )
+
+
+@pytest.mark.parametrize(
+    "message,accepted",
+    [
+        ("assert 1 == 2", True),
+        ("ModuleNotFoundError: attr_list", False),
+    ],
+)
+def test_baseline_body_exception_cannot_count_as_expected_assertion(tmp_path, message, accepted):
+    evidence = tmp_path / "junit.xml"
+    evidence.write_text(
+        f'<testsuite><testcase><failure message="{message}"/></testcase></testsuite>'
+    )
+    test = {"output": {"junit_path": str(evidence)}}
+    if accepted:
+        qualification.assert_failure_evidence(test)
+    else:
+        with pytest.raises(ValueError, match="non-assertion"):
+            qualification.assert_failure_evidence(test)
 
 
 @pytest.mark.parametrize("dirty", [False, True])

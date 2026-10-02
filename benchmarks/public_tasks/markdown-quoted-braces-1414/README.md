@@ -5,12 +5,18 @@ It covers parsing and cooperation between `attr_list` and `fenced_code`.
 
 ```powershell
 git clone --no-checkout https://github.com/Python-Markdown/markdown.git <local-source>
+<python> -m pip install --no-deps --require-hashes -r requirements/locks/public-task-markdown.txt
 python scripts/qualify_public_task.py --task markdown-quoted-braces-1414 --source-repo <local-source> --test-python <python> --output <new-directory>
 ```
 
 Use an installed TraceFix and a prepared pytest interpreter. No dependencies are
 installed and no provider is contacted by qualification. Flat-layout `markdown`
 must import from each independent checkout. The script rejects reused output.
+The explicit preparation dependency supplies extension entry-point metadata.
+It does not replace task source: import probes and per-test audit must prove that
+`markdown` and its extension modules come from the task checkout. Qualification
+never installs dependencies itself. Missing extension metadata is a preflight
+blocker, not a valid faulty-baseline assertion failure.
 
 The task has nine new assertions (including six quote/context combinations),
 two frozen existing attribute-list tests, and nineteen existing fenced-code tests.

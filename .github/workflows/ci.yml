@@ -117,6 +117,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           & $wheelPython -m pip install --no-deps $wheel
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & $wheelPython -m pip install --no-deps --require-hashes -r requirements/locks/public-task-markdown.txt
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue
           Push-Location $env:RUNNER_TEMP
           try {

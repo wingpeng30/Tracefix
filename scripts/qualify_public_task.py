@@ -6,8 +6,10 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import subprocess
 import sys
+import xml.etree.ElementTree as ET
 from pathlib import Path
 from unittest.mock import patch
 
@@ -130,6 +132,44 @@ def write_json(path: Path, value: dict) -> None:
     path.write_text(json.dumps(value, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
 
+def check_task_metadata(python: Path, manifest: dict) -> dict:
+    requirements = manifest.get("required_entry_points", {})
+    if not requirements:
+        return {}
+    groups = list(requirements)
+    code = (
+        "import importlib.metadata as m,json; "
+        f"print(json.dumps({{g:[e.name for e in m.entry_points(group=g)] for g in {groups!r}}}))"
+    )
+    completed = subprocess.run(
+        [str(python), "-c", code],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=True,
+    )
+    found = json.loads(completed.stdout)
+    if any(not set(names) <= set(found.get(group, [])) for group, names in requirements.items()):
+        raise ValueError("missing task entry-point metadata; use the documented dependency lock")
+    return found
+
+
+def assert_failure_evidence(test: dict) -> None:
+    junit = (test.get("output") or {}).get("junit_path")
+    if not isinstance(junit, str):
+        raise ValueError("expected assertion failure requires original JUnit evidence")
+    failures = list(ET.parse(junit).iter("failure"))
+    if not failures or any(
+        not (
+            failure.get("message", "").lstrip().startswith("assert ")
+            or "AssertionError" in failure.get("message", "")
+            or re.search(r"(?:^|\n)E\s+AssertionError\b", failure.text or "")
+        )
+        for failure in failures
+    ):
+        raise ValueError("expected assertion failure contains a non-assertion exception")
+
+
 def apply_product(workspace: Path, product_patch: str, allowed_paths: set[str]) -> dict:
     from tracefix.tools.builtin import ApplyPatchTool
 
@@ -213,6 +253,8 @@ def run_case(
                 raise ValueError(f"{target}: qualification cannot contain skips or errors")
             if status != wanted or test.get("output", {}).get("truncated"):
                 raise ValueError(f"{target}: expected {wanted}, got {status}; inspect raw evidence")
+            if wanted == "failed":
+                assert_failure_evidence(test)
         record["source_after"] = source_state(workspace)
         if record["source_before"] != record["source_after"]:
             raise ValueError("pytest changed frozen source")
@@ -450,6 +492,7 @@ def qualify(
                 },
             ),
         ):
+            record["task_entry_points"] = check_task_metadata(python, manifest)
             prepared = output / "prepared-source"
             git(output, "clone", "--quiet", "--no-checkout", str(source_repo), str(prepared))
             git(prepared, "config", "core.autocrlf", "false")

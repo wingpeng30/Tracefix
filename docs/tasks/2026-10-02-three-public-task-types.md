@@ -55,3 +55,15 @@ new tasks' actual single parent; reject undeclared package files and product
 patches that modify anything outside declared product files. Fifteen targeted
 behavior tests pass after these fixes. New exact-head CI and local qualification
 are required; prior green checks do not approve the modified head.
+
+CI #83 (`ff9a046`, merge checkout `b31a40045c3acae3989cbf0d66f428cdd008ea5c`)
+passed engineering checks and Linux jobs but both wheel qualifications failed on
+the frozen existing Markdown tests. The clean wheel environment had no Markdown
+extension entry-point metadata; the local interpreter happened to have Markdown
+3.7. The official PyPI 3.5.2 universal wheel is now explicitly locked with SHA-256
+`d43323865d89fc0cb9b20c75fc8ad313af307cc087e84b657d9eec768eddeadd`.
+Preparation is explicit, never an automatic qualifier install. A new preflight
+requires `attr_list`, `fenced_code`, `tables` metadata and the production audit
+still checks checkout module origins. The qualifier also now rejects non-assertion
+exceptions in expected failed tests using original JUnit, preventing an import
+exception inside a test body from masquerading as a reproduced defect.

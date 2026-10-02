@@ -50,5 +50,12 @@
     "reference-correction.patch": "2d6b4a521ecc9cd1b9376a6d4eafb995f715dfb716d7e38578e4c3644026b242",
     "reference-product.patch": "0dcc6b60cb7aeba22d6ffd4cfb31a6ee8015088260fe86033be80a9eeb65c408",
     "task.md": "ff2874c41fc76c073b16e0487917bb80444d2ee54b75a4b1b37591b9ce6ecbee"
+  },
+  "required_entry_points": {
+    "markdown.extensions": [
+      "attr_list",
+      "fenced_code",
+      "tables"
+    ]
   }
 }
