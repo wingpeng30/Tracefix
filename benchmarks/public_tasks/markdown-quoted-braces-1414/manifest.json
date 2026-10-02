@@ -43,7 +43,7 @@
   ],
   "qualification_status": "requires_execution",
   "files_sha256": {
-    ".gitattributes": "a79691a93b46e49ce460c26ef22afcc03d6eca1e63bf2edbc20e96159510f6c9",
+    ".gitattributes": "289aa202a3e737801d2ec211268bca8f1bbb95797a805ddd4479fc2df9a72c33",
     "diagnostic-wrong.patch": "1a19e1f62de73a401c60b77c588f8cbbda12749025dbfb552a7fa9e25558e7e3",
     "LICENSE": "7ba4eb6d10b32b2d11dce13821340351cdbbb30ba8ccc67841db2ffd86e79aca",
     "prepare-tests.patch": "59b4460ea417d24bf045ac248d65931f86dfb4bf43506ee133b4879372b9c9eb",
