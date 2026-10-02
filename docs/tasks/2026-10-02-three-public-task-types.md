@@ -1,0 +1,69 @@
+# Three public task types: execution record
+
+Starting main: `f2e735144cfaafab3b1d2e73425e90304ba35345`.
+This batch adds parsing/cooperation and resource-lifecycle tasks to the already
+qualified iterator empty-input task. All model responses are recorded replay;
+supplier requests, holdout access and new paid experiments are prohibited.
+
+## Reference audit and authorized change
+
+Both actual reference parents were confirmed locally from Git objects:
+
+| Task | Base | Upstream reference |
+| --- | --- | --- |
+| Markdown #1414 | `9edba85fc14f034b7109534220702bf60178ff15` | `3d8afc6f89e169522f44c1bbec15f66dc359eccb` |
+| Click #2800 | `d8763b93021c416549b5f8b4b5497234619410db` | `0ef55fda47bb3d0dece21197d81d8d72a4250e73` |
+
+Markdown's original product fix moved inline `} ` behind trailing text. The raw
+failed qualification is at `runs/qualify markdown initial/qualification.json`.
+One initial invalid-fence diagnostic mistakenly rejected preserved literal text;
+that assertion was corrected to inspect rendered code attributes, while the tail
+preservation assertion remains unchanged. The first correction still displaced
+whitespace (`runs/qualify markdown corrected 01`); the next reference passed all
+task tests but its diagnostic mutant was too broad (`corrected 02`). These are
+development/qualification failures, not hidden or rescored model runs.
+
+Click's original fix returns `leaf` instead of `red`, `blue` for nested option
+completion. A read-only secondary audit identified wrong parent argument lists;
+the local independent source probe confirmed the failure. No supplier called.
+
+The user explicitly approved retaining both tasks with separately hashed minimal
+correction patches. Upstream product patches and identities remain unchanged.
+Qualification must distinguish corrected references from upstream commits.
+
+## Delivery and validation
+
+The qualification selector accepts reviewed task IDs; the original command still
+defaults to more-itertools. Schema 2 adds multiple product identities and regression
+targets. Production setup/tools/adapter/gate/verify/report/export remain in use.
+Windows dual-version and outside-checkout wheel qualification is part of CI.
+Actual final commits, CI and qualification records are recorded below when available.
+
+Until all three task types pass, no new real-model experiment is eligible.
+
+The first frozen Markdown candidate `ff9a046a6488e84513d053ce4c12f34ce5736c99`
+qualified locally with no tracked changes:
+`runs/qualify markdown frozen ff9a046/qualification.json`, SHA-256
+`8c8358e1db35acc933d21075e69fda28beeb212eceefafe08dcd335a8f7130a2`.
+The upstream audit has one failed task assertion; corrected references have 9/9,
+2/2 and 19/19 passing tests. Replay uses five pytest processes and independent
+verification is separately recorded. This candidate is not the final review head.
+
+A read-only review found additional identity/scope gates to strengthen: reject
+dirty tracked implementations and identity changes during execution; validate
+new tasks' actual single parent; reject undeclared package files and product
+patches that modify anything outside declared product files. Fifteen targeted
+behavior tests pass after these fixes. New exact-head CI and local qualification
+are required; prior green checks do not approve the modified head.
+
+CI #83 (`ff9a046`, merge checkout `b31a40045c3acae3989cbf0d66f428cdd008ea5c`)
+passed engineering checks and Linux jobs but both wheel qualifications failed on
+the frozen existing Markdown tests. The clean wheel environment had no Markdown
+extension entry-point metadata; the local interpreter happened to have Markdown
+3.7. The official PyPI 3.5.2 universal wheel is now explicitly locked with SHA-256
+`d43323865d89fc0cb9b20c75fc8ad313af307cc087e84b657d9eec768eddeadd`.
+Preparation is explicit, never an automatic qualifier install. A new preflight
+requires `attr_list`, `fenced_code`, `tables` metadata and the production audit
+still checks checkout module origins. The qualifier also now rejects non-assertion
+exceptions in expected failed tests using original JUnit, preventing an import
+exception inside a test body from masquerading as a reproduced defect.

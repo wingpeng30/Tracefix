@@ -117,6 +117,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           & $wheelPython -m pip install --no-deps $wheel
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & $wheelPython -m pip install --no-deps --require-hashes -r requirements/locks/public-task-markdown.txt
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue
           Push-Location $env:RUNNER_TEMP
           try {
@@ -146,6 +148,14 @@ jobs:
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
             & $wheelPython (Join-Path $env:GITHUB_WORKSPACE "examples/replay_resume.py") --output (Join-Path $wheelSmoke "recovery")
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            $markdownSource = Join-Path $env:RUNNER_TEMP "tracefix-markdown-upstream"
+            git clone --quiet --no-checkout https://github.com/Python-Markdown/markdown.git $markdownSource
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            & $wheelPython (Join-Path $env:GITHUB_WORKSPACE "scripts/qualify_public_task.py") --task markdown-quoted-braces-1414 --source-repo $markdownSource --test-python $wheelPython --output (Join-Path $wheelSmoke "markdown qualification") > (Join-Path $wheelSmoke "markdown-qualification.log")
+            if ($LASTEXITCODE -ne 0) {
+              Get-Content (Join-Path $wheelSmoke "markdown-qualification.log") -Tail 20
+              exit $LASTEXITCODE
+            }
           } finally { Pop-Location }
 
       - name: 保存工程与 wheel 验证结果
@@ -171,6 +181,13 @@ jobs:
             ${{ runner.temp }}/tracefix-wheel-smoke/**/*.html
             ${{ runner.temp }}/tracefix-wheel-smoke/**/*.patch
             ${{ runner.temp }}/tracefix-wheel-smoke/**/*.sha256
+            ${{ runner.temp }}/tracefix-wheel-smoke/**/*.txt
+            ${{ runner.temp }}/tracefix-wheel-smoke/**/*.xml
+            ${{ runner.temp }}/tracefix-wheel-smoke/**/*.log
+            ${{ runner.temp }}/tracefix-wheel-smoke/**/*.toml
+            !${{ runner.temp }}/tracefix-wheel-smoke/**/workspace/**
+            !${{ runner.temp }}/tracefix-wheel-smoke/**/prepared-source/**
+            !${{ runner.temp }}/tracefix-wheel-smoke/**/.git/**
             ${{ runner.temp }}/tracefix-public-qualification.log
             ${{ runner.temp }}/tracefix-public-qualification/**/*.json
             ${{ runner.temp }}/tracefix-public-qualification/**/*.txt

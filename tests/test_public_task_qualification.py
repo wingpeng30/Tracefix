@@ -4,6 +4,7 @@ import importlib.util
 import json
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -97,6 +98,132 @@ def test_reference_client_exercises_adapter_parsing_without_provider():
         assert not model.complete(messages, tools=schema).message.tool_calls
         with pytest.raises(AssertionError, match="unexpected"):
             client.completion(messages=[{}], tools=[{}])
+
+
+def test_new_task_multiple_products_targets_and_invalid_contract(tmp_path):
+    manifest = qualification.load_manifest(qualification.TASKS["markdown-quoted-braces-1414"])
+    assert len(manifest["products"]) == 2
+    assert len(manifest["regression_targets"]) == 2
+    assert manifest["diagnostic_expected"] == ["passed", "failed", "passed"]
+    manifest["files_sha256"] = {}
+    manifest["regression_targets"].append(manifest["task_target"])
+    (tmp_path / "manifest.json").write_text(json.dumps(manifest))
+    with pytest.raises(ValueError, match="distinct"):
+        qualification.load_manifest(tmp_path)
+    manifest["regression_targets"].pop()
+    manifest["products"][0]["path"] = "../outside.py"
+    (tmp_path / "manifest.json").write_text(json.dumps(manifest))
+    with pytest.raises(ValueError, match="product path"):
+        qualification.load_manifest(tmp_path)
+
+
+def test_unreviewed_task_is_rejected_before_creating_output(tmp_path):
+    with pytest.raises(ValueError, match="unreviewed"):
+        qualification.qualify(tmp_path / "source", Path(sys.executable), tmp_path / "out", "../x")
+    assert not (tmp_path / "out").exists()
+
+
+def test_product_patch_cannot_qualify_by_modifying_tests(tmp_path, monkeypatch):
+    from tracefix.tools.base import ToolResult
+    from tracefix.tools.builtin import ApplyPatchTool
+
+    monkeypatch.setattr(
+        ApplyPatchTool,
+        "execute",
+        lambda *_args: ToolResult(
+            call_id="qualification-product-patch",
+            tool_name="apply_patch",
+            success=True,
+            output={"changed_files": ["tests/test_contract.py"]},
+        ),
+    )
+    with pytest.raises(ValueError, match="outside declared"):
+        qualification.apply_product(tmp_path, "mock patch", {"product.py"})
+
+
+def test_package_unrecorded_file_is_rejected(tmp_path):
+    (tmp_path / "task.md").write_text("contract")
+    (tmp_path / "manifest.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "files_sha256": {"task.md": qualification.sha(tmp_path / "task.md")},
+            }
+        )
+    )
+    (tmp_path / "unexpected.py").write_text("unexpected")
+    with pytest.raises(ValueError, match="unrecorded"):
+        qualification.load_manifest(tmp_path)
+
+
+def test_missing_extension_metadata_is_preflight_blocker(monkeypatch):
+    monkeypatch.setattr(
+        qualification.subprocess,
+        "run",
+        lambda *_args, **_kwargs: SimpleNamespace(stdout='{"markdown.extensions": []}'),
+    )
+    with pytest.raises(ValueError, match="entry-point metadata"):
+        qualification.check_task_metadata(
+            Path(sys.executable),
+            {
+                "required_entry_points": {"markdown.extensions": ["attr_list"]},
+            },
+        )
+
+
+@pytest.mark.parametrize(
+    "message,accepted",
+    [
+        ("assert 1 == 2", True),
+        ("ModuleNotFoundError: attr_list", False),
+        ("ImportError: cannot import AssertionError from optional_dep", False),
+    ],
+)
+def test_baseline_body_exception_cannot_count_as_expected_assertion(tmp_path, message, accepted):
+    evidence = tmp_path / "junit.xml"
+    evidence.write_text(
+        f'<testsuite><testcase><failure message="{message}"/></testcase></testsuite>'
+    )
+    test = {"output": {"junit_path": str(evidence)}}
+    if accepted:
+        qualification.assert_failure_evidence(test)
+    else:
+        with pytest.raises(ValueError, match="non-assertion"):
+            qualification.assert_failure_evidence(test)
+
+
+def test_chained_assertion_followed_by_import_error_is_not_a_valid_baseline(tmp_path):
+    evidence = tmp_path / "junit.xml"
+    evidence.write_text(
+        '<testsuite><testcase><failure message="ImportError: later">'
+        "E   AssertionError: earlier\nE   ImportError: later"
+        "</failure></testcase></testsuite>"
+    )
+    with pytest.raises(ValueError, match="non-assertion"):
+        qualification.assert_failure_evidence({"output": {"junit_path": str(evidence)}})
+
+
+@pytest.mark.parametrize("dirty", [False, True])
+def test_dirty_implementation_or_wrong_parent_stops_before_tools(tmp_path, monkeypatch, dirty):
+    monkeypatch.setattr(qualification, "upstream_state", lambda *_args: {"head": "unchanged"})
+
+    def git(_repo, *args):
+        if args[0] == "status":
+            return " M runtime.py" if dirty else ""
+        if args[0] == "rev-list":
+            return "reference wrong-parent"
+        return "HEAD"
+
+    monkeypatch.setattr(qualification, "git", git)
+    monkeypatch.setattr(qualification, "run_case", lambda *_args: pytest.fail("tools must not run"))
+    result = qualification.qualify(
+        tmp_path / "source",
+        Path(sys.executable),
+        tmp_path / "output",
+        "markdown-quoted-braces-1414",
+    )
+    assert not result["qualified"]
+    assert ("clean tracked" if dirty else "actual parent") in result["error"]
 
 
 @pytest.mark.parametrize("status", ["collection_error", "timeout", "test_failure", "skipped"])

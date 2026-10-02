@@ -1,0 +1,5 @@
+# Supplies Markdown extension entry-point metadata for the frozen upstream tests.
+# Product modules must still import from the task checkout (production audit).
+# Official PyPI Markdown 3.5.2, BSD-3-Clause, universal wheel.
+Markdown==3.5.2 \
+    --hash=sha256:d43323865d89fc0cb9b20c75fc8ad313af307cc087e84b657d9eec768eddeadd

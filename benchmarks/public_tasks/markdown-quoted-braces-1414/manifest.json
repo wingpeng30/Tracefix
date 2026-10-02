@@ -1,0 +1,61 @@
+{
+  "schema_version": 2,
+  "task_id": "markdown-quoted-braces-1414",
+  "repository": "https://github.com/Python-Markdown/markdown.git",
+  "issue": "https://github.com/Python-Markdown/markdown/issues/1390",
+  "reference_pr": "https://github.com/Python-Markdown/markdown/pull/1414",
+  "base_commit": "9edba85fc14f034b7109534220702bf60178ff15",
+  "reference_commit": "3d8afc6f89e169522f44c1bbec15f66dc359eccb",
+  "license": "BSD-3-Clause",
+  "source_import": "markdown",
+  "task_target": "tests/test_tracefix_quoted_braces.py",
+  "regression_targets": [
+    "tests/test_syntax/extensions/test_attr_list.py::TestAttrList",
+    "tests/test_syntax/extensions/test_fenced_code.py::TestFencedCode"
+  ],
+  "products": [
+    {
+      "path": "markdown/extensions/attr_list.py",
+      "base_blob": "7ce3f9925fc8253c95e8df7faabb3512797df0b5",
+      "reference_blob": "9206d11e69c11912b776ee7b54a9af236c4344af"
+    },
+    {
+      "path": "markdown/extensions/fenced_code.py",
+      "base_blob": "da1a9be1e42f91d71183a6a75568e3896b867025",
+      "reference_blob": "bae7330a35dd3072382614b2e9ac628a5c04fe18"
+    }
+  ],
+  "target_counts": {
+    "tests/test_tracefix_quoted_braces.py": 9,
+    "tests/test_syntax/extensions/test_attr_list.py::TestAttrList": 2,
+    "tests/test_syntax/extensions/test_fenced_code.py::TestFencedCode": 19
+  },
+  "diagnostic_expected": [
+    "passed",
+    "failed",
+    "passed"
+  ],
+  "reference_correction": "reference-correction.patch",
+  "upstream_reference_expected": [
+    "failed",
+    "passed",
+    "passed"
+  ],
+  "qualification_status": "requires_execution",
+  "files_sha256": {
+    ".gitattributes": "289aa202a3e737801d2ec211268bca8f1bbb95797a805ddd4479fc2df9a72c33",
+    "diagnostic-wrong.patch": "1a19e1f62de73a401c60b77c588f8cbbda12749025dbfb552a7fa9e25558e7e3",
+    "LICENSE": "7ba4eb6d10b32b2d11dce13821340351cdbbb30ba8ccc67841db2ffd86e79aca",
+    "prepare-tests.patch": "59b4460ea417d24bf045ac248d65931f86dfb4bf43506ee133b4879372b9c9eb",
+    "reference-correction.patch": "2d6b4a521ecc9cd1b9376a6d4eafb995f715dfb716d7e38578e4c3644026b242",
+    "reference-product.patch": "0dcc6b60cb7aeba22d6ffd4cfb31a6ee8015088260fe86033be80a9eeb65c408",
+    "task.md": "ff2874c41fc76c073b16e0487917bb80444d2ee54b75a4b1b37591b9ce6ecbee"
+  },
+  "required_entry_points": {
+    "markdown.extensions": [
+      "attr_list",
+      "fenced_code",
+      "tables"
+    ]
+  }
+}
