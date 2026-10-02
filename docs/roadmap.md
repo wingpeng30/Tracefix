@@ -169,3 +169,9 @@ G6 pytest-only 精确覆盖补测（同一最终代码版本）：用独立 `COV
 2026-10-02 当前执行顺序更新：先交付安装包内 `regression-feedback` 入口，再冻结 more-itertools #462 空输入任务并执行资格矩阵；此前 Sphinx 初筛保留为历史，本批不重建环境。所有调用均离线，原八次付费额度不续用。执行记录见 `docs/tasks/2026-10-02-package-and-public-task.md`（文档内路径相对仓库根目录）。
 
 2026-10-02 安装包回归反馈入口已通过 PR #10 精确 CI #77 并合并，主线 `0954c4f`。more-itertools #462 单任务已在本机 3.12 通过完整资格矩阵与生产参考回放；Windows 3.11/3.12 资格以本批 PR 的锁定依赖 CI 产物为准。当前不是多类型任务集，也没有新模型效果证据。下一步增加两种不同缺陷类型，先做契约与资格，再申请新的付费验收。详见 `docs/tasks/2026-10-02-package-and-public-task.md`，原始目录不提交。
+# 2026-10-02 public task expansion
+
+The active batch adds Markdown parsing/cooperation and Click resource lifecycle
+qualification, with separately identified corrective references authorized by the
+user after actual upstream-reference failures. No new paid calls are authorized.
+Current implementation/evidence: [three task types](tasks/2026-10-02-three-public-task-types.md).

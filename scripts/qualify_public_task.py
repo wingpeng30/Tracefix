@@ -1,4 +1,4 @@
-"""Qualify the frozen more-itertools task without installing dependencies or calling a model."""
+"""Qualify reviewed public tasks without installing dependencies or calling a model."""
 
 from __future__ import annotations
 
@@ -23,6 +23,10 @@ PACKAGE = (
     Path(__file__).resolve().parents[1]
     / "benchmarks/public_tasks/more-itertools-windowed-empty-462"
 )
+TASKS = {
+    "more-itertools-windowed-empty-462": PACKAGE,
+    "markdown-quoted-braces-1414": PACKAGE.parent / "markdown-quoted-braces-1414",
+}
 
 
 def git(repo: Path, *arguments: str) -> str:
@@ -76,12 +80,41 @@ def source_state(repo: Path) -> dict:
 
 def load_manifest(package: Path = PACKAGE) -> dict:
     manifest = json.loads((package / "manifest.json").read_text(encoding="utf-8"))
-    if manifest.get("schema_version") != 1:
+    if manifest.get("schema_version") not in (1, 2):
         raise ValueError("unsupported task manifest version")
     for name, expected in manifest["files_sha256"].items():
         path = (package / name).resolve()
         if not path.is_relative_to(package.resolve()) or sha(path) != expected:
             raise ValueError(f"task package identity mismatch: {name}")
+    if manifest["schema_version"] == 2:
+        targets = [manifest["task_target"], *manifest["regression_targets"]]
+        if len(targets) != len(set(targets)) or not manifest["regression_targets"]:
+            raise ValueError("task targets must be distinct and include regressions")
+        for target in targets:
+            name = target.split("::", 1)[0]
+            path = Path(name)
+            if path.is_absolute() or ".." in path.parts or not name.endswith(".py"):
+                raise ValueError("invalid task target path")
+            if not isinstance(manifest["target_counts"].get(target), int) or (
+                manifest["target_counts"][target] < 1
+            ):
+                raise ValueError("target count must be a positive integer")
+        paths = [product["path"] for product in manifest["products"]]
+        if not paths or len(paths) != len(set(paths)):
+            raise ValueError("product paths must be distinct and nonempty")
+        for name in paths:
+            path = Path(name)
+            if path.is_absolute() or ".." in path.parts or name.startswith("tests/"):
+                raise ValueError("invalid product path")
+        expected = manifest["diagnostic_expected"]
+        if (
+            len(expected) != len(targets)
+            or expected[0] != "passed"
+            or (
+                "failed" not in expected[1:] or any(x not in ("passed", "failed") for x in expected)
+            )
+        ):
+            raise ValueError("invalid diagnostic outcomes")
     return manifest
 
 
@@ -228,7 +261,14 @@ class ReferenceClient:
         }
 
 
-def replay(source: Path, output: Path, manifest: dict, python: Path, product_patch: str) -> dict:
+def replay(
+    source: Path,
+    output: Path,
+    manifest: dict,
+    python: Path,
+    product_patch: str,
+    package: Path = PACKAGE,
+) -> dict:
     from tracefix.cli import _ordinary_settings, build_parser
 
     config_file = output / "replay.toml"
@@ -236,8 +276,9 @@ def replay(source: Path, output: Path, manifest: dict, python: Path, product_pat
         '[run]\nmodel = "offline/reference-patch"\n'
         f'test_target = "{manifest["task_target"]}"\n'
         f'source_import = "{manifest["source_import"]}"\n'
-        'regression_targets = ["tests/test_more.py::WindowedTests"]\n'
-        "max_steps = 4\nmax_test_runs = 4\nwall_time_seconds = 300\n",
+        f"regression_targets = {json.dumps(manifest['regression_targets'])}\n"
+        f"max_steps = 4\nmax_test_runs = {1 + 2 * len(manifest['regression_targets'])}\n"
+        "wall_time_seconds = 300\n",
         encoding="utf-8",
     )
     settings = _ordinary_settings(
@@ -265,7 +306,7 @@ def replay(source: Path, output: Path, manifest: dict, python: Path, product_pat
     result = TraceFixRunner(llm_factory=lambda config: LiteLLMAdapter(config, client=client)).run(
         RunConfig(
             repo=source,
-            task=(PACKAGE / "task.md").read_text(encoding="utf-8"),
+            task=(package / "task.md").read_text(encoding="utf-8"),
             output_dir=settings["output_dir"],
             env_file=None,
             model_name=settings["model_name"],
@@ -273,7 +314,11 @@ def replay(source: Path, output: Path, manifest: dict, python: Path, product_pat
             source_import=settings["source_import"],
             regression_targets=settings["regression_targets"],
             test_python_executable=python,
-            agent_config=AgentConfig(max_steps=4, max_test_runs=4, wall_time_seconds=300),
+            agent_config=AgentConfig(
+                max_steps=4,
+                max_test_runs=1 + 2 * len(manifest["regression_targets"]),
+                wall_time_seconds=300,
+            ),
         )
     )
     if result.status.value != "completed" or result.validation_gate_status != "passed":
@@ -298,7 +343,15 @@ def replay(source: Path, output: Path, manifest: dict, python: Path, product_pat
     }
 
 
-def qualify(source_repo: Path, python: Path, output: Path) -> dict:
+def qualify(
+    source_repo: Path,
+    python: Path,
+    output: Path,
+    task: str = "more-itertools-windowed-empty-462",
+) -> dict:
+    if task not in TASKS:
+        raise ValueError(f"unreviewed task ID: {task}")
+    package = TASKS[task]
     source_repo = source_repo.expanduser().resolve()
     output = output.expanduser().resolve()
     if output.is_relative_to(source_repo):
@@ -307,12 +360,13 @@ def qualify(source_repo: Path, python: Path, output: Path) -> dict:
     record = {"schema_version": 1, "qualified": False, "cases": [], "output": str(output)}
     original = None
     try:
-        manifest = load_manifest()
+        manifest = load_manifest(package)
         python = python.expanduser().resolve()
         original = upstream_state(source_repo)
         record.update(
             {
-                "task_manifest_sha256": sha(PACKAGE / "manifest.json"),
+                "task_id": task,
+                "task_manifest_sha256": sha(package / "manifest.json"),
                 "upstream_base": manifest["base_commit"],
                 "reference_commit": manifest["reference_commit"],
                 "tracefix_commit": git(PACKAGE.parent, "rev-parse", "HEAD").strip(),
@@ -324,16 +378,24 @@ def qualify(source_repo: Path, python: Path, output: Path) -> dict:
                 "environment": inspect_test_environment(python).model_dump(mode="json"),
             }
         )
-        for commit, expected in (
-            (manifest["base_commit"], manifest["base_product_blob"]),
-            (manifest["reference_commit"], manifest["reference_product_blob"]),
-        ):
-            if (
-                git(source_repo, "rev-parse", f"{commit}:{manifest['product_path']}").strip()
-                != expected
+        products = manifest.get("products")
+        if products is None:
+            products = [
+                {
+                    "path": manifest["product_path"],
+                    "base_blob": manifest["base_product_blob"],
+                    "reference_blob": manifest["reference_product_blob"],
+                }
+            ]
+        for product in products:
+            for commit, expected in (
+                (manifest["base_commit"], product["base_blob"]),
+                (manifest["reference_commit"], product["reference_blob"]),
             ):
-                raise ValueError("upstream product identity mismatch")
-        reference = (PACKAGE / "reference-product.patch").read_text(encoding="utf-8")
+                if git(source_repo, "rev-parse", f"{commit}:{product['path']}").strip() != expected:
+                    raise ValueError("upstream product identity mismatch")
+        reference = (package / "reference-product.patch").read_text(encoding="utf-8")
+        upstream_reference = reference
         actual_reference = git(
             source_repo,
             "diff",
@@ -347,10 +409,14 @@ def qualify(source_repo: Path, python: Path, output: Path) -> dict:
             manifest["base_commit"],
             manifest["reference_commit"],
             "--",
-            manifest["product_path"],
+            *(product["path"] for product in products),
         )
         if actual_reference != reference:
             raise ValueError("reference product patch differs from frozen upstream diff")
+        if manifest.get("reference_correction"):
+            reference += (package / manifest["reference_correction"]).read_text(encoding="utf-8")
+            record["reference_kind"] = "upstream_product_patch_plus_reviewed_correction"
+            record["reference_correction_sha256"] = sha(package / manifest["reference_correction"])
         with (
             forbid_live_access(),
             patch.dict(
@@ -365,7 +431,7 @@ def qualify(source_repo: Path, python: Path, output: Path) -> dict:
             git(output, "clone", "--quiet", "--no-checkout", str(source_repo), str(prepared))
             git(prepared, "config", "core.autocrlf", "false")
             git(prepared, "checkout", "--quiet", "--detach", manifest["base_commit"])
-            git(prepared, "apply", "--index", str(PACKAGE / "prepare-tests.patch"))
+            git(prepared, "apply", "--index", str(package / "prepare-tests.patch"))
             staged = git(prepared, "diff", "--cached", "--name-only").splitlines()
             if staged != [manifest["task_target"]]:
                 raise ValueError("preparation changed files outside new task test")
@@ -380,20 +446,35 @@ def qualify(source_repo: Path, python: Path, output: Path) -> dict:
                 "commit",
                 "--quiet",
                 "-m",
-                "Add public windowed empty-input contract",
+                f"Add public task contract: {task}",
             )
             record["prepared_source"] = source_state(prepared)
-            for name, product_patch, expected in (
-                ("base-1", None, ("failed", "passed")),
-                ("base-2", None, ("failed", "passed")),
-                ("reference-1", reference, ("passed", "passed")),
-                ("reference-2", reference, ("passed", "passed")),
+            baseline = ("failed", *["passed"] * len(manifest["regression_targets"]))
+            fixed = ("passed", *["passed"] * len(manifest["regression_targets"]))
+            diagnostic = tuple(manifest.get("diagnostic_expected", ["passed", "failed"]))
+            if diagnostic[0] != "passed" or "failed" not in diagnostic[1:]:
+                raise ValueError("diagnostic patch must pass task and fail a regression")
+            cases = [
+                ("base-1", None, baseline),
+                ("base-2", None, baseline),
+                ("reference-1", reference, fixed),
+                ("reference-2", reference, fixed),
                 (
                     "diagnostic-wrong",
-                    (PACKAGE / "diagnostic-wrong.patch").read_text(encoding="utf-8"),
-                    ("passed", "failed"),
+                    (package / "diagnostic-wrong.patch").read_text(encoding="utf-8"),
+                    diagnostic,
                 ),
-            ):
+            ]
+            if manifest.get("upstream_reference_expected"):
+                cases.insert(
+                    2,
+                    (
+                        "upstream-reference-audit",
+                        upstream_reference,
+                        tuple(manifest["upstream_reference_expected"]),
+                    ),
+                )
+            for name, product_patch, expected in cases:
                 case = run_case(prepared, output / name, manifest, python, product_patch, expected)
                 if (
                     case["environment"]["fingerprint_sha256"]
@@ -408,7 +489,7 @@ def qualify(source_repo: Path, python: Path, output: Path) -> dict:
                     }
                 )
                 write_json(output / "qualification.json", record)
-            record["replay"] = replay(prepared, output, manifest, python, reference)
+            record["replay"] = replay(prepared, output, manifest, python, reference, package)
             if (
                 inspect_test_environment(python).fingerprint_sha256
                 != (record["environment"]["fingerprint_sha256"])
@@ -442,12 +523,15 @@ def qualify(source_repo: Path, python: Path, output: Path) -> dict:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--task", choices=sorted(TASKS), default="more-itertools-windowed-empty-462"
+    )
     parser.add_argument("--source-repo", type=Path, required=True)
     parser.add_argument("--test-python", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args(argv)
     try:
-        result = qualify(args.source_repo, args.test_python, args.output)
+        result = qualify(args.source_repo, args.test_python, args.output, args.task)
     except (OSError, ValueError) as exc:
         print(str(exc), file=sys.stderr)
         return 2

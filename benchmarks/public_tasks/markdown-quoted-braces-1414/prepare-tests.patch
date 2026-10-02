@@ -1,0 +1,38 @@
+diff --git a/tests/test_tracefix_quoted_braces.py b/tests/test_tracefix_quoted_braces.py
+new file mode 100644
+--- /dev/null
++++ b/tests/test_tracefix_quoted_braces.py
+@@ -0,0 +1,33 @@
++"""Public contract derived from Python-Markdown #1390 / #1414 (BSD-3-Clause)."""
++import pytest
++import markdown
++
++
++@pytest.mark.parametrize("quote", ["'", '"'])
++@pytest.mark.parametrize("kind", ["block", "inline", "fenced"])
++def test_quoted_braces(quote, kind):
++    attrs = '{data-test=' + quote + '{}' + quote + '}'
++    if kind == "block":
++        source, expected = '# Heading ' + attrs, '<h1 data-test="{}">Heading</h1>'
++    elif kind == "inline":
++        source, expected = '*word*' + attrs + ' tail', '<p><em data-test="{}">word</em> tail</p>'
++    else:
++        source = '``` ' + attrs + '\ncode\n```'
++        expected = '<pre><code data-test="{}">code\n</code></pre>'
++    assert markdown.markdown(source, extensions=['attr_list', 'fenced_code']) == expected
++
++
++def test_inline_extra_brace_preserves_tail():
++    assert markdown.markdown('*word*{.a} } tail', extensions=['attr_list']) == '<p><em class="a">word</em> } tail</p>'
++
++
++def test_block_extra_brace_remains_literal():
++    assert markdown.markdown('# Heading {.a} }', extensions=['attr_list']) == '<h1>Heading {.a} }</h1>'
++
++
++def test_invalid_fence_then_valid_fence_terminates():
++    source = '``` {data-test="{}"} }\nfirst\n```\n\n```\nsecond\n```'
++    rendered = markdown.markdown(source, extensions=['attr_list', 'fenced_code'])
++    assert '<code data-test=' not in rendered
++    assert rendered.startswith('<p>``` {data-test="{}"} }')
++    assert 'second' in rendered

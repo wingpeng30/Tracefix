@@ -1,0 +1,159 @@
+diff --git a/markdown/extensions/attr_list.py b/markdown/extensions/attr_list.py
+index 7ce3f99..9206d11 100644
+--- a/markdown/extensions/attr_list.py
++++ b/markdown/extensions/attr_list.py
+@@ -59,6 +59,6 @@ def _handle_word(s, t):
+ _scanner = re.Scanner([
+-    (r'[^ =]+=".*?"', _handle_double_quote),
+-    (r"[^ =]+='.*?'", _handle_single_quote),
+-    (r'[^ =]+=[^ =]+', _handle_key_value),
+-    (r'[^ =]+', _handle_word),
++    (r'[^ =}]+=".*?"', _handle_double_quote),
++    (r"[^ =}]+='.*?'", _handle_single_quote),
++    (r'[^ =}]+=[^ =}]+', _handle_key_value),
++    (r'[^ =}]+', _handle_word),
+     (r' ', None)
+@@ -67,5 +67,18 @@ _scanner = re.Scanner([
+ 
+-def get_attrs(str: str) -> list[tuple[str, str]]:
+-    """ Parse attribute list and return a list of attribute tuples. """
+-    return _scanner.scan(str)[0]
++def get_attrs_and_remainder(attrs_string: str) -> tuple[list[tuple[str, str]], str]:
++    """ Parse attribute list and return a list of attribute tuples.
++
++    Additionally, return any text that remained after a curly brace. In typical cases, its presence
++    should mean that the input does not match the intended attribute list syntax.
++    """
++    attrs, remainder = _scanner.scan(attrs_string)
++    # To keep historic behavior, discard all unparsable text prior to '}'.
++    index = remainder.find('}')
++    remainder = remainder[index:] if index != -1 else ''
++    return attrs, remainder
++
++
++def get_attrs(str: str) -> list[tuple[str, str]]:  # pragma: no cover
++    """ Soft-deprecated. Prefer `get_attrs_and_remainder`. """
++    return get_attrs_and_remainder(str)[0]
+ 
+@@ -78,3 +91,3 @@ class AttrListTreeprocessor(Treeprocessor):
+ 
+-    BASE_RE = r'\{\:?[ ]*([^\}\n ][^\}\n]*)[ ]*\}'
++    BASE_RE = r'\{\:?[ ]*([^\}\n ][^\n]*)[ ]*\}'
+     HEADER_RE = re.compile(r'[ ]+{}[ ]*$'.format(BASE_RE))
+@@ -108,4 +121,4 @@ class AttrListTreeprocessor(Treeprocessor):
+                         if m:
+-                            self.assign_attrs(elem, m.group(1))
+-                            elem[-1].tail = elem[-1].tail[:m.start()]
++                            if not self.assign_attrs(elem, m.group(1), strict=True):
++                                elem[-1].tail = elem[-1].tail[:m.start()]
+                     elif pos is not None and pos > 0 and elem[pos-1].tail:
+@@ -114,4 +127,4 @@ class AttrListTreeprocessor(Treeprocessor):
+                         if m:
+-                            self.assign_attrs(elem, m.group(1))
+-                            elem[pos-1].tail = elem[pos-1].tail[:m.start()]
++                            if not self.assign_attrs(elem, m.group(1), strict=True):
++                                elem[pos-1].tail = elem[pos-1].tail[:m.start()]
+                     elif elem.text:
+@@ -120,4 +133,4 @@ class AttrListTreeprocessor(Treeprocessor):
+                         if m:
+-                            self.assign_attrs(elem, m.group(1))
+-                            elem.text = elem.text[:m.start()]
++                            if not self.assign_attrs(elem, m.group(1), strict=True):
++                                elem.text = elem.text[:m.start()]
+                 elif len(elem) and elem[-1].tail:
+@@ -126,7 +139,7 @@ class AttrListTreeprocessor(Treeprocessor):
+                     if m:
+-                        self.assign_attrs(elem, m.group(1))
+-                        elem[-1].tail = elem[-1].tail[:m.start()]
+-                        if isheader(elem):
+-                            # clean up trailing #s
+-                            elem[-1].tail = elem[-1].tail.rstrip('#').rstrip()
++                        if not self.assign_attrs(elem, m.group(1), strict=True):
++                            elem[-1].tail = elem[-1].tail[:m.start()]
++                            if isheader(elem):
++                                # clean up trailing #s
++                                elem[-1].tail = elem[-1].tail.rstrip('#').rstrip()
+                 elif elem.text:
+@@ -135,7 +148,7 @@ class AttrListTreeprocessor(Treeprocessor):
+                     if m:
+-                        self.assign_attrs(elem, m.group(1))
+-                        elem.text = elem.text[:m.start()]
+-                        if isheader(elem):
+-                            # clean up trailing #s
+-                            elem.text = elem.text.rstrip('#').rstrip()
++                        if not self.assign_attrs(elem, m.group(1), strict=True):
++                            elem.text = elem.text[:m.start()]
++                            if isheader(elem):
++                                # clean up trailing #s
++                                elem.text = elem.text.rstrip('#').rstrip()
+             else:
+@@ -145,8 +158,17 @@ class AttrListTreeprocessor(Treeprocessor):
+                     if m:
+-                        self.assign_attrs(elem, m.group(1))
+-                        elem.tail = elem.tail[m.end():]
++                        remainder = self.assign_attrs(elem, m.group(1))
++                        elem.tail = elem.tail[m.end():] + remainder
++
++    def assign_attrs(self, elem: Element, attrs_string: str, *, strict: bool = False) -> str:
++        """ Assign `attrs` to element.
++
++        If the `attrs_string` has an extra closing curly brace, the remaining text is returned.
++
++        The `strict` argument controls whether to still assign `attrs` if there is a remaining `}`.
++        """
++        attrs, remainder = get_attrs_and_remainder(attrs_string)
++        if strict and remainder:
++            return remainder
+ 
+-    def assign_attrs(self, elem: Element, attrs: str) -> None:
+-        """ Assign `attrs` to element. """
+-        for k, v in get_attrs(attrs):
++        for k, v in attrs:
+             if k == '.':
+@@ -161,2 +183,4 @@ class AttrListTreeprocessor(Treeprocessor):
+                 elem.set(self.sanitize_name(k), v)
++        # The text that we initially over-matched will be put back.
++        return remainder
+ 
+@@ -164,4 +188,4 @@ class AttrListTreeprocessor(Treeprocessor):
+         """
+-        Sanitize name as 'an XML Name, minus the ":"'.
+-        See https://www.w3.org/TR/REC-xml-names/#NT-NCName
++        Sanitize name as 'an XML Name, minus the `:`.'
++        See <https://www.w3.org/TR/REC-xml-names/#NT-NCName>.
+         """
+diff --git a/markdown/extensions/fenced_code.py b/markdown/extensions/fenced_code.py
+index da1a9be..bae7330 100644
+--- a/markdown/extensions/fenced_code.py
++++ b/markdown/extensions/fenced_code.py
+@@ -27,3 +27,3 @@ from ..preprocessors import Preprocessor
+ from .codehilite import CodeHilite, CodeHiliteExtension, parse_hl_lines
+-from .attr_list import get_attrs, AttrListExtension
++from .attr_list import get_attrs_and_remainder, AttrListExtension
+ from ..util import parseBoolValue
+@@ -58,3 +58,3 @@ class FencedBlockPreprocessor(Preprocessor):
+             (?P<fence>^(?:~{3,}|`{3,}))[ ]*                          # opening fence
+-            ((\{(?P<attrs>[^\}\n]*)\})|                              # (optional {attrs} or
++            ((\{(?P<attrs>[^\n]*)\})|                                # (optional {attrs} or
+             (\.?(?P<lang>[\w#.+-]*)[ ]*)?                            # optional (.)lang
+@@ -96,4 +96,5 @@ class FencedBlockPreprocessor(Preprocessor):
+         text = "\n".join(lines)
++        index = 0
+         while 1:
+-            m = self.FENCED_BLOCK_RE.search(text)
++            m = self.FENCED_BLOCK_RE.search(text, index)
+             if m:
+@@ -101,3 +102,7 @@ class FencedBlockPreprocessor(Preprocessor):
+                 if m.group('attrs'):
+-                    id, classes, config = self.handle_attrs(get_attrs(m.group('attrs')))
++                    attrs, remainder = get_attrs_and_remainder(m.group('attrs'))
++                    if remainder:  # Does not have correctly matching curly braces, so the syntax is invalid.
++                        index = m.end('attrs')  # Explicitly skip over this, to prevent an infinite loop.
++                        continue
++                    id, classes, config = self.handle_attrs(attrs)
+                     if len(classes):
+@@ -153,2 +158,4 @@ class FencedBlockPreprocessor(Preprocessor):
+                 text = f'{text[:m.start()]}\n{placeholder}\n{text[m.end():]}'
++                # Continue from after the replaced text in the next iteration.
++                index = m.start() + 1 + len(placeholder)
+             else:

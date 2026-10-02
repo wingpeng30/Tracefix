@@ -99,6 +99,29 @@ def test_reference_client_exercises_adapter_parsing_without_provider():
             client.completion(messages=[{}], tools=[{}])
 
 
+def test_new_task_multiple_products_targets_and_invalid_contract(tmp_path):
+    manifest = qualification.load_manifest(qualification.TASKS["markdown-quoted-braces-1414"])
+    assert len(manifest["products"]) == 2
+    assert len(manifest["regression_targets"]) == 2
+    assert manifest["diagnostic_expected"] == ["passed", "failed", "passed"]
+    manifest["files_sha256"] = {}
+    manifest["regression_targets"].append(manifest["task_target"])
+    (tmp_path / "manifest.json").write_text(json.dumps(manifest))
+    with pytest.raises(ValueError, match="distinct"):
+        qualification.load_manifest(tmp_path)
+    manifest["regression_targets"].pop()
+    manifest["products"][0]["path"] = "../outside.py"
+    (tmp_path / "manifest.json").write_text(json.dumps(manifest))
+    with pytest.raises(ValueError, match="product path"):
+        qualification.load_manifest(tmp_path)
+
+
+def test_unreviewed_task_is_rejected_before_creating_output(tmp_path):
+    with pytest.raises(ValueError, match="unreviewed"):
+        qualification.qualify(tmp_path / "source", Path(sys.executable), tmp_path / "out", "../x")
+    assert not (tmp_path / "out").exists()
+
+
 @pytest.mark.parametrize("status", ["collection_error", "timeout", "test_failure", "skipped"])
 def test_qualification_rejects_incomplete_or_wrong_collection(tmp_path, monkeypatch, status):
     workspace = tmp_path / "workspace"
