@@ -1,0 +1,11 @@
+diff --git a/more_itertools/more.py b/more_itertools/more.py
+index bbcf039..6d2b938 100755
+--- a/more_itertools/more.py
++++ b/more_itertools/more.py
+@@ -878,3 +878,5 @@ def windowed(seq, n, fillvalue=None, step=1):
+     size = len(window)
+-    if size < n:
++    if size == 0:
++        return
++    elif size < n:
+         yield tuple(chain(window, repeat(fillvalue, n - size)))

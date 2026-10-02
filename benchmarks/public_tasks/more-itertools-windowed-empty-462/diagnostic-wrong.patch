@@ -1,0 +1,12 @@
+diff --git a/more_itertools/more.py b/more_itertools/more.py
+--- a/more_itertools/more.py
++++ b/more_itertools/more.py
+@@ -877,7 +877,7 @@
+
+     size = len(window)
+     if size < n:
+-        yield tuple(chain(window, repeat(fillvalue, n - size)))
++        return
+     elif 0 < i < min(step, n):
+         window += (fillvalue,) * i
+         yield tuple(window)

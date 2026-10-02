@@ -1,0 +1,18 @@
+diff --git a/tests/test_tracefix_windowed_empty.py b/tests/test_tracefix_windowed_empty.py
+new file mode 100644
+--- /dev/null
++++ b/tests/test_tracefix_windowed_empty.py
+@@ -0,0 +1,13 @@
++"""Public contract tests added by TraceFix; upstream tests remain unchanged."""
++
++import pytest
++
++from more_itertools import windowed
++
++
++@pytest.mark.parametrize("factory", [list, tuple, lambda: (item for item in ())])
++@pytest.mark.parametrize("width", [1, 3])
++@pytest.mark.parametrize("fillvalue", [None, "!"])
++@pytest.mark.parametrize("step", [1, 2, 5])
++def test_empty_input_has_no_windows(factory, width, fillvalue, step):
++    assert list(windowed(factory(), width, fillvalue=fillvalue, step=step)) == []

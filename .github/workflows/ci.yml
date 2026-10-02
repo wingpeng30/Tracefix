@@ -79,6 +79,20 @@ jobs:
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           } finally { Pop-Location }
 
+      - name: Qualify frozen public windowed task without model calls
+        shell: pwsh
+        run: |
+          $publicSource = Join-Path $env:RUNNER_TEMP "tracefix-public-upstream"
+          $publicOutput = Join-Path $env:RUNNER_TEMP "tracefix-public-qualification"
+          git clone --quiet --no-checkout https://github.com/more-itertools/more-itertools.git $publicSource
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $testPython = python -c "import sys; print(sys.executable)"
+          python scripts/qualify_public_task.py --source-repo $publicSource --test-python $testPython --output $publicOutput > (Join-Path $env:RUNNER_TEMP "tracefix-public-qualification.log")
+          if ($LASTEXITCODE -ne 0) {
+            Get-Content (Join-Path $env:RUNNER_TEMP "tracefix-public-qualification.log") -Tail 30
+            exit $LASTEXITCODE
+          }
+
       - name: 构建并独立安装 wheel
         if: always()
         shell: pwsh
@@ -157,6 +171,18 @@ jobs:
             ${{ runner.temp }}/tracefix-wheel-smoke/**/*.html
             ${{ runner.temp }}/tracefix-wheel-smoke/**/*.patch
             ${{ runner.temp }}/tracefix-wheel-smoke/**/*.sha256
+            ${{ runner.temp }}/tracefix-public-qualification.log
+            ${{ runner.temp }}/tracefix-public-qualification/**/*.json
+            ${{ runner.temp }}/tracefix-public-qualification/**/*.txt
+            ${{ runner.temp }}/tracefix-public-qualification/**/*.xml
+            ${{ runner.temp }}/tracefix-public-qualification/**/*.diff
+            ${{ runner.temp }}/tracefix-public-qualification/**/*.html
+            ${{ runner.temp }}/tracefix-public-qualification/**/*.patch
+            ${{ runner.temp }}/tracefix-public-qualification/**/*.toml
+            ${{ runner.temp }}/tracefix-public-qualification/**/*.sha256
+            !${{ runner.temp }}/tracefix-public-qualification/**/workspace/**
+            !${{ runner.temp }}/tracefix-public-qualification/prepared-source/**
+            !${{ runner.temp }}/tracefix-public-qualification/**/.git/**
           if-no-files-found: warn
 
   docker-zero-call:
