@@ -70,6 +70,10 @@ Docker 构建需要联网取得固定基础镜像与锁内 PyPI wheel；任务�
 
 ## 启停和回退
 
-Skills 默认关闭。baseline 命令不加 --skills-enabled；只需停用时移除该 flag。Docker 也复用相同 Skills 开关；bridge identity 或目录错误时 fail closed。恢复代码可回退本批 Git 提交；保持基线运行时仍可仅关闭 Skills。Context7、GitHub MCP 和 Serena 本批均未接入。
+Skills 默认关闭。baseline 命令不加 --skills-enabled；只需停用时移除该 flag。Docker 也复用相同 Skills 开关；bridge identity 或目录错误时 fail closed。恢复代码可回退本批 Git 提交；保持基线运行时仍可仅关闭 Skills。此段属于 2026-09-28 合成演示边界。后续 Serena 只读查询已接入并由 Linux CI 验证，见 `mcp-serena.md`；Context7/GitHub MCP 未接入。
 
-下一步效果比较先用冻结开发集做 baseline 对 Skills-only 单变量对照，固定任务、源码、镜像和预算，并记录 Token 估算、耗时、搜索/读取、重复工具操作、无效补丁与独立验收。没有真实对照和独立资格证据时，只报告工程能力及合成控制流，不报告真实修复成功率提升。
+历史效果比较建议（非当前执行计划）：用冻结开发集做 baseline 对 Skills-only 单变量对照，固定任务、源码、镜像和预算，并记录 Token 估算、耗时、搜索/读取、重复工具操作、无效补丁与独立验收。没有真实对照和独立资格证据时，只报告工程能力及合成控制流，不报告真实修复成功率提升。
+
+## 当前安装包回归反馈场景
+
+`tracefix-reproduce --scenario regression-feedback --output <新目录>` 无需仓库脚本，使用录制响应及生产适配器、配置、Runner 和 pytest；四请求、八次 Agent 测试，独立验证单列。只支持本地，不支持 Skills/Docker 组合。源仓库、运行目录、配置、报告和导出均保留；路径与哈希见 `reproduction.json`。usage 是模拟值，费用未知。真实模型、回归门和 Linux MCP/Docker 的证据分列于 [evidence.md](evidence.md)。当前下一步是公开任务资格，不能沿用耗尽的八次付费额度。
