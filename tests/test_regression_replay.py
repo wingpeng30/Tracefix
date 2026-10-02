@@ -78,11 +78,28 @@ def test_recorded_guard_forbids_provider_and_network_without_blocking_adapter():
         assert importlib.import_module("json") is json
         with pytest.raises(AssertionError, match="provider import"):
             _ = LiteLLMAdapter(LLMConfig(model_name="offline/test")).client
+        with pytest.raises(AssertionError, match="provider import"):
+            __import__("litellm")
+        with pytest.raises(AssertionError, match="provider import"):
+            importlib.import_module("litellm.fake")
         with pytest.raises(AssertionError, match="network"):
             socket.create_connection(("127.0.0.1", 1))
         with socket.socket() as connection:
             with pytest.raises(AssertionError, match="network"):
                 connection.connect(("127.0.0.1", 1))
+            with pytest.raises(AssertionError, match="network"):
+                connection.connect_ex(("127.0.0.1", 1))
+
+
+def test_package_environment_failure_never_claims_success(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        "tracefix.runtime.TraceFixRunner._prepare_workspace",
+        lambda *_args, **_kwargs: {"success": False, "failure": "pytest missing"},
+    )
+    with pytest.raises(AssertionError, match="repair failed"):
+        main(["--scenario", "regression-feedback", "--output", str(tmp_path / "failed")])
+    assert not (tmp_path / "failed" / "reproduction.json").exists()
+    assert not (tmp_path / "failed" / "export.patch").exists()
 
 
 def test_cli_dispatches_packaged_scenario(tmp_path, monkeypatch, capsys):

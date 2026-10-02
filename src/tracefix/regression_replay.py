@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import builtins
 import hashlib
 import importlib
 import json
@@ -112,6 +113,7 @@ class RecordedRegressionClient:
 def forbid_live_access():
     """Keep adapter serialization/parsing live, forbid lazy provider import and sockets."""
     original_import = importlib.import_module
+    original_builtin_import = builtins.__import__
 
     def guarded_import(name, *args, **kwargs):
         if name == "litellm" or name.startswith("litellm."):
@@ -121,11 +123,18 @@ def forbid_live_access():
     def forbidden(*_args, **_kwargs):
         raise AssertionError("live provider/network access is forbidden in recorded reproduction")
 
+    def guarded_builtin_import(name, *args, **kwargs):
+        if name == "litellm" or name.startswith("litellm."):
+            raise AssertionError("provider import is forbidden in recorded reproduction")
+        return original_builtin_import(name, *args, **kwargs)
+
     with ExitStack() as stack:
         stack.enter_context(patch("importlib.import_module", guarded_import))
+        stack.enter_context(patch("builtins.__import__", guarded_builtin_import))
         stack.enter_context(patch("tracefix.runtime.LiteLLMAdapter", forbidden))
         stack.enter_context(patch.object(socket, "create_connection", forbidden))
         stack.enter_context(patch.object(socket.socket, "connect", forbidden))
+        stack.enter_context(patch.object(socket.socket, "connect_ex", forbidden))
         yield
 
 
@@ -255,6 +264,8 @@ def run_regression_feedback(output: Path) -> dict:
                 report_path,
                 exported,
                 config_file,
+                Path(verification["record_path"]),
+                exported.with_name(exported.name + ".sha256"),
             )
         },
     }
