@@ -110,3 +110,30 @@ Repo Map 和查询选范围，不利用参考修复定位。先测真实载荷�
 压缩后的任务约束、最新修改与失败证据可追溯；真实 pytest 回归门及独立验证通过；成功对照
 所需证据保留。在此基础上再考虑预算感知压缩，不能直接以更低阈值换取不可解释的证据丢失。
 本批没有新的真实模型效果结论，也不申请或消耗新的付费额度。
+
+## 冻结执行记录
+
+正式调查代码提交：`eab96d1bb320ce55020f29bd5fb43d07f2e172c2`；Python 3.12.5。
+执行上方命令，output 使用 `runs/offline-history-investigation-eab96d1`，退出码 0。
+27 个账本请求全部匹配、四条基线全部复现、原输入哈希全部不变。
+微型运行分别为 `20261002T135439Z-9c08f94a`、`20261002T135501Z-c4e24baf`，
+两者任务验收及独立验证通过；原始 pytest/JUnit 在各运行及验证记录内。
+
+| 本地原始产物（不提交） | SHA-256 |
+| --- | --- |
+| `analysis.json` | `f5b35d0fe94056cc703715d9379460c4528f3cbd68a65a6d312557e8de2ec9d8` |
+| `requests.csv` | `e62b9d6839cfbb14736afe53f516b4f3b5a305ba9b2f683a180a35b9e47b99d8` |
+| `report.md` | `9e2398e490360421bae98245ef397cd163cde8a0e6f6964d321682be4b4ec8be` |
+| `micro-line_pages/micro.json` | `f01a00efbf3e99f2399ec2d905c7b0ad84c037e2f9b9841bfc86763356cb1e69` |
+| `micro-context/micro.json` | `e5d9531cd561d1134e09ed15e411a6992f8ee9fbd0f913395e077d27883e5a52` |
+
+原 campaign `requests.json` SHA 保持
+`fca3a7eb8faf5e0a6e3ff9bfc2d43dd0cd55d709cf8ab553a3a94e001bbb2605`，
+`runs.json` SHA 保持 `0e00c0aeb2263a2057197ae6aa0effb2861272f6de99f447fdf01e203438f3ab`。
+新输出还保存各配置、轨迹、结果与三份调查脚本哈希，以及实际解释器和计数依赖版本；
+计数结果不可用仍为不可用。
+
+本地相关验证：真实工具两项加其余合成证据检查，共 25 项新增测试；Ruff、compileall、Diff
+通过。最终 Windows 双版本全套、纯 pytest 覆盖率与安装/Linux 验收以
+[PR #16](https://github.com/wingpeng30/Tracefix/pull/16) 精确提交 CI 原始产物为准，
+不能把前批 CI 当作本批结果。当前文档提交只追加上述证据，不改冻结调查代码。
