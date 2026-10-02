@@ -139,6 +139,13 @@ def main() -> int:
     parser.add_argument("--regression-example", action="store_true")
     parser.add_argument("--validation-gate-example", action="store_true")
     args = parser.parse_args()
+    if args.validation_gate_example:
+        if args.mcp_serena_image_id or args.docker_ordinary_image_id or args.regression_example:
+            parser.error("validation-gate example supports local backend without MCP")
+        from tracefix.regression_replay import run_regression_feedback
+
+        print(json.dumps(run_regression_feedback(args.output), ensure_ascii=False))
+        return 0
     output = args.output.expanduser().resolve()
     if output.exists():
         parser.error("output must not already exist")

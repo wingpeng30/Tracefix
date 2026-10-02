@@ -1,6 +1,6 @@
 # TraceFix 持续维护约定
 
-2026-09-30 当前产品顺序：普通受信任 Python 仓库的本地闭环、任务检查点、普通用户路径、可选只读 MCP、普通仓库 Docker，以及 8 次真实模型小批验收已交付。当前分支 `codex/gated-regression-feedback` 的结束前回归验收与 Agent 反馈已实现；PR #9 的完整 pytest 通过但 Windows 覆盖率暂为 89.5322%。定向验证又发现并修复基线不完整时可能误接受的问题，等待覆盖门槛复验；状态及证据见 [`docs/tasks/2026-09-30-validation-feedback-gate.md`](docs/tasks/2026-09-30-validation-feedback-gate.md)。审查和 CI 通过后，将此能力合入主线，再依据失败证据挑选不同类型的公开任务。演示与历史报告保留；简历材料和案例包装后置。首批使用说明见 [`docs/ordinary-repository.md`](docs/ordinary-repository.md)，能力边界见 [`docs/reviews/2026-09-28-system-review.md`](docs/reviews/2026-09-28-system-review.md)。下文作品集顺序作为历史记录。
+2026-09-30 当前产品顺序：普通受信任 Python 仓库本地闭环、任务检查点、普通用户路径、可选只读 MCP、普通仓库 Docker、真实模型小批验收及结束前回归门均已交付。PR #9 已合并（merge commit `b18958b8342b0642b7f4fe828c39852ada769319`）；精确 PR head `cb5571815a09f831cde0fd1f648059b6fdff6877` 的 CI #73 全部通过。下一步先对公开任务做任务契约和环境资格筛选，再冻结少量不同类型任务；候选筛选现状见 [`docs/tasks/2026-09-30-public-task-qualification.md`](docs/tasks/2026-09-30-public-task-qualification.md)。当前没有通过资格复验的新多类型任务集，不开展真实模型比较；已用完的八次付费运行额度不续用，后续调用需重新授权。演示与历史报告保留；简历材料和案例包装后置。首批使用说明见 [`docs/ordinary-repository.md`](docs/ordinary-repository.md)，能力边界见 [`docs/reviews/2026-09-28-system-review.md`](docs/reviews/2026-09-28-system-review.md)。下文作品集顺序作为历史记录。
 
 开始工作前阅读 [`docs/roadmap.md`](docs/roadmap.md) 与最近的开发、实验记录。
 当前跨会话交接入口：[`docs/handoffs/2026-09-29-agent-harness.md`](docs/handoffs/2026-09-29-agent-harness.md)。历史 V0.8.4 交接保留在 [`docs/handoffs/2026-09-17-v084.md`](docs/handoffs/2026-09-17-v084.md)。
@@ -14,3 +14,5 @@
 每次代码任务结束后，记录实际改动、验证结果、限制和下一步；每次实验记录固定代码版本、
 任务身份、环境、配置和原始结果位置。合成任务成功率、离线定位指标与真实修复成功率必须
 分开表述，并明确哪些结论已经验证、哪些仍是探索性观察。
+
+2026-10-02 当前执行顺序更新：先交付安装包内 `regression-feedback` 入口，再冻结 more-itertools #462 空输入任务并执行资格矩阵；此前 Sphinx 初筛保留为历史，本批不重建环境。所有调用均离线，原八次付费额度不续用。执行记录见 `docs/tasks/2026-10-02-package-and-public-task.md`（文档内路径相对仓库根目录）。

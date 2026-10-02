@@ -8,7 +8,7 @@
 
 从 GitHub 获取本仓库后，使用独立虚拟环境安装。PowerShell 示例：
 
-以下命令使用已合入 PR #1–#6 的 `main`（核验提交 `7a28687f897821b9600cc4a9e8bf8da583ec7d45`）。本项目尚未发布稳定版本。
+以下命令使用已合入 PR #1–#9 的 `main`（核验提交 `b18958b8342b0642b7f4fe828c39852ada769319`）。本项目尚未发布稳定版本。
 
 ```powershell
 git clone https://github.com/wingpeng30/Tracefix.git
@@ -78,3 +78,16 @@ python examples/replay_ordinary.py --validation-gate-example --output runs/valid
 该脚本生成自己的干净 Git 仓库和独立运行目录；输出中的 `result` 路径可传给 `tracefix export --run <result 所在目录> --output fix.patch`。它不调用供应商，原仓库保持干净。
 
 结束前回归演示会先应用一版通过主测试但破坏负数哨兵与身份函数的补丁；离线回放收到自动测试反馈后再修复，随后在新 checkout 独立复验。它验证 harness 控制流，不验证供应商模型的决策质量。普通 `run` 的测试通过只说明列出的公开测试有通过证据，不等于完整正确性。产物中的完整历史、请求视图、估算 Token、供应商 usage 和成本各有不同含义；请求视图默认不记录。普通本地运行支持符合身份约束的 checkpoint 与安全恢复，详见 [`recovery.md`](recovery.md)。
+
+## 仅凭安装包验证回归反馈
+
+```powershell
+tracefix-reproduce --scenario regression-feedback --output "runs/regression feedback"
+$summary = Get-Content "runs/regression feedback/reproduction.json" -Raw | ConvertFrom-Json
+tracefix inspect --run $summary.run_path --json
+tracefix verify --run $summary.run_path
+tracefix report --run $summary.run_path --output "runs/regression feedback/another-report.html"
+tracefix export --run $summary.run_path --output "runs/regression feedback/another-export.patch"
+```
+
+输出目录必须尚不存在。此入口创建并保留 `source/`，运行工作副本在其外部；退出后可重复独立验证，每次生成新记录。默认自动导出 `export.patch` 和哈希、生成 `report.html`。两次基线加两轮三目标验收共八个 pytest 进程；独立验证不计入 Agent 预算。录制客户端在返回第二版修复前确认请求含两个回归失败。仅本地；Docker、Skills、image ID 显式拒绝。无需安装 LiteLLM 可选依赖，但需 Git、pytest 及基础包依赖。所有 usage 是录制模拟值，费用缺失；不发送模型或网络请求。

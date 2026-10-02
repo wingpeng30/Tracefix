@@ -1,7 +1,7 @@
 # 结束前回归验收与 Agent 反馈闭环
 
 日期：2026-09-30
-状态：CI #72 已在精确 PR head `9501ee65c523f129074756f10573c2de518f4479` 全部通过；无未解决审查意见，准备合入主线
+状态：已合入主线；PR #9 merge commit `b18958b8342b0642b7f4fe828c39852ada769319`，精确 PR head `cb5571815a09f831cde0fd1f648059b6fdff6877` 的 CI #73 全部通过
 分支：`codex/gated-regression-feedback`
 基线：`bc18a57a8dc16be1c8f2e934ca1dde06b19e07ed`
 PR：[#9](https://github.com/wingpeng30/Tracefix/pull/9)
@@ -45,4 +45,6 @@ PR：[#9](https://github.com/wingpeng30/Tracefix/pull/9)
 
 ## 后续
 
-重跑相关 Ruff、compileall、diff 与定向测试，提交正确性修复和回归用例，等待 PR #9 的 Windows 双版本 90% 覆盖及 Linux CI 通过；复核 PR 审查意见与 wheel smoke 后再合入主线。之后冻结少量不同类型的公开任务，以失败分类决定下一项改进。真实模型实验需新的次数与金额授权。
+（历史计划，已完成）重跑相关 Ruff、compileall、diff 与定向测试，补充正确性修复及回归用例，并通过 PR #9 的双版本覆盖和 Linux CI 后合入主线。
+
+当前后续是公开任务资格筛选，而不是直接启动新一轮模型评估。候选、环境风险和冻结标准见 [`2026-09-30-public-task-qualification.md`](2026-09-30-public-task-qualification.md)。真实模型实验需新的次数与金额授权。

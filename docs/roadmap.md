@@ -1,8 +1,10 @@
 # TraceFix 路线图
 
-## 2026-09-29 当前执行计划
+## 2026-09-30 当前执行计划
 
-2026-09-30 PR #9 `codex/gated-regression-feedback` 的 CI #72 已在 head `9501ee65c523f129074756f10573c2de518f4479` 全部通过：Windows 双版本覆盖率同为 90.0006666%，Ruff、compileall、editable/wheel smoke 及三个 Linux Docker/MCP job 通过；审查列表为空。验证结束前自动回归门与 Agent 反馈闭环，准备合入主线。机制默认关闭、零供应商请求；不宣称总体修复率提升。计划和状态见 [`tasks/2026-09-30-validation-feedback-gate.md`](tasks/2026-09-30-validation-feedback-gate.md)。
+2026-09-30 PR #9 `codex/gated-regression-feedback` 已合并，merge commit `b18958b8342b0642b7f4fe828c39852ada769319`。精确 PR head `cb5571815a09f831cde0fd1f648059b6fdff6877` 的 CI #73 五个 job 全部成功；CI #72 对应代码 head `9501ee65c523f129074756f10573c2de518f4479`，Windows 双版本覆盖率均为 90.0006666%，Ruff、compileall、editable/wheel smoke 和 Linux Docker/MCP job 通过。结束前自动回归门与 Agent 反馈闭环默认关闭；本批零供应商请求，不声称总体修复率提升。实现边界和历史验证见 [`tasks/2026-09-30-validation-feedback-gate.md`](tasks/2026-09-30-validation-feedback-gate.md)。
+
+下一步先冻结可复现的公开任务契约，再决定是否启动模型诊断。候选审查显示 `sphinx-doc__sphinx-10323` 适合优先资格预检；`psf__requests-1724` 有外部 HTTP 服务和任务测试目标不一致风险；`pylint-dev__pylint-4604` 是历史重用样本且基线测试补丁有收集依赖。尚无多类型任务集通过本轮 base/gold 复验，因此不将这些候选写成已冻结或已验证。筛选记录和停止条件见 [`tasks/2026-09-30-public-task-qualification.md`](tasks/2026-09-30-public-task-qualification.md)。
 
 2026-09-30 下一批聚焦补丁验收可信度：普通本地运行支持在原始与补丁 checkout 中追加公开回归目标，并在报告中显式展示发现的回归。Boltons 真实运行的派生诊断纠正了对旧 `count` 参数的过度判断；该差异属任务未规定的接口行为。实现与边界见 [`experiments/2026-09-30-regression-verification.md`](experiments/2026-09-30-regression-verification.md)。
 
@@ -163,3 +165,5 @@ G6 pytest-only 精确覆盖补测（同一最终代码版本）：用独立 `COV
 2026-09-28 GitHub CI run `36411826884`（分支 `b7addcb`，PR 合并 checkout `b7f4990`）显示 Windows 3.11.9/3.12.10 各 632 项测试通过但 pytest-only 覆盖率均为 89.9151515%，且浅克隆导致 `HEAD^` Diff 检查返回 128；Linux Docker 两臂通过，但原产物未验证容器清理。该运行失败记录与身份见 [`experiments/2026-09-28-clean-checkout-engineering-gates.md`](experiments/2026-09-28-clean-checkout-engineering-gates.md)。当前修订显式接收 Diff 比较基准、导出覆盖缺口、让安装 smoke 在门槛失败后仍运行，并在 Docker 运行前记录 network/mount、运行后审计容器清理。Docker backend 与 Docker 审计定向测试 53 passed，Ruff、YAML 解析与 Diff 检查通过；本机全量检查受到 pytest `basetemp` 目录权限拒绝（641 项中 381 个 fixture setup 错误，覆盖结果 44.12% 无代表性），证据位于 `D:\Tracefix\tmp\tracefix-candidate-b7addcb-py312`。因此不能代表工程验收。本次候选仍须由干净 GitHub CI 重新判定；未有结果前不宣称达到 90% 或完成 Docker 清理验收。
 
 2026-09-28 PR 候选 `1882cc9` 的 GitHub CI run [`36420487054`](https://github.com/wingpeng30/Tracefix/actions/runs/36420487054) 已全绿：Windows Python 3.11.16/3.12.5 各 646 passed、0 skipped，pytest-only coverage `11158/12388 = 90.07103648692282%`，Ruff、compileall、Diff 通过；editable 与仓库外 wheel 的 baseline/Skills-only 合成运行通过；Linux Docker bridge 两臂通过，容器无网络、无挂载、删除已审计，供应商调用计数为零。Docker 审计哈希字段修正和三项 Docker 证据导出行为回归已并入候选。完整身份、wheel/image/artifact 哈希见 [`experiments/2026-09-28-clean-checkout-engineering-gates.md`](experiments/2026-09-28-clean-checkout-engineering-gates.md)。本批工程复现门槛达成，不等同于真实修复成功率提升；后续依序开展 Requests 历史 TLS 复验、pytest-10081 点版本诊断、Sphinx 配方重建和 Token 计数契约。
+
+2026-10-02 当前执行顺序更新：先交付安装包内 `regression-feedback` 入口，再冻结 more-itertools #462 空输入任务并执行资格矩阵；此前 Sphinx 初筛保留为历史，本批不重建环境。所有调用均离线，原八次付费额度不续用。执行记录见 `docs/tasks/2026-10-02-package-and-public-task.md`（文档内路径相对仓库根目录）。
