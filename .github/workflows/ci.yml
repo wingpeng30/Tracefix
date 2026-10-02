@@ -156,6 +156,14 @@ jobs:
               Get-Content (Join-Path $wheelSmoke "markdown-qualification.log") -Tail 20
               exit $LASTEXITCODE
             }
+            $clickSource = Join-Path $env:RUNNER_TEMP "tracefix-click-upstream"
+            git clone --quiet --no-checkout https://github.com/pallets/click.git $clickSource
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            & $wheelPython (Join-Path $env:GITHUB_WORKSPACE "scripts/qualify_public_task.py") --task click-completion-resources-2800 --source-repo $clickSource --test-python $wheelPython --output (Join-Path $wheelSmoke "click qualification") > (Join-Path $wheelSmoke "click-qualification.log")
+            if ($LASTEXITCODE -ne 0) {
+              Get-Content (Join-Path $wheelSmoke "click-qualification.log") -Tail 20
+              exit $LASTEXITCODE
+            }
           } finally { Pop-Location }
 
       - name: 保存工程与 wheel 验证结果

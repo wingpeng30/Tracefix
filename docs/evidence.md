@@ -13,3 +13,9 @@
 完整运行目录与未审查的模型请求不发布。公开文档保留可复制命令和证据身份；本地原始结果继续保留。
 
 安装包入口 head `5a518067889031222da7d2350a452c631883cd5d` 的 [CI #77](https://github.com/wingpeng30/Tracefix/actions/runs/36966132365) 五 job 通过，已在 PR #10 合并。公开 more-itertools 单任务资格、失败记录及当前平台范围见 [本批记录](tasks/2026-10-02-package-and-public-task.md)；资格通过不等于模型效果通过。
+
+新增解析与资源生命周期任务的契约、纠正参考、失败记录及资格入口见
+[三类型任务记录](tasks/2026-10-02-three-public-task-types.md)。Markdown 已通过
+[PR #12 / CI #86](https://github.com/wingpeng30/Tracefix/actions/runs/36975942940)
+并合并；Click 的最终证据以独立 PR #13 的精确提交 CI 为准。所有模型响应均离线，
+不得将纠正参考的通过写成原上游修复提交通过，也不得据此声称修复成功率提高。

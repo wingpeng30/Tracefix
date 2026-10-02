@@ -1,0 +1,13 @@
+diff --git a/src/click/shell_completion.py b/src/click/shell_completion.py
+--- a/src/click/shell_completion.py
++++ b/src/click/shell_completion.py
+@@ -562,3 +562,3 @@
+                     ) as sub_ctx:
+-                        args = ctx._protected_args + ctx.args
++                        args = sub_ctx._protected_args + sub_ctx.args
+                         ctx = sub_ctx
+@@ -581,3 +581,3 @@
+                         ) as sub_sub_ctx:
+-                            args = sub_ctx.args
++                            args = sub_sub_ctx.args
+                             sub_ctx = sub_sub_ctx

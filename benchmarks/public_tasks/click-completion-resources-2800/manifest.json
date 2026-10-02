@@ -1,0 +1,58 @@
+{
+  "schema_version": 2,
+  "task_id": "click-completion-resources-2800",
+  "repository": "https://github.com/pallets/click.git",
+  "issue": "https://github.com/pallets/click/issues/2644",
+  "reference_pr": "https://github.com/pallets/click/pull/2800",
+  "base_commit": "d8763b93021c416549b5f8b4b5497234619410db",
+  "reference_commit": "0ef55fda47bb3d0dece21197d81d8d72a4250e73",
+  "license": "BSD-3-Clause",
+  "source_import": "click",
+  "task_target": "tests/test_tracefix_completion_resources.py",
+  "regression_targets": [
+    "tests/test_shell_completion.py::test_command",
+    "tests/test_shell_completion.py::test_chained",
+    "tests/test_shell_completion.py::test_group_command_same_option"
+  ],
+  "products": [
+    {
+      "path": "src/click/core.py",
+      "base_blob": "666ad68137de338287362db06fcc2b8cafd6a29b",
+      "reference_blob": "bf8967f576da2e094f9d42db95df4c460d28ec15"
+    },
+    {
+      "path": "src/click/shell_completion.py",
+      "base_blob": "6fd9e542231c5ef7d51d9f57dc78a7165e781e73",
+      "reference_blob": "c8655b12aabea2f1f0bb3d36f78ba07ec45df13c"
+    }
+  ],
+  "target_counts": {
+    "tests/test_tracefix_completion_resources.py": 4,
+    "tests/test_shell_completion.py::test_command": 1,
+    "tests/test_shell_completion.py::test_chained": 1,
+    "tests/test_shell_completion.py::test_group_command_same_option": 1
+  },
+  "diagnostic_expected": [
+    "passed",
+    "failed",
+    "passed",
+    "failed"
+  ],
+  "upstream_reference_expected": [
+    "failed",
+    "passed",
+    "passed",
+    "passed"
+  ],
+  "reference_correction": "reference-correction.patch",
+  "qualification_status": "requires_execution",
+  "files_sha256": {
+    ".gitattributes": "b089fcbedc9e7cb6d077e4319e358e159bc41ed8743699a8184c24ff09021911",
+    "diagnostic-wrong.patch": "7bdacdcdb5122ca2dac32d8c610a13f87e7392eb2ad6713096280dfdeb840b59",
+    "LICENSE": "9a8ad106a394e853bfe21f42f4e72d592819a22805d991b5f3275029292b658d",
+    "prepare-tests.patch": "12ee3af0f004910afd39390906aab843cc55dddf909eb396ce0dd59be1297f35",
+    "reference-correction.patch": "90952f6ec431df799746107e8e3d27224664c6289087f0268c4b5af751e0e702",
+    "reference-product.patch": "a8a4c51c9d0220082f95a996c4199754be60648bf73bdb2338b3fa382555d045",
+    "task.md": "dbd2f829e6f2886d2f1bd4a9a41f6dfad845c3d4157bea09f1cd68d063f7aff8"
+  }
+}

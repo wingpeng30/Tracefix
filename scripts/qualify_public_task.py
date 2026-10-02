@@ -28,6 +28,7 @@ PACKAGE = (
 TASKS = {
     "more-itertools-windowed-empty-462": PACKAGE,
     "markdown-quoted-braces-1414": PACKAGE.parent / "markdown-quoted-braces-1414",
+    "click-completion-resources-2800": PACKAGE.parent / "click-completion-resources-2800",
 }
 
 
