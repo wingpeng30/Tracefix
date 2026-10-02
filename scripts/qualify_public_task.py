@@ -9,6 +9,7 @@ import os
 import subprocess
 import sys
 from pathlib import Path
+from unittest.mock import patch
 
 from tracefix import AgentConfig, RunConfig, ToolCall, TraceFixRunner
 from tracefix.models.litellm_adapter import LiteLLMAdapter
@@ -30,6 +31,8 @@ def git(repo: Path, *arguments: str) -> str:
         {
             "GIT_AUTHOR_DATE": "2000-01-01T00:00:00+00:00",
             "GIT_COMMITTER_DATE": "2000-01-01T00:00:00+00:00",
+            "GIT_ALLOW_PROTOCOL": "file",
+            "GIT_TERMINAL_PROMPT": "0",
         }
     )
     return (
@@ -348,7 +351,16 @@ def qualify(source_repo: Path, python: Path, output: Path) -> dict:
         )
         if actual_reference != reference:
             raise ValueError("reference product patch differs from frozen upstream diff")
-        with forbid_live_access():
+        with (
+            forbid_live_access(),
+            patch.dict(
+                os.environ,
+                {
+                    "GIT_ALLOW_PROTOCOL": "file",
+                    "GIT_TERMINAL_PROMPT": "0",
+                },
+            ),
+        ):
             prepared = output / "prepared-source"
             git(output, "clone", "--quiet", "--no-checkout", str(source_repo), str(prepared))
             git(prepared, "config", "core.autocrlf", "false")

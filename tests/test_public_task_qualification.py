@@ -36,10 +36,21 @@ def test_tampered_or_escaping_package_is_rejected(tmp_path):
     content.write_text("changed", encoding="utf-8")
     with pytest.raises(ValueError, match="identity"):
         qualification.load_manifest(tmp_path)
+
     manifest["files_sha256"] = {"../outside": "anything"}
     (tmp_path / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
     with pytest.raises(ValueError, match="identity"):
         qualification.load_manifest(tmp_path)
+
+
+def test_git_preparation_cannot_fetch_remote_or_prompt_for_credentials(tmp_path, monkeypatch):
+    def capture(_command, **kwargs):
+        assert kwargs["env"]["GIT_ALLOW_PROTOCOL"] == "file"
+        assert kwargs["env"]["GIT_TERMINAL_PROMPT"] == "0"
+        return b"local object\n"
+
+    monkeypatch.setattr(qualification.subprocess, "check_output", capture)
+    assert qualification.git(tmp_path, "rev-parse", "HEAD") == "local object\n"
 
 
 def test_output_reuse_or_source_nested_output_does_not_overwrite(tmp_path):
