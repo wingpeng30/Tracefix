@@ -157,6 +157,9 @@ def run_case(
             count = test.get("output", {}).get("test_counts", {}).get("tests")
             if count != manifest["target_counts"][target]:
                 raise ValueError(f"{target}: expected complete test collection, got {count}")
+            counts = test.get("output", {}).get("test_counts", {})
+            if counts.get("skipped", 0) or counts.get("errors", 0):
+                raise ValueError(f"{target}: qualification cannot contain skips or errors")
             if status != wanted or test.get("output", {}).get("truncated"):
                 raise ValueError(f"{target}: expected {wanted}, got {status}; inspect raw evidence")
         record["source_after"] = source_state(workspace)

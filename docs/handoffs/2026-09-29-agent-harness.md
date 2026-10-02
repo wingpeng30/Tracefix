@@ -17,3 +17,5 @@ A 的 [CI #25](https://github.com/wingpeng30/Tracefix/actions/runs/36532867162) 
 D 已提供普通仓库独立 Docker profile，预构建镜像和依赖身份、无网络／非 root／只读根文件系统的容器、新容器独立验证，以及 Linux CI 的重复运行与故障清理。首版不支持恢复丢失容器；Windows Docker Desktop 未实测。PR #6 最新提交的 [CI #51](https://github.com/wingpeng30/Tracefix/actions/runs/36590277947) 五个 job 已通过。下一步依真实失败分布提高普通任务可靠性，优先审查外部任务的 API 兼容边界，再决定是否扩展实验；20 道留出题继续保持未使用。
 
 2026-10-02 当前执行顺序更新：先交付安装包内 `regression-feedback` 入口，再冻结 more-itertools #462 空输入任务并执行资格矩阵；此前 Sphinx 初筛保留为历史，本批不重建环境。所有调用均离线，原八次付费额度不续用。执行记录见 `docs/tasks/2026-10-02-package-and-public-task.md`（文档内路径相对仓库根目录）。
+
+2026-10-02 安装包回归反馈入口已通过 PR #10 精确 CI #77 并合并，主线 `0954c4f`。more-itertools #462 单任务已在本机 3.12 通过完整资格矩阵与生产参考回放；3.11 等待锁定依赖 CI。当前不是多类型任务集，也没有新模型效果证据。下一步增加两种不同缺陷类型，先做契约与资格，再申请新的付费验收。详见 `docs/tasks/2026-10-02-package-and-public-task.md`，原始目录不提交。

@@ -88,7 +88,7 @@ def test_reference_client_exercises_adapter_parsing_without_provider():
             client.completion(messages=[{}], tools=[{}])
 
 
-@pytest.mark.parametrize("status", ["collection_error", "timeout", "test_failure"])
+@pytest.mark.parametrize("status", ["collection_error", "timeout", "test_failure", "skipped"])
 def test_qualification_rejects_incomplete_or_wrong_collection(tmp_path, monkeypatch, status):
     workspace = tmp_path / "workspace"
     workspace.mkdir()
@@ -114,13 +114,14 @@ def test_qualification_rejects_incomplete_or_wrong_collection(tmp_path, monkeypa
                 "returncode": 1,
                 "test_counts": {
                     "tests": 1 if status == "test_failure" else 36,
+                    "skipped": int(status == "skipped"),
                     "failures": 1,
                     "errors": 0,
                 },
             },
         },
     )
-    with pytest.raises(ValueError, match="collection|expected failed"):
+    with pytest.raises(ValueError, match="collection|expected failed|skips"):
         qualification.run_case(
             workspace,
             case,

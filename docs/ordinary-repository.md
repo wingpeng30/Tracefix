@@ -8,7 +8,7 @@
 
 从 GitHub 获取本仓库后，使用独立虚拟环境安装。PowerShell 示例：
 
-以下命令使用已合入 PR #1–#9 的 `main`（核验提交 `b18958b8342b0642b7f4fe828c39852ada769319`）。本项目尚未发布稳定版本。
+以下命令使用已合入 PR #1–#10 的 `main`（核验提交 `0954c4fc638eb6f43f7fe6403b11fa099af096f4`）。本项目尚未发布稳定版本。
 
 ```powershell
 git clone https://github.com/wingpeng30/Tracefix.git
