@@ -26,3 +26,16 @@ Sandbox temporary ACL blocked pytest; a new unsandboxed temporary directory
 passed. Failed environment attempts are not behavioral evidence.
 
 Run results will be appended after execution; no live success claimed yet.
+
+First three runs at `4201ab5`: more-itertools completed and independently passed;
+Markdown stopped after 65,671 input tokens with a failed independent patch;
+Click stopped after 72,869 input tokens without a patch. These demonstrate the
+ordinary cumulative Token limit was post-response, not a supplier hard cap.
+All 23 requests have valid usage and no pending result. Source remained unchanged.
+
+Targeted correction: new campaign adapter checks conservative per-request input
+reservation plus known cumulative usage before sending; output is also reserved.
+Formal P2 counting guards are unchanged. Rechecks lower the existing deterministic
+compaction trigger from 32,000 to 6,000 estimated tokens; budgets are unchanged.
+Sixteen offline tests (ledger, request rejection, context) passed. Rechecks are
+two newly counted logical runs, not resumes or replacements for failed results.

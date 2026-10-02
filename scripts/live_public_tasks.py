@@ -11,12 +11,33 @@ from qualify_public_task import TASKS, git, load_manifest, sha, source_state
 
 from tracefix import AgentConfig, RunConfig, TraceFixRunner
 from tracefix.checkpoint import ProcessLock
+from tracefix.exceptions import TokenBudgetExceeded
 from tracefix.live_budget import LiveBudgetAdapter
 from tracefix.onboarding import doctor, export_patch, verify_patch
 from tracefix.provenance import inspect_test_environment
 from tracefix.report import render_report
 
 CAMPAIGN = "2026-10-02-public-three-types-5runs-5cny"
+
+
+class CampaignAdapter(LiveBudgetAdapter):
+    """Conservative per-run pre-request guard in addition to the CNY ledger."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.first_request = len(self._read()["requests"])
+
+    def complete(self, messages, tools=()):
+        requests = self._read()["requests"][self.first_request:]
+        used_input = sum(r["usage"]["input_tokens"] for r in requests)
+        used_output = sum(r["usage"]["output_tokens"] for r in requests)
+        # The byte-based conservative reservation is deliberately not described
+        # as calibrated supplier token counting. Formal P2 guards are unchanged.
+        if used_input + self.count_input_tokens(messages, tools) > 60000:
+            raise TokenBudgetExceeded("campaign pre-request input reservation exceeded")
+        if used_output + self.config.max_output_tokens > 8000:
+            raise TokenBudgetExceeded("campaign pre-request output reservation exceeded")
+        return super().complete(messages, tools)
 
 
 def read_ledger(path: Path, task: str, stage: str) -> dict:
@@ -97,7 +118,8 @@ def execute(args, root: Path) -> int:
         agent_config=AgentConfig(
             max_steps=20, max_input_tokens=60000, max_output_tokens=8000,
             max_test_runs=16, wall_time_seconds=900, record_request_views=True,
-            context={"context_window_tokens": 100000, "compaction_trigger_tokens": 32000},
+            context={"context_window_tokens": 100000,
+                     "compaction_trigger_tokens": 6000 if stage.startswith("recheck-") else 32000},
         ),
     )
     preflight = doctor({
@@ -130,7 +152,7 @@ def execute(args, root: Path) -> int:
     record["config_sha256"] = sha(config_path)
     ledger["runs"].append(record)
     _write_json(ledger_path, ledger)
-    runner = TraceFixRunner(llm_factory=lambda llm: LiveBudgetAdapter(
+    runner = TraceFixRunner(llm_factory=lambda llm: CampaignAdapter(
         llm, ledger_path=root / "requests.json", limit_cny=5.0,
     ))
     result = runner.run(config)
