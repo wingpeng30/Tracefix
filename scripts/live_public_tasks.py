@@ -11,7 +11,7 @@ from qualify_public_task import TASKS, git, load_manifest, sha, source_state
 
 from tracefix import AgentConfig, RunConfig, TraceFixRunner
 from tracefix.checkpoint import ProcessLock
-from tracefix.exceptions import TokenBudgetExceeded
+from tracefix.exceptions import PreRequestBudgetExceeded
 from tracefix.live_budget import LiveBudgetAdapter
 from tracefix.onboarding import doctor, export_patch, verify_patch
 from tracefix.provenance import inspect_test_environment
@@ -34,9 +34,9 @@ class CampaignAdapter(LiveBudgetAdapter):
         # The byte-based conservative reservation is deliberately not described
         # as calibrated supplier token counting. Formal P2 guards are unchanged.
         if used_input + self.count_input_tokens(messages, tools) > 60000:
-            raise TokenBudgetExceeded("campaign pre-request input reservation exceeded")
+            raise PreRequestBudgetExceeded("campaign pre-request input reservation exceeded")
         if used_output + self.config.max_output_tokens > 8000:
-            raise TokenBudgetExceeded("campaign pre-request output reservation exceeded")
+            raise PreRequestBudgetExceeded("campaign pre-request output reservation exceeded")
         return super().complete(messages, tools)
 
 

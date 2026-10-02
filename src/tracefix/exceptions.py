@@ -111,6 +111,13 @@ class TokenBudgetExceeded(AgentLimitExceeded):
     code = "token_budget_exceeded"
 
 
+class PreRequestBudgetExceeded(TokenBudgetExceeded):
+    """Trusted adapter rejected a request before any provider transmission.
+
+    Adapters must never use this exception after invoking provider transport.
+    """
+
+
 class TimeLimitExceeded(AgentLimitExceeded):
     """任务运行时间达到上限。"""
 
