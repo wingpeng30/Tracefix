@@ -159,15 +159,23 @@ def assert_failure_evidence(test: dict) -> None:
     if not isinstance(junit, str):
         raise ValueError("expected assertion failure requires original JUnit evidence")
     failures = list(ET.parse(junit).iter("failure"))
-    if not failures or any(
-        not (
-            failure.get("message", "").lstrip().startswith("assert ")
-            or "AssertionError" in failure.get("message", "")
-            or re.search(r"(?:^|\n)E\s+AssertionError\b", failure.text or "")
+    if not failures:
+        raise ValueError("expected assertion failure requires failed JUnit nodes")
+    for failure in failures:
+        exception_types = re.findall(
+            r"^E\s+([\w.]+)(?=:|$)",
+            failure.text or "",
+            flags=re.MULTILINE,
         )
-        for failure in failures
-    ):
-        raise ValueError("expected assertion failure contains a non-assertion exception")
+        declared_type = failure.get("type")
+        if declared_type or exception_types:
+            actual_type = declared_type or exception_types[-1]
+            accepted = actual_type in ("AssertionError", "builtins.AssertionError")
+        else:
+            message = failure.get("message", "").lstrip()
+            accepted = message.startswith("assert ") or message.startswith("AssertionError:")
+        if not accepted:
+            raise ValueError("expected assertion failure contains a non-assertion exception")
 
 
 def apply_product(workspace: Path, product_patch: str, allowed_paths: set[str]) -> dict:

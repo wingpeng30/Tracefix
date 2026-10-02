@@ -176,6 +176,7 @@ def test_missing_extension_metadata_is_preflight_blocker(monkeypatch):
     [
         ("assert 1 == 2", True),
         ("ModuleNotFoundError: attr_list", False),
+        ("ImportError: cannot import AssertionError from optional_dep", False),
     ],
 )
 def test_baseline_body_exception_cannot_count_as_expected_assertion(tmp_path, message, accepted):
@@ -189,6 +190,17 @@ def test_baseline_body_exception_cannot_count_as_expected_assertion(tmp_path, me
     else:
         with pytest.raises(ValueError, match="non-assertion"):
             qualification.assert_failure_evidence(test)
+
+
+def test_chained_assertion_followed_by_import_error_is_not_a_valid_baseline(tmp_path):
+    evidence = tmp_path / "junit.xml"
+    evidence.write_text(
+        '<testsuite><testcase><failure message="ImportError: later">'
+        "E   AssertionError: earlier\nE   ImportError: later"
+        "</failure></testcase></testsuite>"
+    )
+    with pytest.raises(ValueError, match="non-assertion"):
+        qualification.assert_failure_evidence({"output": {"junit_path": str(evidence)}})
 
 
 @pytest.mark.parametrize("dirty", [False, True])
