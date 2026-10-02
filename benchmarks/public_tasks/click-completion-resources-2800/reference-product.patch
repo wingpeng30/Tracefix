@@ -1,0 +1,89 @@
+diff --git a/src/click/core.py b/src/click/core.py
+index 666ad68..bf8967f 100644
+--- a/src/click/core.py
++++ b/src/click/core.py
+@@ -706,4 +706,4 @@ class Context:
+         .. versionchanged:: 8.2
+-            Force closing of callbacks registered with
+-            :meth:`call_on_close` before exiting the CLI.
++            Callbacks and context managers registered with :meth:`call_on_close`
++            and :meth:`with_resource` are closed before exiting.
+         """
+diff --git a/src/click/shell_completion.py b/src/click/shell_completion.py
+index 6fd9e54..c8655b1 100644
+--- a/src/click/shell_completion.py
++++ b/src/click/shell_completion.py
+@@ -546,21 +546,10 @@ def _resolve_context(
+     ctx_args["resilient_parsing"] = True
+-    ctx = cli.make_context(prog_name, args.copy(), **ctx_args)
+-    args = ctx._protected_args + ctx.args
++    with cli.make_context(prog_name, args.copy(), **ctx_args) as ctx:
++        args = ctx._protected_args + ctx.args
+ 
+-    while args:
+-        command = ctx.command
++        while args:
++            command = ctx.command
+ 
+-        if isinstance(command, Group):
+-            if not command.chain:
+-                name, cmd, args = command.resolve_command(ctx, args)
+-
+-                if cmd is None:
+-                    return ctx
+-
+-                ctx = cmd.make_context(name, args, parent=ctx, resilient_parsing=True)
+-                args = ctx._protected_args + ctx.args
+-            else:
+-                sub_ctx = ctx
+-
+-                while args:
++            if isinstance(command, Group):
++                if not command.chain:
+                     name, cmd, args = command.resolve_command(ctx, args)
+@@ -570,16 +559,31 @@ def _resolve_context(
+ 
+-                    sub_ctx = cmd.make_context(
+-                        name,
+-                        args,
+-                        parent=ctx,
+-                        allow_extra_args=True,
+-                        allow_interspersed_args=False,
+-                        resilient_parsing=True,
+-                    )
+-                    args = sub_ctx.args
+-
+-                ctx = sub_ctx
+-                args = [*sub_ctx._protected_args, *sub_ctx.args]
+-        else:
+-            break
++                    with cmd.make_context(
++                        name, args, parent=ctx, resilient_parsing=True
++                    ) as sub_ctx:
++                        args = ctx._protected_args + ctx.args
++                        ctx = sub_ctx
++                else:
++                    sub_ctx = ctx
++
++                    while args:
++                        name, cmd, args = command.resolve_command(ctx, args)
++
++                        if cmd is None:
++                            return ctx
++
++                        with cmd.make_context(
++                            name,
++                            args,
++                            parent=ctx,
++                            allow_extra_args=True,
++                            allow_interspersed_args=False,
++                            resilient_parsing=True,
++                        ) as sub_sub_ctx:
++                            args = sub_ctx.args
++                            sub_ctx = sub_sub_ctx
++
++                    ctx = sub_ctx
++                    args = [*sub_ctx._protected_args, *sub_ctx.args]
++            else:
++                break
+ 

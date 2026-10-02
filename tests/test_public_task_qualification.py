@@ -117,6 +117,19 @@ def test_new_task_multiple_products_targets_and_invalid_contract(tmp_path):
         qualification.load_manifest(tmp_path)
 
 
+def test_click_task_contract_resources_and_frozen_reference():
+    package = qualification.TASKS["click-completion-resources-2800"]
+    manifest = qualification.load_manifest(package)
+    assert manifest["base_commit"] == "d8763b93021c416549b5f8b4b5497234619410db"
+    assert manifest["reference_commit"] == "0ef55fda47bb3d0dece21197d81d8d72a4250e73"
+    assert manifest["target_counts"][manifest["task_target"]] == 4
+    assert len(manifest["regression_targets"]) == 3
+    correction = (package / manifest["reference_correction"]).read_text()
+    assert "+                        args = sub_ctx._protected_args + sub_ctx.args" in correction
+    preparation = (package / "prepare-tests.patch").read_text()
+    assert "close_count == 1" in preparation and "Counter(callbacks)" in preparation
+
+
 def test_unreviewed_task_is_rejected_before_creating_output(tmp_path):
     with pytest.raises(ValueError, match="unreviewed"):
         qualification.qualify(tmp_path / "source", Path(sys.executable), tmp_path / "out", "../x")

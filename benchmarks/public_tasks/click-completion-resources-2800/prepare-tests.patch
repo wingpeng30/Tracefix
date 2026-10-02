@@ -1,0 +1,62 @@
+diff --git a/tests/test_tracefix_completion_resources.py b/tests/test_tracefix_completion_resources.py
+new file mode 100644
+--- /dev/null
++++ b/tests/test_tracefix_completion_resources.py
+@@ -0,0 +1,57 @@
++"""Deterministic resource lifecycle and nested completion contract."""
++from collections import Counter
++
++import click
++import pytest
++from click.shell_completion import ShellComplete
++
++
++@pytest.mark.parametrize('shape', ['command', 'group', 'nested', 'chain'])
++def test_completion_closes_context_resources_once(shape):
++    created = []
++    callbacks = []
++    resources = []
++
++    class Resource:
++        def __init__(self, name):
++            self.name = name
++            self.closed = False
++            self.close_count = 0
++
++        def __enter__(self):
++            return self
++
++        def __exit__(self, *args):
++            self.closed = True
++            self.close_count += 1
++
++    class Context(click.Context):
++        def __init__(self, *args, **kwargs):
++            super().__init__(*args, **kwargs)
++            created.append(self.info_name)
++            self.call_on_close(lambda: callbacks.append(self.info_name))
++            resource = Resource(self.info_name)
++            resources.append(self.with_resource(resource))
++
++    class Command(click.Command):
++        context_class = Context
++
++    class Group(click.Group):
++        context_class = Context
++
++    leaf = Command('leaf', params=[click.Option(['--kind'], type=click.Choice(['red', 'blue']))])
++    if shape == 'command':
++        cli, args, names = leaf, ['--kind'], ['leaf']
++    elif shape == 'group':
++        cli, args, names = Group('cli', commands=[leaf]), ['leaf', '--kind'], ['cli', 'leaf']
++    elif shape == 'nested':
++        cli = Group('cli', commands=[Group('outer', commands=[leaf])])
++        args, names = ['outer', 'leaf', '--kind'], ['cli', 'outer', 'leaf']
++    else:
++        cli = Group('cli', chain=True, commands=[Command('start'), leaf])
++        args, names = ['start', 'leaf', '--kind'], ['cli', 'start', 'leaf']
++    items = ShellComplete(cli, {}, cli.name, '_CLICK_COMPLETE').get_completions(args, '')
++    assert [item.value for item in items] == ['red', 'blue']
++    assert Counter(created) == Counter(names)
++    assert Counter(callbacks) == Counter(names)
++    assert all(resource.closed and resource.close_count == 1 for resource in resources)

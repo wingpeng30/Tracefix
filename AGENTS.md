@@ -1,5 +1,7 @@
 # TraceFix 持续维护约定
 
+2026-10-02 当前顺序：Markdown 解析任务已在 PR #12 / 精确 CI #86 通过并合并；Click 资源生命周期任务在独立 PR #13 完成最终资格。任务包与纠正参考的身份、失败记录和平台范围见 `docs/tasks/2026-10-02-three-public-task-types.md`。两个上游修复各有真实契约失败，用户已批准另存最小纠正补丁；不得把组合参考通过说成原上游提交通过。三个类型全部通过资格后才申请新的付费小批验收；此前八次额度不续用。下列早期状态保留为历史。
+
 2026-09-30 当前产品顺序：普通受信任 Python 仓库本地闭环、任务检查点、普通用户路径、可选只读 MCP、普通仓库 Docker、真实模型小批验收及结束前回归门均已交付。PR #9 已合并（merge commit `b18958b8342b0642b7f4fe828c39852ada769319`）；精确 PR head `cb5571815a09f831cde0fd1f648059b6fdff6877` 的 CI #73 全部通过。下一步先对公开任务做任务契约和环境资格筛选，再冻结少量不同类型任务；候选筛选现状见 [`docs/tasks/2026-09-30-public-task-qualification.md`](docs/tasks/2026-09-30-public-task-qualification.md)。当前没有通过资格复验的新多类型任务集，不开展真实模型比较；已用完的八次付费运行额度不续用，后续调用需重新授权。演示与历史报告保留；简历材料和案例包装后置。首批使用说明见 [`docs/ordinary-repository.md`](docs/ordinary-repository.md)，能力边界见 [`docs/reviews/2026-09-28-system-review.md`](docs/reviews/2026-09-28-system-review.md)。下文作品集顺序作为历史记录。
 
 开始工作前阅读 [`docs/roadmap.md`](docs/roadmap.md) 与最近的开发、实验记录。

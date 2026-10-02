@@ -91,3 +91,10 @@ tracefix export --run $summary.run_path --output "runs/regression feedback/anoth
 ```
 
 输出目录必须尚不存在。此入口创建并保留 `source/`，运行工作副本在其外部；退出后可重复独立验证，每次生成新记录。默认自动导出 `export.patch` 和哈希、生成 `report.html`。两次基线加两轮三目标验收共八个 pytest 进程；独立验证不计入 Agent 预算。录制客户端在返回第二版修复前确认请求含两个回归失败。仅本地；Docker、Skills、image ID 显式拒绝。无需安装 LiteLLM 可选依赖，但需 Git、pytest 及基础包依赖。所有 usage 是录制模拟值，费用缺失；不发送模型或网络请求。
+# 公开任务资格入口
+
+普通仓库路径可用于公开任务资格和生产参考回放。当前三类任务的来源、准备依赖、
+命令、平台证据与限制见[三类型任务记录](tasks/2026-10-02-three-public-task-types.md)。
+`scripts/qualify_public_task.py --task <审核过的任务 ID>` 支持显式选择任务；不传
+`--task` 保留 more-itertools 默认值。任务包需要仓库文件，运行时 Agent 和工具可来自
+仓库外安装的 wheel；资格回放不是模型自主修复，新的付费验收另行授权。

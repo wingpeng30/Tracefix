@@ -67,3 +67,34 @@ requires `attr_list`, `fenced_code`, `tables` metadata and the production audit
 still checks checkout module origins. The qualifier also now rejects non-assertion
 exceptions in expected failed tests using original JUnit, preventing an import
 exception inside a test body from masquerading as a reproduced defect.
+
+## Markdown delivered; Click candidate
+
+PR #12 is merged as `6b5af671c9154f867612675e80307dfa4eb2ac42`. Exact head
+`24dbaa911503e6cd904d452833639bc2c05641d9` passed [CI #86](https://github.com/wingpeng30/Tracefix/actions/runs/36975942940):
+all five jobs, Windows 3.11/3.12 each 819 tests with zero failures/errors/skips,
+pytest-only coverage `13621/15126 = 90.05024461192649%`, Ruff, compileall, Diff,
+editable and outside-repository wheel, original task and Markdown qualification,
+Linux frozen/ordinary Docker and Serena MCP. CI #83 and #84 failures remain;
+CI #85 passed an earlier head, so #86 is the merge gate.
+
+Local exact-head Markdown outside-wheel evidence:
+`runs/qualify markdown outside wheel 24dbaa9/qualification.json`, SHA-256
+`64ebdc8b2bbc30b971d2f02ad7cf06126c0cdda5499de05cc4ad32996a095a46`.
+The installed wheel SHA-256 is
+`666d0f675bcf208353b740d53927584094e62fd07814f1d0cdd56deaf71bb87b`
+(built at `20647d1`; runtime/package files unchanged by the final script-only fix).
+Both installed environment and working directory were outside this repository.
+Original task's default CLI also qualified at `24dbaa9`:
+`runs/qualify default task 24dbaa9/qualification.json`, SHA-256
+`7321b30c89b05d2f6d0d6da58b4737dd1570acb75df9a09ed826f26e4e7ee2f1`.
+
+Click's temporary prequalification passed on 3.12 at
+`runs/qualify click preliminary 02`; this used an explicit temporary package map
+and is exploration, not final delivery evidence. Four task cases plus three
+existing single-node regression targets run per checkout. The original upstream
+patch passes the selected existing tests but fails two new cases; the separately
+approved two-line correction passes all seven. A diagnostic mutant dropping
+single-dash completions passes the four task cases but fails two existing targets.
+The production replay consumes seven Agent pytest processes; independent
+verification separately runs seven more. Final Click CI and commit follow in PR #13.
