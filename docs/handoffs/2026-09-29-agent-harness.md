@@ -1,5 +1,9 @@
 # 2026-09-29 Agent/harness 产品交接
 
+## 2026-10-02 最新交接
+
+三类公开任务资格已完成，PR #12 merge `6b5af67`、PR #13 merge `47f2619`；后者精确 head `351b600` 的 CI #88 全部通过，Windows 3.11/3.12 各 820 tests、零 skips，纯 pytest 覆盖率 90.0502446%。任务失败、纠正参考、原始记录哈希和下一轮未授权五次／五元方案见 [`../tasks/2026-10-02-three-public-task-types.md`](../tasks/2026-10-02-three-public-task-types.md)。不要重用已耗尽八次授权，不要将参考回放称为模型自主修复。历史未跟踪材料未提交或清理。
+
 ## 2026-09-30 当前状态
 
 PR #9 已于 2026-09-30 合并：merge commit `b18958b8342b0642b7f4fe828c39852ada769319`，PR head `cb5571815a09f831cde0fd1f648059b6fdff6877` 的 CI #73 成功。当前后续从任务契约资格开始：本轮只读筛选优先预检 Sphinx-10323，暂缓有 HTTP 服务依赖/目标不一致风险的 Requests-1724 和有基线收集依赖的 Pylint-4604；目前没有多类型任务集通过新的 base/gold 复验。详情、SHA 和停止条件见 [`../tasks/2026-09-30-public-task-qualification.md`](../tasks/2026-09-30-public-task-qualification.md)。不要将筛选写成任务资格通过或模型效果证据；供应商调用需重新授权。

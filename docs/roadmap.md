@@ -1,5 +1,9 @@
 # TraceFix 路线图
 
+## 2026-10-02 当前状态
+
+空输入、解析协作、资源生命周期三个公开任务已通过冻结资格矩阵；PR #12/#13 已合并，最新功能 merge `47f2619`。Windows 双版本安装包闭环与现有 Linux 门槛通过；本批零供应商调用，纠正参考不等同于原上游修复。下一步申请新的五次／五元真实验收，并先补齐独立实验账本和回归目标预检；详见 [`tasks/2026-10-02-three-public-task-types.md`](tasks/2026-10-02-three-public-task-types.md)。以下保留历史优先级。
+
 ## 2026-09-30 当前执行计划
 
 2026-09-30 PR #9 `codex/gated-regression-feedback` 已合并，merge commit `b18958b8342b0642b7f4fe828c39852ada769319`。精确 PR head `cb5571815a09f831cde0fd1f648059b6fdff6877` 的 CI #73 五个 job 全部成功；CI #72 对应代码 head `9501ee65c523f129074756f10573c2de518f4479`，Windows 双版本覆盖率均为 90.0006666%，Ruff、compileall、editable/wheel smoke 和 Linux Docker/MCP job 通过。结束前自动回归门与 Agent 反馈闭环默认关闭；本批零供应商请求，不声称总体修复率提升。实现边界和历史验证见 [`tasks/2026-09-30-validation-feedback-gate.md`](tasks/2026-09-30-validation-feedback-gate.md)。

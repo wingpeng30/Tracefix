@@ -98,3 +98,61 @@ approved two-line correction passes all seven. A diagnostic mutant dropping
 single-dash completions passes the four task cases but fails two existing targets.
 The production replay consumes seven Agent pytest processes; independent
 verification separately runs seven more. Final Click CI and commit follow in PR #13.
+
+## Final delivery (2026-10-02)
+
+PR #13 merged as `47f2619f618dbaef658e3071309d34a5e10bc8a2` after exact
+head `351b600c2680633f02ec4c4cd32707e1e2aa5253` passed
+[CI #88](https://github.com/wingpeng30/Tracefix/actions/runs/36977521723).
+Both Windows versions ran 820 tests, zero failures/errors/skips, with pytest-only
+coverage `13621/15126 = 90.05024461192649%`. All five jobs passed, including
+outside-repository installed-wheel qualification of Markdown and Click, the
+original default task, engineering gates and existing Linux Docker/MCP checks.
+Review found no blocker and GitHub had no unresolved review threads. The merge
+tree matches the approved head; historical untracked materials were preserved.
+
+Formal local Click qualification (supersedes the temporary-map exploration):
+`runs/qualify click outside wheel 351b600/qualification.json`, SHA-256
+`1cd891e2b845bfc14942fecb663b60cc810ae4cdb5273b9ae24146d24fb5ce9f`.
+The source clone remained unchanged. Both repeated base/corrected-reference
+matrices, raw upstream failure audit and diagnostic mutant matched their declared
+outcomes; production reference replay and independent verification passed.
+Raw outputs, JUnit, identities and hashes remain in the local record and CI
+artifacts. PR #13's final description also indexes this evidence.
+
+All three defect types are qualified within the frozen contracts. Markdown and
+Click use upstream product patches plus separately approved corrective patches;
+their original upstream commits alone do not satisfy these task contracts.
+Reference replay is not autonomous model repair, and qualification establishes
+neither overall repair success rate nor comparative component effectiveness.
+
+## Proposed fresh real-model campaign — not authorized or executed
+
+- Freeze code at the approved merge `47f2619` and the three packaged manifests;
+  record full code, prepared task, config and patch identities before each run.
+- Run each task once, serially, with at most two additional targeted rechecks
+  after a reproduced failure is fixed: **at most five logical Agent runs and
+  CNY 5 total**, stopping at either bound. Failed runs count; resume retains the
+  same logical identity and cumulative budgets. The old eight-run allowance is
+  exhausted and is not reused.
+- Proposed model: `deepseek/deepseek-flash`, non-thinking, non-streaming,
+  automatic retries disabled; local backend, Skills/MCP disabled initially.
+  Per run: 20 steps, cumulative input 60,000/output 8,000 tokens, 2,048 output
+  per request, 16 pytest processes, 900 active seconds, 60-second request timeout.
+- Before any paid request, prepare a new independent campaign ledger and
+  regression-aware configuration. Do not reuse the old hard-coded eight-run,
+  CNY 20 campaign script unchanged. Offline-test the request-before-reservation
+  rejection, pending request recovery, target budgets and missing usage paths.
+- Freeze execution-day official prices from
+  [DeepSeek pricing](https://api-docs.deepseek.com/zh-cn/quick_start/pricing/).
+  Reserve conservatively using peak cache-miss input and maximum output prices;
+  reconcile valid usage after responses. Client estimates are not an account-side
+  billing cap. Unknown usage/cost/result or persistence failure stops further
+  paid requests; never resend an uncertain request automatically.
+- Give the Agent task text and protected targets, but no reference/corrective
+  patch. Record request views securely; independently verify the final patch in
+  fresh checkouts, then report/export. Keep failures and budget stops in the
+  ledger. Publish reviewed summaries rather than full private request contents.
+
+The next action requires fresh user approval of this count and amount, followed
+by the offline campaign preflight. No supplier request was made in this batch.
