@@ -86,6 +86,14 @@ def load_manifest(package: Path = PACKAGE) -> dict:
         path = (package / name).resolve()
         if not path.is_relative_to(package.resolve()) or sha(path) != expected:
             raise ValueError(f"task package identity mismatch: {name}")
+    actual_files = {
+        path.relative_to(package).as_posix() for path in package.rglob("*") if path.is_file()
+    }
+    expected_files = {*manifest["files_sha256"], "manifest.json"}
+    if (package / "README.md").is_file():
+        expected_files.add("README.md")
+    if actual_files != expected_files:
+        raise ValueError("task package contains unrecorded or missing files")
     if manifest["schema_version"] == 2:
         targets = [manifest["task_target"], *manifest["regression_targets"]]
         if len(targets) != len(set(targets)) or not manifest["regression_targets"]:
@@ -122,7 +130,7 @@ def write_json(path: Path, value: dict) -> None:
     path.write_text(json.dumps(value, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
 
-def apply_product(workspace: Path, product_patch: str) -> None:
+def apply_product(workspace: Path, product_patch: str, allowed_paths: set[str]) -> dict:
     from tracefix.tools.builtin import ApplyPatchTool
 
     result = ApplyPatchTool(workspace).execute(
@@ -134,6 +142,10 @@ def apply_product(workspace: Path, product_patch: str) -> None:
     )
     if not result.success:
         raise ValueError(f"product patch rejected: {result.error}")
+    changed = set((result.output or {}).get("changed_files", []))
+    if not changed or not changed <= allowed_paths:
+        raise ValueError("product patch changed files outside declared products")
+    return result.model_dump(mode="json")
 
 
 def run_case(
@@ -167,7 +179,10 @@ def run_case(
         if not preparation.get("success"):
             raise ValueError(f"environment preflight failed: {preparation.get('failure')}")
         if product_patch:
-            apply_product(workspace, product_patch)
+            paths = {p["path"] for p in manifest.get("products", [])}
+            if not paths:
+                paths = {manifest["product_path"]}
+            record["patch_application"] = apply_product(workspace, product_patch, paths)
         record["source_before"] = source_state(workspace)
         targets = [manifest["task_target"], *manifest["regression_targets"]]
         tool = RunTestsTool(
@@ -378,6 +393,14 @@ def qualify(
                 "environment": inspect_test_environment(python).model_dump(mode="json"),
             }
         )
+        if record["tracefix_dirty"]:
+            raise ValueError("qualification requires a clean tracked TraceFix checkout")
+        if manifest["schema_version"] == 2:
+            parents = git(
+                source_repo, "rev-list", "--parents", "-n", "1", manifest["reference_commit"]
+            ).split()
+            if parents != [manifest["reference_commit"], manifest["base_commit"]]:
+                raise ValueError("frozen base is not the reference's sole actual parent")
         products = manifest.get("products")
         if products is None:
             products = [
@@ -501,6 +524,16 @@ def qualify(
     except Exception as exc:
         record["error"] = f"{type(exc).__name__}: {exc}"
     finally:
+        if record.get("qualified") and (
+            git(PACKAGE.parent, "rev-parse", "HEAD").strip() != record["tracefix_commit"]
+            or git(PACKAGE.parent, "status", "--porcelain", "--untracked-files=no").strip()
+            or sha(Path(__file__)) != record["qualification_script_sha256"]
+            or sha(package / "manifest.json") != record["task_manifest_sha256"]
+        ):
+            record["qualified"] = False
+            record["error"] = (
+                "TraceFix implementation or task identity changed during qualification"
+            )
         if original is not None:
             current = upstream_state(source_repo)
             record["upstream_unchanged"] = original == current

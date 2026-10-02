@@ -40,3 +40,18 @@ Windows dual-version and outside-checkout wheel qualification is part of CI.
 Actual final commits, CI and qualification records are recorded below when available.
 
 Until all three task types pass, no new real-model experiment is eligible.
+
+The first frozen Markdown candidate `ff9a046a6488e84513d053ce4c12f34ce5736c99`
+qualified locally with no tracked changes:
+`runs/qualify markdown frozen ff9a046/qualification.json`, SHA-256
+`8c8358e1db35acc933d21075e69fda28beeb212eceefafe08dcd335a8f7130a2`.
+The upstream audit has one failed task assertion; corrected references have 9/9,
+2/2 and 19/19 passing tests. Replay uses five pytest processes and independent
+verification is separately recorded. This candidate is not the final review head.
+
+A read-only review found additional identity/scope gates to strengthen: reject
+dirty tracked implementations and identity changes during execution; validate
+new tasks' actual single parent; reject undeclared package files and product
+patches that modify anything outside declared product files. Fifteen targeted
+behavior tests pass after these fixes. New exact-head CI and local qualification
+are required; prior green checks do not approve the modified head.

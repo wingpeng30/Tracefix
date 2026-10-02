@@ -122,6 +122,62 @@ def test_unreviewed_task_is_rejected_before_creating_output(tmp_path):
     assert not (tmp_path / "out").exists()
 
 
+def test_product_patch_cannot_qualify_by_modifying_tests(tmp_path, monkeypatch):
+    from tracefix.tools.base import ToolResult
+    from tracefix.tools.builtin import ApplyPatchTool
+
+    monkeypatch.setattr(
+        ApplyPatchTool,
+        "execute",
+        lambda *_args: ToolResult(
+            call_id="qualification-product-patch",
+            tool_name="apply_patch",
+            success=True,
+            output={"changed_files": ["tests/test_contract.py"]},
+        ),
+    )
+    with pytest.raises(ValueError, match="outside declared"):
+        qualification.apply_product(tmp_path, "mock patch", {"product.py"})
+
+
+def test_package_unrecorded_file_is_rejected(tmp_path):
+    (tmp_path / "task.md").write_text("contract")
+    (tmp_path / "manifest.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "files_sha256": {"task.md": qualification.sha(tmp_path / "task.md")},
+            }
+        )
+    )
+    (tmp_path / "unexpected.py").write_text("unexpected")
+    with pytest.raises(ValueError, match="unrecorded"):
+        qualification.load_manifest(tmp_path)
+
+
+@pytest.mark.parametrize("dirty", [False, True])
+def test_dirty_implementation_or_wrong_parent_stops_before_tools(tmp_path, monkeypatch, dirty):
+    monkeypatch.setattr(qualification, "upstream_state", lambda *_args: {"head": "unchanged"})
+
+    def git(_repo, *args):
+        if args[0] == "status":
+            return " M runtime.py" if dirty else ""
+        if args[0] == "rev-list":
+            return "reference wrong-parent"
+        return "HEAD"
+
+    monkeypatch.setattr(qualification, "git", git)
+    monkeypatch.setattr(qualification, "run_case", lambda *_args: pytest.fail("tools must not run"))
+    result = qualification.qualify(
+        tmp_path / "source",
+        Path(sys.executable),
+        tmp_path / "output",
+        "markdown-quoted-braces-1414",
+    )
+    assert not result["qualified"]
+    assert ("clean tracked" if dirty else "actual parent") in result["error"]
+
+
 @pytest.mark.parametrize("status", ["collection_error", "timeout", "test_failure", "skipped"])
 def test_qualification_rejects_incomplete_or_wrong_collection(tmp_path, monkeypatch, status):
     workspace = tmp_path / "workspace"
