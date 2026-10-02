@@ -11,3 +11,5 @@
 | 普通 Docker | [Linux 零调用记录](experiments/2026-09-29-ordinary-docker-zero-call.md) | Windows Docker Desktop 未实测，不支持容器丢失后的会话恢复 |
 
 完整运行目录与未审查的模型请求不发布。公开文档保留可复制命令和证据身份；本地原始结果继续保留。
+
+安装包入口 head `5a518067889031222da7d2350a452c631883cd5d` 的 [CI #77](https://github.com/wingpeng30/Tracefix/actions/runs/36966132365) 五 job 通过，已在 PR #10 合并。公开 more-itertools 单任务资格、失败记录及当前平台范围见 [本批记录](tasks/2026-10-02-package-and-public-task.md)；资格通过不等于模型效果通过。

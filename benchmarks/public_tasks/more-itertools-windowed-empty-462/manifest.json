@@ -1,0 +1,31 @@
+{
+  "schema_version": 1,
+  "task_id": "more-itertools-windowed-empty-462",
+  "repository": "https://github.com/more-itertools/more-itertools.git",
+  "issue": "https://github.com/more-itertools/more-itertools/issues/462",
+  "reference_pr": "https://github.com/more-itertools/more-itertools/pull/645",
+  "base_commit": "8a27da60d70fbfc348b124ce89733d8a7104977a",
+  "reference_commit": "db4630bc3175d6a884fb07092c645417c9e62d49",
+  "license": "MIT",
+  "source_import": "more_itertools",
+  "task_target": "tests/test_tracefix_windowed_empty.py",
+  "regression_targets": [
+    "tests/test_more.py::WindowedTests"
+  ],
+  "product_path": "more_itertools/more.py",
+  "base_product_blob": "bbcf039a5177413002a5b6cd9f2d472a262f872c",
+  "reference_product_blob": "6d2b938e730d6bc6bf56b60d6f1e65a3a22b0e6e",
+  "qualification_status": "requires_execution",
+  "files_sha256": {
+    ".gitattributes": "a79691a93b46e49ce460c26ef22afcc03d6eca1e63bf2edbc20e96159510f6c9",
+    "diagnostic-wrong.patch": "fb90a14fd3e132d2de4ff4b0310359803dce79daf2c12de115ee7f62ab8e2ec5",
+    "LICENSE": "09f1c8c9e941af3e584d59641ea9b87d83c0cb0fd007eb5ef391a7e2643c1a46",
+    "prepare-tests.patch": "989d46a1060077e6384d04ec7b6093c0b6bf7093c6376e5307eed4322c222141",
+    "reference-product.patch": "8950acef258905cce05b699d7220653bcac15668d66cfa2e2a9dd3aad7dd31a2",
+    "task.md": "e2d6e27dde1d5401e423ec6d4c31157ce33ca4d5a919512431e79786ae285bb8"
+  },
+  "target_counts": {
+    "tests/test_tracefix_windowed_empty.py": 36,
+    "tests/test_more.py::WindowedTests": 6
+  }
+}

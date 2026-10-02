@@ -167,3 +167,5 @@ G6 pytest-only 精确覆盖补测（同一最终代码版本）：用独立 `COV
 2026-09-28 PR 候选 `1882cc9` 的 GitHub CI run [`36420487054`](https://github.com/wingpeng30/Tracefix/actions/runs/36420487054) 已全绿：Windows Python 3.11.16/3.12.5 各 646 passed、0 skipped，pytest-only coverage `11158/12388 = 90.07103648692282%`，Ruff、compileall、Diff 通过；editable 与仓库外 wheel 的 baseline/Skills-only 合成运行通过；Linux Docker bridge 两臂通过，容器无网络、无挂载、删除已审计，供应商调用计数为零。Docker 审计哈希字段修正和三项 Docker 证据导出行为回归已并入候选。完整身份、wheel/image/artifact 哈希见 [`experiments/2026-09-28-clean-checkout-engineering-gates.md`](experiments/2026-09-28-clean-checkout-engineering-gates.md)。本批工程复现门槛达成，不等同于真实修复成功率提升；后续依序开展 Requests 历史 TLS 复验、pytest-10081 点版本诊断、Sphinx 配方重建和 Token 计数契约。
 
 2026-10-02 当前执行顺序更新：先交付安装包内 `regression-feedback` 入口，再冻结 more-itertools #462 空输入任务并执行资格矩阵；此前 Sphinx 初筛保留为历史，本批不重建环境。所有调用均离线，原八次付费额度不续用。执行记录见 `docs/tasks/2026-10-02-package-and-public-task.md`（文档内路径相对仓库根目录）。
+
+2026-10-02 安装包回归反馈入口已通过 PR #10 精确 CI #77 并合并，主线 `0954c4f`。more-itertools #462 单任务已在本机 3.12 通过完整资格矩阵与生产参考回放；Windows 3.11/3.12 资格以本批 PR 的锁定依赖 CI 产物为准。当前不是多类型任务集，也没有新模型效果证据。下一步增加两种不同缺陷类型，先做契约与资格，再申请新的付费验收。详见 `docs/tasks/2026-10-02-package-and-public-task.md`，原始目录不提交。
