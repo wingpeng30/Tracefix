@@ -98,7 +98,7 @@ def config_identity_sha256(
     )
     exclude = {"regression_targets"} if legacy_empty_targets else set()
     if manifest_config is not None:
-        exclude.update(name for name in ("memory_enabled", "memory_dir")
+        exclude.update(name for name in ("memory_enabled", "memory_dir", "conversation_enabled")
                        if name not in manifest_config)
     return hashlib.sha256(
         config.model_dump_json(exclude=exclude).encode("utf-8")
@@ -127,6 +127,7 @@ class RunConfig(BaseModel):
     skills_root: Path | None = None
     memory_enabled: bool = False
     memory_dir: Path | None = None
+    conversation_enabled: bool = False
     mcp_serena_image_id: str | None = None
     environment_recipe: EnvironmentRecipe | None = None
     test_environment_variables: dict[str, str] = Field(default_factory=dict)
@@ -196,6 +197,8 @@ class RunConfig(BaseModel):
             raise ValueError("custom Skills directories are supported only by local execution")
         if self.memory_enabled and self.execution_backend != "local":
             raise ValueError("experience memory currently requires the local backend")
+        if self.conversation_enabled and self.execution_backend != "local":
+            raise ValueError("continuous dialogue currently requires the local backend")
         if self.execution_backend == "docker" and self.mcp_serena_image_id is not None:
             raise ValueError("Serena MCP is supported only with the local Agent backend")
         if self.execution_backend != "docker" and (
@@ -242,6 +245,9 @@ class RunResult(BaseModel):
     duration_seconds: float = Field(ge=0)
     model_request_seconds: float = Field(default=0.0, ge=0)
     memory_status: dict[str, JsonValue] = Field(default_factory=dict)
+    turn_number: int = Field(default=1, ge=1)
+    session_status: str = "single_task"
+    turn_records: list[dict[str, JsonValue]] = Field(default_factory=list)
     tool_execution_seconds: float = Field(default=0.0, ge=0)
     context_preparation_seconds: float = Field(default=0.0, ge=0)
     repository_index_seconds: float = Field(default=0.0, ge=0)
@@ -301,6 +307,7 @@ class TraceFixRunner:
             try:
                 active.state.memory_status = reflect_experience(
                     active, memory, root, workspace, hashlib.sha256(patch.encode()).hexdigest(),
+                    turn_number=active.state.turn_number if config.conversation_enabled else None,
                 )
             except (OSError, ValueError, CheckpointError) as exc:
                 active.state.memory_status = {"status": "rejected", "reason": str(exc)}
@@ -308,7 +315,59 @@ class TraceFixRunner:
         agent.experience_callback = completed
 
     @classmethod
-    def inspect(cls, run_dir: Path) -> dict[str, Any]:
+    def _record_dialogue_result(cls, root: Path, result: RunResult) -> RunResult:
+        """Commit immutable round artifacts before advertising a waiting session."""
+        from tracefix.memory import atomic_json
+
+        if not (root / "session.json").is_file():
+            failed = result.model_copy(update={"session_status": "failed"})
+            atomic_json(root / "result.json", failed.model_dump(mode="json"))
+            return failed
+        turn_root = root / "turns" / f"{result.turn_number:04d}"
+        attempt = turn_root / uuid4().hex
+        attempt.mkdir(parents=True)
+        artifacts: dict[str, str] = {}
+        for name, source in {
+            "patch.diff": Path(result.diff_path),
+            "trajectory.jsonl": Path(result.trace_path),
+            "session.json": root / "session.json",
+        }.items():
+            data = source.read_bytes()
+            (attempt / name).write_bytes(data)
+            artifacts[name] = hashlib.sha256(data).hexdigest()
+        inspection = cls.inspect(root, _for_continue=True, _check_round_records=False)
+        status = (
+            "awaiting_user" if result.status is AgentStatus.COMPLETED
+            else "paused" if inspection.get("resumable") else result.status.value
+        )
+        archived = result.model_copy(update={
+            "session_status": status, "turn_records": [],
+            "result_path": str(attempt / "result.json"),
+            "diff_path": str(attempt / "patch.diff"),
+            "trace_path": str(attempt / "trajectory.jsonl"),
+        })
+        atomic_json(attempt / "validation.json", {
+            "schema_version": 1, "turn_number": result.turn_number,
+            "validation_status": result.agent_validation_status,
+            "last_test_evidence": inspection.get("last_test_evidence"),
+            "workspace_diff_sha256": inspection.get("workspace_diff_sha256"),
+        })
+        atomic_json(attempt / "result.json", archived.model_dump(mode="json"))
+        for name in ("validation.json", "result.json"):
+            artifacts[name] = hashlib.sha256((attempt / name).read_bytes()).hexdigest()
+        atomic_json(turn_root / "latest.json", {
+            "schema_version": 1, "turn_number": result.turn_number,
+            "attempt": attempt.name, "artifacts": artifacts,
+        })
+        records = [json.loads(path.read_text(encoding="utf-8"))
+                   for path in sorted((root / "turns").glob("*/latest.json"))]
+        updated = result.model_copy(update={"session_status": status, "turn_records": records})
+        atomic_json(root / "result.json", updated.model_dump(mode="json"))
+        return updated
+
+    @classmethod
+    def inspect(cls, run_dir: Path, *, _for_continue: bool = False,
+                _check_round_records: bool = True) -> dict[str, Any]:
         """Read a local session without constructing a model or modifying its checkout."""
         root = run_dir.expanduser().resolve()
         manifest_path = root / "session.json"
@@ -326,6 +385,33 @@ class TraceFixRunner:
                 pythonpath_entries=config.test_pythonpath_entries,
             ).fingerprint_sha256
             reasons: list[str] = []
+            if _for_continue and (
+                not config.conversation_enabled or manifest.get("schema_version") != 2
+            ):
+                reasons.append("run is not a continuous session")
+            if _for_continue and config.conversation_enabled and _check_round_records:
+                latest_result = RunResult.model_validate_json(
+                    (root / "result.json").read_text(encoding="utf-8"),
+                )
+                for turn in range(1, latest_result.turn_number + 1):
+                    turn_root = root / "turns" / f"{turn:04d}"
+                    record = json.loads((turn_root / "latest.json").read_text(encoding="utf-8"))
+                    attempt_name = record["attempt"]
+                    if (record.get("schema_version") != 1 or record.get("turn_number") != turn
+                            or not isinstance(attempt_name, str) or len(attempt_name) != 32
+                            or any(char not in "0123456789abcdef" for char in attempt_name)):
+                        raise CheckpointError("invalid conversation round identity")
+                    attempt = turn_root / attempt_name
+                    required = {"patch.diff", "trajectory.jsonl", "session.json",
+                                "validation.json", "result.json"}
+                    if set(record["artifacts"]) != required:
+                        raise CheckpointError("incomplete conversation round artifacts")
+                    for name, expected in record["artifacts"].items():
+                        path = attempt / name
+                        if path.is_symlink() or not path.resolve().is_relative_to(root):
+                            raise CheckpointError("unsafe conversation round artifact")
+                        if hashlib.sha256(path.read_bytes()).hexdigest() != expected:
+                            raise CheckpointError("conversation round artifact identity changed")
             if config.regression_targets:
                 baseline_path = root / "validation-baseline.json"
                 if not baseline_path.is_file():
@@ -457,15 +543,38 @@ class TraceFixRunner:
                             break
                         if event.get("event_type") == TraceEventType.TASK_FINISHED.value:
                             terminal_state = event.get("payload", {}).get("state", {})
-                            if terminal_state.get("status") != AgentStatus.INTERRUPTED.value:
+                            if terminal_state.get("status") not in (
+                                {AgentStatus.INTERRUPTED.value, AgentStatus.COMPLETED.value}
+                                if _for_continue else {AgentStatus.INTERRUPTED.value}
+                            ):
                                 reasons.append("run has a non-interrupted terminal event")
                 if (root / "result.json").is_file():
                     result = RunResult.model_validate_json(
                         (root / "result.json").read_text(encoding="utf-8")
                     )
-                    if result.status is not AgentStatus.INTERRUPTED:
+                    if result.status not in (
+                        {AgentStatus.INTERRUPTED, AgentStatus.COMPLETED}
+                        if _for_continue else {AgentStatus.INTERRUPTED}
+                    ):
                         reasons.append("run is not interrupted")
-            return {
+                if _for_continue:
+                    saved_state = AgentState.model_validate(saved_agent["state"])
+                    if (_check_round_records and config.conversation_enabled
+                            and saved_state.turn_number != latest_result.turn_number):
+                        reasons.append("current round result is not committed")
+                    if (not saved_state.cost_complete or not saved_state.usage_complete
+                            or saved_state.memory_status.get("status") in {
+                                "outcome_unknown", "response_received",
+                            }):
+                        reasons.append("session has an unresolved model outcome or accounting")
+                    if (saved_state.step_count >= config.agent_config.max_steps
+                            or saved_state.test_runs >= config.agent_config.max_test_runs
+                            or saved_state.input_tokens >= config.agent_config.max_input_tokens
+                            or saved_state.output_tokens >= config.agent_config.max_output_tokens
+                            or snapshot.payload["agent"]["active_seconds"]
+                            >= config.agent_config.wall_time_seconds):
+                        reasons.append("cumulative session budget exhausted")
+            outcome = {
                 "resumable": not reasons and inspection.resumable,
                 "reasons": reasons,
                 "sequence": inspection.sequence,
@@ -495,20 +604,41 @@ class TraceFixRunner:
                     if inspection.resumable else None
                 ),
             }
+            if config.conversation_enabled and not _for_continue:
+                continued = cls.inspect(root, _for_continue=True)
+                outcome.update({"continuable": continued["resumable"],
+                                "continue_reasons": continued["reasons"],
+                                "session_status": "awaiting_user" if inspection.resumable
+                                and snapshot.payload["agent"]["state"]["status"] == "completed"
+                                else "paused" if continued["resumable"] else "interrupted",
+                                "turn_number": snapshot.payload["agent"]["state"].get(
+                                    "turn_number", 1,
+                                ) if inspection.resumable else None})
+            return outcome
         except (OSError, ValueError, KeyError, TypeError, TraceFixError) as exc:
             return {"resumable": False, "reasons": [str(exc)], "run": str(root)}
 
     def resume(self, run_dir: Path) -> RunResult:
+        return self._continue_existing(run_dir)
+
+    def continue_turn(self, run_dir: Path, message: str) -> RunResult:
+        """Append an explicit user instruction at a committed continuous-session boundary."""
+        if not message.strip():
+            raise CheckpointError("message cannot be empty")
+        return self._continue_existing(run_dir, message=message)
+
+    def _continue_existing(self, run_dir: Path, *, message: str | None = None) -> RunResult:
         """Continue a validated local session in its original checkout."""
         root = run_dir.expanduser().resolve()
         manifest_path = root / "session.json"
         if not manifest_path.is_file():
             raise CheckpointError("session manifest is missing")
         with ProcessLock(root):
-            inspection = self.inspect(root)
+            inspection = self.inspect(root, _for_continue=message is not None)
             if not inspection["resumable"]:
                 raise CheckpointError(
-                    "run cannot be resumed", context={"reasons": inspection["reasons"]}
+                    "run cannot be continued" if message is not None else "run cannot be resumed",
+                    context={"reasons": inspection["reasons"]},
                 )
             manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
             config = RunConfig.model_validate(manifest["config"])
@@ -582,7 +712,8 @@ class TraceFixRunner:
             sequence = snapshot.sequence
             with JSONLTraceSink(trace_path, append=True) as sink:
                 sink.write(TraceEvent(
-                    event_type=TraceEventType.SESSION_RESUMED,
+                    event_type=(TraceEventType.SESSION_CONTINUED if message is not None
+                                else TraceEventType.SESSION_RESUMED),
                     task_id=root.name,
                     step=int(snapshot.payload["agent"]["state"]["step_count"]),
                     payload={"checkpoint_sequence": sequence},
@@ -635,16 +766,22 @@ class TraceFixRunner:
                     }, sequence=sequence)
 
                 agent.checkpoint_callback = save_checkpoint
+                agent.persist_terminal_checkpoint = config.conversation_enabled
                 self._attach_memory(agent, config, root, workspace, protected_dirs)
                 try:
-                    state = agent.resume(snapshot.payload["agent"])
+                    state = agent.resume(snapshot.payload["agent"], message=message)
+                except KeyboardInterrupt:
+                    state = agent.state
                 finally:
                     if mcp_manager is not None:
                         mcp_manager.close()
             patch, changed_files = self._collect_diff(workspace, protected_dirs)
             diff_path = root / "patch.diff"
             diff_path.write_text(patch, encoding="utf-8")
-            provenance = collect_run_provenance(config.task, llm_config)
+            provenance = collect_run_provenance(
+                state.task if config.conversation_enabled and state.turn_number > 1
+                else config.task, llm_config,
+            )
             result = RunResult(
                 run_id=root.name,
                 source_repo=str(config.repo.expanduser().resolve()),
@@ -687,12 +824,15 @@ class TraceFixRunner:
                 context_metrics=state.context_metrics.model_copy(deep=True),
                 presentation_metrics=state.presentation_metrics.model_copy(deep=True),
                 memory_status=state.memory_status,
+                turn_number=state.turn_number,
                 repo_map=repo_map,
                 repo_map_path=str(repo_map_path) if repo_map else None,
                 provenance=provenance,
                 workspace_preparation=manifest["workspace_preparation"],
             )
             result_path.write_text(result.model_dump_json(indent=2), encoding="utf-8")
+            if config.conversation_enabled:
+                result = self._record_dialogue_result(root, result)
             return result
 
     def run(self, config: RunConfig) -> RunResult:
@@ -993,7 +1133,8 @@ class TraceFixRunner:
                 manifest_path = run_dir / "session.json"
                 manifest_path.write_text(
                     json.dumps(
-                        {"schema_version": 1, "config": config.model_dump(mode="json"),
+                        {"schema_version": 2 if config.conversation_enabled else 1,
+                         "config": config.model_dump(mode="json"),
                          "identity": checkpoint_identity,
                          "workspace_preparation": workspace_preparation},
                         ensure_ascii=False, indent=2,
@@ -1028,6 +1169,7 @@ class TraceFixRunner:
                     )
 
                 agent.checkpoint_callback = save_checkpoint
+                agent.persist_terminal_checkpoint = config.conversation_enabled
             if workspace is not None:
                 self._attach_memory(agent, config, run_dir, workspace, internal_artifacts)
             if docker_backend is not None:
@@ -1174,6 +1316,7 @@ class TraceFixRunner:
             context_metrics=state.context_metrics.model_copy(deep=True),
             presentation_metrics=state.presentation_metrics.model_copy(deep=True),
             memory_status=state.memory_status,
+            turn_number=state.turn_number,
             repo_map=repository_map,
             repo_map_path=str(repo_map_path) if repository_map is not None else None,
             provenance=provenance,
@@ -1215,6 +1358,8 @@ class TraceFixRunner:
                     "error": self._serialize_error(exc),
                 })
                 result_path.write_text(result.model_dump_json(indent=2), encoding="utf-8")
+        if config.conversation_enabled:
+            result = self._record_dialogue_result(run_dir, result)
         return result
 
     @staticmethod

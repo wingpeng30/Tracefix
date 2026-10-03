@@ -36,6 +36,8 @@ class TraceEventType(StrEnum):
     ERROR = "error"
     TASK_FINISHED = "task_finished"
     SESSION_RESUMED = "session_resumed"
+    SESSION_CONTINUED = "session_continued"
+    TURN_STARTED = "turn_started"
     VALIDATION_GATE_STARTED = "validation_gate_started"
     VALIDATION_GATE_COMPLETED = "validation_gate_completed"
     VALIDATION_BASELINE_STARTED = "validation_baseline_started"

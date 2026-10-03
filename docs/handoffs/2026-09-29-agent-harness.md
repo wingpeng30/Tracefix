@@ -40,3 +40,8 @@ Continue from [the three-task execution record](../tasks/2026-10-02-three-public
 The user approved separately hashed corrections to the two upstream references;
 do not describe those corrected patches as the original upstream commits.
 Qualification remains zero-call and must precede a fresh experiment authorization.
+# 2026-10-04 更新
+
+G1 已通过精确提交 `773ec7abbf012592c16fd95c01141f2629370fc1` 的 CI #98 五项门槛，
+正式 PR #17 已创建，尚未合并。G2 从该提交继续，尚未完成验收。
+证据与旧候选失败记录见 `docs/tasks/2026-10-04-memory-dialogue-docker.md`。

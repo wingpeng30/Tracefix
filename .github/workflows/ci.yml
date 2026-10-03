@@ -80,6 +80,8 @@ jobs:
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
             python -m tracefix.reproduction --scenario memory-experience --output (Join-Path $smokeRoot "memory-experience")
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            python -m tracefix.reproduction --scenario continuous-dialogue --output (Join-Path $smokeRoot "continuous-dialogue")
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           } finally { Pop-Location }
 
       - name: Qualify frozen public windowed task without model calls
@@ -139,6 +141,8 @@ jobs:
             & (Join-Path $wheelEnv "Scripts/tracefix-reproduce.exe") --scenario regression-feedback --output (Join-Path $wheelSmoke "regression feedback")
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
             & (Join-Path $wheelEnv "Scripts/tracefix-reproduce.exe") --scenario memory-experience --output (Join-Path $wheelSmoke "memory experience")
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            & (Join-Path $wheelEnv "Scripts/tracefix-reproduce.exe") --scenario continuous-dialogue --output (Join-Path $wheelSmoke "continuous dialogue")
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
             & $wheelPython (Join-Path $env:GITHUB_WORKSPACE "examples/replay_ordinary.py") --output $ordinary
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
