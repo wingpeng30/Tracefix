@@ -41,6 +41,7 @@ def test_three_real_rounds_correction_archives_and_cumulative_budget(tmp_path):
     repo = repository(tmp_path)
     result = runner().run(RunConfig(
         repo=repo, output_dir=tmp_path / "runs", task="Increment a page",
+        model_name="offline/dialogue", env_file=None,
         test_target="tests/test_widget.py", conversation_enabled=True,
     ))
     root = Path(result.result_path).parent
@@ -82,6 +83,7 @@ def test_three_real_rounds_correction_archives_and_cumulative_budget(tmp_path):
 def test_legacy_single_task_does_not_become_a_session(tmp_path):
     result = runner().run(RunConfig(
         repo=repository(tmp_path), output_dir=tmp_path / "runs", task="Increment page",
+        model_name="offline/dialogue", env_file=None,
         test_target="tests/test_widget.py",
     ))
     with pytest.raises(Exception, match="cannot be continued"):
@@ -100,6 +102,7 @@ def test_safe_pause_can_append_a_turn_and_concurrent_writes_are_rejected(tmp_pat
     monkeypatch.setattr(CheckpointStore, "save", pause)
     result = runner().run(RunConfig(
         repo=repository(tmp_path), output_dir=tmp_path / "runs", task="Increment page",
+        model_name="offline/dialogue", env_file=None,
         test_target="tests/test_widget.py", conversation_enabled=True,
     ))
     root = Path(result.result_path).parent
@@ -119,6 +122,7 @@ def test_safe_pause_can_append_a_turn_and_concurrent_writes_are_rejected(tmp_pat
 def test_round_corruption_pending_outcome_and_budget_fail_closed(tmp_path):
     result = runner().run(RunConfig(
         repo=repository(tmp_path), output_dir=tmp_path / "runs", task="Increment page",
+        model_name="offline/dialogue", env_file=None,
         test_target="tests/test_widget.py", conversation_enabled=True,
     ))
     root = Path(result.result_path).parent

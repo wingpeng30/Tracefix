@@ -60,6 +60,19 @@ JUnit `tmp/dialogue-final-targeted-01.xml`。Ruff 与 staged Diff 检查通过�
 以及记忆函数新增参数不兼容旧替身、旧会话局部变量未初始化，均修复后从稳定代码复验。
 此前失败不记为通过，不放宽预算或身份约束。
 
+冻结候选 `960fe6eea43f57d7543f84cf92232b0b7f4dcc5b` 全量 902 tests，898 passed、
+4 failed、无跳过；覆盖率 14538/16114 = 90.21968474618345%。Ruff/compileall/Diff 均退出 0。
+失败为四个新增 API 测试未显式指定离线模型，在没有本地 .env 的干净 checkout 中
+触发请求前凭据拒绝；修正测试配置，不修改生产保护。
+原始证据 `tmp/dialogue-engineering-frozen-20261004-01`，该候选不推送。
+仓库外 wheel 与独立 editable 三进程验收已通过，零供应商调用，原始汇总及哈希
+`tmp/dialogue-packaging-20261004-01.json`，wheel SHA256
+`cce9e26cff802a4b6c301559a7902160c76d30e864d1d6772f40054d58a7ae2f`。
+本机启动已有 Docker Desktop 后，真实 Linux ordinary 运行及另一个独立容器验证通过，
+镜像 ID `sha256:49b75da8b9ba8ffb762e0995422817381db39c379973c8c777d54f2e4e724869`。
+运行目录 `tmp/dialogue-docker-ordinary-20261004-01`，独立验证日志
+`tmp/dialogue-docker-ordinary-independent-20261004-01.log`；本轮所属容器已清理。
+
 2026-10-04 开始 G1 实现，功能分支 `codex/experience-memory`；尚未通过交付门槛。
 本机普通 Python 位于 Anaconda，工程检查采用仓库 `.venv` 的锁定环境。
 Docker 本机 daemon 的可用性以执行时探针为准；真实容器验收必须由 Linux 实测证明。
