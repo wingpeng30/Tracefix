@@ -33,6 +33,8 @@ memory_dir = "./memory"
 相同内容去重，同类修改要求明确引用被替代版本的内容哈希；无明确继承的冲突会暂停启用。
 旧版本保留，可显式停用与回滚已验证版本：
 
+主动停用会保留停用标志，后续自动提炼不能重新启用；显式回滚已验证版本后才解除。
+
 ```powershell
 tracefix memory list --repo ../my-project --memory-dir ./memory
 tracefix memory show --repo ../my-project --memory-dir ./memory --key pagination

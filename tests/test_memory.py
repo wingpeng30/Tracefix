@@ -105,6 +105,19 @@ def test_candidate_can_gain_verified_evidence_without_overwriting_history(store)
     assert store.publish("repeated", proposal(), evidence(), [])["status"] == "duplicate"
 
 
+def test_automatic_revision_cannot_override_explicit_disable(store):
+    store.publish("first", proposal(), evidence(), [])
+    previous = store.show("pagination")["versions"][0]["sha256"]
+    store.disable("pagination")
+    update = store.publish("update", proposal(summary="Revised description", supersedes=previous),
+                           evidence(), [])
+    assert update["status"] == "candidate"
+    assert not store.select("pagination")
+    assert store.show("pagination")["disabled"] is True
+    store.rollback("pagination", 1)
+    assert store.select("pagination")
+
+
 @pytest.mark.parametrize("mutation", [
     "schema", "repo", "shape", "key", "versions", "active", "status", "content", "evidence",
     "unverified_active",
@@ -383,6 +396,21 @@ def test_installed_package_shape_replay_separate_processes(tmp_path):
     assert result["provider_calls"] == 0
     assert result["learn"]["pid"] != result["recall"]["pid"]
     assert result["recall"]["recalled"] is True
+
+
+def test_recorded_worker_uses_production_adapter_and_independent_verifier(tmp_path):
+    from tracefix.memory_replay import worker
+
+    output = tmp_path / "worker"
+    output.mkdir()
+    first = worker(output, "learn")
+    second = worker(output, "recall")
+    assert first["recorded_requests"] == 7
+    assert second["recorded_requests"] == 8
+    assert first["independent_passed"] and second["independent_passed"]
+    assert second["recalled"]
+    assert first["memory"]["status"] == "verified"
+    assert second["memory"]["status"] == "duplicate"
 
 
 @pytest.mark.parametrize("mode,expected", [

@@ -151,6 +151,7 @@ class ExperienceStore:
             if key not in data["records"]:
                 raise MemoryError("unknown experience")
             data["records"][key]["active"] = None
+            data["records"][key]["disabled"] = True
             self._write(data)
 
     def rollback(self, key: str, version: int) -> None:
@@ -162,6 +163,7 @@ class ExperienceStore:
             if record["versions"][version - 1]["status"] != "verified":
                 raise MemoryError("cannot activate an unverified experience")
             record["active"] = version
+            record["disabled"] = False
             self._write(data)
 
     def publish(self, episode: str, proposal: ExperienceProposal,
@@ -182,6 +184,8 @@ class ExperienceStore:
                     data["episodes"][episode] = receipt
                     self._write(data)
                     return receipt
+            if record.get("disabled", False):
+                reasons = [*reasons, "experience was explicitly disabled"]
             if record["active"] is not None:
                 previous = record["versions"][record["active"] - 1]
                 if proposal.supersedes != previous["sha256"]:

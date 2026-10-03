@@ -50,3 +50,13 @@ Ruff 和工作区 Diff 检查通过。wheel 构建日志 `tmp/memory-wheel-build
 此前全量检查在临时目录权限问题及实现编辑期间运行，不能作为精确版本验收。
 将使用冻结候选的独立 checkout 验收；全量覆盖率、Windows 双版本、editable、Linux Docker/MCP
 及精确提交 CI 尚未通过，G1 保持未完成，未创建正式 PR。
+
+候选 `50260a5e86f5295110e7970601777e0b94000a21` 的独立 checkout 检查：
+892 tests，889 passed、2 failed、1 skipped；精确覆盖率 14161/15787 = 89.70038639386837%，
+未过门槛。原始日志、JUnit、覆盖率及哈希位于 `tmp/memory-engineering-frozen-20261004-01`。
+失败源于缺少既有 Docker TLS 锁定依赖和运行中补齐依赖造成的环境身份变化；不修改测试断言。
+已按原工程锁文件的哈希安装 cryptography 48.0.0 / cffi 2.1.1 / pycparser 3.0。
+补齐依赖后的 TLS 与记忆定向测试 46 passed；模拟实验失败单独重跑 1 passed。
+新增在进程内运行真实记录适配器和独立验证器的闭环测试，测量子进程未计入的产品路径；
+同时保留跨进程测试。增加主动停用不能被自动版本更新覆盖的维护测试，1 passed。
+将固定新候选并在依赖不变的环境重新运行完整检查，不降低 90% 门槛。
