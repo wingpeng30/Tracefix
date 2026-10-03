@@ -222,6 +222,20 @@ def test_store_corruption_concurrency_and_failed_publication(store, monkeypatch)
         store.list()
 
 
+def test_capacity_rejection_preserves_readable_previous_versions(store, monkeypatch):
+    import tracefix.memory as memory
+
+    store.publish("first", proposal(), evidence(), [])
+    original = store.path.read_bytes()
+    previous = store.show("pagination")["versions"][0]["sha256"]
+    monkeypatch.setattr(memory, "_MAX_INDEX_BYTES", len(original))
+    with pytest.raises(MemoryError, match="capacity"):
+        store.publish("larger", proposal(summary="Additional guidance", supersedes=previous),
+                      evidence(), [])
+    assert store.path.read_bytes() == original
+    assert store.select("pagination")[0][1] == 1
+
+
 @pytest.mark.parametrize("update", [
     {"generalized": True}, {"test_call_id": "missing"},
     {"applicability_paths": ["../outside"]}, {"applicability_paths": ["missing.py"]},

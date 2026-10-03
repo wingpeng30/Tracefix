@@ -26,6 +26,7 @@ _VERIFIED_INSTRUCTIONS = {
     "run_tests": "Run the related tests after changing the implementation.",
     "get_git_diff": "Inspect the final diff before completing the task.",
 }
+_MAX_INDEX_BYTES = 16 * 1024 * 1024
 
 
 def canonical(value: Any) -> bytes:
@@ -93,7 +94,7 @@ class ExperienceStore:
         if not self.path.exists():
             return {"repo_id": self.repo_id, "records": {}, "episodes": {}}
         try:
-            if self.path.is_symlink() or self.path.stat().st_size > 16 * 1024 * 1024:
+            if self.path.is_symlink() or self.path.stat().st_size > _MAX_INDEX_BYTES:
                 raise ValueError("invalid index file")
             envelope = json.loads(self.path.read_text(encoding="utf-8"))
             data = envelope["data"]
@@ -134,7 +135,10 @@ class ExperienceStore:
             raise MemoryError(f"cannot verify memory store: {exc}") from exc
 
     def _write(self, data: dict[str, Any]) -> None:
-        atomic_json(self.path, {"schema_version": 1, "sha256": digest(data), "data": data})
+        envelope = {"schema_version": 1, "sha256": digest(data), "data": data}
+        if len(canonical(envelope)) + 1 > _MAX_INDEX_BYTES:
+            raise MemoryError("memory index capacity exceeded; previous versions retained")
+        atomic_json(self.path, envelope)
 
     def list(self) -> dict[str, Any]:
         return self._read()["records"]

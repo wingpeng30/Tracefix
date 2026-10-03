@@ -34,6 +34,7 @@ memory_dir = "./memory"
 旧版本保留，可显式停用与回滚已验证版本：
 
 主动停用会保留停用标志，后续自动提炼不能重新启用；显式回滚已验证版本后才解除。
+索引上限为 16 MiB，超限的新写入被拒绝并报告原因，上一份索引仍可读取。
 
 ```powershell
 tracefix memory list --repo ../my-project --memory-dir ./memory

@@ -60,3 +60,9 @@ Ruff 和工作区 Diff 检查通过。wheel 构建日志 `tmp/memory-wheel-build
 新增在进程内运行真实记录适配器和独立验证器的闭环测试，测量子进程未计入的产品路径；
 同时保留跨进程测试。增加主动停用不能被自动版本更新覆盖的维护测试，1 passed。
 将固定新候选并在依赖不变的环境重新运行完整检查，不降低 90% 门槛。
+
+候选 `2aceba7` 的仓库外 editable 与 wheel 记忆闭环均通过，已安装 wheel 的 memory list 命令通过；
+产物为 `tmp/memory-wheel-20261004-06`，日志 `tmp/memory-editable-smoke-20261004-01.log`、
+`tmp/memory-wheel-smoke-20261004-06.log` 和 `tmp/memory-wheel-cli-20261004-06.log`。
+审查补齐索引容量保护：16 MiB 上限在替换前检查，超限保留旧索引，不写入之后无法读取的记录。
+容量与原子写入损坏定向测试 2 passed，退出码 0，目录 `tmp/memory-capacity-tests-20261004-03`。
