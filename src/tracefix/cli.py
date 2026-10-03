@@ -224,6 +224,9 @@ def build_parser() -> argparse.ArgumentParser:
     inspect_parser.add_argument("--json", action="store_true")
     resume_parser = subparsers.add_parser("resume", help="从安全 checkpoint 继续本地任务")
     resume_parser.add_argument("--run", type=Path, required=True)
+    continue_parser = subparsers.add_parser("continue", help="向连续会话追加一轮消息")
+    continue_parser.add_argument("--run", type=Path, required=True)
+    continue_parser.add_argument("--message", required=True)
 
     run_parser = subparsers.add_parser("run", help="运行一个仓库修复任务")
     run_parser.add_argument("--config", type=Path, help="普通本地运行的 TOML 配置")
@@ -263,6 +266,10 @@ def build_parser() -> argparse.ArgumentParser:
     task_group.add_argument("--task-file", type=Path, help="从 UTF-8 文件读取 Bug 描述")
     _add_shared_options(run_parser)
     run_parser.set_defaults(env_file=None)
+    chat_parser = subparsers.add_parser(
+        "chat", parents=[run_parser], add_help=False, help="创建或重新进入连续会话",
+    )
+    chat_parser.add_argument("--run", type=Path, help="重新进入已有连续会话")
 
     doctor_parser = subparsers.add_parser("doctor", help="零模型调用检查普通本地运行配置")
     doctor_parser.add_argument("--config", type=Path)
@@ -828,6 +835,8 @@ def _print_json(value: Any) -> None:
 def _print_run_result(result: Any) -> None:
     """输出适合人阅读、且不包含供应商原始响应的运行摘要。"""
     print(f"状态: {result.status.value}")
+    if getattr(result, "session_status", "single_task") != "single_task":
+        print(f"会话: {result.session_status} / 第 {result.turn_number} 轮（资源为累计值）")
     print(f"步骤: {result.step_count}")
     print(f"Token: 输入 {result.input_tokens} / 输出 {result.output_tokens}")
     context_metrics = result.context_metrics
@@ -900,7 +909,7 @@ def _ordinary_settings(args: argparse.Namespace) -> dict[str, Any]:
             "model",
             "env_file",
             "skills_dir",
-            "memory", "memory_dir",
+            "memory", "memory_dir", "conversation",
             "mcp_serena_image_id",
             "execution_backend", "docker_profile", "docker_image_id",
             "max_steps", "max_input_tokens", "max_output_tokens", "wall_time_seconds",
@@ -966,6 +975,7 @@ def _ordinary_settings(args: argparse.Namespace) -> dict[str, Any]:
         ),
         "memory_enabled": choose("memory", getattr(args, "memory", None)),
         "memory_dir": path_value("memory_dir", getattr(args, "memory_dir", None)),
+        "conversation_enabled": choose("conversation", None),
         "mcp_serena_image_id": choose(
             "mcp_serena_image_id", getattr(args, "mcp_serena_image_id", None),
             "TRACEFIX_MCP_SERENA_IMAGE_ID",
@@ -987,12 +997,33 @@ def _ordinary_settings(args: argparse.Namespace) -> dict[str, Any]:
                 "repo", "task", "test_python", "test_target", "source_import",
                 "regression_targets",
                 "output_dir", "model", "env_file", "skills_dir",
-                "memory", "memory_dir",
+                "memory", "memory_dir", "conversation",
                 "mcp_serena_image_id",
                 "execution_backend", "docker_profile", "docker_image_id",
             }
         },
     }
+
+
+def _chat_loop(runner: TraceFixRunner, run_dir: Path) -> int:
+    """Read user messages only between durable rounds; EOF leaves the session on disk."""
+    manifest = json.loads((run_dir / "session.json").read_text(encoding="utf-8"))
+    if (manifest.get("schema_version") != 2
+            or manifest.get("config", {}).get("conversation_enabled") is not True):
+        raise ValueError("已有记录不是连续会话")
+    print(f"会话: {run_dir.resolve()}")
+    while True:
+        try:
+            message = input("TraceFix> ")
+        except (EOFError, KeyboardInterrupt):
+            return 0
+        if message.strip() in {":exit", ":quit"}:
+            return 0
+        if not message.strip():
+            continue
+        result = (runner.resume(run_dir) if message.strip() == ":resume"
+                  else runner.continue_turn(run_dir, message))
+        _print_run_result(result)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -1028,10 +1059,17 @@ def main(argv: list[str] | None = None) -> int:
             if args.json:
                 _print_json(inspection)
             else:
-                print("可恢复" if inspection["resumable"] else "不可恢复")
+                print("可继续对话" if inspection.get("continuable")
+                      else "可恢复" if inspection["resumable"] else "不可恢复")
                 for reason in inspection["reasons"]:
                     print(f"原因: {reason}")
-            return 0 if inspection["resumable"] else 2
+            return 0 if inspection["resumable"] or inspection.get("continuable") else 2
+        if args.command == "continue":
+            result = TraceFixRunner().continue_turn(args.run, args.message)
+            _print_run_result(result)
+            return 0 if result.status is AgentStatus.COMPLETED else 2
+        if args.command == "chat" and args.run is not None:
+            return _chat_loop(TraceFixRunner(), args.run)
         if args.command == "resume":
             result = TraceFixRunner().resume(args.run)
             _print_run_result(result)
@@ -1421,7 +1459,7 @@ def main(argv: list[str] | None = None) -> int:
             print(f"汇总文件: {summary.summary_path}")
             return 0
 
-        if args.command == "run":
+        if args.command in {"run", "chat"}:
             settings = _ordinary_settings(args)
             for field, value in settings["shared_toml"].items():
                 env_name = {
@@ -1441,7 +1479,7 @@ def main(argv: list[str] | None = None) -> int:
             real_issue_budget=args.command
             in {"real-prescreen", "real-repo-map-prescreen", "real-paired-eval"},
         )
-        if args.command == "run":
+        if args.command in {"run", "chat"}:
             settings = _ordinary_settings(args)
             if settings["repo"] is None:
                 raise ValueError("必须通过 --repo 或配置文件指定仓库")
@@ -1464,6 +1502,8 @@ def main(argv: list[str] | None = None) -> int:
                     "docker_image_id": settings["docker_image_id"],
                     "memory_enabled": settings["memory_enabled"] or False,
                     "memory_dir": settings["memory_dir"],
+                    "conversation_enabled": args.command == "chat"
+                    or settings["conversation_enabled"] or False,
                     "docker_task_id": args.docker_task_id,
                     "docker_input_root": args.docker_input_root
                     if settings["execution_backend"] == "docker"
@@ -1471,7 +1511,8 @@ def main(argv: list[str] | None = None) -> int:
                     else None,
                 }
             )
-            result = TraceFixRunner().run(
+            runner = TraceFixRunner()
+            result = runner.run(
                 RunConfig(
                     repo=settings["repo"],
                     task=_read_task(args)
@@ -1484,6 +1525,10 @@ def main(argv: list[str] | None = None) -> int:
                 )
             )
             _print_run_result(result)
+            if args.command == "chat":
+                if result.status is AgentStatus.FAILED:
+                    return 1
+                return _chat_loop(runner, Path(result.result_path).parent)
             if result.status is AgentStatus.COMPLETED:
                 return 0
             return 2 if result.status is AgentStatus.INTERRUPTED else 1

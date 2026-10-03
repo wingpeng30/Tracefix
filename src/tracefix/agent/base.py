@@ -108,6 +108,11 @@ class AgentState(BaseModel):
     presentation_metrics: ToolPresentationMetrics = Field(default_factory=ToolPresentationMetrics)
     model_request_seconds: float = Field(default=0.0, ge=0)
     memory_status: dict[str, JsonValue] = Field(default_factory=dict)
+    turn_number: int = Field(default=1, ge=1)
+    turn_start_steps: int = Field(default=0, ge=0)
+    turn_start_searches: int = Field(default=0, ge=0)
+    turn_start_reads: int = Field(default=0, ge=0)
+    turn_start_repo_reads: int = Field(default=0, ge=0)
     tool_execution_seconds: float = Field(default=0.0, ge=0)
     context_preparation_seconds: float = Field(default=0.0, ge=0)
 

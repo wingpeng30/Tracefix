@@ -40,6 +40,7 @@ class MinimalAgent(BaseAgent):
 
     checkpoint_callback: Callable[[MinimalAgent], None] | None = None
     experience_callback: Callable[[MinimalAgent], None] | None = None
+    persist_terminal_checkpoint: bool = False
 
     _RECOVERY_FIELDS = (
         "_failed_apply_calls", "_invalid_test_signatures", "_consecutive_apply_failures",
@@ -84,7 +85,7 @@ class MinimalAgent(BaseAgent):
             self._tests_passed = False
             self.state.validation_status = "unverified"
 
-    def resume(self, payload: dict[str, Any]) -> AgentState:
+    def resume(self, payload: dict[str, Any], *, message: str | None = None) -> AgentState:
         """Continue a previously validated local checkpoint without resetting history."""
         from tracefix.messages import MessageHistory
 
@@ -110,20 +111,31 @@ class MinimalAgent(BaseAgent):
         self.state.status = AgentStatus.RUNNING
         self.state.finished_at = None
         self.state.stop_reason = None
+        if message is not None:
+            if not message.strip():
+                raise AgentError("message cannot be empty")
+            self._check_pre_request_budgets()
+            self._reset_turn_runtime()
+            self.state.turn_number += 1
+            self.state.turn_start_steps = self.state.step_count
+            self.state.turn_start_searches = self.state.search_calls
+            self.state.turn_start_reads = self.state.file_read_calls
+            self.state.turn_start_repo_reads = self.state.repo_map_candidate_reads
+            self.state.task = message
+            self.state.phase = AgentPhase.EXPLORE
+            self.state.final_output = None
+            self.state.validation_status = "unverified"
+            self.state.validation_gate_status = None
+            self.state.validation_gate_results = []
+            self.state.memory_status = {}
+            self._append_message(Message(role=MessageRole.USER, content=message,
+                                         metadata={"turn": self.state.turn_number}))
+            self._emit(TraceEventType.TURN_STARTED, {"turn": self.state.turn_number})
+            if self.checkpoint_callback is not None:
+                self.checkpoint_callback(self)
         return self._run_initialized(self.state.task or "", resume=True)
 
-    def run(self, task: str) -> AgentState:
-        """初始化消息历史并运行，正常完成或预算终止时返回最终状态。"""
-        if not task.strip():
-            raise AgentError("task cannot be empty")
-
-        validation_targets = getattr(self, "validation_targets", ())
-        validation_baseline = getattr(self, "validation_baseline", {})
-        validation_source_identity = getattr(self, "validation_source_identity", None)
-        original_target = getattr(self, "configured_original_target", None)
-        baseline_runs = getattr(self, "validation_baseline_runs", 0)
-        baseline_seconds = getattr(self, "validation_baseline_seconds", 0.0)
-        self.reset()
+    def _reset_turn_runtime(self) -> None:
         # 以下运行期记忆只服务于确定性失败恢复，不进入持久化 AgentState。
         self._failed_apply_calls: dict[str, str] = {}
         self._invalid_test_signatures: dict[str, int] = {}
@@ -152,6 +164,20 @@ class MinimalAgent(BaseAgent):
         self._late_targeted_retrievals = 0
         self._last_test_evidence: dict[str, Any] | None = None
         self._validation_gate_attempted_sha: str | None = None
+
+    def run(self, task: str) -> AgentState:
+        """初始化消息历史并运行，正常完成或预算终止时返回最终状态。"""
+        if not task.strip():
+            raise AgentError("task cannot be empty")
+
+        validation_targets = getattr(self, "validation_targets", ())
+        validation_baseline = getattr(self, "validation_baseline", {})
+        validation_source_identity = getattr(self, "validation_source_identity", None)
+        original_target = getattr(self, "configured_original_target", None)
+        baseline_runs = getattr(self, "validation_baseline_runs", 0)
+        baseline_seconds = getattr(self, "validation_baseline_seconds", 0.0)
+        self.reset()
+        self._reset_turn_runtime()
         self.validation_targets = validation_targets
         self.validation_baseline = validation_baseline
         self.validation_source_identity = validation_source_identity
@@ -397,6 +423,18 @@ class MinimalAgent(BaseAgent):
             raise
 
         self._add_usage(response.usage)
+        if self.state.turn_number > 1 and response.message.tool_calls:
+            # Provider IDs can restart in a new process; historical calls remain globally unique.
+            calls = tuple(call.model_copy(update={
+                "id": f"turn-{self.state.turn_number}-{call.id}",
+            }) for call in response.message.tool_calls)
+            response = response.model_copy(update={"message": response.message.model_copy(update={
+                "tool_calls": calls,
+                "metadata": {**response.message.metadata, "provider_call_ids": {
+                    saved.id: original.id for saved, original in
+                    zip(calls, response.message.tool_calls, strict=True)
+                }},
+            })})
         self._append_message(response.message)
         self._emit_model_response(response, model_duration_seconds)
 
@@ -1020,7 +1058,9 @@ class MinimalAgent(BaseAgent):
                 normalized_requested_path = requested_path.replace("\\", "/")
                 if normalized_requested_path in self.repository_candidates:
                     self._repo_map_candidate_reads.add(normalized_requested_path)
-                    self.state.repo_map_candidate_reads = len(self._repo_map_candidate_reads)
+                    self.state.repo_map_candidate_reads = (
+                        self.state.turn_start_repo_reads + len(self._repo_map_candidate_reads)
+                    )
                     # Repo Map 候选被读到只是一条定位证据，不强行切换阶段；模型仍可在
                     # 后续测试反馈下补读调用方，避免过早补丁导致准确率下降。
 
@@ -1211,11 +1251,12 @@ class MinimalAgent(BaseAgent):
         ):
             return
         reasons = []
-        if self.state.step_count >= self.config.max_exploration_steps:
+        if self.state.step_count - self.state.turn_start_steps >= self.config.max_exploration_steps:
             reasons.append("模型探索步骤已达到软上限")
-        if self.state.search_calls >= self.config.max_search_calls:
+        if self.state.search_calls - self.state.turn_start_searches >= self.config.max_search_calls:
             reasons.append("搜索调用已达到软上限")
-        if self.state.file_read_calls >= self.config.max_file_reads_before_patch:
+        if (self.state.file_read_calls - self.state.turn_start_reads
+                >= self.config.max_file_reads_before_patch):
             reasons.append("补丁前文件读取已达到软上限")
         if not reasons:
             return
@@ -1238,7 +1279,8 @@ class MinimalAgent(BaseAgent):
         if (
             not self._feature_enabled(self.config.action_guidance_enabled)
             or self._patch_action_reminder_sent
-            or self.state.repo_map_candidate_reads < self.config.repo_map_reads_before_patch
+            or self.state.repo_map_candidate_reads - self.state.turn_start_repo_reads
+            < self.config.repo_map_reads_before_patch
         ):
             return
         self._append_message(
@@ -1515,8 +1557,9 @@ class MinimalAgent(BaseAgent):
         if status is AgentStatus.COMPLETED and self.experience_callback is not None:
             self.experience_callback(self)
             self.state.finished_at = datetime.now(UTC)
-            if self.checkpoint_callback is not None:
-                self.checkpoint_callback(self)
+        if (status is AgentStatus.COMPLETED and self.checkpoint_callback is not None
+                and (self.experience_callback is not None or self.persist_terminal_checkpoint)):
+            self.checkpoint_callback(self)
         self._emit_state()
         self._emit(TraceEventType.TASK_FINISHED, {"state": self.state.model_dump(mode="json")})
 

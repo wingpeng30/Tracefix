@@ -6,7 +6,7 @@
 
 ## 子 Goal 与提交门槛
 
-- [ ] G1：自动形成、维护并跨进程复用仓库级经验 Skills。
+- [x] G1：自动形成、维护并跨进程复用仓库级经验 Skills。
 - [ ] G2：CLI 与 Python API 连续对话、独立轮次记录及累计预算。
 - [ ] G3：ordinary Docker 完整批次快照与原容器删除后的新容器恢复。
 - [ ] G4：多轮→经验→新会话→Docker 中断恢复→独立验收的联动链路。
@@ -26,6 +26,36 @@ Docker 首批只覆盖普通仓库 profile；原镜像、基线、产品快照�
 结果未知的模型或修改工具调用阻断恢复。
 
 ## 当前验证
+
+### G1 正式交付证据
+
+精确提交 `773ec7abbf012592c16fd95c01141f2629370fc1` 已完成所有门槛，
+正式 PR [#17](https://github.com/wingpeng30/Tracefix/pull/17) 已创建，尚未合并。
+精确 push CI [#98](https://github.com/wingpeng30/Tracefix/actions/runs/37141279902)
+五项全部通过：Windows Python 3.11/3.12 各 895 tests，无失败、错误或跳过，
+精确综合覆盖率 14247/15799 = 90.17659345528197%；三个 Linux Docker/MCP 门槛通过。
+本地冻结 checkout 895 tests 全通过，覆盖率 14260/15799 = 90.25887714412305%，
+Ruff、compileall、Diff 均退出 0。证据位于 `tmp/memory-engineering-frozen-20261004-03`。
+独立 editable 与仓库外 wheel 实际命令验收通过，跨进程学习、召回、真实加载、工具执行、
+独立补丁验证、停用及回滚均通过，供应商调用为零。
+最终 wheel SHA256 `f90bf0d4f049d8840b277cc04a9f5c5ff52b7b43e5470c6a3298fbc176f17ed0`。
+原始 CI run/jobs/artifacts 记录位于 `tmp/memory-ci-98-final-20261004.json`。
+以下早期候选失败记录保留为历史，不作为交付证据。
+G2 从该精确提交继续，分支 `codex/continuous-dialogue`，尚未完成验证。
+
+### G2 实现与候选检查
+
+新增显式连续会话格式、chat/continue CLI 与 continue_turn API，保留单轮中断恢复入口。
+共享历史、工作区、累计预算和固定经验快照，各轮独立归档补丁、轨迹、验证与结果，
+新轮重置探索及结束验证；每轮经验请求使用独立幂等收据。
+已完成三轮真实修改、pytest、校正要求、独立进程重新进入的定向测试。
+尚未通过 G2 冻结提交全量工程检查和精确 CI，不创建 G2 正式 PR。
+
+早期定向失败保留：缺少模拟费用字段导致会计不完整而拒绝继续；CLI 未指定离线模型
+在请求前被配置保护拒绝；Windows GBK 输出不能编码费用符号，验收进程改用 UTF-8；
+独立验证缺少源码导入字段被拒绝。检查还发现编辑中的实现身份变化正确阻断跨进程继续，
+以及记忆函数新增参数不兼容旧替身、旧会话局部变量未初始化，均修复后从稳定代码复验。
+此前失败不记为通过，不放宽预算或身份约束。
 
 2026-10-04 开始 G1 实现，功能分支 `codex/experience-memory`；尚未通过交付门槛。
 本机普通 Python 位于 Anaconda，工程检查采用仓库 `.venv` 的锁定环境。

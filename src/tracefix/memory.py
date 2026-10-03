@@ -344,9 +344,13 @@ def validate_proposal(proposal: ExperienceProposal, evidence: dict, workspace: P
 
 
 def reflect_experience(agent: Any, store: ExperienceStore, run_dir: Path,
-                       workspace: Path, source_sha256: str) -> dict[str, Any]:
+                       workspace: Path, source_sha256: str, *, turn_number: int | None = None
+                       ) -> dict[str, Any]:
     """One budgeted extraction, with a durable pre-dispatch receipt and no unknown-call retry."""
-    job = run_dir / "memory-job.json"
+    job = run_dir / (
+        f"memory-job-turn-{turn_number:04d}.json"
+        if turn_number is not None else "memory-job.json"
+    )
     if job.exists():
         return json.loads(job.read_text(encoding="utf-8"))
     agent.verify_test_source(source_sha256)

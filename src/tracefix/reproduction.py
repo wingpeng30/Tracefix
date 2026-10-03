@@ -464,10 +464,18 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--backend", choices=("local", "docker"), default="local")
     parser.add_argument("--image-id", help="full sha256 image ID required for Docker mode")
     parser.add_argument(
-        "--scenario", choices=("smoke", "pagination", "regression-feedback", "memory-experience"),
+        "--scenario", choices=("smoke", "pagination", "regression-feedback", "memory-experience",
+                               "continuous-dialogue"),
         default="smoke"
     )
     args = parser.parse_args(argv)
+    if args.scenario == "continuous-dialogue":
+        if args.backend != "local" or args.skills_enabled or args.image_id:
+            parser.error("continuous-dialogue requires local execution without explicit Skills")
+        from tracefix.dialogue_replay import run_dialogue_replay
+
+        print(json.dumps(run_dialogue_replay(args.output), ensure_ascii=True))
+        return 0
     if args.scenario == "memory-experience":
         if args.backend != "local" or args.skills_enabled or args.image_id:
             parser.error("memory-experience requires local execution without explicit Skills")

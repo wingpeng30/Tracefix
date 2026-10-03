@@ -405,6 +405,11 @@ ul{{padding-left:20px}}footer{{color:var(--muted);font-size:13px}}
 <p>模型请求视图：{_clean(request_view_text)}</p>
 <p>恢复段：{resume_segments} · Checkpoint：{_clean(checkpoint_text)}</p>
 <p>经验记忆：{_clean(result.get('memory_status') or '未启用')}</p>
+<p>会话状态：{_clean(result.get('session_status', 'single_task'))}；
+当前轮次：{_clean(result.get('turn_number', 1))}。
+以下资源使用为会话累计值。</p>
+<details><summary>独立轮次记录与产物身份</summary>
+<pre>{_clean(result.get('turn_records', []))}</pre></details>
 <p>最近测试事实：{test_fact_text}</p>
 <p>运行错误：{_label(result.get("error"))}</p>
 <p>Agent 结束表示控制流结束；公开测试结果和独立验收分别列示，
