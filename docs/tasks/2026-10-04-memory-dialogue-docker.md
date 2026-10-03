@@ -49,6 +49,9 @@ G2 从该精确提交继续，分支 `codex/continuous-dialogue`，尚未完成�
 共享历史、工作区、累计预算和固定经验快照，各轮独立归档补丁、轨迹、验证与结果，
 新轮重置探索及结束验证；每轮经验请求使用独立幂等收据。
 已完成三轮真实修改、pytest、校正要求、独立进程重新进入的定向测试。
+稳定定向回归 78 passed，退出码 0，JUnit `tmp/dialogue-targeted-frozen-01.xml`；
+补充报告和进程内 CLI 分支后，连续对话专项 7 passed，退出码 0，
+JUnit `tmp/dialogue-final-targeted-01.xml`。Ruff 与 staged Diff 检查通过。
 尚未通过 G2 冻结提交全量工程检查和精确 CI，不创建 G2 正式 PR。
 
 早期定向失败保留：缺少模拟费用字段导致会计不完整而拒绝继续；CLI 未指定离线模型
