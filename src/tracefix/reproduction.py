@@ -464,9 +464,17 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--backend", choices=("local", "docker"), default="local")
     parser.add_argument("--image-id", help="full sha256 image ID required for Docker mode")
     parser.add_argument(
-        "--scenario", choices=("smoke", "pagination", "regression-feedback"), default="smoke"
+        "--scenario", choices=("smoke", "pagination", "regression-feedback", "memory-experience"),
+        default="smoke"
     )
     args = parser.parse_args(argv)
+    if args.scenario == "memory-experience":
+        if args.backend != "local" or args.skills_enabled or args.image_id:
+            parser.error("memory-experience requires local execution without explicit Skills")
+        from tracefix.memory_replay import run_memory_replay
+
+        print(json.dumps(run_memory_replay(args.output), ensure_ascii=True, indent=2))
+        return 0
     if args.scenario == "regression-feedback":
         if args.backend != "local" or args.skills_enabled or args.image_id:
             parser.error(

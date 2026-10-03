@@ -220,6 +220,7 @@ def run(output: Path, root: Path, python: str, diff_base: str = "HEAD^") -> dict
         python,
         "-m",
         "pytest",
+        "tests",
         "-q",
         "--cov=tracefix",
         "--cov-branch",

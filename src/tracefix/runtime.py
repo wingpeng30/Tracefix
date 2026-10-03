@@ -96,7 +96,10 @@ def config_identity_sha256(
         and "regression_targets" not in manifest_config
         and not config.regression_targets
     )
-    exclude = {"regression_targets"} if legacy_empty_targets else None
+    exclude = {"regression_targets"} if legacy_empty_targets else set()
+    if manifest_config is not None:
+        exclude.update(name for name in ("memory_enabled", "memory_dir")
+                       if name not in manifest_config)
     return hashlib.sha256(
         config.model_dump_json(exclude=exclude).encode("utf-8")
     ).hexdigest()
@@ -122,6 +125,8 @@ class RunConfig(BaseModel):
     regression_targets: tuple[str, ...] = ()
     source_import: str | None = None
     skills_root: Path | None = None
+    memory_enabled: bool = False
+    memory_dir: Path | None = None
     mcp_serena_image_id: str | None = None
     environment_recipe: EnvironmentRecipe | None = None
     test_environment_variables: dict[str, str] = Field(default_factory=dict)
@@ -189,6 +194,8 @@ class RunConfig(BaseModel):
                 raise ValueError("ordinary Docker does not accept frozen task inputs")
         if self.execution_backend == "docker" and self.skills_root is not None:
             raise ValueError("custom Skills directories are supported only by local execution")
+        if self.memory_enabled and self.execution_backend != "local":
+            raise ValueError("experience memory currently requires the local backend")
         if self.execution_backend == "docker" and self.mcp_serena_image_id is not None:
             raise ValueError("Serena MCP is supported only with the local Agent backend")
         if self.execution_backend != "docker" and (
@@ -234,6 +241,7 @@ class RunResult(BaseModel):
     finished_at: datetime
     duration_seconds: float = Field(ge=0)
     model_request_seconds: float = Field(default=0.0, ge=0)
+    memory_status: dict[str, JsonValue] = Field(default_factory=dict)
     tool_execution_seconds: float = Field(default=0.0, ge=0)
     context_preparation_seconds: float = Field(default=0.0, ge=0)
     repository_index_seconds: float = Field(default=0.0, ge=0)
@@ -269,6 +277,35 @@ class TraceFixRunner:
     def __init__(self, llm_factory: LLMFactory | None = None) -> None:
         # 注入工厂让自动测试可以替换真实供应商，同时生产默认仍使用 LiteLLM。
         self._llm_factory = llm_factory or LiteLLMAdapter
+
+    @staticmethod
+    def _agent_config(config: RunConfig) -> AgentConfig:
+        return config.agent_config.model_copy(deep=True, update={
+            "skills_enabled": config.agent_config.skills_enabled or config.memory_enabled,
+        })
+
+    @staticmethod
+    def _skills_root(config: RunConfig, root: Path) -> Path | None:
+        return root / "experience-skills" if config.memory_enabled else config.skills_root
+
+    def _attach_memory(self, agent: MinimalAgent, config: RunConfig, root: Path,
+                       workspace: Path, protected: set[str]) -> None:
+        if not config.memory_enabled:
+            return
+        from tracefix.memory import ExperienceStore, reflect_experience
+
+        memory = ExperienceStore(config.memory_dir or root.parent / "memory", config.repo)
+
+        def completed(active: MinimalAgent) -> None:
+            patch, _ = self._collect_diff(workspace, protected)
+            try:
+                active.state.memory_status = reflect_experience(
+                    active, memory, root, workspace, hashlib.sha256(patch.encode()).hexdigest(),
+                )
+            except (OSError, ValueError, CheckpointError) as exc:
+                active.state.memory_status = {"status": "rejected", "reason": str(exc)}
+
+        agent.experience_callback = completed
 
     @classmethod
     def inspect(cls, run_dir: Path) -> dict[str, Any]:
@@ -370,9 +407,9 @@ class TraceFixRunner:
                     workspace,
                     evidence_dir=root / "test-evidence",
                     protected_dirs=set(protected),
-                    skills_enabled=config.agent_config.skills_enabled,
+                    skills_enabled=config.agent_config.skills_enabled or config.memory_enabled,
                     skill_limits=config.agent_config.skill_limits,
-                    skills_root=config.skills_root,
+                    skills_root=cls._skills_root(config, root),
                     test_timeout_seconds=min(120.0, float(config.agent_config.wall_time_seconds)),
                     test_python_executable=config.test_python_executable,
                     test_pythonpath_entries=config.test_pythonpath_entries,
@@ -384,7 +421,7 @@ class TraceFixRunner:
                 ).encode("utf-8")).hexdigest()
                 if tool_sha != recorded["tool_sha256"]:
                     reasons.append("tool definitions changed")
-                if config.agent_config.skills_enabled:
+                if config.agent_config.skills_enabled or config.memory_enabled:
                     try:
                         registry.get("load_skill").restore_recovery_state(
                             snapshot.payload["skills"]
@@ -501,9 +538,9 @@ class TraceFixRunner:
                 workspace,
                 evidence_dir=root / "test-evidence",
                 protected_dirs=protected_dirs,
-                skills_enabled=config.agent_config.skills_enabled,
+                skills_enabled=config.agent_config.skills_enabled or config.memory_enabled,
                 skill_limits=config.agent_config.skill_limits,
-                skills_root=config.skills_root,
+                skills_root=self._skills_root(config, root),
                 test_timeout_seconds=min(120.0, float(config.agent_config.wall_time_seconds)),
                 test_python_executable=config.test_python_executable,
                 test_pythonpath_entries=config.test_pythonpath_entries,
@@ -522,7 +559,9 @@ class TraceFixRunner:
             ).encode("utf-8")).hexdigest()
             if tool_hash != manifest["identity"]["tool_sha256"]:
                 raise CheckpointError("tool definitions changed since checkpoint")
-            skill_tool = tools.get("load_skill") if config.agent_config.skills_enabled else None
+            skill_tool = tools.get("load_skill") if (
+                config.agent_config.skills_enabled or config.memory_enabled
+            ) else None
             if skill_tool is not None:
                 skill_tool.restore_recovery_state(snapshot.payload["skills"])
             load_environment_file(config.env_file)
@@ -550,7 +589,7 @@ class TraceFixRunner:
                 ))
                 agent = MinimalAgent(
                     self._llm_factory(llm_config), tools,
-                    config=config.agent_config.model_copy(deep=True),
+                    config=self._agent_config(config),
                     trace_sink=sink,
                     repository_map=repo_map.text if repo_map else None,
                     repository_candidates=repo_map.candidate_files if repo_map else (),
@@ -596,6 +635,7 @@ class TraceFixRunner:
                     }, sequence=sequence)
 
                 agent.checkpoint_callback = save_checkpoint
+                self._attach_memory(agent, config, root, workspace, protected_dirs)
                 try:
                     state = agent.resume(snapshot.payload["agent"])
                 finally:
@@ -646,6 +686,7 @@ class TraceFixRunner:
                 agent_config=config.agent_config.model_copy(deep=True),
                 context_metrics=state.context_metrics.model_copy(deep=True),
                 presentation_metrics=state.presentation_metrics.model_copy(deep=True),
+                memory_status=state.memory_status,
                 repo_map=repo_map,
                 repo_map_path=str(repo_map_path) if repo_map else None,
                 provenance=provenance,
@@ -739,6 +780,15 @@ class TraceFixRunner:
             self._validate_credentials(config.model_name)
             source, source_commit = self._validate_source_repository(config.repo)
             source_repo = str(source)
+            if config.memory_enabled:
+                from tracefix.memory import ExperienceStore
+
+                memory = ExperienceStore(config.memory_dir or output_root / "memory", source)
+                selected = memory.snapshot(config.task, run_dir / "experience-skills",
+                                           config.skills_root, config.agent_config.skill_limits)
+                from tracefix.memory import atomic_json
+
+                atomic_json(run_dir / "memory-selection.json", selected)
             if config.execution_backend == "docker":
                 assert config.docker_profile == "ordinary" or (
                     config.docker_task_id and config.docker_input_root
@@ -762,7 +812,7 @@ class TraceFixRunner:
                     Path(__file__).resolve().parents[2],
                     repo_map_task=config.task,
                     repo_map_config=config.agent_config.repo_map,
-                    skills_enabled=config.agent_config.skills_enabled,
+                    skills_enabled=config.agent_config.skills_enabled or config.memory_enabled,
                     skill_limits=config.agent_config.skill_limits,
                     **docker_prepare_options,
                 )
@@ -829,9 +879,9 @@ class TraceFixRunner:
                     workspace,
                     evidence_dir=run_dir / "test-evidence",
                     protected_dirs=internal_artifacts,
-                    skills_enabled=config.agent_config.skills_enabled,
+                    skills_enabled=config.agent_config.skills_enabled or config.memory_enabled,
                     skill_limits=config.agent_config.skill_limits,
-                    skills_root=config.skills_root,
+                    skills_root=self._skills_root(config, run_dir),
                     test_timeout_seconds=min(120.0, float(config.agent_config.wall_time_seconds)),
                     test_python_executable=config.test_python_executable,
                     test_pythonpath_entries=config.test_pythonpath_entries,
@@ -874,7 +924,7 @@ class TraceFixRunner:
             agent = MinimalAgent(
                 llm,
                 tools,
-                config=config.agent_config.model_copy(deep=True),
+                config=self._agent_config(config),
                 trace_sink=sink,
                 repository_map=repository_map.text if repository_map else None,
                 repository_candidates=(repository_map.candidate_files if repository_map else ()),
@@ -960,7 +1010,9 @@ class TraceFixRunner:
                     active.verify_test_source(current_sha)
                     trace_bytes = trace_path.read_bytes()
                     skill_tool = (
-                        tools.get("load_skill") if config.agent_config.skills_enabled else None
+                        tools.get("load_skill") if (
+                            config.agent_config.skills_enabled or config.memory_enabled
+                        ) else None
                     )
                     sequence += 1
                     store.save(
@@ -976,6 +1028,8 @@ class TraceFixRunner:
                     )
 
                 agent.checkpoint_callback = save_checkpoint
+            if workspace is not None:
+                self._attach_memory(agent, config, run_dir, workspace, internal_artifacts)
             if docker_backend is not None:
                 docker_backend.set_phase("agent_running")
             agent_task = config.task
@@ -1119,6 +1173,7 @@ class TraceFixRunner:
             agent_config=config.agent_config.model_copy(deep=True),
             context_metrics=state.context_metrics.model_copy(deep=True),
             presentation_metrics=state.presentation_metrics.model_copy(deep=True),
+            memory_status=state.memory_status,
             repo_map=repository_map,
             repo_map_path=str(repo_map_path) if repository_map is not None else None,
             provenance=provenance,

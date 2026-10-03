@@ -2,7 +2,8 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, 'codex/experience-memory', 'codex/continuous-dialogue',
+               'codex/docker-recovery', 'codex/memory-dialogue-integration']
   pull_request:
   workflow_dispatch:
 
@@ -77,6 +78,8 @@ jobs:
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
             python -m tracefix.reproduction --scenario pagination --backend local --skills-enabled --output (Join-Path $smokeRoot "pagination-skills")
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            python -m tracefix.reproduction --scenario memory-experience --output (Join-Path $smokeRoot "memory-experience")
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           } finally { Pop-Location }
 
       - name: Qualify frozen public windowed task without model calls
@@ -134,6 +137,8 @@ jobs:
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
             $ordinary = Join-Path $wheelSmoke "ordinary"
             & (Join-Path $wheelEnv "Scripts/tracefix-reproduce.exe") --scenario regression-feedback --output (Join-Path $wheelSmoke "regression feedback")
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            & (Join-Path $wheelEnv "Scripts/tracefix-reproduce.exe") --scenario memory-experience --output (Join-Path $wheelSmoke "memory experience")
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
             & $wheelPython (Join-Path $env:GITHUB_WORKSPACE "examples/replay_ordinary.py") --output $ordinary
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

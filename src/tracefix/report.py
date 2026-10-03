@@ -404,6 +404,7 @@ ul{{padding-left:20px}}footer{{color:var(--muted);font-size:13px}}
 <p>测试解释器及环境：{_label(result.get("workspace_preparation"))}</p>
 <p>模型请求视图：{_clean(request_view_text)}</p>
 <p>恢复段：{resume_segments} · Checkpoint：{_clean(checkpoint_text)}</p>
+<p>经验记忆：{_clean(result.get('memory_status') or '未启用')}</p>
 <p>最近测试事实：{test_fact_text}</p>
 <p>运行错误：{_label(result.get("error"))}</p>
 <p>Agent 结束表示控制流结束；公开测试结果和独立验收分别列示，

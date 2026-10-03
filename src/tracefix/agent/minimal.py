@@ -39,6 +39,7 @@ class MinimalAgent(BaseAgent):
     """使用原生工具调用完成“分析—执行—反馈”闭环的最小 Agent。"""
 
     checkpoint_callback: Callable[[MinimalAgent], None] | None = None
+    experience_callback: Callable[[MinimalAgent], None] | None = None
 
     _RECOVERY_FIELDS = (
         "_failed_apply_calls", "_invalid_test_signatures", "_consecutive_apply_failures",
@@ -1511,6 +1512,11 @@ class MinimalAgent(BaseAgent):
         self.state.status = status
         self.state.stop_reason = reason
         self.state.finished_at = datetime.now(UTC)
+        if status is AgentStatus.COMPLETED and self.experience_callback is not None:
+            self.experience_callback(self)
+            self.state.finished_at = datetime.now(UTC)
+            if self.checkpoint_callback is not None:
+                self.checkpoint_callback(self)
         self._emit_state()
         self._emit(TraceEventType.TASK_FINISHED, {"state": self.state.model_dump(mode="json")})
 

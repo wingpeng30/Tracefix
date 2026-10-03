@@ -1,5 +1,12 @@
 # TraceFix 路线图
 
+## 2026-10-04 当前执行计划
+
+用户批准按 G1 经验 Skills 长期记忆、G2 连续对话、G3 普通 Docker 重建恢复、G4 联动验收推进。
+新功能默认关闭，仅离线验收；各阶段精确候选 CI 全部门槛通过后才创建正式 PR。
+G1 正在验证，尚未交付；详细状态见 [`tasks/2026-10-04-memory-dialogue-docker.md`](tasks/2026-10-04-memory-dialogue-docker.md)。
+下列“下一步”保留为历史，旧付费额度不续用。
+
 ## 2026-10-02 离线预算调查
 
 27 个真实请求与第四次本地拒绝已复现。重叠读取主要补取被裁剪或压缩退出的证据；32,000 单请求估算阈值与累计预算不协作。两个调查候选均不直接采用，下一批先做默认关闭的定向读取可见性契约；不放宽正式计量保护，不执行第五次付费运行。详见 [`experiments/2026-10-02-offline-budget-investigation.md`](experiments/2026-10-02-offline-budget-investigation.md)。以下保留历史状态。

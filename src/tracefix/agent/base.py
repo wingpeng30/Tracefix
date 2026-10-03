@@ -107,6 +107,7 @@ class AgentState(BaseModel):
     context_metrics: ContextMetrics = Field(default_factory=ContextMetrics)
     presentation_metrics: ToolPresentationMetrics = Field(default_factory=ToolPresentationMetrics)
     model_request_seconds: float = Field(default=0.0, ge=0)
+    memory_status: dict[str, JsonValue] = Field(default_factory=dict)
     tool_execution_seconds: float = Field(default=0.0, ge=0)
     context_preparation_seconds: float = Field(default=0.0, ge=0)
 
