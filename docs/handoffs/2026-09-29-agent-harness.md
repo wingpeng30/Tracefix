@@ -1,5 +1,12 @@
 # 2026-09-29 Agent/harness 产品交接
 
+## 2026-10-04 当前交接
+
+当前执行用户批准的 G1→G4 新计划；G1 经验记忆候选正在验收，不能称为正式交付。
+定向测试与仓库外 wheel 已验证工程闭环，完整与跨平台门槛仍待确认。
+详见 [`../tasks/2026-10-04-memory-dialogue-docker.md`](../tasks/2026-10-04-memory-dialogue-docker.md)。
+不执行付费调用，不改历史账本；下面的优先级作为历史保留。
+
 ## 2026-10-02 预算调查交接
 
 当前新增离线调查入口 `scripts/analyze_live_history.py`：配对 27 个完成请求与一个未发送视图，并用真实工具验证补读、缓存失效、压缩和验收反馈。两个候选未达到采用标准；下一批只优先完善定向读取可见性。原账本及四次结果保持不变，不执行第五次。调查及复现命令见 [`../experiments/2026-10-02-offline-budget-investigation.md`](../experiments/2026-10-02-offline-budget-investigation.md)，历史交接保留。

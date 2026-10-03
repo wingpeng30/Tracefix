@@ -147,6 +147,9 @@ def _add_shared_options(parser: argparse.ArgumentParser) -> None:
     )
     parser.add_argument("--skills-max-active", type=int, help="最多激活的技能数（默认 4）")
     parser.add_argument("--skills-dir", type=Path, help="显式审核的本地 Skills 目录")
+    parser.add_argument("--memory", action="store_true", default=None,
+                        help="启用有证据的经验提炼与跨任务 Skills 记忆（默认关闭）")
+    parser.add_argument("--memory-dir", type=Path, help="仓库外的经验记忆根目录")
     parser.add_argument("--skills-max-bytes", type=int, help="单个技能正文 UTF-8 字节上限")
     parser.add_argument("--skills-max-reference-bytes", type=int, help="单份参考文本字节上限")
     parser.add_argument("--skills-max-total-bytes", type=int, help="技能与参考文本累计字节上限")
@@ -202,6 +205,13 @@ def build_parser() -> argparse.ArgumentParser:
         description="在隔离 Git 克隆中运行 TraceFix Coding Agent。",
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
+
+    memory_parser = subparsers.add_parser("memory", help="管理仓库级经验记忆，不调用模型")
+    memory_parser.add_argument("operation", choices=("list", "show", "disable", "rollback"))
+    memory_parser.add_argument("--repo", type=Path, required=True)
+    memory_parser.add_argument("--memory-dir", type=Path, required=True)
+    memory_parser.add_argument("--key")
+    memory_parser.add_argument("--version", type=int)
 
     report_parser = subparsers.add_parser("report", help="将已保存的运行渲染为离线 HTML 报告")
     report_parser.add_argument("--run", type=Path, required=True, help="运行目录或单臂复现目录")
@@ -890,6 +900,7 @@ def _ordinary_settings(args: argparse.Namespace) -> dict[str, Any]:
             "model",
             "env_file",
             "skills_dir",
+            "memory", "memory_dir",
             "mcp_serena_image_id",
             "execution_backend", "docker_profile", "docker_image_id",
             "max_steps", "max_input_tokens", "max_output_tokens", "wall_time_seconds",
@@ -953,6 +964,8 @@ def _ordinary_settings(args: argparse.Namespace) -> dict[str, Any]:
         "skills_root": path_value(
             "skills_dir", getattr(args, "skills_dir", None), "TRACEFIX_SKILLS_DIR"
         ),
+        "memory_enabled": choose("memory", getattr(args, "memory", None)),
+        "memory_dir": path_value("memory_dir", getattr(args, "memory_dir", None)),
         "mcp_serena_image_id": choose(
             "mcp_serena_image_id", getattr(args, "mcp_serena_image_id", None),
             "TRACEFIX_MCP_SERENA_IMAGE_ID",
@@ -974,6 +987,7 @@ def _ordinary_settings(args: argparse.Namespace) -> dict[str, Any]:
                 "repo", "task", "test_python", "test_target", "source_import",
                 "regression_targets",
                 "output_dir", "model", "env_file", "skills_dir",
+                "memory", "memory_dir",
                 "mcp_serena_image_id",
                 "execution_backend", "docker_profile", "docker_image_id",
             }
@@ -986,6 +1000,23 @@ def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
     try:
+        if args.command == "memory":
+            from tracefix.memory import ExperienceStore
+
+            store = ExperienceStore(args.memory_dir, args.repo)
+            if args.operation != "list" and not args.key:
+                raise ValueError("此操作需要 --key")
+            if args.operation == "list":
+                _print_json(store.list())
+            elif args.operation == "show":
+                _print_json(store.show(args.key))
+            elif args.operation == "disable":
+                store.disable(args.key)
+            else:
+                if args.version is None:
+                    raise ValueError("回滚需要 --version")
+                store.rollback(args.key, args.version)
+            return 0
         if args.command == "report":
             print(render_report(args.run, args.output))
             return 0
@@ -1431,6 +1462,8 @@ def main(argv: list[str] | None = None) -> int:
                     "execution_backend": settings["execution_backend"] or "local",
                     "docker_profile": settings["docker_profile"] or "frozen",
                     "docker_image_id": settings["docker_image_id"],
+                    "memory_enabled": settings["memory_enabled"] or False,
+                    "memory_dir": settings["memory_dir"],
                     "docker_task_id": args.docker_task_id,
                     "docker_input_root": args.docker_input_root
                     if settings["execution_backend"] == "docker"
