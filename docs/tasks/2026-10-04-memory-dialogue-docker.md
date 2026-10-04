@@ -412,3 +412,19 @@ SHA256 0dcb98672b8293b276c886d37cda264af1407e7d8b152ac6a827e662fb99eee6。
 安全恢复及保存后中断契约通过4.41秒（docker-replay-worker-01.xml）。
 Ruff修正换行后复验，下一步冻结缓存修复候选并重跑完整本地与Linux验收。
 G3/G4未完成，无正式G3 PR，无供应商调用，不降低精确90%门槛。
+
+2026-10-04 缓存修复候选4effdda已冻结，完整工程检查运行中。wheel SHA256
+26b418eab8a6da11dd1a692a7c7e61020201fa76ba3b7b9ed620e80769f044af。
+真实产品恢复products-06已通过恢复后pytest，但脚本重复清理已删除旧容器
+而报清理错误，原退出1保留。只修正脚本对已确认删除的容器不再重复删除，
+products-07全部通过，退出0：文件新增/删除、755权限、已跟踪缓存目录产品、
+重建空测试临时目录、Skills恢复、工具/解释器身份拒绝、四容器最终清理。
+证据tmp/docker-recovery-products-07/acceptance.json，实现哈希
+3ea1e661d4b5b23be30b489abde23ffb8489f4378846b310b75bdf7e614d9d62，
+镜像保持49b75da8...，供应商调用0。脚本清理修正尚未纳入4effdda，下一
+候选须包含此修正并执行精确CI；完整恢复轮次正在installed-05重新验收。
+
+2026-10-04 4effdda的wheel完整四类恢复验收installed-05与editable-02均退出0，
+通过且实现哈希同为3ea1e661...，供应商调用0。全量engineering-04会话85013
+随后丢失，系统查询无原检查/python子进程，无summary或最终pytest产物；不能
+视为完成或通过。冻结脚本清理修正后重新运行完整检查，原空/未完成目录保留。

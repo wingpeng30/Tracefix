@@ -126,7 +126,7 @@ def check(output: Path, image_id: str) -> dict:
     finally:
         if restored:
             restored.close(remove=True)
-        first.close(remove=True)
+        first.close(remove=bool(first.container_id and not missing(first.container_id)))
     assert len(set(containers)) == 4 and all(missing(container) for container in containers)
     summary = {"passed": True, "provider_calls": 0, "source_commit": commit,
                "image_id": image_id, "containers": containers, "all_containers_removed": True,

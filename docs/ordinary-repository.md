@@ -118,3 +118,8 @@ tracefix-reproduce --scenario docker-recovery --backend docker --image-id <完�
 再用独立容器验收补丁。供应商访问禁止，模型 usage 为模拟值。快照上限 1 GiB，
 越界链接、损坏文件和未决模型或修改结果会阻断恢复。长期经验由宿主保存，容器加载
 固定版本的 Skills 快照；工程回放不验证真实模型提炼或决策质量。
+
+启用 ordinary Docker 恢复时，容器私有 Git 排除未跟踪的 Python/pytest 缓存，
+使差异与产品快照一致；目标仓库无需新增 `.gitignore`。已经由 Git 跟踪的
+缓存目录内产品文件仍保存并恢复。文件新增、删除、执行权限及 Skills 状态
+的真实 Linux 检查由 `scripts/check_docker_recovery_products.py` 和 CI 执行。
