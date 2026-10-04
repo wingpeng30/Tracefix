@@ -465,3 +465,14 @@ tmp/g3-ci102-py311、tmp/g3-ci102-job-*.log，G3不创建正式PR，G4仍未完�
 本机目录位于父Git仓库内掩盖错误，干净CI正确拒绝。改为config.repo，不改
 生产Git保护；44项定向回归通过（tmp/g3-ci-fix-targeted-01.xml），后续必须
 在干净冻结checkout重新执行完整工程门槛，再推送精确候选CI。
+
+候选7658a82本地1035项全通过，15660/17383=90.08801702813093%，原始工程
+证据tmp/docker-recovery-engineering-09。精确CI #103三个Linux门槛再次通过；
+Windows3.11/3.12均为1034 passed、1 failed、0 errors/skipped，覆盖率分别
+15649/17383=90.02473681182765%、15647/17383=90.01323131795432%。
+唯一失败是inspect夹具仍手写未规范化工具哈希，CI锁定Pydantic2.10.1的1.0
+与本机2.13的1导致身份不匹配；产品已经使用保留完整契约的数字规范化。
+原冻结候选在独立Pydantic2.10.1下复现1失败（g3-tool-identity-red-01.xml），
+夹具改用正式tool_identity后44项全通过（g3-tool-identity-green-01.xml）。
+不移除工具身份校验，不改变生产代码；失败CI和原始结果保留。
+新修正仍需冻结全量工程与精确CI，G3/G4未完成，不创建正式G3 PR。

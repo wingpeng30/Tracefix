@@ -7,7 +7,7 @@ import pytest
 
 from examples.replay_ordinary import _git
 from tracefix.checkpoint import CheckpointError
-from tracefix.docker_recovery import owned_file, validate_batch
+from tracefix.docker_recovery import owned_file, tool_identity, validate_batch
 from tracefix.memory import digest
 from tracefix.workspace_snapshot import export_workspace
 
@@ -198,9 +198,7 @@ def inspected(batch, monkeypatch):
     identity = {"implementation_sha256": "code", "config_sha256": "config",
                 "repo_map_sha256": hashlib.sha256(b"").hexdigest()}
     registry = create_default_tool_registry(config.repo)
-    identity["tool_sha256"] = hashlib.sha256(json.dumps(
-        [spec.model_dump(mode="json") for spec in registry.specs()],
-        sort_keys=True, ensure_ascii=False).encode("utf-8")).hexdigest()
+    identity["tool_sha256"] = tool_identity(registry.specs())
     snapshot["tool_sha256"] = identity["tool_sha256"]
     (root / "docker-checkpoints" / f'{snapshot["batch_id"]}.json').write_text(
         json.dumps(snapshot), encoding="utf-8")
@@ -230,7 +228,7 @@ def test_inspect_docker_session_without_original_container(inspected):
     root, manifest, config, calls = inspected
     outcome = inspect_session(root, manifest, config, implementation_sha256="code",
                               config_sha256="config")
-    assert outcome["resumable"] is True
+    assert outcome["resumable"] is True, outcome
     assert len(calls) == 1 and calls[0][1:3] == ["image", "inspect"]
     (root / "result.json").write_text('{"status":"completed"}', encoding="utf-8")
     assert "run is not interrupted" in inspect_session(
