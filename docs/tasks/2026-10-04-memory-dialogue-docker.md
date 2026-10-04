@@ -496,4 +496,34 @@ g3-locked-consistent-provenance.json。没有降低门槛或改动生产身份�
 G4从该已验证提交建立codex/memory-dialogue-integration。新增安装包联动入口
 memory-dialogue-integration，串联三轮实际CLI/提炼、新Docker召回/修改、安全
 中断与旧容器删除、新进程恢复及第三容器全文件验证；Linux CI分别执行wheel
-与editable场景。当前尚未实测或完成全量/精确CI，G4不创建正式PR。
+与editable场景。接入时尚未实测，以下记录后续验证；全量/精确CI完成前不创建正式PR。
+
+### G4 本地联动及故障验证
+
+提交 f0f202e 的首次真实 Linux Docker 联动通过，原始证据 tmp/g4-linux-integrated-01。
+提交 06f20b0 补充经验版本实际加载、提炼计量与供应商零调用检查，保存原始命令输出、
+补丁、轨迹、测试和快照文件哈希及 Python/平台身份。42 项故障注入全部通过；
+控制器测试仅补充实际 Docker 证据，不替代它。该提交真实联动再次通过，证据
+tmp/g4-linux-integrated-02：五个独立 PID，暂停 step=4，恢复 step=8，累计
+800 input/80 output tokens、2 次测试、费用0，独立容器完整3项通过且三个容器均已删除。
+使用固定镜像 sha256:49b75da8b9ba8ffb762e0995422817381db39c379973c8c777d54f2e4e724869。
+实际供应商调用0，资源计量来自预录模型。真实模型提炼与决策质量未测。
+
+冻结 checkout tmp/g4-frozen-01。首次 wheel 构建缺少 setuptools 而失败，原始记录
+tmp/g4-wheel-build-01.log 保留；改用已有构建环境生成 wheel，SHA256
+b686b64ed0ec0e1307b9379838685ff307045551ca81fd2839e34ae0ac81cb0b。
+仓库外 wheel 和 editable 的真实 Linux Docker 联动均通过，分别保存于
+tmp/g4-wheel-integration-01、tmp/g4-editable-integration-01。每次独立容器3项全部通过，
+供应商调用0；各143个原始产物哈希全部复核，安装包新增模块、命令和 Skills/Docker
+资源已核对，综合证据 tmp/g4-installed-audit-01.json。当前 checkout 实现哈希
+54de8c8e45dd36fbf2342adf784b14fb760b4bf4eec00e1f7946707b344972ff，冻结 checkout/
+wheel/editable 哈希56a35e419d796869f4a909fa5901fecb32f9cdd0b597a90fbf99b981454f4a12；
+各运行内部固定身份，Git checkout 换行转换造成文件字节差异。
+冻结提交 06f20b031a93e7e363e908cdd2a8ae2a5e94d953 的本地全量工程门槛通过：
+Python3.12.5/Pydantic2.10.1，1077项测试、0失败/错误/跳过，精确覆盖率
+15808/17541=90.12028960720598%；Ruff、compileall、Diff均退出0，工作树干净。
+原始工程结果 tmp/g4-engineering-frozen-01，汇总哈希见其 summary.json。
+首次在未设置PYTHONPATH的父工作区运行花费1363秒，两个既有子进程导入测试失败，
+覆盖率89.89225243714725%；修正为冻结checkout且令子进程继承 `src` 导入路径后，
+两项定向测试和全量测试均通过，没有改代码或降低门槛。
+全量复验耗时689秒。候选精确CI尚待运行，G4正式PR尚未创建。

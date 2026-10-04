@@ -6,7 +6,8 @@
 新功能默认关闭，仅离线验收；各阶段精确候选 CI 全部门槛通过后才创建正式 PR。
 G1 已通过精确 CI #98 并提交正式 PR #17；G2 已通过精确 CI #100 并提交正式 PR #18。
 G3 已通过精确 CI #104 并提交正式 PR #19；三个 PR 均尚未合并。
-G4 从已验证的 G3 提交继续，正在接入完整多轮/记忆/Docker恢复联动验收。
+G4 的冻结实现已通过本地全量 1077 项测试、精确覆盖率 90.1202896%、Ruff、
+compileall、Diff，以及离线真实 Docker、wheel、editable 联动验收；精确候选 CI 待运行。
 详细状态见 [`tasks/2026-10-04-memory-dialogue-docker.md`](tasks/2026-10-04-memory-dialogue-docker.md)。
 下列“下一步”保留为历史，旧付费额度不续用。
 
