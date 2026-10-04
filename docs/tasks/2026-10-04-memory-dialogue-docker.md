@@ -526,4 +526,16 @@ Python3.12.5/Pydantic2.10.1，1077项测试、0失败/错误/跳过，精确覆�
 首次在未设置PYTHONPATH的父工作区运行花费1363秒，两个既有子进程导入测试失败，
 覆盖率89.89225243714725%；修正为冻结checkout且令子进程继承 `src` 导入路径后，
 两项定向测试和全量测试均通过，没有改代码或降低门槛。
-全量复验耗时689秒。候选精确CI尚待运行，G4正式PR尚未创建。
+全量复验耗时689秒。首次精确候选 CI #106（提交a8d6c4c55d6a5d7f464d60363ce524ee0a8fa790）
+五项中四项通过：Linux ordinary Docker、冻结 Docker、MCP及Windows3.12通过；
+Windows3.11覆盖率为15795/17541=90.04617752693689%，但有1项测试失败，故未创建PR。
+run ID 37215201883；3.11 artifact ID 11308143393，SHA256
+b0ebe2f208c544ff63b066a2fdaa4e9aef6d287afb31b49d8567e76185b6f200。
+
+使用与CI锁文件相同的Python3.11依赖在本机复现了新增验收测试失败：本机特殊Windows
+CPython构建的`platform.platform()`在系统`shell ver`探测上抛TypeError。改用稳定的
+`sys.platform`记录执行平台，并断言收据中的值；修复提交7e221f5c244ee242a26950602ecede9af0d68c89。
+Python3.11/3.12的42项定向验收均通过。修复后wheel SHA256
+cb837b2f4a3f4ca98793943fe8bfc7ea78cc7522b22b713b5bbc2137ff50f824；wheel/editable真实
+Linux Docker联动分别重跑通过，独立容器3项通过，provider调用0；各143个产物哈希复核，
+详见`tmp/g4-installed-audit-02.json`。最终修复候选精确CI待运行，G4正式PR尚未创建。

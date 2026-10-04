@@ -3,9 +3,9 @@
 ## 2026-10-04 当前交接
 
 当前执行用户批准的 G1→G4 新计划。G1/G2/G3 已分别通过精确 CI #98/#100/#104，
-正式 PR #17/#18/#19 均未合并；G4 冻结提交 06f20b0 本地全量 1077 项测试通过，
-精确覆盖率90.12028960720598%，Ruff/compileall/Diff、真实 Docker、wheel及editable
-联动均通过；正在准备精确提交 CI。
+正式 PR #17/#18/#19 均未合并；G4 首次精确 CI #106 的 Windows 3.11 测试失败，
+未创建 PR。提交7e221f5修复Windows平台身份记录，双版本42项定向测试以及wheel/editable
+真实Linux Docker联动重验通过；最终修复候选 CI 待运行。
 三个 CLI 进程形成经验后，新 Docker 会话实际加载经验；删除中断容器，由另一进程
 重建恢复，第三个独立容器通过完整三项测试。离线模型预录响应不证明真实模型决策质量。
 详见 [`../tasks/2026-10-04-memory-dialogue-docker.md`](../tasks/2026-10-04-memory-dialogue-docker.md)。
