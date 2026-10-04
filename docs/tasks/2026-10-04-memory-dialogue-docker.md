@@ -366,3 +366,31 @@ JUnit `tmp/docker-budget-inspect-01.xml`，Ruff未用import/格式修正后通�
 通过，25.29秒（tmp/docker-runtime-tools-03.xml）。新增文件Ruff通过。
 下一步冻结新候选，全量重新测量覆盖，再进行安装包和真实Linux验收；G3/G4
 保持未完成，没有新增正式PR，供应商调用为零。
+
+2026-10-04 G3 新冻结候选为9fd5f28（尚未推送）。从git归档构建wheel，
+SHA256 0dcb98672b8293b276c886d37cda264af1407e7d8b152ac6a827e662fb99eee6。
+新增恢复/故障/流式归档模块及Docker资源全部包含，resource-proof.json保存。
+独立wheel安装环境在仓库外执行完整真实Linux Docker验收通过，退出0：
+读取、补丁、测试后安全中断各2进程，二次恢复3进程，全部原容器已删除，
+各最终补丁在另一独立容器验证通过。越界链接、1GiB上限、写入失败保留
+旧批次、修改结果未知拒绝自动恢复、清理失败显式报告及最终清理均通过。
+完整证据tmp/docker-recovery-installed-03/recovery-summary.json，绑定实现哈希
+2667cce70952d7c7a0f2701d0331dc37e6b80fa1aaec7808249e497ca3d5b455，
+镜像sha256:49b75da8b9ba8ffb762e0995422817381db39c379973c8c777d54f2e4e724869，
+供应商调用0，离线模型计量为合成数据，不作为真实提炼/决策质量证据。
+另增加验收器拒绝进程/容器复用、未清理容器、工作进程失败、独立验证失败
+的6项契约测试，通过2.97秒（tmp/docker-replay-contract-01.xml），仅为补充。
+冻结全量验收仍在运行，G3/G4未完成，未新增正式PR。
+
+同一9fd5f28源码归档的editable独立环境也通过真实Linux恢复：两个独立
+宿主进程、新容器恢复，另一个容器验证补丁通过，退出0。证据
+ tmp/docker-recovery-editable-01/summary.json 及independent.json，供应商调用0。
+安装环境Python3.12.7/pydantic2.8.2；冻结全量门槛使用锁定Python3.12.5环境，
+最终Windows3.11/3.12精确CI仍待执行，不把安装检查代替版本矩阵。
+
+验收器补强：父进程显式检查工作进程终态、provider_calls==0，以及故障
+验收passed和零供应商调用；不只信任退出码。9契约检查通过3.27秒，另4故障
+反例（不安全快照被接受、断连被隐藏、清理失败被隐藏）通过0.50秒，Ruff通过。
+原始证据tmp/docker-replay-contract-02.xml、tmp/docker-fault-contract-01.xml。
+这些是验收器补充契约测试，不替代上述真实Linux容器执行。实现变更尚未
+纳入9fd5f28冻结候选，需要下一精确候选复验，不复用旧实现哈希作为新验收。

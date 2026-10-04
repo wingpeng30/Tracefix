@@ -89,6 +89,9 @@ def run_recovery_replay(output: Path, image_id: str) -> dict:
             if process.returncode:
                 raise AssertionError(f"{case}/{phase} failed with exit {process.returncode}")
             receipt = json.loads((output / case / f"{phase}.json").read_text(encoding="utf-8"))
+            expected_status = "interrupted" if phase in {"run", "resume-one"} else "completed"
+            if receipt.get("status") != expected_status or receipt.get("provider_calls") != 0:
+                raise AssertionError("worker receipt has invalid status or provider accounting")
             removed = subprocess.run(["docker", "inspect", receipt["container_id"]],
                                      capture_output=True, timeout=30, check=False)
             if removed.returncode == 0:
@@ -107,6 +110,8 @@ def run_recovery_replay(output: Path, image_id: str) -> dict:
     from tracefix.docker_recovery_faults import run_snapshot_faults
 
     faults = run_snapshot_faults(output / "snapshot-faults", output / "source", image_id)
+    if faults.get("passed") is not True or faults.get("provider_calls") != 0:
+        raise AssertionError("snapshot fault acceptance or provider accounting failed")
     evidence = {str(path.relative_to(output)): hashlib.sha256(path.read_bytes()).hexdigest()
                 for path in output.rglob("*.json") if ".git" not in path.parts}
     summary = {"accepted": True, "provider_calls": 0, "image_id": image_id, "cases": cases,
