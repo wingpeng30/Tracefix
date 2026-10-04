@@ -122,6 +122,23 @@ def check(output: Path, image_id: str) -> dict:
                          "test_tmp_empty": True}
         assert restored.session.call("__recovery_state__", {}).output["skills"] == (
             snapshot["bridge_state"]["skills"])
+        execute(restored.container_name,
+            "import io; from pathlib import Path; "
+            "from tracefix.checkpoint import CheckpointError; "
+            "from tracefix.workspace_snapshot import export_workspace,restore_workspace; "
+            "external=Path('/work/external'); external.mkdir(); "
+            "sentinel=external/'sentinel'; sentinel.write_bytes(b'unchanged'); "
+            "linked=Path('/work/substituted-root'); linked.symlink_to(external); "
+            "archive=Path('/tmp/root-check.tar'); "
+            "stream=archive.open('wb'); meta=export_workspace(Path('/work/agent'),stream); "
+            "stream.close()\n"
+            "for operation in ('export','restore'):\n"
+            " try:\n"
+            "  if operation=='export': export_workspace(linked,io.BytesIO())\n"
+            "  else: restore_workspace(linked,archive,meta)\n"
+            " except CheckpointError as exc: assert 'root' in str(exc) and 'link' in str(exc)\n"
+            " else: raise AssertionError('substituted root accepted')\n"
+            " assert sentinel.read_bytes()==b'unchanged'\n")
         test(tools, "after-recovery")
     finally:
         if restored:
@@ -131,6 +148,7 @@ def check(output: Path, image_id: str) -> dict:
     summary = {"passed": True, "provider_calls": 0, "source_commit": commit,
                "image_id": image_id, "containers": containers, "all_containers_removed": True,
                "probe": probe, "identity_faults": faults,
+               "substituted_root_rejected": True,
                "implementation_sha256": TraceFixRunner._implementation_sha256(),
                "evidence_sha256": {path.name: hashlib.sha256(path.read_bytes()).hexdigest()
                                    for path in output.glob("*.json")}}
