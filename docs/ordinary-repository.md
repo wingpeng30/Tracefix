@@ -99,9 +99,9 @@ tracefix export --run $summary.run_path --output "runs/regression feedback/anoth
 `--task` 保留 more-itertools 默认值。任务包需要仓库文件，运行时 Agent 和工具可来自
 仓库外安装的 wheel；资格回放不是模型自主修复，新的付费验收另行授权。
 
-## 普通 Docker 恢复候选
+## 普通 Docker 恢复
 
-当前 G3 候选正在完成工程资格，不代表阶段正式交付。运行时显式使用
+G3 已通过精确提交 CI #104 并创建 PR #19，尚未合并。运行时显式使用
 `--execution-backend docker --docker-profile ordinary --docker-image-id <完整镜像ID>`
 和 `--docker-recovery`；TOML 对应 `docker_recovery = true`。默认关闭。
 安全暂停后用 `tracefix inspect --run <目录> --json` 检查，随后
@@ -123,3 +123,14 @@ tracefix-reproduce --scenario docker-recovery --backend docker --image-id <完�
 使差异与产品快照一致；目标仓库无需新增 `.gitignore`。已经由 Git 跟踪的
 缓存目录内产品文件仍保存并恢复。文件新增、删除、执行权限及 Skills 状态
 的真实 Linux 检查由 `scripts/check_docker_recovery_products.py` 和 CI 执行。
+
+完整联动入口正在 G4 验收，尚未完成正式资格：
+
+```powershell
+tracefix-reproduce --scenario memory-dialogue-integration --backend docker --image-id <完整镜像ID> --output runs/integration-check
+```
+
+它串联三次独立 CLI 进程的修复和自动经验提炼、新 Docker 会话实际召回、补丁批次
+落盘后中断、旧容器删除、新进程恢复及第三个容器的三个公开测试。保存版本、加载状态、
+累计资源、进程/容器身份、原始输出和哈希。Docker 查询故障不算容器删除成功。
+此入口禁止供应商访问，工程回放不测量真实模型提炼或修复质量。

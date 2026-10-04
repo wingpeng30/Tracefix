@@ -2,8 +2,13 @@
 
 ## 2026-10-04 当前交接
 
-当前执行用户批准的 G1→G4 新计划；G1 经验记忆候选正在验收，不能称为正式交付。
-定向测试与仓库外 wheel 已验证工程闭环，完整与跨平台门槛仍待确认。
+当前执行用户批准的 G1→G4 新计划。G1/G2/G3 已分别通过精确 CI #98/#100/#104，
+正式 PR #17/#18/#19/#20 均未合并。G4 精确 CI #108 在提交7208eab上五项全过，
+Windows3.11/3.12各1078项测试通过，Linux Docker/MCP也通过；新增CI/artifact结果已补录，
+该文档提交的新精确CI待通过后完成G4验收。#107暴露Windows连续对话门槛失败，修复改为
+轮次级子进程收据，不依赖OS PID互异；详见任务记录。
+三个 CLI 进程形成经验后，新 Docker 会话实际加载经验；删除中断容器，由另一进程
+重建恢复，第三个独立容器通过完整三项测试。离线模型预录响应不证明真实模型决策质量。
 详见 [`../tasks/2026-10-04-memory-dialogue-docker.md`](../tasks/2026-10-04-memory-dialogue-docker.md)。
 不执行付费调用，不改历史账本；下面的优先级作为历史保留。
 
@@ -45,5 +50,9 @@ Qualification remains zero-call and must precede a fresh experiment authorizatio
 G1 已通过精确提交 `773ec7abbf012592c16fd95c01141f2629370fc1` 的 CI #98 五项门槛，
 正式 PR #17 已创建，尚未合并。G2 精确提交 `608cfd65f443139c39a71f9737a245e4b9260ec8`
 已通过 CI #100 五项门槛，正式 PR #18 已创建并基于 #17，尚未合并。
-G3 从该已验证提交继续，本机真实 Linux Docker 已可用；镜像和证据见任务记录。
+G3 精确提交 `a7a95bbbc1d90fd6433ae58f7e3438416ccaa245` 已通过 CI #104 五项门槛，
+正式 PR #19 已创建，基于 #18，尚未合并。Windows双版本各1035项全通过，
+精确覆盖率分别90.0247368%/90.0132313%；安装包及真实Linux Docker/MCP通过。
+G4 从该提交继续，分支codex/memory-dialogue-integration；完整联动尚未验收，
+不创建正式G4 PR。本机真实 Linux Docker 已可用；镜像和原始证据见任务记录。
 证据与旧候选失败记录见 `docs/tasks/2026-10-04-memory-dialogue-docker.md`。

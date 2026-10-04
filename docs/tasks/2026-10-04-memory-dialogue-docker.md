@@ -8,7 +8,7 @@
 
 - [x] G1：自动形成、维护并跨进程复用仓库级经验 Skills。
 - [x] G2：CLI 与 Python API 连续对话、独立轮次记录及累计预算。
-- [ ] G3：ordinary Docker 完整批次快照与原容器删除后的新容器恢复。
+- [x] G3：ordinary Docker 完整批次快照与原容器删除后的新容器恢复。
 - [ ] G4：多轮→经验→新会话→Docker 中断恢复→独立验收的联动链路。
 
 每阶段本地端到端与全量工程门槛通过后推送候选分支；精确提交 Windows 3.11/3.12、
@@ -476,3 +476,84 @@ Windows3.11/3.12均为1034 passed、1 failed、0 errors/skipped，覆盖率分�
 夹具改用正式tool_identity后44项全通过（g3-tool-identity-green-01.xml）。
 不移除工具身份校验，不改变生产代码；失败CI和原始结果保留。
 新修正仍需冻结全量工程与精确CI，G3/G4未完成，不创建正式G3 PR。
+
+### G3 正式交付及 G4 接入
+
+G3 精确提交 `a7a95bbbc1d90fd6433ae58f7e3438416ccaa245` 已通过
+[CI #104](https://github.com/wingpeng30/Tracefix/actions/runs/37210269401) 五项门槛，
+正式 [PR #19](https://github.com/wingpeng30/Tracefix/pull/19) 已创建，基于 #18，未合并。
+Windows3.11/3.12各1035项，无失败/错误/跳过，精确覆盖率分别
+15649/17383=90.02473681182765%、15647/17383=90.01323131795432%。
+Ruff/编译/Diff、editable和仓库外wheel通过；三个Linux Docker/MCP门槛通过。
+原始结果位于tmp/g3-ci104-py311、tmp/g3-ci104-py312、tmp/g3-ci104-ordinary，
+完整run/jobs记录tmp/g3-ci104-final.json，供应商调用0。
+本地统一Pydantic2.10.1环境1035项全通过，15660/17383=90.08801702813093%，
+证据tmp/docker-recovery-engineering-11。此前engineering-10混用父进程2.10.1/
+子进程2.13而被工具身份保护拒绝，其1失败原始结果保留；独立一致环境45项
+定向回归及父子版本证据见g3-locked-consistent-targeted-01.xml和
+g3-locked-consistent-provenance.json。没有降低门槛或改动生产身份保护。
+
+G4从该已验证提交建立codex/memory-dialogue-integration。新增安装包联动入口
+memory-dialogue-integration，串联三轮实际CLI/提炼、新Docker召回/修改、安全
+中断与旧容器删除、新进程恢复及第三容器全文件验证；Linux CI分别执行wheel
+与editable场景。接入时尚未实测，以下记录后续验证；全量/精确CI完成前不创建正式PR。
+
+### G4 本地联动及故障验证
+
+提交 f0f202e 的首次真实 Linux Docker 联动通过，原始证据 tmp/g4-linux-integrated-01。
+提交 06f20b0 补充经验版本实际加载、提炼计量与供应商零调用检查，保存原始命令输出、
+补丁、轨迹、测试和快照文件哈希及 Python/平台身份。42 项故障注入全部通过；
+控制器测试仅补充实际 Docker 证据，不替代它。该提交真实联动再次通过，证据
+tmp/g4-linux-integrated-02：五个独立 PID，暂停 step=4，恢复 step=8，累计
+800 input/80 output tokens、2 次测试、费用0，独立容器完整3项通过且三个容器均已删除。
+使用固定镜像 sha256:49b75da8b9ba8ffb762e0995422817381db39c379973c8c777d54f2e4e724869。
+实际供应商调用0，资源计量来自预录模型。真实模型提炼与决策质量未测。
+
+冻结 checkout tmp/g4-frozen-01。首次 wheel 构建缺少 setuptools 而失败，原始记录
+tmp/g4-wheel-build-01.log 保留；改用已有构建环境生成 wheel，SHA256
+b686b64ed0ec0e1307b9379838685ff307045551ca81fd2839e34ae0ac81cb0b。
+仓库外 wheel 和 editable 的真实 Linux Docker 联动均通过，分别保存于
+tmp/g4-wheel-integration-01、tmp/g4-editable-integration-01。每次独立容器3项全部通过，
+供应商调用0；各143个原始产物哈希全部复核，安装包新增模块、命令和 Skills/Docker
+资源已核对，综合证据 tmp/g4-installed-audit-01.json。当前 checkout 实现哈希
+54de8c8e45dd36fbf2342adf784b14fb760b4bf4eec00e1f7946707b344972ff，冻结 checkout/
+wheel/editable 哈希56a35e419d796869f4a909fa5901fecb32f9cdd0b597a90fbf99b981454f4a12；
+各运行内部固定身份，Git checkout 换行转换造成文件字节差异。
+冻结提交 06f20b031a93e7e363e908cdd2a8ae2a5e94d953 的本地全量工程门槛通过：
+Python3.12.5/Pydantic2.10.1，1077项测试、0失败/错误/跳过，精确覆盖率
+15808/17541=90.12028960720598%；Ruff、compileall、Diff均退出0，工作树干净。
+原始工程结果 tmp/g4-engineering-frozen-01，汇总哈希见其 summary.json。
+首次在未设置PYTHONPATH的父工作区运行花费1363秒，两个既有子进程导入测试失败，
+覆盖率89.89225243714725%；修正为冻结checkout且令子进程继承 `src` 导入路径后，
+两项定向测试和全量测试均通过，没有改代码或降低门槛。
+全量复验耗时689秒。首次精确候选 CI #106（提交a8d6c4c55d6a5d7f464d60363ce524ee0a8fa790）
+五项中四项通过：Linux ordinary Docker、冻结 Docker、MCP及Windows3.12通过；
+Windows3.11覆盖率为15795/17541=90.04617752693689%，但有1项测试失败，故未创建PR。
+run ID 37215201883；3.11 artifact ID 11308143393，SHA256
+b0ebe2f208c544ff63b066a2fdaa4e9aef6d287afb31b49d8567e76185b6f200。
+
+使用与CI锁文件相同的Python3.11依赖在本机复现了新增验收测试失败：本机特殊Windows
+CPython构建的`platform.platform()`在系统`shell ver`探测上抛TypeError。改用稳定的
+`sys.platform`记录执行平台，并断言收据中的值；修复提交7e221f5c244ee242a26950602ecede9af0d68c89。
+Python3.11/3.12的42项定向验收均通过。修复后wheel SHA256
+cb837b2f4a3f4ca98793943fe8bfc7ea78cc7522b22b713b5bbc2137ff50f824；wheel/editable真实
+Linux Docker联动分别重跑通过，独立容器3项通过，provider调用0；各143个产物哈希复核，
+详见`tmp/g4-installed-audit-02.json`。
+
+精确 CI #107（提交df51f4d07bcb7c69857bddcc5f9ca401f641b9e2，run ID 37218406037）
+四项通过，Windows 3.11 editable smoke 在连续对话三轮验收处失败，未创建PR；工程全量检查、
+wheel场景和wheel构建通过。失败日志只有聚合断言，未输出其子条件。检查本地运行证据后，
+将不同轮次必须拥有互异OS PID判定为不稳健：各轮确由独立`subprocess.run`启动，Windows允许
+回收PID。验收现改为检查每个子进程写入的轮次、成功退出、有效PID及零供应商调用，并加入
+PID复用回归测试。当前本机三轮真实CLI均退出0、各7个预录请求、0供应商调用，且已通过轮次
+状态断言；随后独立测试验证在本机受限目录创建临时回归目录时被Windows ACL拒绝，不能将该
+本机隔离错误计为功能通过。修复提交7208eab的精确CI #108已全部五项通过，run ID
+37220323426；Windows3.11与3.12各1078项测试、0失败/错误/跳过，精确覆盖率分别为
+15796/17542=90.04674495496522%和15798/17542=90.05814616349333%。Editable与wheel
+连续对话回放均通过三轮真实CLI进程、每轮7个预录请求、供应商调用0；三项Linux容器/MCP门槛
+通过。原始CI artifact ID与SHA256：3.11工程11309274196 / `3be73f5b6bba395b677d550a5e9137744196e2576da65b961e1829e6a6ae4df2`；
+3.12工程11310650034 / `371a1c38d79ce4cb6c8b10861d17d4549e579c8616176c4172a1c07db7379d86`；
+Docker smoke 11309977874 / `fa5a50caf4a379dde830ec846d0728bc3266520f240cd8eb7a8e2ef247c37713`；
+ordinary Docker 11309359489 / `1d8395c9e24eb2f28c10e1307c71b114295559d8bdaea3e41a074747b36b3a27`；
+MCP 11309648604 / `6301d3776f39468c645755368d1894b79dea1fab4ad557d89e68a5ed1f2df33d`。
+正式G4 PR #20已创建，尚未合并。该记录提交变更后须通过对应精确CI，才能将本阶段标记完成。

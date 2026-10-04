@@ -1,8 +1,10 @@
-# 本地任务的检查与恢复
+# 任务的检查与恢复
 
 普通本地运行会在每个完整模型／工具批次后保存 `session.json` 与 `checkpoint.json`。快照包含完整对话、Agent 阶段及预算、任务事实、Skills 加载状态和源码／配置／工具身份。轨迹事件在操作前写入并落盘；恢复继续写入同一轨迹，先前的 `result.json` 另存为 `result-before-resume-<序号>.json`。
 
-首版仅支持同一台机器上原运行目录、源码仓库和 checkout 均仍存在的普通本地运行。环境配方、自定义测试环境变量和 Docker 会话目前不生成可恢复快照。快照保存的配置不包含供应商密钥；恢复时重新从进程环境或配置的 `.env` 读取。不要把运行目录当成公开资料，它可能包含源码和模型消息。
+普通本地恢复要求同机原运行目录、源码仓库和 checkout 仍存在。普通 Docker profile 显式启用 `docker_recovery = true` 或 `--docker-recovery` 后，可从完整批次的源码基线、产品快照及桥接状态创建新容器恢复，不依赖原容器存活；该入口已通过 G3 工程资格。具体配置、1 GiB 快照边界与安装包复现命令见[普通 Docker 说明](ordinary-repository.md)。其他 Docker profile、环境配方和自定义测试环境变量仍不支持此恢复入口。
+
+快照保存的配置不包含供应商密钥；恢复时重新从进程环境或配置的 `.env` 读取。不要把运行目录当成公开资料，它可能包含源码和模型消息。已完成轮次后追加要求使用[连续对话的 chat/continue 入口](continuous-dialogue.md)，中断同一轮仍使用 `resume`。
 
 ```powershell
 tracefix inspect --run runs/<run-id> --json
