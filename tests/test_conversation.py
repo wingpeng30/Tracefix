@@ -174,6 +174,18 @@ def test_recorded_worker_uses_real_cli_and_memory_in_process(tmp_path, monkeypat
     assert TraceFixRunner.inspect(root)["turn_number"] == 3
 
 
+def test_dialogue_process_receipts_allow_os_pid_reuse():
+    from tracefix.dialogue_replay import _valid_process_receipts
+
+    receipts = [
+        {"turn": turn, "pid": 1234, "exit_code": 0, "provider_calls": 0}
+        for turn in (1, 2, 3)
+    ]
+    assert _valid_process_receipts(receipts)
+    receipts[2]["turn"] = 2
+    assert not _valid_process_receipts(receipts)
+
+
 def test_chat_loop_blank_resume_exit_and_legacy_rejection(tmp_path, monkeypatch):
     from tracefix import cli
 

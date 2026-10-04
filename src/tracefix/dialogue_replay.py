@@ -40,6 +40,18 @@ class DialogueClient(RecordedMemoryClient):
         ]
 
 
+def _valid_process_receipts(processes: list[dict]) -> bool:
+    """Validate three separately launched workers without assuming OS PID uniqueness."""
+    return (len(processes) == 3 and all(
+        item.get("turn") == expected
+        and item.get("exit_code") == 0
+        and isinstance(item.get("pid"), int)
+        and item["pid"] > 0
+        and item.get("provider_calls") == 0
+        for expected, item in enumerate(processes, start=1)
+    ))
+
+
 def worker(output: Path, turn: int) -> int:
     client = DialogueClient(turn)
     runner = TraceFixRunner(lambda config: LiteLLMAdapter(config, client=client))
@@ -105,7 +117,7 @@ def run_dialogue_replay(output: Path) -> dict:
                  for turn in (1, 2, 3)]
     if (result.status != "completed" or result.turn_number != 3
             or len(result.turn_records) != 3 or result.step_count != 21
-            or len({item["pid"] for item in processes}) != 3
+            or not _valid_process_receipts(processes)
             or not TraceFixRunner.inspect(root).get("continuable")):
         raise AssertionError("three committed, independently entered rounds were not proven")
     receipts = [json.loads(path.read_text(encoding="utf-8"))

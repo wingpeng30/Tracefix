@@ -539,3 +539,12 @@ Python3.11/3.12的42项定向验收均通过。修复后wheel SHA256
 cb837b2f4a3f4ca98793943fe8bfc7ea78cc7522b22b713b5bbc2137ff50f824；wheel/editable真实
 Linux Docker联动分别重跑通过，独立容器3项通过，provider调用0；各143个产物哈希复核，
 详见`tmp/g4-installed-audit-02.json`。最终修复候选精确CI待运行，G4正式PR尚未创建。
+
+精确 CI #107（提交df51f4d07bcb7c69857bddcc5f9ca401f641b9e2，run ID 37218406037）
+四项通过，Windows 3.11 editable smoke 在连续对话三轮验收处失败，未创建PR；工程全量检查、
+wheel场景和wheel构建通过。失败日志只有聚合断言，未输出其子条件。检查本地运行证据后，
+将不同轮次必须拥有互异OS PID判定为不稳健：各轮确由独立`subprocess.run`启动，Windows允许
+回收PID。验收现改为检查每个子进程写入的轮次、成功退出、有效PID及零供应商调用，并加入
+PID复用回归测试。当前本机三轮真实CLI均退出0、各7个预录请求、0供应商调用，且已通过轮次
+状态断言；随后独立测试验证在本机受限目录创建临时回归目录时被Windows ACL拒绝，不能将该
+本机隔离错误计为功能通过。该修复的精确CI尚未运行，G4 PR仍未创建。
