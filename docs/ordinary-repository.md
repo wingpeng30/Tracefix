@@ -98,3 +98,28 @@ tracefix export --run $summary.run_path --output "runs/regression feedback/anoth
 `scripts/qualify_public_task.py --task <审核过的任务 ID>` 支持显式选择任务；不传
 `--task` 保留 more-itertools 默认值。任务包需要仓库文件，运行时 Agent 和工具可来自
 仓库外安装的 wheel；资格回放不是模型自主修复，新的付费验收另行授权。
+
+## 普通 Docker 恢复候选
+
+当前 G3 候选正在完成工程资格，不代表阶段正式交付。运行时显式使用
+`--execution-backend docker --docker-profile ordinary --docker-image-id <完整镜像ID>`
+和 `--docker-recovery`；TOML 对应 `docker_recovery = true`。默认关闭。
+安全暂停后用 `tracefix inspect --run <目录> --json` 检查，随后
+`tracefix resume --run <目录>` 重建容器继续。追加要求使用 `tracefix continue`
+或 `tracefix chat --run`，初次连续会话用 `tracefix chat --config`。
+连续会话共享累计预算，不因等待输入或重建容器增加预算。
+
+```powershell
+tracefix-reproduce --scenario docker-recovery --backend docker --image-id <完整镜像ID> --output runs/docker-recovery-check
+```
+
+此离线入口要求真实 Linux Docker、Git 和已准备的 ordinary 镜像；输出目录必须不存在。
+它运行读取后、补丁后、测试后中断及二次恢复，逐次核对新宿主进程、新容器、删除结果，
+再用独立容器验收补丁。供应商访问禁止，模型 usage 为模拟值。快照上限 1 GiB，
+越界链接、损坏文件和未决模型或修改结果会阻断恢复。长期经验由宿主保存，容器加载
+固定版本的 Skills 快照；工程回放不验证真实模型提炼或决策质量。
+
+启用 ordinary Docker 恢复时，容器私有 Git 排除未跟踪的 Python/pytest 缓存，
+使差异与产品快照一致；目标仓库无需新增 `.gitignore`。已经由 Git 跟踪的
+缓存目录内产品文件仍保存并恢复。文件新增、删除、执行权限及 Skills 状态
+的真实 Linux 检查由 `scripts/check_docker_recovery_products.py` 和 CI 执行。

@@ -150,6 +150,8 @@ def _add_shared_options(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--memory", action="store_true", default=None,
                         help="启用有证据的经验提炼与跨任务 Skills 记忆（默认关闭）")
     parser.add_argument("--memory-dir", type=Path, help="仓库外的经验记忆根目录")
+    parser.add_argument("--docker-recovery", action="store_true", default=None,
+                        help="启用 ordinary Docker 持久化恢复检查点")
     parser.add_argument("--skills-max-bytes", type=int, help="单个技能正文 UTF-8 字节上限")
     parser.add_argument("--skills-max-reference-bytes", type=int, help="单份参考文本字节上限")
     parser.add_argument("--skills-max-total-bytes", type=int, help="技能与参考文本累计字节上限")
@@ -909,7 +911,7 @@ def _ordinary_settings(args: argparse.Namespace) -> dict[str, Any]:
             "model",
             "env_file",
             "skills_dir",
-            "memory", "memory_dir", "conversation",
+            "memory", "memory_dir", "conversation", "docker_recovery",
             "mcp_serena_image_id",
             "execution_backend", "docker_profile", "docker_image_id",
             "max_steps", "max_input_tokens", "max_output_tokens", "wall_time_seconds",
@@ -976,6 +978,8 @@ def _ordinary_settings(args: argparse.Namespace) -> dict[str, Any]:
         "memory_enabled": choose("memory", getattr(args, "memory", None)),
         "memory_dir": path_value("memory_dir", getattr(args, "memory_dir", None)),
         "conversation_enabled": choose("conversation", None),
+        "docker_recovery_enabled": choose(
+            "docker_recovery", getattr(args, "docker_recovery", None)),
         "mcp_serena_image_id": choose(
             "mcp_serena_image_id", getattr(args, "mcp_serena_image_id", None),
             "TRACEFIX_MCP_SERENA_IMAGE_ID",
@@ -997,7 +1001,7 @@ def _ordinary_settings(args: argparse.Namespace) -> dict[str, Any]:
                 "repo", "task", "test_python", "test_target", "source_import",
                 "regression_targets",
                 "output_dir", "model", "env_file", "skills_dir",
-                "memory", "memory_dir", "conversation",
+                "memory", "memory_dir", "conversation", "docker_recovery",
                 "mcp_serena_image_id",
                 "execution_backend", "docker_profile", "docker_image_id",
             }
@@ -1500,6 +1504,7 @@ def main(argv: list[str] | None = None) -> int:
                     "execution_backend": settings["execution_backend"] or "local",
                     "docker_profile": settings["docker_profile"] or "frozen",
                     "docker_image_id": settings["docker_image_id"],
+                    "docker_recovery_enabled": settings["docker_recovery_enabled"] or False,
                     "memory_enabled": settings["memory_enabled"] or False,
                     "memory_dir": settings["memory_dir"],
                     "conversation_enabled": args.command == "chat"

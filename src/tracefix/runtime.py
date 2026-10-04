@@ -98,7 +98,8 @@ def config_identity_sha256(
     )
     exclude = {"regression_targets"} if legacy_empty_targets else set()
     if manifest_config is not None:
-        exclude.update(name for name in ("memory_enabled", "memory_dir", "conversation_enabled")
+        exclude.update(name for name in ("memory_enabled", "memory_dir", "conversation_enabled",
+                                        "docker_recovery_enabled")
                        if name not in manifest_config)
     return hashlib.sha256(
         config.model_dump_json(exclude=exclude).encode("utf-8")
@@ -128,6 +129,7 @@ class RunConfig(BaseModel):
     memory_enabled: bool = False
     memory_dir: Path | None = None
     conversation_enabled: bool = False
+    docker_recovery_enabled: bool = False
     mcp_serena_image_id: str | None = None
     environment_recipe: EnvironmentRecipe | None = None
     test_environment_variables: dict[str, str] = Field(default_factory=dict)
@@ -195,9 +197,15 @@ class RunConfig(BaseModel):
                 raise ValueError("ordinary Docker does not accept frozen task inputs")
         if self.execution_backend == "docker" and self.skills_root is not None:
             raise ValueError("custom Skills directories are supported only by local execution")
-        if self.memory_enabled and self.execution_backend != "local":
+        if self.docker_recovery_enabled and (
+            self.execution_backend != "docker" or self.docker_profile != "ordinary"
+        ):
+            raise ValueError("Docker recovery requires the ordinary Docker backend")
+        if (self.memory_enabled and self.execution_backend != "local"
+                and not self.docker_recovery_enabled):
             raise ValueError("experience memory currently requires the local backend")
-        if self.conversation_enabled and self.execution_backend != "local":
+        if (self.conversation_enabled and self.execution_backend != "local"
+                and not self.docker_recovery_enabled):
             raise ValueError("continuous dialogue currently requires the local backend")
         if self.execution_backend == "docker" and self.mcp_serena_image_id is not None:
             raise ValueError("Serena MCP is supported only with the local Agent backend")
@@ -314,6 +322,35 @@ class TraceFixRunner:
 
         agent.experience_callback = completed
 
+    def _attach_docker_memory(self, agent: MinimalAgent, config: RunConfig,
+                              root: Path, backend: DockerToolBackend) -> None:
+        """Reflect on verified product bytes on the host, retaining container isolation."""
+        if not config.memory_enabled:
+            return
+        from tracefix.memory import ExperienceStore, reflect_experience
+        from tracefix.workspace_snapshot import restore_workspace
+
+        memory = ExperienceStore(config.memory_dir or root.parent / "memory", config.repo)
+
+        def completed(active: MinimalAgent) -> None:
+            try:
+                snapshot = backend.save_snapshot(1)
+                mirror = root / "memory-products"
+                mirror.mkdir(exist_ok=True)
+                restore_workspace(mirror, root / snapshot["archive"], snapshot["metadata"],
+                                  materialize_links=False)
+                source_sha = hashlib.sha256(
+                    snapshot["bridge_state"]["diff"]["diff"].encode("utf-8")).hexdigest()
+                active.verify_test_source(source_sha)
+                active.state.memory_status = reflect_experience(
+                    active, memory, root, mirror, source_sha,
+                    turn_number=active.state.turn_number if config.conversation_enabled else None,
+                )
+            except (OSError, ValueError, TraceFixError) as exc:
+                active.state.memory_status = {"status": "rejected", "reason": str(exc)}
+
+        agent.experience_callback = completed
+
     @classmethod
     def _record_dialogue_result(cls, root: Path, result: RunResult) -> RunResult:
         """Commit immutable round artifacts before advertising a waiting session."""
@@ -376,6 +413,23 @@ class TraceFixRunner:
         try:
             manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
             config = RunConfig.model_validate(manifest["config"])
+            if config.execution_backend == "docker":
+                from tracefix.docker_recovery import inspect_session
+
+                outcome = inspect_session(
+                    root, manifest, config, implementation_sha256=cls._implementation_sha256(),
+                    config_sha256=config_identity_sha256(config, manifest["config"]),
+                    for_continue=_for_continue,
+                )
+                if config.conversation_enabled and not _for_continue:
+                    continued = cls.inspect(root, _for_continue=True)
+                    outcome.update(continuable=continued["resumable"],
+                                   continue_reasons=continued["reasons"],
+                                   turn_number=continued.get("turn_number"),
+                                   session_status="awaiting_user" if continued["resumable"]
+                                   and not outcome["resumable"] else "paused"
+                                   if continued["resumable"] else "interrupted")
+                return outcome
             recorded = manifest["identity"]
             actual = dict(recorded)
             actual["config_sha256"] = config_identity_sha256(config, manifest["config"])
@@ -643,7 +697,7 @@ class TraceFixRunner:
             manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
             config = RunConfig.model_validate(manifest["config"])
             if config.execution_backend != "local":
-                raise CheckpointError("Docker sessions cannot be resumed")
+                return self._resume_docker_locked(root, manifest, config, message=message)
             store = CheckpointStore(root, manifest["identity"])
             snapshot = store.load()
             workspace = root / "workspace"
@@ -835,6 +889,130 @@ class TraceFixRunner:
                 result = self._record_dialogue_result(root, result)
             return result
 
+    def _resume_docker_locked(self, root: Path, manifest: dict, config: RunConfig,
+                              *, message: str | None = None) -> RunResult:
+        """Rebuild an inspected ordinary workspace while retaining cumulative Agent state."""
+        store = CheckpointStore(root, manifest["identity"])
+        saved = store.load()
+        old_result = RunResult.model_validate_json(
+            (root / "result.json").read_text(encoding="utf-8"))
+        backend = DockerToolBackend(
+            task_id="tracefix-ordinary", input_root=root, run_dir=root, run_id=root.name,
+            profile="ordinary", image_id=config.docker_image_id,
+            timeout_seconds=min(120, int(config.agent_config.wall_time_seconds)),
+        )
+        try:
+            tools = backend.prepare(
+                manifest["identity"]["source_commit"], config.repo,
+                Path(__file__).resolve().parents[2],
+                baseline_archive=root / "agent-base.tar",
+                recovery_snapshot=saved.payload["docker_snapshot"],
+                recovery_enabled=True,
+                skills_enabled=config.agent_config.skills_enabled or config.memory_enabled,
+                skill_limits=config.agent_config.skill_limits,
+                source_import_probe=config.source_import,
+                skills_root=self._skills_root(config, root),
+            )
+            backend.workspace_preparation["test_target"] = config.test_target
+            backend.remove_previous_container(saved.payload["docker_snapshot"])
+            load_environment_file(config.env_file)
+            self._validate_credentials(config.model_name)
+            llm_config = LLMConfig(
+                model_name=config.model_name, temperature=0.0,
+                max_output_tokens=config.per_request_output_tokens,
+                timeout_seconds=config.llm_timeout_seconds, max_retries=config.llm_max_retries,
+                extra_kwargs=self._provider_kwargs(config.model_name),
+            )
+            map_path = root / "repo-map.json"
+            repo_map = RepoMap.model_validate_json(map_path.read_text(encoding="utf-8")) \
+                if map_path.is_file() else None
+            sequence = saved.sequence
+            trace_path = root / "trajectory.jsonl"
+            with JSONLTraceSink(trace_path, append=True) as sink:
+                agent = MinimalAgent(
+                    self._llm_factory(llm_config), tools, config=self._agent_config(config),
+                    trace_sink=sink, repository_map=repo_map.text if repo_map else None,
+                    repository_candidates=repo_map.candidate_files if repo_map else (),
+                )
+
+                def checkpoint(active: MinimalAgent) -> None:
+                    nonlocal sequence
+                    next_sequence = sequence + 1
+                    snapshot = backend.save_snapshot(next_sequence)
+                    patch_sha = hashlib.sha256(
+                        snapshot["bridge_state"]["diff"]["diff"].encode("utf-8")).hexdigest()
+                    active.verify_test_source(patch_sha)
+                    trace = trace_path.read_bytes()
+                    store.save({"agent": active.checkpoint_payload(), "docker_snapshot": snapshot,
+                                "workspace_diff_sha256": patch_sha, "trace_size": len(trace),
+                                "trace_sha256": hashlib.sha256(trace).hexdigest(),
+                                "skills": snapshot["bridge_state"]["skills"],
+                                "protected_dirs": snapshot["bridge_state"]["protected_dirs"]},
+                               sequence=next_sequence)
+                    sequence = next_sequence
+
+                agent.checkpoint_callback = checkpoint
+                agent.persist_terminal_checkpoint = True
+                agent.persist_resume_checkpoint = True
+                self._attach_docker_memory(agent, config, root, backend)
+                try:
+                    state = agent.resume(saved.payload["agent"], message=message)
+                except KeyboardInterrupt:
+                    state = agent.state
+            diff = backend.session.call("get_git_diff", {"context_lines": 3})
+            if not diff.success or diff.output.get("truncated"):
+                raise WorkspaceError("could not export complete resumed Docker diff")
+            backend.export_evidence()
+            diff_path = root / "patch.diff"
+            diff_path.write_text(diff.output["diff"], encoding="utf-8")
+            (root / f"result-before-resume-{saved.sequence}.json").write_text(
+                old_result.model_dump_json(indent=2), encoding="utf-8")
+            updates = {name: getattr(state, name) for name in (
+                "status", "stop_reason", "final_output", "step_count", "input_tokens",
+                "output_tokens", "test_runs", "search_calls", "file_read_calls",
+                "cached_tool_calls", "cost_usd", "cost_complete", "usage_complete",
+                "started_at", "finished_at", "model_request_seconds", "tool_execution_seconds",
+                "context_preparation_seconds", "context_metrics", "presentation_metrics",
+                "memory_status", "turn_number", "validation_gate_status", "validation_gate_results",
+            )}
+            updates.update(
+                agent_validation_status=state.validation_status,
+                changed_files=diff.output["changed_files"],
+                patch_sha256=hashlib.sha256(diff_path.read_bytes()).hexdigest(),
+                workspace_preparation=backend.workspace_preparation,
+                workspace=f"docker://{backend.container_id}/work/agent",
+                duration_seconds=max(0.0, time.monotonic() - agent._started_monotonic),
+                cost_cny_estimate=round(state.cost_usd * config.usd_cny_rate, 8)
+                if state.cost_complete else None,
+            )
+            result = RunResult.model_validate(old_result.model_dump() | updates)
+            (root / "result.json").write_text(result.model_dump_json(indent=2), encoding="utf-8")
+            if config.conversation_enabled:
+                result = self._record_dialogue_result(root, result)
+            backend.set_phase(state.status.value)
+            return result
+        except Exception as exc:
+            from tracefix.memory import atomic_json
+
+            atomic_json(root / f"recovery-failure-{saved.sequence}-{uuid4().hex}.json", {
+                "schema_version": 1, "checkpoint_sequence": saved.sequence,
+                "stage": "resume", "error": self._serialize_error(exc),
+                "container_id": backend.container_id,
+            })
+            raise
+        finally:
+            try:
+                backend.close(remove=True)
+            except Exception as exc:
+                from tracefix.memory import atomic_json
+
+                atomic_json(root / f"recovery-failure-{saved.sequence}-{uuid4().hex}.json", {
+                    "schema_version": 1, "checkpoint_sequence": saved.sequence,
+                    "stage": "cleanup", "error": self._serialize_error(exc),
+                    "container_id": backend.container_id,
+                })
+                raise
+
     def run(self, config: RunConfig) -> RunResult:
         """执行任务并保证成功、预算终止或异常时都保存结构化结果。"""
         source_path = config.repo.expanduser().resolve()
@@ -943,9 +1121,12 @@ class TraceFixRunner:
                     image_id=config.docker_image_id,
                 )
                 docker_prepare_options = (
-                    {"source_import_probe": config.source_import}
+                    {"source_import_probe": config.source_import,
+                     "recovery_enabled": config.docker_recovery_enabled}
                     if config.docker_profile == "ordinary" else {}
                 )
+                if config.memory_enabled:
+                    docker_prepare_options["skills_root"] = self._skills_root(config, run_dir)
                 tools = docker_backend.prepare(
                     source_commit,
                     source,
@@ -1086,22 +1267,58 @@ class TraceFixRunner:
 
                 agent.validation_source_identity = checkout_identity
             if config.execution_backend == "docker" and config.docker_profile == "ordinary":
+                from tracefix.docker_recovery import tool_identity
+
+                docker_identity = {
+                    "source_commit": source_commit,
+                    "config_sha256": config_identity_sha256(config),
+                    "image_id": config.docker_image_id,
+                    "implementation_sha256": self._implementation_sha256(),
+                    "tool_sha256": tool_identity(tools.specs()),
+                    "repo_map_sha256": hashlib.sha256(
+                        (repository_map.text if repository_map else "").encode("utf-8")
+                    ).hexdigest(),
+                }
                 (run_dir / "session.json").write_text(
                     json.dumps(
                         {
-                            "schema_version": 1,
-                            "checkpoint_supported": False,
+                            "schema_version": 2 if config.conversation_enabled else 1,
+                            "checkpoint_supported": config.docker_recovery_enabled,
                             "config": config.model_dump(mode="json"),
-                            "identity": {
-                                "source_commit": source_commit,
-                                "config_sha256": config_identity_sha256(config),
-                                "image_id": config.docker_image_id,
-                            },
+                            "identity": docker_identity,
                             "workspace_preparation": workspace_preparation,
                         },
                         ensure_ascii=False, indent=2,
                     ), encoding="utf-8",
                 )
+                if config.docker_recovery_enabled:
+                    assert docker_backend is not None
+                    docker_store = CheckpointStore(run_dir, docker_identity)
+                    docker_sequence = 0
+
+                    def save_docker_checkpoint(active: MinimalAgent) -> None:
+                        nonlocal docker_sequence
+                        next_sequence = docker_sequence + 1
+                        snapshot = docker_backend.save_snapshot(next_sequence)
+                        diff = snapshot["bridge_state"]["diff"]
+                        current_sha = hashlib.sha256(
+                            diff["diff"].encode("utf-8")
+                        ).hexdigest()
+                        active.verify_test_source(current_sha)
+                        trace_bytes = trace_path.read_bytes()
+                        docker_store.save({
+                            "agent": active.checkpoint_payload(),
+                            "docker_snapshot": snapshot,
+                            "workspace_diff_sha256": current_sha,
+                            "trace_size": len(trace_bytes),
+                            "trace_sha256": hashlib.sha256(trace_bytes).hexdigest(),
+                            "skills": snapshot["bridge_state"]["skills"],
+                            "protected_dirs": snapshot["bridge_state"]["protected_dirs"],
+                        }, sequence=next_sequence)
+                        docker_sequence = next_sequence
+
+                    agent.checkpoint_callback = save_docker_checkpoint
+                    agent.persist_terminal_checkpoint = True
             if (
                 config.execution_backend == "local"
                 and config.environment_recipe is None
@@ -1172,6 +1389,8 @@ class TraceFixRunner:
                 agent.persist_terminal_checkpoint = config.conversation_enabled
             if workspace is not None:
                 self._attach_memory(agent, config, run_dir, workspace, internal_artifacts)
+            elif docker_backend is not None:
+                self._attach_docker_memory(agent, config, run_dir, docker_backend)
             if docker_backend is not None:
                 docker_backend.set_phase("agent_running")
             agent_task = config.task

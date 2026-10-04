@@ -133,6 +133,9 @@ class MinimalAgent(BaseAgent):
             self._emit(TraceEventType.TURN_STARTED, {"turn": self.state.turn_number})
             if self.checkpoint_callback is not None:
                 self.checkpoint_callback(self)
+        if message is None and getattr(self, "persist_resume_checkpoint", False):
+            if self.checkpoint_callback is not None:
+                self.checkpoint_callback(self)
         return self._run_initialized(self.state.task or "", resume=True)
 
     def _reset_turn_runtime(self) -> None:
