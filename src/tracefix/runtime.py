@@ -907,6 +907,7 @@ class TraceFixRunner:
                 Path(__file__).resolve().parents[2],
                 baseline_archive=root / "agent-base.tar",
                 recovery_snapshot=saved.payload["docker_snapshot"],
+                recovery_enabled=True,
                 skills_enabled=config.agent_config.skills_enabled or config.memory_enabled,
                 skill_limits=config.agent_config.skill_limits,
                 source_import_probe=config.source_import,
@@ -1120,7 +1121,8 @@ class TraceFixRunner:
                     image_id=config.docker_image_id,
                 )
                 docker_prepare_options = (
-                    {"source_import_probe": config.source_import}
+                    {"source_import_probe": config.source_import,
+                     "recovery_enabled": config.docker_recovery_enabled}
                     if config.docker_profile == "ordinary" else {}
                 )
                 if config.memory_enabled:

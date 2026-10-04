@@ -422,6 +422,7 @@ class DockerToolBackend:
         skills_root: Path | None = None,
         baseline_archive: Path | None = None,
         recovery_snapshot: dict[str, Any] | None = None,
+        recovery_enabled: bool = False,
     ) -> ToolRegistry:
         self.source_commit = source_commit
         if self.profile == "ordinary":
@@ -752,6 +753,13 @@ class DockerToolBackend:
             ]
         )
         steps = []
+        if recovery_enabled:
+            if self.profile != "ordinary":
+                raise WorkspaceError("Docker recovery requires the ordinary profile")
+            # Private Git exclusions align generated caches with the snapshot product contract.
+            # Tracked files remain visible to Git and are retained by the snapshot codec.
+            _run([self.docker, "exec", self.container_name, "sh", "-c",
+                  "printf '\\n__pycache__/\\n.pytest_cache/\\n' >> /work/agent/.git/info/exclude"])
         for template in self.recipe.get("build_commands", []):
             command = [self.python if arg == "{python}" else arg for arg in template]
             started = time.monotonic()

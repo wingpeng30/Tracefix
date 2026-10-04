@@ -1,12 +1,82 @@
 """Verifier contract checks supplement, and never replace, real Docker replay evidence."""
 
 import json
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
 from tracefix import docker_recovery_faults
 from tracefix import docker_recovery_replay as replay
+from tracefix.checkpoint import CheckpointStore
+
+
+@pytest.mark.parametrize("case,phase,violation", [
+    ("read", "run", None), ("patch", "run", None), ("test", "run", None),
+    ("twice", "resume-one", None), ("read", "resume", None),
+    ("read", "resume", "unsafe"), ("read", "resume", "terminal"),
+])
+def test_worker_requires_safe_resume_and_expected_durable_termination(
+    tmp_path, monkeypatch, case, phase, violation,
+):
+    directory = tmp_path / case
+    directory.mkdir()
+    root = directory / "run"
+    root.mkdir()
+    (directory / "session-location.json").write_text(
+        json.dumps({"run": str(root)}), encoding="utf-8")
+    resumed = []
+
+    class Result(SimpleNamespace):
+        def model_dump(self, **kwargs):
+            return vars(self)
+
+    class Runner:
+        def __init__(self, factory):
+            assert callable(factory)
+
+        def inspect(self, requested):
+            assert requested == root
+            return {"resumable": violation != "unsafe", "step_count": 2}
+
+        def finish(self, sequence):
+            store = CheckpointStore(root, {"worker": case})
+            status = "completed"
+            try:
+                store.save({"safe_batch": True}, sequence=sequence)
+            except KeyboardInterrupt:
+                status = "interrupted"
+            if violation == "terminal":
+                status = "failed"
+            return Result(status=status, step_count=sequence - 1,
+                          result_path=str(root / "result.json"),
+                          workspace_preparation={"container_id": "new-owned-container"})
+
+        def run(self, config):
+            assert config.docker_recovery_enabled and config.docker_profile == "ordinary"
+            return self.finish({"read": 3, "patch": 4, "test": 5}[case])
+
+        def resume(self, requested):
+            resumed.append(requested)
+            return self.finish(6)
+
+    monkeypatch.setattr(replay, "TraceFixRunner", Runner)
+    if violation:
+        with pytest.raises(AssertionError):
+            replay.worker(tmp_path, "sha256:" + "a" * 64, case, phase)
+        assert not (directory / f"{phase}.json").exists()
+        if violation == "unsafe":
+            assert not resumed
+    else:
+        replay.worker(tmp_path, "sha256:" + "a" * 64, case, phase)
+        receipt = json.loads((directory / f"{phase}.json").read_text(encoding="utf-8"))
+        assert receipt["status"] == (
+            "interrupted" if phase in {"run", "resume-one"} else "completed")
+        assert receipt["provider_calls"] == 0
+        saved = CheckpointStore(root, {"worker": case}).load()
+        assert saved.payload == {"safe_batch": True}
+        assert saved.sequence == receipt["step_count"] + 1
+        assert Path(receipt["result_path"]).parent == root
 
 
 @pytest.mark.parametrize("fault", [

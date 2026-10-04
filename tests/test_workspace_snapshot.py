@@ -5,6 +5,7 @@ import hashlib
 import io
 import json
 import tarfile
+from types import SimpleNamespace
 
 import pytest
 
@@ -62,6 +63,68 @@ def test_real_file_roundtrip_deletion_binary_products_and_cache_exclusion(saved,
     assert (target / ".git/owned-baseline").read_bytes() == b"preserve"
     assert (source / ".tracefix-test-tmp/transient").exists()
     restore_workspace(target, archive, metadata)
+
+
+def test_tracked_cache_named_products_survive_while_generated_files_are_excluded(saved, tmp_path):
+    source, _, _ = saved
+    cache = source / "product/__pycache__"
+    (cache / "owned.py").write_bytes(b"user-owned product")
+    _git(source, "add", "product/__pycache__/owned.py")
+    archive = tmp_path / "tracked-cache.tar"
+    with archive.open("wb") as stream:
+        metadata = export_workspace(source, stream)
+    paths = {row["path"] for row in metadata["files"]}
+    assert "product/__pycache__/owned.py" in paths
+    assert "product/__pycache__/temporary.pyc" not in paths
+    target = tmp_path / "restored-cache"
+    restore_workspace(target, archive, metadata)
+    assert (target / "product/__pycache__/owned.py").read_bytes() == b"user-owned product"
+    assert not (target / "product/__pycache__/temporary.pyc").exists()
+
+
+def test_snapshot_rejects_file_replacement_after_path_inspection(saved, monkeypatch):
+    import tracefix.workspace_snapshot as snapshot
+
+    source, _, _ = saved
+    original = snapshot.os.fstat
+
+    def replaced(descriptor):
+        observed = original(descriptor)
+        return SimpleNamespace(st_ino=observed.st_ino + 1, st_dev=observed.st_dev)
+
+    monkeypatch.setattr(snapshot.os, "fstat", replaced)
+    with pytest.raises(CheckpointError, match="changed during snapshot"):
+        export_workspace(source, io.BytesIO())
+
+
+@pytest.mark.parametrize("target,member_under_link", [
+    ("data.py", False), ("../outside", False), ("/outside", False),
+    ("C:/outside", False), ("data.py", True),
+])
+def test_link_archive_validation_preserves_path_boundaries(tmp_path, target, member_under_link):
+    archive = tmp_path / "links.tar"
+    link = tarfile.TarInfo("link")
+    link.type, link.linkname, link.mode = tarfile.SYMTYPE, target, 0o777
+    records = [{"path": "link", "type": "symlink", "target": target, "mode": 0o777, "size": 0}]
+    with tarfile.open(archive, "w") as stream:
+        stream.addfile(link)
+        if member_under_link:
+            child = tarfile.TarInfo("link/child.py")
+            child.mode = 0o644
+            stream.addfile(child, io.BytesIO())
+            records.append({"path": child.name, "type": "file", "mode": child.mode,
+                            "size": 0, "sha256": hashlib.sha256(b"").hexdigest()})
+    metadata = {"schema_version": 1, "files": records, "deleted": [],
+                "archive_bytes": archive.stat().st_size,
+                "archive_sha256": hashlib.sha256(archive.read_bytes()).hexdigest()}
+    if target == "data.py" and not member_under_link:
+        assert validate_archive(archive, metadata)[0].issym()
+        restored = tmp_path / "link-mirror"
+        restore_workspace(restored, archive, metadata, materialize_links=False)
+        assert not (restored / "link").exists()
+    else:
+        with pytest.raises(CheckpointError, match="link"):
+            validate_archive(archive, metadata)
 
 
 @pytest.mark.parametrize("mode", [

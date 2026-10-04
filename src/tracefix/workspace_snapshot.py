@@ -31,15 +31,25 @@ def safe_name(name: str) -> bool:
             and str(PurePosixPath(name)) == name)
 
 
-def _paths(root: Path) -> list[Path]:
+def _paths(root: Path, tracked: set[str] | None = None) -> list[Path]:
     paths = []
+    tracked = tracked or set()
+
+    def product(relative: str) -> bool:
+        if not any(part.casefold() in _CACHES for part in PurePosixPath(relative).parts):
+            return True
+        return relative in tracked or any(name.startswith(relative + "/") for name in tracked)
+
     for directory, directories, files in os.walk(root, followlinks=False):
         parent = Path(directory)
         directories[:] = sorted(name for name in directories
-                                 if name.casefold() not in _PROTECTED | _CACHES)
+                                 if name.casefold() not in _PROTECTED
+                                 and product((parent / name).relative_to(root).as_posix()))
         for name in sorted([*directories, *files]):
             path = parent / name
             relative = path.relative_to(root).as_posix()
+            if not product(relative):
+                continue
             if not safe_name(relative) or not path.resolve().is_relative_to(root):
                 raise CheckpointError("snapshot path or link escaped the workspace")
             paths.append(path)
@@ -79,7 +89,9 @@ def export_workspace(root: Path, stream: BinaryIO, *, maximum: int = MAX_SNAPSHO
                      ) -> dict[str, Any]:
     """Stream one complete snapshot without duplicating its bytes in container tmpfs."""
     root = root.resolve(strict=True)
-    paths = _paths(root)
+    tracked = subprocess.run(["git", "ls-files", "-z"], cwd=root, check=True,
+                             capture_output=True).stdout.decode("utf-8").split("\0")
+    paths = _paths(root, set(tracked))
     if sum(path.lstat().st_size for path in paths if path.is_file()
            and not path.is_symlink()) > maximum:
         raise CheckpointError("workspace snapshot exceeds the 1 GiB limit")
@@ -121,8 +133,6 @@ def export_workspace(root: Path, stream: BinaryIO, *, maximum: int = MAX_SNAPSHO
             else:
                 raise CheckpointError("snapshot contains an unsupported product file type")
             records.append(record)
-    tracked = subprocess.run(["git", "ls-files", "-z"], cwd=root, check=True,
-                             capture_output=True).stdout.decode("utf-8").split("\0")
     deleted = sorted(name for name in tracked if name and not (root / name).exists()
                      and not (root / name).is_symlink())
     if any(not safe_name(name) for name in deleted):

@@ -394,3 +394,21 @@ SHA256 0dcb98672b8293b276c886d37cda264af1407e7d8b152ac6a827e662fb99eee6。
 原始证据tmp/docker-replay-contract-02.xml、tmp/docker-fault-contract-01.xml。
 这些是验收器补充契约测试，不替代上述真实Linux容器执行。实现变更尚未
 纳入9fd5f28冻结候选，需要下一精确候选复验，不复用旧实现哈希作为新验收。
+
+2026-10-04 G3 冻结2511451全量1013项无失败/错误/跳过，pytest退出0，但精确
+综合覆盖15553/17353=89.62715380625828%，工程检查仍拒绝；Ruff/编译/Diff通过。
+证据tmp/docker-recovery-engineering-03，保留原始结果，不采用四舍五入覆盖率。
+该候选wheel真实Linux四类恢复+故障均通过（tmp/docker-recovery-installed-04），
+实现哈希355844f9acfd08f5e2908de415c9c5c8ae6c9caa59477ca56b5edc920607654c。
+新增产品/权限/Skills与工具/解释器身份故障脚本并纳入Linux CI。首次脚本
+因_git助手不返回提交值失败（products-04），修正后发现无.gitignore仓库的
+生成缓存进入Git差异、但快照排除缓存，恢复差异不一致（products-05）。两次
+失败日志保留，原容器均清理，不将失败报告改为成功。
+修复限定在恢复启用时：仅在容器私有.git/info/exclude忽略未跟踪缓存，不改
+目标仓库；快照保留已跟踪缓存目录下的产品文件，生成缓存继续排除。37项
+快照/路径边界检查通过10.96秒（docker-cache-products-01.xml），39项运行时/
+传输/普通Docker回归通过39.62秒（docker-cache-runtime-01.xml），6项准备阶段
+身份/默认关闭检查通过1.07秒（docker-prepare-identity-01.xml）；16项工作进程
+安全恢复及保存后中断契约通过4.41秒（docker-replay-worker-01.xml）。
+Ruff修正换行后复验，下一步冻结缓存修复候选并重跑完整本地与Linux验收。
+G3/G4未完成，无正式G3 PR，无供应商调用，不降低精确90%门槛。
