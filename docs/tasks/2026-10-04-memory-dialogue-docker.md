@@ -428,3 +428,10 @@ products-07全部通过，退出0：文件新增/删除、755权限、已跟踪�
 通过且实现哈希同为3ea1e661...，供应商调用0。全量engineering-04会话85013
 随后丢失，系统查询无原检查/python子进程，无summary或最终pytest产物；不能
 视为完成或通过。冻结脚本清理修正后重新运行完整检查，原空/未完成目录保留。
+
+2026-10-04 G3 根目录边界复核：真实 Windows junction 隔离复现表明导出与恢复
+会跟随被替换的工作区根目录，2项反例失败（tmp/docker-root-boundary-red-01.xml）。
+已在根目录解析和清理之前拒绝符号链接及reparse/junction；使用lstat属性兼容
+Windows Python3.11。39项根目录及快照回归通过7.87秒，外部哨兵文件保持不变
+（tmp/docker-root-boundary-green-01.xml），Ruff通过。43cd63e冻结检查仍继续，
+该修复需另冻结并重新验收，旧检查结果不作为新实现通过依据，零供应商调用。

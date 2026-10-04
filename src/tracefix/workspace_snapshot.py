@@ -21,6 +21,15 @@ _PROTECTED = {".git", ".tracefix-build-tmp", ".tracefix-test-tmp"}
 _CACHES = {"__pycache__", ".pytest_cache"}
 
 
+def _reject_linked_root(root: Path) -> None:
+    try:
+        observed = root.lstat()
+    except FileNotFoundError:
+        return
+    if stat.S_ISLNK(observed.st_mode) or getattr(observed, "st_file_attributes", 0) & 0x400:
+        raise CheckpointError("workspace snapshot root must not be a link or junction")
+
+
 def safe_name(name: str) -> bool:
     parts = PurePosixPath(name).parts
     windows = PureWindowsPath(name)
@@ -88,6 +97,7 @@ class _HashReader:
 def export_workspace(root: Path, stream: BinaryIO, *, maximum: int = MAX_SNAPSHOT_BYTES
                      ) -> dict[str, Any]:
     """Stream one complete snapshot without duplicating its bytes in container tmpfs."""
+    _reject_linked_root(root)
     root = root.resolve(strict=True)
     tracked = subprocess.run(["git", "ls-files", "-z"], cwd=root, check=True,
                              capture_output=True).stdout.decode("utf-8").split("\0")
@@ -191,6 +201,7 @@ def validate_archive(path: Path, metadata: dict[str, Any], *,
 
 
 def _clear_products(root: Path) -> Path:
+    _reject_linked_root(root)
     root.mkdir(parents=True, exist_ok=True)
     root = root.resolve(strict=True)
     for name in _CACHES:
