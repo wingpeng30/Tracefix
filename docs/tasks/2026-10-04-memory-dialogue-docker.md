@@ -538,7 +538,7 @@ CPython构建的`platform.platform()`在系统`shell ver`探测上抛TypeError�
 Python3.11/3.12的42项定向验收均通过。修复后wheel SHA256
 cb837b2f4a3f4ca98793943fe8bfc7ea78cc7522b22b713b5bbc2137ff50f824；wheel/editable真实
 Linux Docker联动分别重跑通过，独立容器3项通过，provider调用0；各143个产物哈希复核，
-详见`tmp/g4-installed-audit-02.json`。最终修复候选精确CI待运行，G4正式PR尚未创建。
+详见`tmp/g4-installed-audit-02.json`。
 
 精确 CI #107（提交df51f4d07bcb7c69857bddcc5f9ca401f641b9e2，run ID 37218406037）
 四项通过，Windows 3.11 editable smoke 在连续对话三轮验收处失败，未创建PR；工程全量检查、
@@ -547,4 +547,13 @@ wheel场景和wheel构建通过。失败日志只有聚合断言，未输出其�
 回收PID。验收现改为检查每个子进程写入的轮次、成功退出、有效PID及零供应商调用，并加入
 PID复用回归测试。当前本机三轮真实CLI均退出0、各7个预录请求、0供应商调用，且已通过轮次
 状态断言；随后独立测试验证在本机受限目录创建临时回归目录时被Windows ACL拒绝，不能将该
-本机隔离错误计为功能通过。该修复的精确CI尚未运行，G4 PR仍未创建。
+本机隔离错误计为功能通过。修复提交7208eab的精确CI #108已全部五项通过，run ID
+37220323426；Windows3.11与3.12各1078项测试、0失败/错误/跳过，精确覆盖率分别为
+15796/17542=90.04674495496522%和15798/17542=90.05814616349333%。Editable与wheel
+连续对话回放均通过三轮真实CLI进程、每轮7个预录请求、供应商调用0；三项Linux容器/MCP门槛
+通过。原始CI artifact ID与SHA256：3.11工程11309274196 / `3be73f5b6bba395b677d550a5e9137744196e2576da65b961e1829e6a6ae4df2`；
+3.12工程11310650034 / `371a1c38d79ce4cb6c8b10861d17d4549e579c8616176c4172a1c07db7379d86`；
+Docker smoke 11309977874 / `fa5a50caf4a379dde830ec846d0728bc3266520f240cd8eb7a8e2ef247c37713`；
+ordinary Docker 11309359489 / `1d8395c9e24eb2f28c10e1307c71b114295559d8bdaea3e41a074747b36b3a27`；
+MCP 11309648604 / `6301d3776f39468c645755368d1894b79dea1fab4ad557d89e68a5ed1f2df33d`。
+正式G4 PR #20已创建，尚未合并。该记录提交变更后须通过对应精确CI，才能将本阶段标记完成。
