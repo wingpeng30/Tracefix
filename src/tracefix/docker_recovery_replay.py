@@ -104,9 +104,13 @@ def run_recovery_replay(output: Path, image_id: str) -> dict:
         if not independent["passed"]:
             raise AssertionError(independent)
         cases.append({"case": case, "processes": receipts, "independent_passed": True})
+    from tracefix.docker_recovery_faults import run_snapshot_faults
+
+    faults = run_snapshot_faults(output / "snapshot-faults", output / "source", image_id)
     evidence = {str(path.relative_to(output)): hashlib.sha256(path.read_bytes()).hexdigest()
                 for path in output.rglob("*.json") if ".git" not in path.parts}
     summary = {"accepted": True, "provider_calls": 0, "image_id": image_id, "cases": cases,
+               "snapshot_faults": faults,
                "implementation_sha256": TraceFixRunner._implementation_sha256(),
                "evidence_sha256": evidence, "simulated_model_usage": True}
     atomic_json(output / "recovery-summary.json", summary)

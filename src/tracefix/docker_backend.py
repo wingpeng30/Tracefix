@@ -998,6 +998,25 @@ class DockerToolBackend:
             _RemoteTool(spec, self, self.session.skill_catalog) for spec in self.session.tools
         )
 
+    def remove_previous_container(self, snapshot: dict[str, Any]) -> None:
+        """Remove an abandoned container only after checking its exact owned identity."""
+        previous = snapshot.get("container_id")
+        if (not isinstance(previous, str) or re.fullmatch(r"[0-9a-f]{64}", previous) is None
+                or previous == self.container_id):
+            raise WorkspaceError("invalid previous Docker container identity")
+        found = _run([self.docker, "ps", "-a", "--no-trunc", "--filter", f"id={previous}",
+                      "--format", "{{.ID}}"])
+        identifiers = found.stdout.decode("utf-8").splitlines()
+        if not identifiers:
+            return
+        if identifiers != [previous]:
+            raise WorkspaceError("previous Docker container identity is ambiguous")
+        owned = _run([self.docker, "inspect", "--format",
+                      '{{index .Config.Labels "tracefix.run_id"}}', previous])
+        if owned.stdout.decode("utf-8").strip() != self.run_id:
+            raise WorkspaceError("previous Docker container ownership changed; removal refused")
+        _run([self.docker, "rm", "-f", previous])
+
     def save_snapshot(self, sequence: int) -> dict[str, Any]:
         """Stream bounded product data and bind its verified bridge and journal state."""
         from tracefix.docker_recovery import tool_identity

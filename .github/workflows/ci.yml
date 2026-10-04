@@ -350,7 +350,7 @@ jobs:
           python scripts/test_ordinary_docker_failures.py --image-id "$image_id" --output "$RUNNER_TEMP/ordinary-failures"
           cd "$RUNNER_TEMP"
           tracefix-reproduce --scenario docker-recovery --backend docker --image-id "$image_id" --output "$RUNNER_TEMP/ordinary-recovery" > "$RUNNER_TEMP/ordinary-recovery-summary.json"
-          python -c 'import json,sys; d=json.load(open(sys.argv[1])); assert d["accepted"] and d["provider_calls"] == 0 and len(d["cases"]) == 4' "$RUNNER_TEMP/ordinary-recovery-summary.json"
+          python -c 'import json,sys; d=json.load(open(sys.argv[1])); assert d["accepted"] and d["provider_calls"] == 0 and len(d["cases"]) == 4 and d["snapshot_faults"]["passed"]' "$RUNNER_TEMP/ordinary-recovery-summary.json"
           test -z "$(docker ps -a --filter 'name=tracefix-' --format '{{.ID}}')"
       - name: Preserve ordinary Docker evidence
         if: always()

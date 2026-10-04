@@ -109,12 +109,79 @@ def test_baseline_corruption_preserves_saved_checkpoint(batch):
         validate_batch(root, snapshot, sequence=1, image_id="pinned-image")
 
 
-def test_inspect_docker_session_without_original_container(batch, monkeypatch):
+@pytest.mark.parametrize("field,value,reason", [
+    ("schema_version", 2, "sequence changed"),
+    ("batch_id", "invalid", "batch identity"),
+    ("archive", "../outside", "escapes"),
+    ("image_id", "other-image", "image identity"),
+    ("bridge_state_sha256", "corrupt", "bridge state"),
+    ("journal_size", -1, "journal prefix"),
+    ("journal_sha256", "corrupt", "journal prefix"),
+    ("test_evidence", {"../outside": "corrupt"}, "evidence path"),
+])
+def test_corrupt_batch_bindings_fail_before_recovery(batch, field, value, reason):
+    root, snapshot = batch
+    original_batch = snapshot["batch_id"]
+    snapshot[field] = value
+    (root / "docker-checkpoints" / f"{original_batch}.json").write_text(
+        json.dumps(snapshot), encoding="utf-8")
+    with pytest.raises(CheckpointError, match=reason):
+        validate_batch(root, snapshot, sequence=1, image_id="pinned-image")
+
+
+def test_sidecar_and_evidence_corruption_are_rejected(batch):
+    root, snapshot = batch
+    sidecar = root / "docker-checkpoints" / f'{snapshot["batch_id"]}.json'
+    sidecar.write_text("{}", encoding="utf-8")
+    with pytest.raises(CheckpointError, match="metadata changed"):
+        validate_batch(root, snapshot, sequence=1, image_id="pinned-image")
+    directory = root / "test-evidence"
+    directory.mkdir()
+    (directory / "result.json").write_bytes(b"changed")
+    snapshot["test_evidence"] = {"result.json": hashlib.sha256(b"original").hexdigest()}
+    sidecar.write_text(json.dumps(snapshot), encoding="utf-8")
+    with pytest.raises(CheckpointError, match="test evidence changed"):
+        validate_batch(root, snapshot, sequence=1, image_id="pinned-image")
+
+
+@pytest.mark.parametrize("found,owner,removes", [
+    (False, "owned", False), (True, "owned", True), (True, "other", False),
+])
+def test_previous_container_removal_requires_full_identity(
+    tmp_path, monkeypatch, found, owner, removes,
+):
+    from types import SimpleNamespace
+
+    from tracefix.docker_backend import DockerToolBackend
+    from tracefix.exceptions import WorkspaceError
+
+    backend = DockerToolBackend(task_id="tracefix-ordinary", input_root=tmp_path,
+                                run_dir=tmp_path, run_id="owned", profile="ordinary",
+                                image_id="sha256:" + "a" * 64)
+    previous = "b" * 64
+    backend.container_id = "c" * 64
+    commands = []
+
+    def run(command, **kwargs):
+        commands.append(command)
+        value = (previous + "\n" if found else "") if command[1] == "ps" else owner + "\n"
+        return SimpleNamespace(stdout=value.encode())
+
+    monkeypatch.setattr("tracefix.docker_backend._run", run)
+    if found and owner != "owned":
+        with pytest.raises(WorkspaceError, match="ownership changed"):
+            backend.remove_previous_container({"container_id": previous})
+    else:
+        backend.remove_previous_container({"container_id": previous})
+    assert any(command[1:3] == ["rm", "-f"] for command in commands) is removes
+
+
+@pytest.fixture
+def inspected(batch, monkeypatch):
     from types import SimpleNamespace
 
     from tracefix.agent import AgentState, MinimalAgent
     from tracefix.checkpoint import CheckpointStore
-    from tracefix.docker_recovery import inspect_session
     from tracefix.runtime import RunConfig
     from tracefix.tools import create_default_tool_registry
 
@@ -154,6 +221,13 @@ def test_inspect_docker_session_without_original_container(batch, monkeypatch):
         return SimpleNamespace(returncode=0, stdout="pinned-image\n")
 
     monkeypatch.setattr("tracefix.docker_recovery.subprocess.run", inspect_image)
+    return root, manifest, config, calls
+
+
+def test_inspect_docker_session_without_original_container(inspected):
+    from tracefix.docker_recovery import inspect_session
+
+    root, manifest, config, calls = inspected
     outcome = inspect_session(root, manifest, config, implementation_sha256="code",
                               config_sha256="config")
     assert outcome["resumable"] is True
@@ -161,3 +235,142 @@ def test_inspect_docker_session_without_original_container(batch, monkeypatch):
     (root / "result.json").write_text('{"status":"completed"}', encoding="utf-8")
     assert "run is not interrupted" in inspect_session(
         root, manifest, config, implementation_sha256="code", config_sha256="config")["reasons"]
+
+
+@pytest.mark.parametrize("fault,reason", [
+    ("usage", "unresolved model accounting"), ("memory", "unresolved memory request"),
+    ("runtime", "runtime memory is incomplete"), ("test", "passing test does not match"),
+    ("trace", "trajectory prefix changed"), ("suffix", "uncommitted model or tool outcome"),
+])
+def test_inspect_rejects_unresolved_or_corrupt_agent_evidence(inspected, fault, reason):
+    from tracefix.checkpoint import CheckpointStore
+    from tracefix.docker_recovery import inspect_session
+
+    root, manifest, config, _ = inspected
+    store = CheckpointStore(root, manifest["identity"])
+    payload = store.load().payload
+    if fault == "usage":
+        payload["agent"]["state"]["usage_complete"] = False
+    elif fault == "memory":
+        payload["agent"]["state"]["memory_status"] = {"status": "outcome_unknown"}
+    elif fault == "runtime":
+        payload["agent"]["memory"] = {}
+    elif fault == "test":
+        payload["agent"]["memory"]["_last_test_evidence"] = {
+            "valid": True, "source_sha256": "different-products",
+        }
+    elif fault == "trace":
+        payload["trace_sha256"] = "changed"
+    else:
+        (root / "trajectory.jsonl").write_bytes(b'{"event_type":"model_requested"}\n')
+    store.path.unlink()
+    store.save(payload, sequence=1)
+    if fault == "trace":
+        with pytest.raises(CheckpointError, match=reason):
+            inspect_session(root, manifest, config, implementation_sha256="code",
+                            config_sha256="config")
+    else:
+        outcome = inspect_session(root, manifest, config, implementation_sha256="code",
+                                  config_sha256="config")
+        assert any(reason in item for item in outcome["reasons"])
+
+
+@pytest.mark.parametrize("budget", ["step_count", "test_runs", "input_tokens", "output_tokens",
+                                   "active_seconds"])
+def test_continue_refuses_each_exhausted_cumulative_budget(inspected, budget):
+    from tracefix.checkpoint import CheckpointStore
+    from tracefix.docker_recovery import inspect_session
+
+    root, manifest, config, _ = inspected
+    config.conversation_enabled = True
+    manifest["schema_version"] = 2
+    store = CheckpointStore(root, manifest["identity"])
+    payload = store.load().payload
+    limits = {"step_count": config.agent_config.max_steps,
+              "test_runs": config.agent_config.max_test_runs,
+              "input_tokens": config.agent_config.max_input_tokens,
+              "output_tokens": config.agent_config.max_output_tokens,
+              "active_seconds": config.agent_config.wall_time_seconds}
+    payload["agent"]["active_seconds"] = 0
+    if budget == "active_seconds":
+        payload["agent"][budget] = limits[budget]
+    else:
+        payload["agent"]["state"][budget] = limits[budget]
+    store.path.unlink()
+    store.save(payload, sequence=1)
+    (root / "result.json").write_text('{"status":"completed","turn_number":1}', encoding="utf-8")
+    turn = root / "turns/0001"
+    attempt = "a" * 32
+    directory = turn / attempt
+    directory.mkdir(parents=True)
+    names = {"patch.diff", "trajectory.jsonl", "session.json", "validation.json", "result.json"}
+    for name in names:
+        (directory / name).write_bytes(b"immutable round artifact")
+    record = {"schema_version": 1, "turn_number": 1, "attempt": attempt,
+              "artifacts": dict.fromkeys(
+                  names, hashlib.sha256(b"immutable round artifact").hexdigest())}
+    (turn / "latest.json").write_text(json.dumps(record), encoding="utf-8")
+    outcome = inspect_session(root, manifest, config, implementation_sha256="code",
+                              config_sha256="config", for_continue=True)
+    assert "cumulative session budget exhausted" in outcome["reasons"]
+
+
+@pytest.mark.parametrize("fault", ["attempt", "missing-artifact", "changed-artifact", "round"])
+def test_continue_rejects_corrupt_round_archive(inspected, fault):
+    from tracefix.checkpoint import CheckpointStore
+    from tracefix.docker_recovery import inspect_session
+
+    root, manifest, config, _ = inspected
+    config.conversation_enabled = True
+    manifest["schema_version"] = 2
+    store = CheckpointStore(root, manifest["identity"])
+    payload = store.load().payload
+    payload["agent"]["active_seconds"] = 0
+    store.path.unlink()
+    store.save(payload, sequence=1)
+    (root / "result.json").write_text('{"status":"completed","turn_number":1}', encoding="utf-8")
+    turn = root / "turns/0001"
+    attempt = "a" * 32
+    directory = turn / attempt
+    directory.mkdir(parents=True)
+    names = {"patch.diff", "trajectory.jsonl", "session.json", "validation.json", "result.json"}
+    for name in names:
+        (directory / name).write_bytes(b"committed")
+    record = {"schema_version": 1, "turn_number": 1, "attempt": attempt,
+              "artifacts": dict.fromkeys(names, hashlib.sha256(b"committed").hexdigest())}
+    if fault == "attempt":
+        record["attempt"] = "../outside"
+    elif fault == "missing-artifact":
+        record["artifacts"].pop("validation.json")
+    elif fault == "changed-artifact":
+        (directory / "patch.diff").write_bytes(b"changed")
+    else:
+        record["turn_number"] = 2
+    (turn / "latest.json").write_text(json.dumps(record), encoding="utf-8")
+    with pytest.raises(CheckpointError, match="conversation round"):
+        inspect_session(root, manifest, config, implementation_sha256="code",
+                        config_sha256="config", for_continue=True)
+
+
+@pytest.mark.parametrize("fault", ["timeout", "missing", "other-image"])
+def test_inspect_does_not_accept_unverified_image(inspected, monkeypatch, fault):
+    from types import SimpleNamespace
+
+    from tracefix.docker_recovery import inspect_session
+
+    root, manifest, config, _ = inspected
+
+    def inspect_image(*args, **kwargs):
+        if fault == "timeout":
+            raise TimeoutError("unavailable engine")
+        return SimpleNamespace(returncode=1 if fault == "missing" else 0, stdout="other-image")
+
+    monkeypatch.setattr("tracefix.docker_recovery.subprocess.run", inspect_image)
+    if fault == "timeout":
+        with pytest.raises(CheckpointError, match="inspection is unavailable"):
+            inspect_session(root, manifest, config, implementation_sha256="code",
+                            config_sha256="config")
+    else:
+        outcome = inspect_session(root, manifest, config, implementation_sha256="code",
+                                  config_sha256="config")
+        assert "saved Docker image is unavailable or changed" in outcome["reasons"]

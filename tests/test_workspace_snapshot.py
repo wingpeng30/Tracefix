@@ -167,3 +167,36 @@ def test_streaming_restore_in_disposable_workspace_and_final_digest(saved, tmp_p
     changed["archive_sha256"] = "0" * 64
     with pytest.raises(CheckpointError, match="identity"):
         restore_stream(tmp_path / "disposable-invalid", io.BytesIO(archive.read_bytes()), changed)
+
+
+@pytest.mark.parametrize("fault,reason", [
+    ("schema", "envelope"), ("limit", "envelope"), ("path", "product paths"),
+    ("duplicate", "product paths"), ("missing", "unexpected"), ("mode", "permissions"),
+    ("size", "size changed"), ("hash", "content changed"), ("type", "unsupported"),
+])
+def test_streaming_restore_rejects_corrupt_disposable_products(saved, tmp_path, fault, reason):
+    _, archive, metadata = saved
+    changed = copy.deepcopy(metadata)
+    file = next(row for row in changed["files"] if row["type"] == "file")
+    if fault == "schema":
+        changed["schema_version"] = 2
+    elif fault == "limit":
+        changed["archive_bytes"] = 1024 ** 3 + 1
+    elif fault == "path":
+        file["path"] = "../outside"
+    elif fault == "duplicate":
+        changed["files"].append(copy.deepcopy(file))
+    elif fault == "missing":
+        changed["files"].remove(file)
+    elif fault == "mode":
+        file["mode"] ^= 0o100
+    elif fault == "size":
+        file["size"] += 1
+    elif fault == "hash":
+        file["sha256"] = "0" * 64
+    else:
+        file["type"] = "symlink"
+    target = tmp_path / "disposable"
+    with pytest.raises(CheckpointError, match=reason):
+        restore_stream(target, io.BytesIO(archive.read_bytes()), changed)
+    assert not (tmp_path / "outside").exists()

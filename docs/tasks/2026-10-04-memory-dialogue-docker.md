@@ -282,3 +282,87 @@ YAML解析通过。相关回归 `tmp/docker-recovery-regression-01.log`/JUnit �
 完整且有已知结果的内部只读恢复状态查询允许作为保存失败后的日志后缀，
 未决查询及修改仍拒绝，14定向测试通过。原始真实上一批次再次validate_batch通过。
 尚需故障回放产品化、完整覆盖门槛、安装包/精确CI与G4，不提交正式PR。
+
+2026-10-04 G3 首次冻结候选 f29356f6f98e62e6c19228232a312845e43d1390：
+仅候选提交，未创建正式 PR。干净 checkout `tmp/docker-recovery-frozen-01`，
+工程检查输出 `tmp/docker-recovery-engineering-01`，当前统一执行会话 3577 正在运行。
+工作区 Ruff 扫到历史 tests/.tmp-workspace 内生成的 conftest，不能代表干净候选检查；
+保留这些历史文件，以冻结 checkout Ruff/全量 pytest/精确覆盖率结果为准。
+完整故障与安装包/Windows双版本/精确CI仍未通过，G3/G4保持未完成。
+
+2026-10-04 G3 故障回放产品化：新增 docker_recovery_faults，接入可安装
+Docker recovery 场景和 Linux CI 断言。真实 Linux Docker 运行通过，故障含
+越界链接、1GiB限制、发布写入失败/上一批次保留，以及实际补丁已执行但宿主
+丢失结果的桥接断连；日志记录 outcome_unknown，validate_batch 拒绝自动恢复。
+容器删除通过；供应商调用零。原始 `tmp/docker-packaged-faults-01/faults.json`
+与 `tmp/docker-packaged-faults-01.log`。Ruff通过。
+冻结 f29356f 的工程检查会话3577仍运行，不修改其独立 checkout；本次新模块
+属于后续修订，必须重新冻结最终候选并验收，不能混用旧版本覆盖证据。
+
+2026-10-04 G3 故障补齐：产品化真实 Linux Docker 回放新增清理失败注入，
+确认 backend 明确报告 ordinary Docker cleanup was incomplete，解除注入后
+重试清理、本次容器删除通过。原始 `tmp/docker-packaged-faults-02/faults.json`
+及 `tmp/docker-packaged-faults-02.log`，供应商调用零。
+新增损坏批次/路径/镜像/桥接/日志/sidecar/测试证据拒绝回归，23 passed，
+JUnit `tmp/docker-corruption-unit-01.xml`，Ruff通过。
+冻结f29356f全量工程检查仍在会话3577运行；本轮新故障代码和测试不混入
+该冻结版本的资格结果，后续最终候选需重新验收。G3/G4未完成。
+
+2026-10-04 G3 恢复失败诊断增量：Runner 在准备/恢复或容器清理失败时写入
+独立 recovery-failure 收据（序号/阶段/已脱敏错误/容器身份），保留历史结果、
+补丁与有效检查点；不盲目生成未知操作后的检查点。两项故障回归通过，
+断言供应商构造零、清理尝试、历史字节一致和两类诊断落盘。
+`tmp/docker-recovery-diagnostics-01.xml`，Ruff格式修正后通过。
+冻结f29356f全量检查仍运行；该新修订需后续候选验收，G3/G4未完成。
+
+2026-10-04 G3 遗留容器清理实现：新容器完成状态恢复后，按保存的完整原容器ID
+查询是否仍存活，仅所有权标签等于本run ID才删除；不存在正常继续，身份
+不符/查询失败拒绝，发生在模型构造前。此增量尚待真实Linux与定向验收，
+不宣称通过。冻结f29356f工程会话3577仍运行，不修改其checkout。
+
+2026-10-04 首次 G3 冻结候选 f29356f 全量结论：Windows Python3.12.5，
+951 passed、0 failed，846.25秒；pytest仅因覆盖门槛退出1，精确综合覆盖约88.01%，
+低于90%，阶段验收失败。原始 `tmp/docker-recovery-engineering-01`，
+干净候选 tracked_working_tree_dirty=false。不降低门槛、不提交正式PR。
+下一步按 coverage-gaps.json 补充有意义的恢复/故障路径，最终修订重新冻结验收。
+遗留原容器真实Linux复验通过：保存原容器存活，重建恢复后按完整ID与本run标签
+删除，随后真实pytest/新增删除/755权限检查通过；原始
+`tmp/docker-owned-container-linux-03.log` / `tmp/docker-snapshot-linux-03/acceptance.json`。
+定向26passed，`tmp/docker-owned-container-02.xml`；首次测试插入位置错误失败保留。
+
+2026-10-04 G3 覆盖缺口定位：f29356f精确综合15148/17211 = 88.01347975132182%，
+缺口集中新恢复编排及Windows pytest未执行的容器路径，不降低90%门槛。
+新增宿主执行适配器补充测试，实际Git工作区/补丁/pytest/快照/CheckpointStore/
+Runner.inspect与resume/经验提炼均运行，断言完整历史、累计Token、两次工作区身份
+及记忆关闭/启用行为；真实Linux Docker矩阵独立保留为必需验收。
+4 passed（含先前恢复失败诊断），25.08秒，`tmp/docker-runtime-tools-02.xml`，Ruff通过。
+首次适配器忘记重建注册测试临时目录，2失败/2通过，原始tools-01 JUnit保留，
+修正适配器后复验通过。尚需其他预算/故障覆盖与最终候选完整验收，G3/G4未完成。
+
+2026-10-04 G3 预算与未决请求拒绝覆盖：新增每项累计 step/test/input/output/time
+预算耗尽的 continue 拒绝，保留轮次归档；未知记忆请求、不完整 runtime 状态、
+测试源码身份不符、轨迹前缀和未提交模型请求拒绝。全部37定向测试通过，
+JUnit `tmp/docker-budget-inspect-01.xml`，Ruff未用import/格式修正后通过。
+这些补充Windows检查器覆盖，不替代真实Linux Docker验收；最终精确综合覆盖
+仍待重新冻结和全量测量，G3/G4保持未完成。
+
+2026-10-04 G3 流式恢复故障覆盖：新增 envelope/1GiB限制、越界/重复路径、
+缺失成员、权限/大小/内容哈希/类型不符拒绝，断言无工作区外写入；流式目标为
+可丢弃新容器，损坏部分恢复不进入Agent。30定向快照测试通过，9.47秒，
+`tmp/docker-stream-fault-01.xml`，Ruff通过。最终综合覆盖仍待冻结复测，不降低门槛。
+
+2026-10-04 G3 连续轮次故障覆盖：新增非法attempt路径、缺失归档项、补丁
+归档被修改、轮次身份不符及镜像查询不可用/缺失/身份变化的拒绝测试。
+44检查器定向测试通过，13.23秒，`tmp/docker-round-identity-01.xml`，Ruff通过。
+最终覆盖门槛仍未复测，G3/G4未完成，不提交正式PR。
+
+2026-10-04 G3 宿主恢复及传输补充验证：真实文件/pytest/归档的宿主后端补充
+恢复、经验提炼、准备失败和清理失败诊断覆盖。新增传输测试最初6项因夹具
+缺少prepare初始化的python字段失败，原始JUnit保留；修正夹具后6项全部通过
+（tmp/docker-snapshot-transport-02.xml）。联合84项全部通过，52.33秒
+（tmp/docker-focused-coverage-01.xml）；该定向子集的全包覆盖31.36%触发原90%
+保护并返回1，不作为全量验收，也不合并不同实现版本覆盖结果。
+修复恢复结果workspace仍指向旧容器的问题，断言新旧容器身份不同；4项回归
+通过，25.29秒（tmp/docker-runtime-tools-03.xml）。新增文件Ruff通过。
+下一步冻结新候选，全量重新测量覆盖，再进行安装包和真实Linux验收；G3/G4
+保持未完成，没有新增正式PR，供应商调用为零。

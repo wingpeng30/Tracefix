@@ -913,6 +913,7 @@ class TraceFixRunner:
                 skills_root=self._skills_root(config, root),
             )
             backend.workspace_preparation["test_target"] = config.test_target
+            backend.remove_previous_container(saved.payload["docker_snapshot"])
             load_environment_file(config.env_file)
             self._validate_credentials(config.model_name)
             llm_config = LLMConfig(
@@ -978,6 +979,7 @@ class TraceFixRunner:
                 changed_files=diff.output["changed_files"],
                 patch_sha256=hashlib.sha256(diff_path.read_bytes()).hexdigest(),
                 workspace_preparation=backend.workspace_preparation,
+                workspace=f"docker://{backend.container_id}/work/agent",
                 duration_seconds=max(0.0, time.monotonic() - agent._started_monotonic),
                 cost_cny_estimate=round(state.cost_usd * config.usd_cny_rate, 8)
                 if state.cost_complete else None,
@@ -988,8 +990,27 @@ class TraceFixRunner:
                 result = self._record_dialogue_result(root, result)
             backend.set_phase(state.status.value)
             return result
+        except Exception as exc:
+            from tracefix.memory import atomic_json
+
+            atomic_json(root / f"recovery-failure-{saved.sequence}-{uuid4().hex}.json", {
+                "schema_version": 1, "checkpoint_sequence": saved.sequence,
+                "stage": "resume", "error": self._serialize_error(exc),
+                "container_id": backend.container_id,
+            })
+            raise
         finally:
-            backend.close(remove=True)
+            try:
+                backend.close(remove=True)
+            except Exception as exc:
+                from tracefix.memory import atomic_json
+
+                atomic_json(root / f"recovery-failure-{saved.sequence}-{uuid4().hex}.json", {
+                    "schema_version": 1, "checkpoint_sequence": saved.sequence,
+                    "stage": "cleanup", "error": self._serialize_error(exc),
+                    "container_id": backend.container_id,
+                })
+                raise
 
     def run(self, config: RunConfig) -> RunResult:
         """执行任务并保证成功、预算终止或异常时都保存结构化结果。"""
