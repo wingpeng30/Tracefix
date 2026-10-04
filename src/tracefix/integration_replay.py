@@ -4,7 +4,6 @@ import argparse
 import hashlib
 import json
 import os
-import platform
 import subprocess
 import sys
 from pathlib import Path
@@ -155,7 +154,7 @@ def run_integrated_replay(output: Path, image_id: str) -> dict:
         'independent_passed': True, 'independent_test_counts': counts,
         'implementation_sha256': TraceFixRunner._implementation_sha256(),
         'environment': {'python': sys.version, 'executable': sys.executable,
-                        'platform': platform.platform()},
+                        'platform': sys.platform},
         'source_widget_sha256': source_before,
         'evidence_sha256': {
             str(path.relative_to(output)): hashlib.sha256(path.read_bytes()).hexdigest()

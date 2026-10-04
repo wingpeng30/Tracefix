@@ -105,6 +105,7 @@ def test_controller_accepts_only_complete_independent_evidence(tmp_path, monkeyp
         assert summary['accepted'] and summary['provider_calls'] == 0
         assert 'pause.stdout' in summary['evidence_sha256']
         assert summary['environment']['executable']
+        assert summary['environment']['platform'] == replay.sys.platform
         assert summary['source_widget_sha256']
         with pytest.raises(FileExistsError):
             replay.run_integrated_replay(output, 'image')
