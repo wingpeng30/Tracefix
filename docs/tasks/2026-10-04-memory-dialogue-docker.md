@@ -454,3 +454,14 @@ Skills/身份拒绝及四容器清理通过；所有失败原始记录保留。�
 脚本模块路径及本文证据记录，不改变上述已验证的src实现或pytest测试。
 下一步推送候选执行精确Windows双版本、安装包及Linux Docker/MCP CI；此前
 不建立正式G3 PR。G4仍未完成，真实模型提炼与决策质量未测。
+
+2026-10-04 候选09297c4的CI #102三个Linux Docker/MCP job通过；下载的ordinary
+证据ZIP SHA256为697b0d321fd9ddddc42afffae53d876c25cac6683f37bd00224529805adf2f87。
+四类恢复、快照故障、产品/权限/Skills/身份/根路径拒绝及清理通过，供应商调用0。
+Windows双版本job失败；3.11原始pytest为1016 passed、19 setup errors，精确
+15595/17383=89.71408847724788%，不能作为工程通过。原始日志与产物保留在
+tmp/g3-ci102-py311、tmp/g3-ci102-job-*.log，G3不创建正式PR，G4仍未完成。
+原因是新增inspect夹具在产物根目录而非已提交source仓库创建工具注册表；
+本机目录位于父Git仓库内掩盖错误，干净CI正确拒绝。改为config.repo，不改
+生产Git保护；44项定向回归通过（tmp/g3-ci-fix-targeted-01.xml），后续必须
+在干净冻结checkout重新执行完整工程门槛，再推送精确候选CI。

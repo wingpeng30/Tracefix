@@ -197,7 +197,7 @@ def inspected(batch, monkeypatch):
                        docker_recovery_enabled=True)
     identity = {"implementation_sha256": "code", "config_sha256": "config",
                 "repo_map_sha256": hashlib.sha256(b"").hexdigest()}
-    registry = create_default_tool_registry(root)
+    registry = create_default_tool_registry(config.repo)
     identity["tool_sha256"] = hashlib.sha256(json.dumps(
         [spec.model_dump(mode="json") for spec in registry.specs()],
         sort_keys=True, ensure_ascii=False).encode("utf-8")).hexdigest()
