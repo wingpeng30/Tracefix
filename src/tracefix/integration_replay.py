@@ -4,6 +4,7 @@ import argparse
 import hashlib
 import json
 import os
+import platform
 import subprocess
 import sys
 from pathlib import Path
@@ -89,6 +90,8 @@ def run_integrated_replay(output: Path, image_id: str) -> dict:
     output = output.expanduser().resolve()
     output.mkdir(parents=True, exist_ok=False)
     learning = run_dialogue_replay(output / 'learning')
+    if learning.get('accepted') is not True or learning.get('provider_calls') != 0:
+        raise AssertionError('learning acceptance or zero-provider accounting was invalid')
     source = output / 'learning' / 'source'
     source_before = hashlib.sha256((source / 'widget.py').read_bytes()).hexdigest()
     environment = {**os.environ, 'PYTHONPATH': str(Path(__file__).resolve().parents[1]),
@@ -118,6 +121,13 @@ def run_integrated_replay(output: Path, image_id: str) -> dict:
             or paused['selection_sha256'] != resumed['selection_sha256']
             or paused['skill_sha256'] != resumed['skill_sha256']):
         raise AssertionError('loaded experience version changed or was not actually recalled')
+    for selected in paused['selected']:
+        name = 'experience-' + selected['key']
+        loaded = [item for item in paused['skills']['loaded'] if item['name'] == name]
+        if (name not in paused['skills']['activated'] or len(loaded) != 1
+                or loaded[0]['version'] != str(selected['version'])
+                or paused['skills']['loaded_bytes'] <= 0):
+            raise AssertionError('selected experience was not loaded with its pinned version')
     if (paused['status'] != 'interrupted' or paused['step_count'] != 4
             or resumed['status'] != 'completed' or resumed['step_count'] != 8
             or resumed['input_tokens'] != 800 or resumed['output_tokens'] != 80
@@ -144,9 +154,13 @@ def run_integrated_replay(output: Path, image_id: str) -> dict:
         'docker_processes': receipts, 'independent_container': verifier,
         'independent_passed': True, 'independent_test_counts': counts,
         'implementation_sha256': TraceFixRunner._implementation_sha256(),
+        'environment': {'python': sys.version, 'executable': sys.executable,
+                        'platform': platform.platform()},
+        'source_widget_sha256': source_before,
         'evidence_sha256': {
             str(path.relative_to(output)): hashlib.sha256(path.read_bytes()).hexdigest()
-            for path in output.rglob('*.json') if '.git' not in path.parts},
+            for path in output.rglob('*') if path.is_file()
+            and not {'.git', '__pycache__', '.pytest_cache'} & set(path.parts)},
     }
     atomic_json(output / 'integration-summary.json', summary)
     return summary
