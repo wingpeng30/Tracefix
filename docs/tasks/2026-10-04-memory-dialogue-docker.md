@@ -440,3 +440,17 @@ Windows Python3.11。39项根目录及快照回归通过7.87秒，外部哨兵�
 90.08174073221275%，Ruff/编译/Diff全通过，tmp/docker-recovery-engineering-05。
 根目录修复另提交f123eff，并将真实Linux符号链接根目录的导出/恢复拒绝检查
 纳入产品恢复验收脚本；外部哨兵不变，不以旧候选门槛代替新候选验收。
+
+2026-10-04 G3 新实现本地完整门槛通过：冻结d50f6e9，1035项0失败/错误/跳过，
+精确15660/17383=90.08801702813093%，Ruff/编译/Diff通过，engineering-07。
+wheel SHA0e1837d9d9da81f6bd270745a94f663ff7110dd635aa0c9c2c265e23062815c6，
+实现SHA a27b8dc65ddeac727861eb879dd9e51cfcc0147a49c92e71050bbe5d890b1e6a。
+已安装wheel的完整四类恢复installed-06与editable-03均退出0，独立宿主进程、
+新容器恢复及独立容器补丁验证通过，供应商调用0。products-08因Docker服务
+未启动失败；恢复已安装的用户级Docker Desktop后products-09发现探针缺少
+PYTHONPATH，修正为容器内/opt/tracefix/src后products-10全部通过（退出0）。
+符号链接根目录导出/恢复均拒绝、哨兵不变，产品新增/删除/755权限/跟踪缓存/
+Skills/身份拒绝及四容器清理通过；所有失败原始记录保留。最终候选只补验收
+脚本模块路径及本文证据记录，不改变上述已验证的src实现或pytest测试。
+下一步推送候选执行精确Windows双版本、安装包及Linux Docker/MCP CI；此前
+不建立正式G3 PR。G4仍未完成，真实模型提炼与决策质量未测。

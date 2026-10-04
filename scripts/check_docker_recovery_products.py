@@ -46,7 +46,8 @@ def check(output: Path, image_id: str) -> dict:
                                  run_id=output.name, profile="ordinary", image_id=image_id)
 
     def execute(container, code):
-        command = ["docker", "exec", container, "python", "-c", code]
+        command = ["docker", "exec", container, "env", "PYTHONPATH=/opt/tracefix/src",
+                   "python", "-c", code]
         process = subprocess.run(command, capture_output=True, text=True, timeout=30, check=False)
         commands.append({"command": command, "exit_code": process.returncode,
                          "stdout": process.stdout, "stderr": process.stderr})
