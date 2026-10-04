@@ -8,7 +8,7 @@
 
 - [x] G1：自动形成、维护并跨进程复用仓库级经验 Skills。
 - [x] G2：CLI 与 Python API 连续对话、独立轮次记录及累计预算。
-- [ ] G3：ordinary Docker 完整批次快照与原容器删除后的新容器恢复。
+- [x] G3：ordinary Docker 完整批次快照与原容器删除后的新容器恢复。
 - [ ] G4：多轮→经验→新会话→Docker 中断恢复→独立验收的联动链路。
 
 每阶段本地端到端与全量工程门槛通过后推送候选分支；精确提交 Windows 3.11/3.12、
@@ -476,3 +476,24 @@ Windows3.11/3.12均为1034 passed、1 failed、0 errors/skipped，覆盖率分�
 夹具改用正式tool_identity后44项全通过（g3-tool-identity-green-01.xml）。
 不移除工具身份校验，不改变生产代码；失败CI和原始结果保留。
 新修正仍需冻结全量工程与精确CI，G3/G4未完成，不创建正式G3 PR。
+
+### G3 正式交付及 G4 接入
+
+G3 精确提交 `a7a95bbbc1d90fd6433ae58f7e3438416ccaa245` 已通过
+[CI #104](https://github.com/wingpeng30/Tracefix/actions/runs/37210269401) 五项门槛，
+正式 [PR #19](https://github.com/wingpeng30/Tracefix/pull/19) 已创建，基于 #18，未合并。
+Windows3.11/3.12各1035项，无失败/错误/跳过，精确覆盖率分别
+15649/17383=90.02473681182765%、15647/17383=90.01323131795432%。
+Ruff/编译/Diff、editable和仓库外wheel通过；三个Linux Docker/MCP门槛通过。
+原始结果位于tmp/g3-ci104-py311、tmp/g3-ci104-py312、tmp/g3-ci104-ordinary，
+完整run/jobs记录tmp/g3-ci104-final.json，供应商调用0。
+本地统一Pydantic2.10.1环境1035项全通过，15660/17383=90.08801702813093%，
+证据tmp/docker-recovery-engineering-11。此前engineering-10混用父进程2.10.1/
+子进程2.13而被工具身份保护拒绝，其1失败原始结果保留；独立一致环境45项
+定向回归及父子版本证据见g3-locked-consistent-targeted-01.xml和
+g3-locked-consistent-provenance.json。没有降低门槛或改动生产身份保护。
+
+G4从该已验证提交建立codex/memory-dialogue-integration。新增安装包联动入口
+memory-dialogue-integration，串联三轮实际CLI/提炼、新Docker召回/修改、安全
+中断与旧容器删除、新进程恢复及第三容器全文件验证；Linux CI分别执行wheel
+与editable场景。当前尚未实测或完成全量/精确CI，G4不创建正式PR。

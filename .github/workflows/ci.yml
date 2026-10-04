@@ -353,6 +353,11 @@ jobs:
           python -c 'import json,sys; d=json.load(open(sys.argv[1])); assert d["accepted"] and d["provider_calls"] == 0 and len(d["cases"]) == 4 and d["snapshot_faults"]["passed"]' "$RUNNER_TEMP/ordinary-recovery-summary.json"
           python "$GITHUB_WORKSPACE/scripts/check_docker_recovery_products.py" --image-id "$image_id" --output "$RUNNER_TEMP/ordinary-recovery-products" > "$RUNNER_TEMP/ordinary-recovery-products-summary.json"
           python -c 'import json,sys; d=json.load(open(sys.argv[1])); assert d["passed"] and d["provider_calls"] == 0 and d["all_containers_removed"] and len(d["identity_faults"]) == 2' "$RUNNER_TEMP/ordinary-recovery-products-summary.json"
+          tracefix-reproduce --scenario memory-dialogue-integration --backend docker --image-id "$image_id" --output "$RUNNER_TEMP/ordinary-integration-wheel" > "$RUNNER_TEMP/ordinary-integration-wheel-summary.json"
+          python -c 'import json,sys; d=json.load(open(sys.argv[1])); assert d["accepted"] and d["provider_calls"] == 0 and d["independent_test_counts"]["passed"] == 3' "$RUNNER_TEMP/ordinary-integration-wheel-summary.json"
+          python -m pip install --no-deps --no-build-isolation -e "$GITHUB_WORKSPACE"
+          tracefix-reproduce --scenario memory-dialogue-integration --backend docker --image-id "$image_id" --output "$RUNNER_TEMP/ordinary-integration-editable" > "$RUNNER_TEMP/ordinary-integration-editable-summary.json"
+          python -c 'import json,sys; d=json.load(open(sys.argv[1])); assert d["accepted"] and d["provider_calls"] == 0 and d["independent_test_counts"]["passed"] == 3' "$RUNNER_TEMP/ordinary-integration-editable-summary.json"
           test -z "$(docker ps -a --filter 'name=tracefix-' --format '{{.ID}}')"
       - name: Preserve ordinary Docker evidence
         if: always()
@@ -368,6 +373,8 @@ jobs:
             ${{ runner.temp }}/ordinary-failures/failure-audit.json
             ${{ runner.temp }}/ordinary-recovery/**
             ${{ runner.temp }}/ordinary-recovery-products/**
+            ${{ runner.temp }}/ordinary-integration-wheel/**
+            ${{ runner.temp }}/ordinary-integration-editable/**
             ${{ runner.temp }}/ordinary-failures/ordinary-timeout-disconnect/tool-events.jsonl
             ${{ runner.temp }}/ordinary-failures/ordinary-import-error/docker-run-state.json
             ${{ runner.temp }}/ordinary-export.patch

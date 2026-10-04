@@ -465,10 +465,18 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--image-id", help="full sha256 image ID required for Docker mode")
     parser.add_argument(
         "--scenario", choices=("smoke", "pagination", "regression-feedback", "memory-experience",
-                               "continuous-dialogue", "docker-recovery"),
+                               "continuous-dialogue", "docker-recovery",
+                               "memory-dialogue-integration"),
         default="smoke"
     )
     args = parser.parse_args(argv)
+    if args.scenario == "memory-dialogue-integration":
+        if args.backend != "docker" or not args.image_id or args.skills_enabled:
+            parser.error("memory-dialogue-integration requires Docker and an immutable image ID")
+        from tracefix.integration_replay import run_integrated_replay
+
+        print(json.dumps(run_integrated_replay(args.output, args.image_id), ensure_ascii=True))
+        return 0
     if args.scenario == "docker-recovery":
         if args.backend != "docker" or not args.image_id or args.skills_enabled:
             parser.error("docker-recovery requires Docker and an immutable image ID")
