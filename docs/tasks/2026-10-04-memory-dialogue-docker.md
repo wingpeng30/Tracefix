@@ -7,7 +7,7 @@
 ## 子 Goal 与提交门槛
 
 - [x] G1：自动形成、维护并跨进程复用仓库级经验 Skills。
-- [ ] G2：CLI 与 Python API 连续对话、独立轮次记录及累计预算。
+- [x] G2：CLI 与 Python API 连续对话、独立轮次记录及累计预算。
 - [ ] G3：ordinary Docker 完整批次快照与原容器删除后的新容器恢复。
 - [ ] G4：多轮→经验→新会话→Docker 中断恢复→独立验收的联动链路。
 
@@ -44,6 +44,22 @@ Ruff、compileall、Diff 均退出 0。证据位于 `tmp/memory-engineering-froz
 G2 从该精确提交继续，分支 `codex/continuous-dialogue`，尚未完成验证。
 
 ### G2 实现与候选检查
+
+G2 最终交付：精确提交 `608cfd65f443139c39a71f9737a245e4b9260ec8`，
+正式 PR [#18](https://github.com/wingpeng30/Tracefix/pull/18) 已创建，基于 G1 PR #17，尚未合并。
+精确 push CI [#100](https://github.com/wingpeng30/Tracefix/actions/runs/37147028347) 五项通过；
+Windows 3.11/3.12 各 902 tests，无失败、错误或跳过，综合覆盖率
+14531/16114 = 90.17624425964999%；三个 Linux Docker/MCP 门槛及 editable/wheel 通过。
+本地冻结 checkout 902 全通过，覆盖率 14544/16114 = 90.2569194489264%，
+Ruff、compileall、阶段 Diff 均退出 0，证据 `tmp/dialogue-engineering-frozen-20261004-02`。
+修正候选的包装证据 `tmp/dialogue-packaging-20261004-02.json`；最终 wheel SHA256
+`856a6367e480fcf3148709b3ac1113d6ec500571bf2d8fdb6056a33c6467458f`。
+完整 CI 记录及各 job 日志 `tmp/dialogue-ci-100-final-20261004.json`、
+`tmp/dialogue-ci-100-job-*.log`。受控时钟等待排除及真实 G1 旧记录读取的补充验证
+`tmp/dialogue-clock-legacy-20261004-01.json`；没有供应商请求。
+本机真实 ordinary 故障门槛也通过，记录 `tmp/dialogue-docker-failures-20261004-01`。
+G3 从该精确提交建立 `codex/docker-recovery`，尚未实现或验收。
+以下候选记录与失败保留为历史。
 
 新增显式连续会话格式、chat/continue CLI 与 continue_turn API，保留单轮中断恢复入口。
 共享历史、工作区、累计预算和固定经验快照，各轮独立归档补丁、轨迹、验证与结果，
@@ -112,3 +128,157 @@ Ruff 和工作区 Diff 检查通过。wheel 构建日志 `tmp/memory-wheel-build
 `tmp/memory-wheel-smoke-20261004-06.log` 和 `tmp/memory-wheel-cli-20261004-06.log`。
 审查补齐索引容量保护：16 MiB 上限在替换前检查，超限保留旧索引，不写入之后无法读取的记录。
 容量与原子写入损坏定向测试 2 passed，退出码 0，目录 `tmp/memory-capacity-tests-20261004-03`。
+
+2026-10-04 G3 底层增量验证（尚未完成阶段）：真实 Linux Docker 快照回放
+`tmp/replay-docker-snapshot-lowlevel.py` / `tmp/docker-snapshot-linux-01.log` 退出码 0。
+镜像 sha256:49b75da8b9ba8ffb762e0995422817381db39c379973c8c777d54f2e4e724869；
+原容器删除后，新容器恢复新增文件、删除状态、755 权限、Skills 计量及空测试临时目录，真实 pytest 通过。
+验收 JSON 位于 `tmp/docker-snapshot-linux-01/acceptance.json`，供应商调用为零。
+桥接恢复身份、禁用 Skills、失败或截断 diff 的拒绝测试与工作区快照定向测试共 33 passed，
+JUnit `tmp/docker-snapshot-unit-05.xml`，退出码 0；Ruff 通过。
+首次 sandbox 测试因临时目录权限失败；随后一次夹具缺少失败 ToolResult 必需 error 字段，
+记录 `tmp/docker-snapshot-unit-04.xml` 为 32 passed/1 failed，修正夹具后复验通过。
+这些仅证明底层快照和桥接行为；Runner 原子检查点、inspect/resume、Docker 连续对话及
+跨进程故障验收仍待实现，G3/G4 保持未完成，不提交正式 PR。
+
+2026-10-04 G3 Runner 保存路径增量：新增默认关闭 `docker_recovery_enabled`，
+CLI `--docker-recovery` / TOML `docker_recovery`；仅 ordinary Docker 接受，
+旧配置身份哈希排除不存在的新字段。真实 Linux Docker Runner 离线修复完成，
+6 个记录适配器请求、0 供应商调用，保存 7 个完整检查点（含终态回复）。
+每个检查点绑定工作区快照、桥接状态、Agent 与轨迹，只有原子 store.save 成功才推进序号。
+原始日志 `tmp/docker-runner-checkpoint-02.log`；产物目录
+`tmp/docker-runner-checkpoint-01/20261003T231000Z-89e90729`（含 runner-proof.json）。
+首次辅助脚本导入保护器位置错误，`tmp/docker-runner-checkpoint-01.log` 保留失败记录。
+配置定向测试 5 passed；既有 CLI TOML 定向测试 1 passed；Ruff 通过。
+此时仅保存路径已接入：Docker inspect/resume/continue 与 G4 验收仍未完成，
+不宣称完整恢复可用，不提交 G3 正式 PR；零新付费调用。
+
+2026-10-04 G3 批次校验增量：新增 docker_recovery.validate_batch，校验批次序号、
+快照路径与 sidecar、镜像身份、保存源码基线、桥接摘要、工作区成员哈希、测试证据、
+桥接日志前缀和未决工具操作。拒绝检查点后已完成但未提交的修改工具；仅允许
+有完整 dispatch/result 的最终 get_git_diff 读取后缀。该函数不创建模型或容器。
+已对真实 Docker Runner 产物运行通过；定向测试 9 passed，Ruff 通过，
+JUnit `tmp/docker-batch-validation-01.xml`。辅助探针首次 UTF-8 未指定、随后未处理
+handshake 事件均失败；修正读取和协议处理后真实产物验证通过。
+仍待连接 Runner.inspect 与跨进程恢复，G3/G4 不标完成，不创建正式 PR。
+
+2026-10-04 G3 inspect 增量：Runner.inspect 按 Docker 分支调用只读检查，
+核对实现/配置/RepoMap 身份、批次内容、Agent/桥接一致性、消息历史未决调用、
+运行时记忆字段、轨迹前缀和镜像实际 ID；已完成任务拒绝 resume，未启用恢复明确拒绝。
+单测证明检查无需原容器，仅执行 docker image inspect；10 passed，Ruff 通过，
+JUnit `tmp/docker-inspect-unit-02.xml`。完整新容器 resume、工具/解释器/Skills 身份复核、
+连续对话仍待完成，G3 保持未完成；当前增量不作为精确候选阶段验收。
+
+2026-10-04 G3 身份复核增量：inspect 保留工具定义摘要校验，使用仅规格注册表，
+无需宿主产品 Git 工作区、不执行产品工具；复核 Skills 内容版本、受保护目录、
+有效测试证据与保存 diff 的身份。定向 10 passed，JUnit
+`tmp/docker-inspect-identity-05.xml`；Ruff import 格式修正后通过。
+早期注册表路径/证据布局探针失败记录保留在 identity-01/02/03；
+自动审批拒绝移除工具摘要检查，未执行被拒绝修改，后续方案保留同一检查。
+跨进程新容器 resume 和完整 G3/G4 阶段门槛仍待完成。
+
+2026-10-04 G3 后端恢复身份增量：快照保存桥接 tool_sha256，新容器 prepare
+在恢复 Skills/执行 Agent 前核对实际工具定义和容器解释器身份；inspect 绑定
+批次工具身份与 session 身份。定向测试 10 passed，Ruff 通过。
+真实 Linux Docker 第二次底层回放通过，原容器 f42f7b46... 已删除，恢复容器
+b22df8fc... 恢复新增/删除/755权限/Skills 状态并运行真实 pytest；原始证据
+`tmp/docker-snapshot-linux-02/acceptance.json`、`tmp/docker-snapshot-linux-02.log`。
+真实容器工具与解释器身份不符注入均拒绝，且失败容器清理验证通过，
+`tmp/docker-snapshot-linux-02/identity-faults.json` / `tmp/docker-identity-faults-01.log`。
+供应商调用均为零。Runner 的新进程 resume 入口仍未接入，G3/G4 不标完成。
+
+2026-10-04 G3 Runner 恢复入口增量：接入从保存基线/快照创建新容器、恢复
+完整 Agent 历史与累计预算、首次请求前落盘新检查点、终态补丁与结果持久化。
+Ruff 通过。真实独立进程安全中断生成成功，2 步后 Interrupted，原始
+`tmp/docker-runner-resume-run-01.log`、`tmp/docker-runner-resume-01`。
+后续独立进程 inspect 被工具定义摘要差异阻断，未执行恢复模型请求：
+`tmp/docker-runner-resume-continue-01.log`。不能宣称 Runner 跨进程恢复通过。
+下一步定位宿主/容器工具规格序列化差异，保留工具身份拒绝，不跳过检查。
+G3/G4 保持未完成，未提交正式 PR，供应商调用为零。
+
+2026-10-04 G3 首次 Runner 跨进程恢复通过：真实工具规格差异定位为 Pydantic
+整数数值边界序列化 1/1.0，不是工具契约差异。新增规范工具身份摘要仅统一
+等值整数 JSON 数字，所有键/实际数值/约束仍绑定；11 定向测试通过，Ruff 通过。
+新记录 `tmp/docker-runner-resume-02`：第一个宿主进程在完整读取批次后安全中断
+（step 2），第二个宿主进程 inspect 通过、重建新容器并恢复至 Completed（step 6）。
+新容器 d727a8f4...，真实 pytest 与补丁工具执行，供应商调用为零。
+原始日志 `tmp/docker-runner-resume-run-02.log` / `tmp/docker-runner-resume-continue-02.log`；
+规格差异原始 JSON `tmp/docker-tool-spec-probe-01/local.json` / `remote.json`。
+此前 run-01 的拒绝记录保留，不修改旧证据。该验证尚未覆盖全部故障矩阵、
+独立容器最终补丁验收、连续对话与长期记忆联动；G3/G4 仍未达阶段提交门槛。
+
+2026-10-04 G3 补丁后及测试后恢复增量：首次独立验证拒绝 run-02，原因是
+恢复结果漏保存配置 test_target；修复生产元数据保存，不修改旧结果/验证器。
+新 run-03 在补丁后安全中断，独立进程新容器恢复完成，并在另一独立容器
+最终补丁 pytest 验收通过；原始 `tmp/docker-runner-resume-run-03.log`、
+`tmp/docker-runner-resume-continue-03.log`、`tmp/docker-resume-independent-03.log`，
+产物 `tmp/docker-runner-resume-03`。失败 run-02 日志保留。
+run-04 另测真实 pytest 完成后中断及独立进程恢复，原始 run/continue-04 日志。
+Ruff 通过；供应商调用零。全部故障与阶段全量门槛尚未完成，不提交正式 PR。
+
+2026-10-04 G3 二次恢复验证：同一任务三个独立宿主进程依次 run(step2中断)、
+resume-one(step4中断)、resume-two(step6完成)，每次恢复新建不同 Linux Docker 容器。
+最终补丁在另一个独立容器通过公开 pytest。产物 `tmp/docker-runner-resume-05`；
+原始 `tmp/docker-runner-resume-run-05.log`、`tmp/docker-runner-resume-one-05.log`、
+`tmp/docker-runner-resume-two-05.log`、`tmp/docker-resume-independent-05.log`。
+三个任务容器删除审计通过 `tmp/docker-resume-cleanup-05.json`。供应商调用零。
+inspect 改为读取静态工具规格副本，保留摘要校验，避免 RunTestsTool 构造产生
+宿主临时证据目录；11 定向测试通过、Ruff 通过。完整故障与安装/CI阶段门槛
+仍待完成，G3/G4 保持未完成。
+
+2026-10-04 G3 Docker 连续对话增量：仅显式 ordinary Docker 恢复允许连续对话，
+会话格式 schema2；inspect continue 检查累计预算、当前轮次结果与各轮独立产物哈希；
+恢复结果归档到 turns，仍累计历史/步骤/Token。真实三个独立 CLI 进程
+chat --config、chat --run、continue 完成三轮修改与测试：第二轮纠正第一轮，
+第三轮零值修复且整文件 pytest；累计 step18，turn3，每轮归档存在。
+最终补丁在另一独立 Linux Docker 容器公开测试通过。供应商调用零。
+产物 `tmp/docker-dialogue-01`；三轮 CLI 日志 `tmp/docker-dialogue-turn-01/02/03.log`，
+独立验证 `tmp/docker-dialogue-independent-01.log`。Ruff 通过。
+经验提炼/召回与 Docker 联动、故障矩阵及阶段全量/安装/CI仍待完成，G3/G4未完成。
+
+2026-10-04 G3 Docker 长期记忆增量：宿主从校验快照构造产品镜像，以真实
+工具/补丁/测试证据提炼；每轮一次同适配器请求计入预算、保留固定 Skills 版本。
+真实三轮 Docker CLI 提炼/去重完成，turn3 step21（含3次提炼），产物
+`tmp/docker-dialogue-memory-01/runs`，三轮日志 `tmp/docker-dialogue-memory-turn-01/02/03.log`。
+首次新会话召回失败：经验选中但 Skills root 在 prepare 后才传递；原始失败
+`tmp/docker-memory-recall-01.log` 保留。修复传递顺序后另一独立新会话召回通过：
+load_skill 文本确实进入下一次模型请求，再执行真实工具/pytest，最终经验去重。
+`tmp/docker-memory-recall-02.log`、`tmp/docker-dialogue-memory-01/recall-runs-02`。
+供应商调用零；尚待记忆启用的中断恢复、完整故障/安装包/CI门槛及 G4 集成验收。
+
+2026-10-04 G3 经验加载后跨进程恢复通过：新 Docker 会话从已启用经验中
+实际 load_skill，下一模型请求含经验正文，补丁后安全中断；独立宿主进程
+创建另一容器恢复同一 Skills 版本/已加载计量，真实 pytest 完成并宿主提炼去重。
+最终补丁在另一独立容器验收通过；所有供应商调用零。
+产物 `tmp/docker-dialogue-memory-01/memory-resume-runs-01`；原始日志
+`tmp/docker-memory-resume-run-01.log`、`tmp/docker-memory-resume-continue-01.log`、
+`tmp/docker-memory-resume-independent-01.log`，记录 PID 32188 为恢复进程。
+inspect 增加未决经验请求拒绝；恢复/配置定向 16 passed，Ruff 通过，
+JUnit `tmp/docker-memory-recovery-unit-01.xml`。仍需安装包可复现入口、故障矩阵、
+冻结候选全量门槛和精确 CI；G3/G4 不标完成、不提交正式 PR。
+
+2026-10-04 G3 可安装验收模块增量：新增 docker_recovery_replay 及
+tracefix-reproduce --scenario docker-recovery --backend docker --image-id ...，
+覆盖读取/补丁/测试后中断与二次恢复，独立宿主进程/新容器/容器删除/独立补丁
+验证及原始 JSON 哈希。命令入口定向 12 passed，Ruff 通过。
+首次模块回放因 session 指针与 run 收据同名覆盖失败，原始
+`tmp/docker-recovery-module-01.log` 及目录保留；改名 session-location.json。
+新回放 `tmp/docker-recovery-module-02` 正在运行，未宣称验收通过；
+运行期间不再编辑实现文件。G3/G4 尚未达到全量安装包与精确 CI 门槛。
+
+2026-10-04 G3 可安装回放矩阵通过：`tmp/docker-recovery-module-02/recovery-summary.json`
+accepted=true/provider_calls=0，读取/补丁/测试后三种中断各2个独立宿主进程，
+二次恢复3个进程，每次新建不同容器且删除审计通过，四个最终补丁独立容器验收通过。
+原始 stdout/stderr、收据、轨迹/配置/镜像/实现摘要/产物哈希由模块保存；计量为模拟。
+Linux ordinary CI 增加仓库外已安装 wheel 的 docker-recovery 场景及证据上传；
+YAML解析通过。相关回归 `tmp/docker-recovery-regression-01.log`/JUnit 仍运行，
+未作为阶段资格；完整故障矩阵、Windows全量覆盖、editable/wheel精确版本与CI仍待完成。
+
+2026-10-04 G3 故障与回归增量：相关检查点/连续对话/桥接/快照/Docker回归
+143 passed，196.05秒，退出码0，JUnit `tmp/docker-recovery-regression-01.xml`。
+真实 Linux Docker 快照故障：越界符号链接、超过1GiB稀疏文件、发布写入失败
+全部拒绝，先前快照字节保留、partial清理、容器删除通过；原始
+`tmp/docker-snapshot-faults-01/faults.json` / `tmp/docker-snapshot-faults-01.log`。
+完整且有已知结果的内部只读恢复状态查询允许作为保存失败后的日志后缀，
+未决查询及修改仍拒绝，14定向测试通过。原始真实上一批次再次validate_batch通过。
+尚需故障回放产品化、完整覆盖门槛、安装包/精确CI与G4，不提交正式PR。

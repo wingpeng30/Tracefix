@@ -43,5 +43,7 @@ Qualification remains zero-call and must precede a fresh experiment authorizatio
 # 2026-10-04 更新
 
 G1 已通过精确提交 `773ec7abbf012592c16fd95c01141f2629370fc1` 的 CI #98 五项门槛，
-正式 PR #17 已创建，尚未合并。G2 从该提交继续，尚未完成验收。
+正式 PR #17 已创建，尚未合并。G2 精确提交 `608cfd65f443139c39a71f9737a245e4b9260ec8`
+已通过 CI #100 五项门槛，正式 PR #18 已创建并基于 #17，尚未合并。
+G3 从该已验证提交继续，本机真实 Linux Docker 已可用；镜像和证据见任务记录。
 证据与旧候选失败记录见 `docs/tasks/2026-10-04-memory-dialogue-docker.md`。

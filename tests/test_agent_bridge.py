@@ -159,3 +159,47 @@ def test_bridge_rejects_non_string_environment_values(tmp_path, monkeypatch, env
     )
     with pytest.raises(ValueError, match="string mapping"):
         agent_bridge.main()
+
+
+@pytest.mark.parametrize("names", [None, [], ["../escape"], [".tracefix-test-tmp"], [1]])
+def test_restore_rejects_invalid_protected_identity_before_mutation(tmp_path, names):
+    protected = {"original"}
+    with pytest.raises(ValueError, match="invalid bridge"):
+        agent_bridge.restore_state(SimpleNamespace(names=()), protected, tmp_path,
+                                   {"schema_version": 1, "protected_dirs": names})
+    assert protected == {"original"}
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_restore_recreates_temporary_identity_and_skill_accounting(tmp_path):
+    restored = []
+    skill = SimpleNamespace(restore_recovery_state=restored.append)
+    tools = SimpleNamespace(names=("load_skill",), get=lambda _name: skill)
+    protected = {"old"}
+    state = {"schema_version": 1,
+             "protected_dirs": [".tracefix-build-tmp", ".tracefix-test-tmp"],
+             "skills": {"loaded": ["immutable-version"]}}
+    agent_bridge.restore_state(tools, protected, tmp_path, state)
+    assert restored == [state["skills"]]
+    assert protected == set(state["protected_dirs"])
+    assert (tmp_path / ".tracefix-test-tmp").is_dir()
+    with pytest.raises(ValueError, match="already exists"):
+        agent_bridge.restore_state(tools, protected, tmp_path, state)
+
+
+def test_restore_refuses_skills_when_disabled(tmp_path):
+    with pytest.raises(ValueError, match="disabled Skills"):
+        agent_bridge.restore_state(SimpleNamespace(names=()), set(), tmp_path,
+                                   {"schema_version": 1,
+                                    "protected_dirs": [".tracefix-build-tmp"],
+                                    "skills": {"loaded": []}})
+
+
+@pytest.mark.parametrize("success,truncated", [(False, False), (True, True)])
+def test_checkpoint_refuses_incomplete_diff(success, truncated):
+    diff = SimpleNamespace(execute=lambda _call: ToolResult(
+        call_id="checkpoint-diff", tool_name="get_git_diff", success=success,
+        output={"truncated": truncated}, error=None if success else "diff failed"))
+    tools = SimpleNamespace(names=(), get=lambda _name: diff)
+    with pytest.raises(ValueError, match="complete product diff"):
+        agent_bridge.recovery_state(tools, {".tracefix-build-tmp"})

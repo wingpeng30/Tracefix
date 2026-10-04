@@ -13,6 +13,39 @@ from tracefix.tools import create_default_tool_registry
 from tracefix.tools.skills import SkillLimits
 
 
+def recovery_state(tools, protected: set[str]) -> dict:
+    """Return internal bridge state only between complete synchronous tool calls."""
+    diff = tools.get("get_git_diff").execute(ToolCall(
+        id="checkpoint-diff", name="get_git_diff", arguments={"context_lines": 3},
+    ))
+    if not diff.success or diff.output.get("truncated"):
+        raise ValueError("cannot checkpoint the complete product diff")
+    return {"schema_version": 1, "protected_dirs": sorted(protected),
+            "skills": tools.get("load_skill").recovery_state()
+            if "load_skill" in tools.names else None, "diff": diff.output}
+
+
+def restore_state(tools, protected: set[str], workspace: Path, state: dict) -> None:
+    """Recreate owned temporary identities and restore immutable Skills accounting."""
+    names = state.get("protected_dirs")
+    if (state.get("schema_version") != 1 or not isinstance(names, list)
+            or not all(isinstance(name, str) for name in names)
+            or not set(names).issubset({".tracefix-build-tmp", ".tracefix-test-tmp"})
+            or ".tracefix-build-tmp" not in names):
+        raise ValueError("invalid bridge recovery state")
+    if ".tracefix-test-tmp" in names:
+        temporary = workspace / ".tracefix-test-tmp"
+        if temporary.is_symlink() or temporary.exists():
+            raise ValueError("new container test temporary path already exists")
+        temporary.mkdir()
+    if "load_skill" in tools.names:
+        tools.get("load_skill").restore_recovery_state(state["skills"])
+    elif state.get("skills") is not None:
+        raise ValueError("recovery state contains disabled Skills")
+    protected.clear()
+    protected.update(names)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--workspace", type=Path, required=True)
@@ -27,6 +60,7 @@ def main() -> int:
     parser.add_argument("--repo-map-config")
     parser.add_argument("--skills-enabled", action="store_true")
     parser.add_argument("--skill-limits-json")
+    parser.add_argument("--skills-root", type=Path)
     args = parser.parse_args()
     environment = (
         json.loads(args.environment_json.read_text(encoding="utf-8"))
@@ -51,6 +85,7 @@ def main() -> int:
         evidence_dir=args.evidence,
         protected_dirs=protected,
         skills_enabled=args.skills_enabled,
+        skills_root=args.skills_root,
         skill_limits=(
             SkillLimits.model_validate_json(args.skill_limits_json)
             if args.skills_enabled and args.skill_limits_json
@@ -84,7 +119,14 @@ def main() -> int:
         call = None
         try:
             call = ToolCall.model_validate_json(line)
-            if call.name == "__prepare__":
+            if call.name in {"__recovery_state__", "__restore_state__"}:
+                from tracefix.tools import ToolResult
+
+                if call.name == "__restore_state__":
+                    restore_state(tools, protected, args.workspace, call.arguments)
+                result = ToolResult(call_id=call.id, tool_name=call.name, success=True,
+                                    output=recovery_state(tools, protected))
+            elif call.name == "__prepare__":
                 target = ToolCall.model_validate(call.arguments)
                 tool = tools.get(target.name)
                 prepare = getattr(tool, "prepare", None)

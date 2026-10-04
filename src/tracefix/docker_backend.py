@@ -419,6 +419,9 @@ class DockerToolBackend:
         skills_enabled: bool = False,
         skill_limits: SkillLimits | None = None,
         source_import_probe: str | None = None,
+        skills_root: Path | None = None,
+        baseline_archive: Path | None = None,
+        recovery_snapshot: dict[str, Any] | None = None,
     ) -> ToolRegistry:
         self.source_commit = source_commit
         if self.profile == "ordinary":
@@ -451,7 +454,16 @@ class DockerToolBackend:
                     raise WorkspaceError(
                         "frozen Docker input hash mismatch", context={"path": relative}
                     )
-        source = self._source_archive(source_repo, source_commit)
+        if baseline_archive is not None:
+            if (self.profile != "ordinary" or baseline_archive.is_symlink()
+                    or not baseline_archive.resolve().is_relative_to(self.run_dir.resolve())
+                    or not baseline_archive.is_file()):
+                raise WorkspaceError("invalid saved Docker source baseline")
+            source = baseline_archive
+        else:
+            source = self._source_archive(source_repo, source_commit)
+        if recovery_snapshot is not None:
+            self.container_name += "-recovery-" + uuid4().hex[:8]
         if self.profile in {"synthetic", "ordinary"}:
             assert self.requested_image_id is not None
             expected_image, self.python = self.requested_image_id, "/usr/local/bin/python"
@@ -874,6 +886,21 @@ class DockerToolBackend:
         env_file = self.run_dir / "container-environment.json"
         env_file.write_text(json.dumps(environment, ensure_ascii=False), encoding="utf-8")
         self._copy_file_into(env_file, "/input/environment.json")
+        if recovery_snapshot is not None:
+            self.restore_snapshot(recovery_snapshot)
+        if skills_root is not None:
+            if self.profile != "ordinary" or not skills_enabled:
+                raise WorkspaceError("experience Skills require ordinary Docker with Skills")
+            approved = skills_root.resolve(strict=True)
+            if any(path.is_symlink() for path in approved.rglob("*")):
+                raise WorkspaceError("Docker Skills snapshot contains a symbolic link")
+            buffer = io.BytesIO()
+            with tarfile.open(fileobj=buffer, mode="w") as catalog_archive:
+                catalog_archive.add(approved, arcname="skills")
+            _run([self.docker, "exec", "-i", self.container_name, "tar", "-xf", "-",
+                  "-C", "/input"], input_data=buffer.getvalue(), timeout=120)
+            _run([self.docker, "exec", self.container_name, "chmod", "-R", "a-w",
+                  "/input/skills"])
         command = [
             self.docker,
             "exec",
@@ -918,12 +945,25 @@ class DockerToolBackend:
                     (skill_limits or SkillLimits()).model_dump_json(),
                 ]
             )
+            if skills_root is not None:
+                command.extend(["--skills-root", "/input/skills"])
         self.session = _BridgeSession(
             command, self.timeout_seconds + 60, self.run_dir / "tool-events.jsonl",
             skills_enabled=skills_enabled,
         )
         if self.session.run_id != self.run_id:
             raise WorkspaceError("Docker bridge run identity mismatch")
+        if recovery_snapshot is not None:
+            from tracefix.docker_recovery import tool_identity
+
+            tool_sha = tool_identity(self.session.tools)
+            if tool_sha != recovery_snapshot.get("tool_sha256"):
+                raise WorkspaceError("Docker recovery tool definitions changed")
+            if container_interpreter != recovery_snapshot.get("interpreter"):
+                raise WorkspaceError("Docker recovery interpreter identity changed")
+            restored = self.session.call("__restore_state__", recovery_snapshot["bridge_state"])
+            if not restored.success or restored.output != recovery_snapshot["bridge_state"]:
+                raise WorkspaceError("Docker bridge state did not restore exactly")
         self.repo_map = self.session.repo_map
         self.workspace_preparation = {
             "success": True,
@@ -957,6 +997,88 @@ class DockerToolBackend:
         return ToolRegistry(
             _RemoteTool(spec, self, self.session.skill_catalog) for spec in self.session.tools
         )
+
+    def save_snapshot(self, sequence: int) -> dict[str, Any]:
+        """Stream bounded product data and bind its verified bridge and journal state."""
+        from tracefix.docker_recovery import tool_identity
+        from tracefix.memory import atomic_json, digest
+        from tracefix.workspace_snapshot import validate_archive
+
+        if self.profile != "ordinary" or self.session is None:
+            raise WorkspaceError("only an active ordinary Docker bridge can save a snapshot")
+        state = self.session.call("__recovery_state__", {})
+        if not state.success or not isinstance(state.output, dict):
+            raise WorkspaceError("could not save Docker bridge state")
+        directory = self.run_dir / "docker-checkpoints"
+        directory.mkdir(exist_ok=True)
+        identity = f"{sequence:08d}-{uuid4().hex}"
+        archive_path = directory / f"{identity}.tar"
+        temporary = directory / f"{identity}.partial"
+        try:
+            with temporary.open("xb") as output:
+                result = subprocess.run(
+                    [self.docker, "exec", self.container_name, "env",
+                     "PYTHONPATH=/opt/tracefix/src", self.python, "-m",
+                     "tracefix.workspace_snapshot", "export", "--workspace", "/work/agent"],
+                    stdout=output, stderr=subprocess.PIPE, timeout=self.timeout_seconds + 120,
+                    check=False,
+                )
+                output.flush()
+                os.fsync(output.fileno())
+            if result.returncode:
+                raise WorkspaceError("Docker product snapshot failed", context={
+                    "stderr": result.stderr.decode("utf-8", "replace")[-2000:],
+                })
+            metadata = json.loads(result.stderr.decode("utf-8"))
+            validate_archive(temporary, metadata)
+            os.replace(temporary, archive_path)
+            self.export_evidence()
+            journal = (self.run_dir / "tool-events.jsonl").read_bytes()
+            record = {
+                "schema_version": 1, "sequence": sequence, "batch_id": identity,
+                "archive": str(archive_path.relative_to(self.run_dir)), "metadata": metadata,
+                "bridge_state": state.output, "bridge_state_sha256": digest(state.output),
+                "journal_size": len(journal), "journal_sha256": hashlib.sha256(journal).hexdigest(),
+                "baseline_sha256": hashlib.sha256(
+                    (self.run_dir / "agent-base.tar").read_bytes(),
+                ).hexdigest(),
+                "image_id": self.image_id, "container_id": self.container_id,
+                "interpreter": self.workspace_preparation["container_interpreter"],
+                "tool_sha256": tool_identity(self.session.tools),
+                "test_evidence": {path.name: hashlib.sha256(path.read_bytes()).hexdigest()
+                                  for path in (self.run_dir / "test-evidence").iterdir()
+                                  if path.is_file()},
+            }
+            atomic_json(directory / f"{identity}.json", record)
+            return record
+        finally:
+            temporary.unlink(missing_ok=True)
+
+    def restore_snapshot(self, snapshot: dict[str, Any]) -> None:
+        """Restore a validated archive before starting the new container's bridge."""
+        from tracefix.memory import atomic_json
+        from tracefix.workspace_snapshot import validate_archive
+
+        path = self.run_dir / snapshot["archive"]
+        validate_archive(path, snapshot["metadata"])
+        metadata_path = self.run_dir / "restore-metadata.json"
+        atomic_json(metadata_path, snapshot["metadata"])
+        self._copy_file_into(metadata_path, "/input/restore-metadata.json")
+        # Streaming stdin avoids a second 1 GiB host buffer and preserves container tmpfs space.
+        with path.open("rb") as source:
+            restored = subprocess.run(
+                [self.docker, "exec", "-i", self.container_name, "env",
+                 "PYTHONPATH=/opt/tracefix/src", self.python, "-m",
+                 "tracefix.workspace_snapshot", "restore-stream", "--workspace", "/work/agent",
+                 "--metadata", "/input/restore-metadata.json"], stdin=source, capture_output=True,
+                timeout=self.timeout_seconds + 120, check=False,
+            )
+        if restored.returncode:
+            raise WorkspaceError("could not restore Docker recovery archive", context={
+                "stderr": restored.stderr.decode("utf-8", "replace")[-2000:],
+            })
+        _run([self.docker, "exec", self.container_name, "rm", "-f",
+              "/input/restore-metadata.json"])
 
     def set_phase(self, phase: str) -> None:
         """Persist the owned container identity and current lifecycle phase."""
