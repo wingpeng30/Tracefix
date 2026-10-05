@@ -42,6 +42,7 @@ tracefix = [
 [project.scripts]
 tracefix = "tracefix.cli:main"
 tracefix-reproduce = "tracefix.reproduction:main"
+tracefix-compare = "tracefix.comparison_campaign:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

@@ -1,5 +1,14 @@
 # 2026-09-29 Agent/harness 产品交接
 
+## 2026-10-05 当前交接
+
+新任务是人民币20元、90次任务运行的冷启动三组对照，模型为官方DeepSeek Flash非思考、零重试。
+十个已知任务固定，不接触留出集；新独立账本，旧额度/结果不续用。
+实现入口scripts/compare_agent_vs_model.py及安装包tracefix-compare，先过全部离线与精确CI门槛再付费。
+当前供应商请求为零，原始预检失败与新复验分别保存；详见
+[`../experiments/2026-10-05-agent-model-comparison.md`](../experiments/2026-10-05-agent-model-comparison.md)。
+G4最终head bc7dd7d已通过精确CI #110/#111。以下“文档CI待通过”文字作为历史保留。
+
 ## 2026-10-04 当前交接
 
 当前执行用户批准的 G1→G4 新计划。G1/G2/G3 已分别通过精确 CI #98/#100/#104，
