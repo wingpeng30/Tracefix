@@ -1,0 +1,677 @@
+{
+  "schema_version": 1,
+  "product_base": "bc7dd7df4939a374062ea0c7039279de81112cd2",
+  "implementation_commit": "e98279c9a83d91eb0dc5d9cc6c87d0dea664ab3c",
+  "implementation_sha256": "826d7dd9e0fe691dcd39bcfe2415260360ef86df202b1f6b3cf7fc39c328bf75",
+  "limits": {
+    "input_tokens": 60000,
+    "output_tokens": 8000,
+    "requests": 20,
+    "tests": 16,
+    "active_seconds": 900,
+    "timeout_seconds": 60,
+    "limit_cny": 20.0
+  },
+  "mode": "live",
+  "bootstrap": {
+    "seed": 20261005,
+    "resamples": 10000
+  },
+  "schedule": [
+    {
+      "id": "001",
+      "task_id": "more-itertools-windowed-empty-462",
+      "repetition": 1,
+      "arm": "A"
+    },
+    {
+      "id": "002",
+      "task_id": "more-itertools-windowed-empty-462",
+      "repetition": 1,
+      "arm": "B"
+    },
+    {
+      "id": "003",
+      "task_id": "more-itertools-windowed-empty-462",
+      "repetition": 1,
+      "arm": "C"
+    },
+    {
+      "id": "004",
+      "task_id": "markdown-quoted-braces-1414",
+      "repetition": 1,
+      "arm": "C"
+    },
+    {
+      "id": "005",
+      "task_id": "markdown-quoted-braces-1414",
+      "repetition": 1,
+      "arm": "B"
+    },
+    {
+      "id": "006",
+      "task_id": "markdown-quoted-braces-1414",
+      "repetition": 1,
+      "arm": "A"
+    },
+    {
+      "id": "007",
+      "task_id": "click-completion-resources-2800",
+      "repetition": 1,
+      "arm": "C"
+    },
+    {
+      "id": "008",
+      "task_id": "click-completion-resources-2800",
+      "repetition": 1,
+      "arm": "A"
+    },
+    {
+      "id": "009",
+      "task_id": "click-completion-resources-2800",
+      "repetition": 1,
+      "arm": "B"
+    },
+    {
+      "id": "010",
+      "task_id": "psf__requests-1142",
+      "repetition": 1,
+      "arm": "A"
+    },
+    {
+      "id": "011",
+      "task_id": "psf__requests-1142",
+      "repetition": 1,
+      "arm": "C"
+    },
+    {
+      "id": "012",
+      "task_id": "psf__requests-1142",
+      "repetition": 1,
+      "arm": "B"
+    },
+    {
+      "id": "013",
+      "task_id": "psf__requests-1766",
+      "repetition": 1,
+      "arm": "B"
+    },
+    {
+      "id": "014",
+      "task_id": "psf__requests-1766",
+      "repetition": 1,
+      "arm": "C"
+    },
+    {
+      "id": "015",
+      "task_id": "psf__requests-1766",
+      "repetition": 1,
+      "arm": "A"
+    },
+    {
+      "id": "016",
+      "task_id": "pytest-dev__pytest-10051",
+      "repetition": 1,
+      "arm": "B"
+    },
+    {
+      "id": "017",
+      "task_id": "pytest-dev__pytest-10051",
+      "repetition": 1,
+      "arm": "A"
+    },
+    {
+      "id": "018",
+      "task_id": "pytest-dev__pytest-10051",
+      "repetition": 1,
+      "arm": "C"
+    },
+    {
+      "id": "019",
+      "task_id": "pytest-dev__pytest-10081",
+      "repetition": 1,
+      "arm": "A"
+    },
+    {
+      "id": "020",
+      "task_id": "pytest-dev__pytest-10081",
+      "repetition": 1,
+      "arm": "B"
+    },
+    {
+      "id": "021",
+      "task_id": "pytest-dev__pytest-10081",
+      "repetition": 1,
+      "arm": "C"
+    },
+    {
+      "id": "022",
+      "task_id": "pytest-dev__pytest-10356",
+      "repetition": 1,
+      "arm": "C"
+    },
+    {
+      "id": "023",
+      "task_id": "pytest-dev__pytest-10356",
+      "repetition": 1,
+      "arm": "B"
+    },
+    {
+      "id": "024",
+      "task_id": "pytest-dev__pytest-10356",
+      "repetition": 1,
+      "arm": "A"
+    },
+    {
+      "id": "025",
+      "task_id": "sphinx-doc__sphinx-10435",
+      "repetition": 1,
+      "arm": "C"
+    },
+    {
+      "id": "026",
+      "task_id": "sphinx-doc__sphinx-10435",
+      "repetition": 1,
+      "arm": "A"
+    },
+    {
+      "id": "027",
+      "task_id": "sphinx-doc__sphinx-10435",
+      "repetition": 1,
+      "arm": "B"
+    },
+    {
+      "id": "028",
+      "task_id": "sphinx-doc__sphinx-10449",
+      "repetition": 1,
+      "arm": "A"
+    },
+    {
+      "id": "029",
+      "task_id": "sphinx-doc__sphinx-10449",
+      "repetition": 1,
+      "arm": "C"
+    },
+    {
+      "id": "030",
+      "task_id": "sphinx-doc__sphinx-10449",
+      "repetition": 1,
+      "arm": "B"
+    },
+    {
+      "id": "031",
+      "task_id": "more-itertools-windowed-empty-462",
+      "repetition": 2,
+      "arm": "B"
+    },
+    {
+      "id": "032",
+      "task_id": "more-itertools-windowed-empty-462",
+      "repetition": 2,
+      "arm": "C"
+    },
+    {
+      "id": "033",
+      "task_id": "more-itertools-windowed-empty-462",
+      "repetition": 2,
+      "arm": "A"
+    },
+    {
+      "id": "034",
+      "task_id": "markdown-quoted-braces-1414",
+      "repetition": 2,
+      "arm": "B"
+    },
+    {
+      "id": "035",
+      "task_id": "markdown-quoted-braces-1414",
+      "repetition": 2,
+      "arm": "A"
+    },
+    {
+      "id": "036",
+      "task_id": "markdown-quoted-braces-1414",
+      "repetition": 2,
+      "arm": "C"
+    },
+    {
+      "id": "037",
+      "task_id": "click-completion-resources-2800",
+      "repetition": 2,
+      "arm": "A"
+    },
+    {
+      "id": "038",
+      "task_id": "click-completion-resources-2800",
+      "repetition": 2,
+      "arm": "B"
+    },
+    {
+      "id": "039",
+      "task_id": "click-completion-resources-2800",
+      "repetition": 2,
+      "arm": "C"
+    },
+    {
+      "id": "040",
+      "task_id": "psf__requests-1142",
+      "repetition": 2,
+      "arm": "C"
+    },
+    {
+      "id": "041",
+      "task_id": "psf__requests-1142",
+      "repetition": 2,
+      "arm": "B"
+    },
+    {
+      "id": "042",
+      "task_id": "psf__requests-1142",
+      "repetition": 2,
+      "arm": "A"
+    },
+    {
+      "id": "043",
+      "task_id": "psf__requests-1766",
+      "repetition": 2,
+      "arm": "C"
+    },
+    {
+      "id": "044",
+      "task_id": "psf__requests-1766",
+      "repetition": 2,
+      "arm": "A"
+    },
+    {
+      "id": "045",
+      "task_id": "psf__requests-1766",
+      "repetition": 2,
+      "arm": "B"
+    },
+    {
+      "id": "046",
+      "task_id": "pytest-dev__pytest-10051",
+      "repetition": 2,
+      "arm": "A"
+    },
+    {
+      "id": "047",
+      "task_id": "pytest-dev__pytest-10051",
+      "repetition": 2,
+      "arm": "C"
+    },
+    {
+      "id": "048",
+      "task_id": "pytest-dev__pytest-10051",
+      "repetition": 2,
+      "arm": "B"
+    },
+    {
+      "id": "049",
+      "task_id": "pytest-dev__pytest-10081",
+      "repetition": 2,
+      "arm": "B"
+    },
+    {
+      "id": "050",
+      "task_id": "pytest-dev__pytest-10081",
+      "repetition": 2,
+      "arm": "C"
+    },
+    {
+      "id": "051",
+      "task_id": "pytest-dev__pytest-10081",
+      "repetition": 2,
+      "arm": "A"
+    },
+    {
+      "id": "052",
+      "task_id": "pytest-dev__pytest-10356",
+      "repetition": 2,
+      "arm": "B"
+    },
+    {
+      "id": "053",
+      "task_id": "pytest-dev__pytest-10356",
+      "repetition": 2,
+      "arm": "A"
+    },
+    {
+      "id": "054",
+      "task_id": "pytest-dev__pytest-10356",
+      "repetition": 2,
+      "arm": "C"
+    },
+    {
+      "id": "055",
+      "task_id": "sphinx-doc__sphinx-10435",
+      "repetition": 2,
+      "arm": "A"
+    },
+    {
+      "id": "056",
+      "task_id": "sphinx-doc__sphinx-10435",
+      "repetition": 2,
+      "arm": "B"
+    },
+    {
+      "id": "057",
+      "task_id": "sphinx-doc__sphinx-10435",
+      "repetition": 2,
+      "arm": "C"
+    },
+    {
+      "id": "058",
+      "task_id": "sphinx-doc__sphinx-10449",
+      "repetition": 2,
+      "arm": "C"
+    },
+    {
+      "id": "059",
+      "task_id": "sphinx-doc__sphinx-10449",
+      "repetition": 2,
+      "arm": "B"
+    },
+    {
+      "id": "060",
+      "task_id": "sphinx-doc__sphinx-10449",
+      "repetition": 2,
+      "arm": "A"
+    },
+    {
+      "id": "061",
+      "task_id": "more-itertools-windowed-empty-462",
+      "repetition": 3,
+      "arm": "C"
+    },
+    {
+      "id": "062",
+      "task_id": "more-itertools-windowed-empty-462",
+      "repetition": 3,
+      "arm": "A"
+    },
+    {
+      "id": "063",
+      "task_id": "more-itertools-windowed-empty-462",
+      "repetition": 3,
+      "arm": "B"
+    },
+    {
+      "id": "064",
+      "task_id": "markdown-quoted-braces-1414",
+      "repetition": 3,
+      "arm": "A"
+    },
+    {
+      "id": "065",
+      "task_id": "markdown-quoted-braces-1414",
+      "repetition": 3,
+      "arm": "C"
+    },
+    {
+      "id": "066",
+      "task_id": "markdown-quoted-braces-1414",
+      "repetition": 3,
+      "arm": "B"
+    },
+    {
+      "id": "067",
+      "task_id": "click-completion-resources-2800",
+      "repetition": 3,
+      "arm": "B"
+    },
+    {
+      "id": "068",
+      "task_id": "click-completion-resources-2800",
+      "repetition": 3,
+      "arm": "C"
+    },
+    {
+      "id": "069",
+      "task_id": "click-completion-resources-2800",
+      "repetition": 3,
+      "arm": "A"
+    },
+    {
+      "id": "070",
+      "task_id": "psf__requests-1142",
+      "repetition": 3,
+      "arm": "B"
+    },
+    {
+      "id": "071",
+      "task_id": "psf__requests-1142",
+      "repetition": 3,
+      "arm": "A"
+    },
+    {
+      "id": "072",
+      "task_id": "psf__requests-1142",
+      "repetition": 3,
+      "arm": "C"
+    },
+    {
+      "id": "073",
+      "task_id": "psf__requests-1766",
+      "repetition": 3,
+      "arm": "A"
+    },
+    {
+      "id": "074",
+      "task_id": "psf__requests-1766",
+      "repetition": 3,
+      "arm": "B"
+    },
+    {
+      "id": "075",
+      "task_id": "psf__requests-1766",
+      "repetition": 3,
+      "arm": "C"
+    },
+    {
+      "id": "076",
+      "task_id": "pytest-dev__pytest-10051",
+      "repetition": 3,
+      "arm": "C"
+    },
+    {
+      "id": "077",
+      "task_id": "pytest-dev__pytest-10051",
+      "repetition": 3,
+      "arm": "B"
+    },
+    {
+      "id": "078",
+      "task_id": "pytest-dev__pytest-10051",
+      "repetition": 3,
+      "arm": "A"
+    },
+    {
+      "id": "079",
+      "task_id": "pytest-dev__pytest-10081",
+      "repetition": 3,
+      "arm": "C"
+    },
+    {
+      "id": "080",
+      "task_id": "pytest-dev__pytest-10081",
+      "repetition": 3,
+      "arm": "A"
+    },
+    {
+      "id": "081",
+      "task_id": "pytest-dev__pytest-10081",
+      "repetition": 3,
+      "arm": "B"
+    },
+    {
+      "id": "082",
+      "task_id": "pytest-dev__pytest-10356",
+      "repetition": 3,
+      "arm": "A"
+    },
+    {
+      "id": "083",
+      "task_id": "pytest-dev__pytest-10356",
+      "repetition": 3,
+      "arm": "C"
+    },
+    {
+      "id": "084",
+      "task_id": "pytest-dev__pytest-10356",
+      "repetition": 3,
+      "arm": "B"
+    },
+    {
+      "id": "085",
+      "task_id": "sphinx-doc__sphinx-10435",
+      "repetition": 3,
+      "arm": "B"
+    },
+    {
+      "id": "086",
+      "task_id": "sphinx-doc__sphinx-10435",
+      "repetition": 3,
+      "arm": "C"
+    },
+    {
+      "id": "087",
+      "task_id": "sphinx-doc__sphinx-10435",
+      "repetition": 3,
+      "arm": "A"
+    },
+    {
+      "id": "088",
+      "task_id": "sphinx-doc__sphinx-10449",
+      "repetition": 3,
+      "arm": "B"
+    },
+    {
+      "id": "089",
+      "task_id": "sphinx-doc__sphinx-10449",
+      "repetition": 3,
+      "arm": "A"
+    },
+    {
+      "id": "090",
+      "task_id": "sphinx-doc__sphinx-10449",
+      "repetition": 3,
+      "arm": "C"
+    }
+  ],
+  "full_protocol_sha256": "4fd4f85ce77d3c75352cca96ba8c39e484e74bd78628763cd70001a28cd84277",
+  "model": {
+    "requested": "deepseek/deepseek-flash",
+    "returned": [
+      "deepseek-flash"
+    ],
+    "thinking": "disabled",
+    "temperature": 0,
+    "streaming": false,
+    "retries": 0,
+    "endpoint": "https://api.deepseek.com"
+  },
+  "arm_c_default_config_sha256": "2f3e0eb9417397bc07f56a78d3e89870218498a83556adcfc84fe2072cdfdb13",
+  "tasks": {
+    "more-itertools-windowed-empty-462": {
+      "source_commit": "82bb61c19e2c7553c499c7e80b176334cecfa6d9",
+      "source_identity_sha256": "ae9183155e657749639dc1858b020e29b27830ae8ec0e438cb8368b6c2852447",
+      "environment_sha256": "7095450a6f5792c65f3675fc49a2df23edbab487e13c5ef3fb723c75269baf94",
+      "prompt_sha256": "10d98849d342a932ac1f3496a0823a0960568c2f76d8c20e04f6458c6e6ed62f",
+      "qualification_sha256": "06c4988e602649aaee9ef7a165678c9caeaa5594c357241325f7a581d225aa46",
+      "verification_nodes_sha256": "5d87e37d7c82a2d1e3663e70df19d7ca8ec5c92e8838ffb0acf71e27ab0532dd",
+      "reference_kind": "original_reference",
+      "reference_correction_sha256": null
+    },
+    "markdown-quoted-braces-1414": {
+      "source_commit": "e8a97f5e8cd9c666cd4159082323a2ffe2840b59",
+      "source_identity_sha256": "475f1f9076c49b317f6b3845d3279b5c28c16905cecad3c54bd882ac1565af38",
+      "environment_sha256": "7095450a6f5792c65f3675fc49a2df23edbab487e13c5ef3fb723c75269baf94",
+      "prompt_sha256": "bdfe4ed8ab881df07a9503dffcd987f6f93627106d42ff66f3945d29f05a84fd",
+      "qualification_sha256": "458886660ecb22a4dcd5768c15b523e1ce6d9a332e3ceb54402ba6348faaab39",
+      "verification_nodes_sha256": "40e266a387a8a37ff6f6b1b25d7351be210858cbd82bf03da3ec7a48d4cb22ca",
+      "reference_kind": "upstream_product_patch_plus_reviewed_correction",
+      "reference_correction_sha256": "2d6b4a521ecc9cd1b9376a6d4eafb995f715dfb716d7e38578e4c3644026b242"
+    },
+    "click-completion-resources-2800": {
+      "source_commit": "94afe7bca2c3ed3188c94d3e844b1894be12af1a",
+      "source_identity_sha256": "e12f987656dc5bb6d210a5c2f29549a974c3015c75a209e74a4783fafe7447a3",
+      "environment_sha256": "7095450a6f5792c65f3675fc49a2df23edbab487e13c5ef3fb723c75269baf94",
+      "prompt_sha256": "ea8fbec75428c8c55c67c66f8d04392012e56c3b3d94afcbfb708e600b81be5a",
+      "qualification_sha256": "791a92ec22705edb0ac507aa3e7766bfe033bc2b40f3421ab37ef3820afa79ae",
+      "verification_nodes_sha256": "3bfcec4545e57c859404efa8df5f3020e88aad2284a61f7e7b800ddc3b5f6d05",
+      "reference_kind": "upstream_product_patch_plus_reviewed_correction",
+      "reference_correction_sha256": "90952f6ec431df799746107e8e3d27224664c6289087f0268c4b5af751e0e702"
+    },
+    "psf__requests-1142": {
+      "source_commit": "22623bd8c265b78b161542663ee980738441c307",
+      "source_identity_sha256": "3f136a3af567fb7ebfabc2dd1a32a19bdef04aab72293b30065d803c5c1bcf2c",
+      "environment_sha256": "7e1d467a3118d23b64e55d3e116ed58e751a01337dd35b2f38ced0225769b109",
+      "prompt_sha256": "e1e780a3ad4a6b73697019ff04021ffdf42fe4eb97344e9053f24df2e7e594ce",
+      "qualification_sha256": "76f29d31f6b59a1455a1210e79b0824af1508e0ce246ac431388a262b7e48b64",
+      "verification_nodes_sha256": "1a0e89b948595c2f916c00ca458e846e4768f0d43e20986c57849709dcff7c1c",
+      "reference_kind": "original_reference",
+      "reference_correction_sha256": null
+    },
+    "psf__requests-1766": {
+      "source_commit": "847735553aeda6e6633f2b32e14ba14ba86887a4",
+      "source_identity_sha256": "41a7bd9067ae5d7a2321604cfb520a32d211ee64c1178f7e51bc1a0d18b59d78",
+      "environment_sha256": "3b6cfd0cf615015a61392c75af9c90817ccbfccd27e3817a634559b4e4a20185",
+      "prompt_sha256": "31c61d3f225af0f0e3127147937cd5c12a72ecb0e4cd6da0c69db75b569a93d1",
+      "qualification_sha256": "e19387cea32c624a92bc5fd465857dc7c7ce942c6b4366ea68e447c6deb7dade",
+      "verification_nodes_sha256": "88940302ac1ff8992fdb8a1e28e5a7a92b9e897806b5a2b1827a5e1b900fdf98",
+      "reference_kind": "original_reference",
+      "reference_correction_sha256": null
+    },
+    "pytest-dev__pytest-10051": {
+      "source_commit": "aa55975c7d3f6c9f6d7f68accc41bb7cadf0eb9a",
+      "source_identity_sha256": "242fff82cf79a5ca8a6ffa64e316889915856f0b24b9373903007516d62c5820",
+      "environment_sha256": "1958f58475dd3d4e92c6f2c795000f96c5e0fe7499c75093d132135ead491a2e",
+      "prompt_sha256": "ebe22577b6789220f450210c74737e7992aec1b0367e27ed7cb411dab354c231",
+      "qualification_sha256": "e8c431adf3273647d94b4777802991ba7c47d36ffa7ba52cce73eb66ca8cc997",
+      "verification_nodes_sha256": "467ace260daa89445eda5ca6887b0a28aae597a9795c2b875fe1f13dc81fa02c",
+      "reference_kind": "original_reference",
+      "reference_correction_sha256": null
+    },
+    "pytest-dev__pytest-10081": {
+      "source_commit": "da9a2b584eb7a6c7e924b2621ed0ddaeca0a7bea",
+      "source_identity_sha256": "4358d3b6b58f2058abd7bf7e5f0badfa36f4f83cfa84267486c53278e13c947f",
+      "environment_sha256": "1586c22a191bde2d3c1b142328c4de5091ebdade37d3ea84a4cf95cab93da5df",
+      "prompt_sha256": "d9c95778d8eaf039c7e083d3b997b780f60365fa1033ca9cd590f981410a0864",
+      "qualification_sha256": "684489c8ccd48bed340320363e6bb2124f19ca72fac216f67d2df6a21eface67",
+      "verification_nodes_sha256": "28c78c1d290d44a43ccaf2f9cfa0ebeb6f992b46cee53d46231f244bda0524e5",
+      "reference_kind": "original_reference",
+      "reference_correction_sha256": null
+    },
+    "pytest-dev__pytest-10356": {
+      "source_commit": "3c1534944cbd34e8a41bc9e76818018fadefc9a1",
+      "source_identity_sha256": "06539d6836c89ad402ceb7a46a1f89204f62977577d607db5ff942b444667bc5",
+      "environment_sha256": "7eca2236950b34f56293fdbf555ebe39c3ad9820b831954c12e33547b4236027",
+      "prompt_sha256": "efde69b39ae3ecd7f2cdc23002e312e385720a0dea9508b54b72c8008b867251",
+      "qualification_sha256": "20b49494ef802b5f586734cff6dd7a717c321cfa2f050bc0fe5b4865a4c497f2",
+      "verification_nodes_sha256": "11953efb305105873eef822293933d1b56861eaf375b7a89319be7822ed8e30c",
+      "reference_kind": "original_reference",
+      "reference_correction_sha256": null
+    },
+    "sphinx-doc__sphinx-10435": {
+      "source_commit": "f1061c012e214f16fd8790dec3c283d787e3daa8",
+      "source_identity_sha256": "3a2c0a465d5fbb59c622ed57cbc7ad1033c92f62961f5f63ea8a5ecee68bed6b",
+      "environment_sha256": "d2950f940df34532b959f9d187c3e950bf234e30f53d595220a4fbfd45178d2b",
+      "prompt_sha256": "291484f471c522f9ea9108bdaf539b5ed70244ebe94cc1563b352afe84e99125",
+      "qualification_sha256": "1231ddb351ce7d30de72e4d45679cc8ae1098a88447182e58f1ffecefd8c4183",
+      "verification_nodes_sha256": "81af166cecf0c41065a07bb3fe17b405de1114831216e0adac88b1d19034f117",
+      "reference_kind": "original_reference",
+      "reference_correction_sha256": null
+    },
+    "sphinx-doc__sphinx-10449": {
+      "source_commit": "36367765fe780f962bba861bf368a765380bbc68",
+      "source_identity_sha256": "87b8dae67f53a93c6b30b4d91dfa0940b560d91cbb315503d6e43bb129501530",
+      "environment_sha256": "5d08b8ec31d21300aae21c3a971d5407a9507cc82555fe20a8dfbe570b56acc5",
+      "prompt_sha256": "35549d81b52be684e0899ab14f8fe1dca15e88fc7906b4cae1471a012c5030c3",
+      "qualification_sha256": "ffe9063fb1113dbac80ccb18484eff61926b59a4264e441af57967e881b676b4",
+      "verification_nodes_sha256": "3284ebf7e4e623aa2075e3ed0ddbf584b9f0365f44b028c1e934842a93f3653e",
+      "reference_kind": "original_reference",
+      "reference_correction_sha256": null
+    }
+  }
+}

@@ -3,7 +3,8 @@ name: CI
 on:
   push:
     branches: [main, 'codex/experience-memory', 'codex/continuous-dialogue',
-               'codex/docker-recovery', 'codex/memory-dialogue-integration']
+               'codex/docker-recovery', 'codex/memory-dialogue-integration',
+               'codex/agent-model-comparison']
   pull_request:
   workflow_dispatch:
 
@@ -70,6 +71,8 @@ jobs:
           New-Item -ItemType Directory -Path $smokeRoot | Out-Null
           Push-Location $env:RUNNER_TEMP
           try {
+            python -m tracefix.comparison_campaign --help
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
             python -m tracefix.reproduction --backend local --output (Join-Path $smokeRoot "baseline")
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
             python -m tracefix.reproduction --backend local --skills-enabled --output (Join-Path $smokeRoot "skills")
@@ -128,6 +131,8 @@ jobs:
           Push-Location $env:RUNNER_TEMP
           try {
             & $wheelPython -c "import pathlib,tracefix; p=pathlib.Path(tracefix.__file__).resolve(); assert 'site-packages' in str(p).lower(), p; print(p)"
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            & (Join-Path $wheelEnv "Scripts/tracefix-compare.exe") --help
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
             & (Join-Path $wheelEnv "Scripts/tracefix-reproduce.exe") --backend local --output (Join-Path $wheelSmoke "baseline")
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
