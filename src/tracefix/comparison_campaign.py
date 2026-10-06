@@ -15,7 +15,6 @@ from urllib.request import ProxyHandler, build_opener
 from tracefix import AgentConfig, RunConfig, TraceFixRunner
 from tracefix.checkpoint import ProcessLock
 from tracefix.comparison import (
-    LIMITS,
     PATCH_RULE,
     PRODUCT_BASE,
     TASK_IDS,
@@ -29,6 +28,15 @@ from tracefix.comparison import (
     static_material,
     summarize,
     write_json,
+)
+from tracefix.comparison_profiles import (
+    CAPABILITY_PROFILE,
+    LEGACY_PROFILE,
+    TOKENIZER_PROFILE,
+    OfficialCounter,
+    calibrate_previous,
+    profile_config,
+    protocol_profile,
 )
 from tracefix.exceptions import PreRequestBudgetExceeded, ToolError
 from tracefix.messages import Message, MessageRole, ToolCall
@@ -61,7 +69,24 @@ def source_identity(source: Path) -> dict:
     }
 
 
-def config_for(spec: dict, task: str, output: Path, env_file: Path | None) -> RunConfig:
+def config_for(
+    spec: dict, task: str, output: Path, env_file: Path | None, profile: dict | None = None
+) -> RunConfig:
+    selected = profile or profile_config()
+    limits = selected["limits"]
+    agent_config = AgentConfig(
+        max_steps=limits["requests"],
+        max_input_tokens=limits["input_tokens"],
+        max_output_tokens=limits["output_tokens"],
+        max_test_runs=limits["tests"],
+        wall_time_seconds=limits["active_seconds"],
+        record_request_views=True,
+    )
+    if selected["capability_mode"]:
+        from tracefix.models.input_bounds import DEEPSEEK_FLASH_CONTEXT
+
+        agent_config.context.context_window_tokens = DEEPSEEK_FLASH_CONTEXT
+        agent_config.context.compaction_trigger_tokens = DEEPSEEK_FLASH_CONTEXT - 8192
     return RunConfig(
         repo=Path(spec["source"]),
         task=task,
@@ -69,8 +94,8 @@ def config_for(spec: dict, task: str, output: Path, env_file: Path | None) -> Ru
         env_file=env_file,
         model_name="deepseek/deepseek-flash",
         llm_max_retries=0,
-        llm_timeout_seconds=60,
-        per_request_output_tokens=2048,
+        llm_timeout_seconds=limits["timeout_seconds"],
+        per_request_output_tokens=selected["per_request_output_tokens"],
         test_python_executable=Path(spec["python"]),
         source_import=spec.get("source_import")
         or (spec.get("recipe") or {}).get("source_import_probe"),
@@ -81,14 +106,7 @@ def config_for(spec: dict, task: str, output: Path, env_file: Path | None) -> Ru
         test_environment_variables=spec.get(
             "environment_variables", (spec.get("recipe") or {}).get("environment_variables", {})
         ),
-        agent_config=AgentConfig(
-            max_steps=20,
-            max_input_tokens=60000,
-            max_output_tokens=8000,
-            max_test_runs=16,
-            wall_time_seconds=900,
-            record_request_views=True,
-        ),
+        agent_config=agent_config,
     )
 
 
@@ -246,11 +264,49 @@ def qualify_task(spec: dict, root: Path) -> dict:
     return updated
 
 
-def prepare(catalog: Path, root: Path, prices: Path, *, mode: str = "live") -> dict:
+def prepare(
+    catalog: Path,
+    root: Path,
+    prices: Path,
+    *,
+    mode: str = "live",
+    profile: str = LEGACY_PROFILE,
+    tokenizer: Path | None = None,
+    counter_runtime: Path | None = None,
+    previous_campaign: Path | None = None,
+) -> dict:
     root.mkdir(parents=True, exist_ok=True)
     with ProcessLock(root):
         if (root / "protocol.json").exists():
             raise ValueError("protocol already frozen; cannot overwrite")
+        selected = profile_config(profile)
+        runtime = None
+        calibration = None
+        if profile != LEGACY_PROFILE:
+            if tokenizer is None or previous_campaign is None:
+                raise ValueError("tokenizer profile requires tokenizer and previous campaign")
+            from tracefix.models.input_bounds import V41_TOKENIZER_SHA256
+
+            if file_sha(tokenizer) != V41_TOKENIZER_SHA256:
+                raise ValueError("official tokenizer identity mismatch")
+            runtime = (
+                read_json(counter_runtime)
+                if counter_runtime
+                else {
+                    "command": [
+                        sys.executable,
+                        "-m",
+                        "tracefix.comparison_counter",
+                        "--tokenizer",
+                        str(tokenizer.resolve()),
+                    ]
+                }
+            )
+            calibration = calibrate_previous(previous_campaign, runtime)
+            write_json(root / "tokenizer-calibration.json", calibration)
+            if not calibration["accepted"]:
+                raise ValueError("previous 212-request tokenizer calibration failed; no paid calls")
+            runtime = calibration["runtime"]
         specifications = read_json(catalog)
         if [s["task_id"] for s in specifications] != list(TASK_IDS):
             raise ValueError("exact ten-task catalog required")
@@ -272,6 +328,8 @@ def prepare(catalog: Path, root: Path, prices: Path, *, mode: str = "live") -> d
             qualified.append(qualify_task(spec, root))
         tasks = {}
         artifacts = {}
+        if calibration is not None:
+            artifacts["tokenizer-calibration.json"] = file_sha(root / "tokenizer-calibration.json")
         for spec in qualified:
             source = Path(spec["source"])
             material = static_material(
@@ -286,6 +344,13 @@ def prepare(catalog: Path, root: Path, prices: Path, *, mode: str = "live") -> d
                 + "\n"
                 + material
             )
+            if selected["name"] != LEGACY_PROFILE:
+                previous_protocol = read_json(previous_campaign / "protocol.json")
+                previous_spec = previous_protocol["tasks"][spec["task_id"]]
+                previous_prompt = Path(previous_spec["prompt_path"])
+                if file_sha(previous_prompt) != previous_spec["prompt_sha256"]:
+                    raise ValueError("previous frozen prompt corrupted")
+                prompt = previous_prompt.read_text(encoding="utf-8")
             prompt_path = root / "prompts" / (spec["task_id"] + ".txt")
             prompt_path.parent.mkdir(exist_ok=True)
             prompt_path.write_text(prompt, encoding="utf-8")
@@ -299,19 +364,21 @@ def prepare(catalog: Path, root: Path, prices: Path, *, mode: str = "live") -> d
         artifacts["prices.json"] = file_sha(root / "prices.json")
         implementation = Path(__file__).resolve().parents[2]
         protocol = {
-            "schema_version": 1,
+            "schema_version": 2 if profile != LEGACY_PROFILE else 1,
             "product_base": PRODUCT_BASE,
             "implementation_commit": git(implementation, "rev-parse", "HEAD"),
             "implementation_sha256": TraceFixRunner._implementation_sha256(),
             "mode": mode,
-            "limits": LIMITS,
+            "limits": selected["limits"],
             "tasks": tasks,
-            "schedule": schedule(),
+            "schedule": schedule(selected),
             "artifacts": artifacts,
             "arm_c_config": AgentConfig().model_dump(mode="json"),
             "arm_b": "plain tool loop; no reminders, caching, repo map or compression",
             "bootstrap": {"seed": 20261005, "resamples": 10000},
         }
+        if profile != LEGACY_PROFILE:
+            protocol.update(profile=selected, counter_runtime=runtime)
         write_json(root / "protocol.json", protocol)
         write_json(root / "protocol.sha256.json", {"sha256": digest(protocol)})
         return protocol
@@ -321,8 +388,14 @@ def check_protocol(root: Path, *, require_ci: bool = True) -> dict:
     protocol = read_json(root / "protocol.json")
     if digest(protocol) != read_json(root / "protocol.sha256.json")["sha256"]:
         raise ValueError("protocol corrupted")
-    if protocol["limits"] != LIMITS or protocol["schedule"] != schedule():
+    selected = protocol_profile(protocol)
+    if protocol["limits"] != selected["limits"] or protocol["schedule"] != schedule(selected):
         raise ValueError("frozen schedule/limits changed")
+    if selected["name"] != LEGACY_PROFILE:
+        OfficialCounter(protocol["counter_runtime"]).invoke()
+        calibration = read_json(root / "tokenizer-calibration.json")
+        if not calibration["accepted"] or calibration["runtime"] != protocol["counter_runtime"]:
+            raise ValueError("tokenizer calibration identity mismatch")
     implementation = Path(__file__).resolve().parents[2]
     if (
         git(implementation, "rev-parse", "HEAD") != protocol["implementation_commit"]
@@ -369,6 +442,7 @@ class FixtureClient:
 
     def __init__(self, patch: str):
         self.patch, self.calls = patch, 0
+        self.fixture_input_tokens = 100
 
     def completion(self, **kwargs):
         self.calls += 1
@@ -411,7 +485,11 @@ class FixtureClient:
             content = None if tool_call else "Finished"
         return {
             "model": "offline/comparison-fixture",
-            "usage": {"prompt_tokens": 100, "completion_tokens": 10, "total_tokens": 110},
+            "usage": {
+                "prompt_tokens": self.fixture_input_tokens,
+                "completion_tokens": 10,
+                "total_tokens": self.fixture_input_tokens + 10,
+            },
             "choices": [
                 {
                     "message": {
@@ -502,6 +580,7 @@ def execute_trial(root: Path, protocol: dict, row: dict, env_file: Path | None) 
     prompt = Path(spec["prompt_path"]).read_text(encoding="utf-8")
     client = FixtureClient(spec["fixture_patch"]) if protocol["mode"] == "offline" else None
     adapter = None
+    selected = protocol_profile(protocol)
 
     def factory(config):
         nonlocal adapter
@@ -516,13 +595,19 @@ def execute_trial(root: Path, protocol: dict, row: dict, env_file: Path | None) 
                 }
             )
         adapter = ComparisonBudget(
-            config, root=root, trial=row, protocol_sha=digest(protocol), client=client
+            config,
+            root=root,
+            trial=row,
+            protocol_sha=digest(protocol),
+            client=client,
+            profile=selected,
+            counter_runtime=protocol.get("counter_runtime"),
         )
         return adapter
 
     patch = directory / "patch.diff"
     try:
-        config = config_for(spec, prompt, directory / "agent", env_file)
+        config = config_for(spec, prompt, directory / "agent", env_file, selected)
         if row["arm"] == "C":
             if protocol["mode"] == "offline":
                 config = config.model_copy(update={"model_name": "offline/comparison-fixture"})
@@ -554,8 +639,10 @@ def execute_trial(root: Path, protocol: dict, row: dict, env_file: Path | None) 
             llm_config = LLMConfig(
                 model_name=config.model_name,
                 temperature=0.0,
-                max_output_tokens=8000 if row["arm"] == "A" else 2048,
-                timeout_seconds=60,
+                max_output_tokens=8000
+                if row["arm"] == "A"
+                else selected["per_request_output_tokens"],
+                timeout_seconds=selected["limits"]["timeout_seconds"],
                 max_retries=0,
                 extra_kwargs={
                     "api_base": "https://api.deepseek.com",
@@ -653,7 +740,10 @@ def validate_requests(root: Path, protocol: dict) -> list[dict]:
     if not (root / "requests.json").exists():
         return []
     ledger = read_json(root / "requests.json")
-    if ledger["protocol_sha256"] != digest(protocol) or ledger["limit_cny"] != 20.0:
+    if (
+        ledger["protocol_sha256"] != digest(protocol)
+        or ledger["limit_cny"] != protocol_profile(protocol)["limits"]["limit_cny"]
+    ):
         raise ValueError("request ledger identity mismatch")
     for row in ledger["requests"]:
         for suffix, key in (("request", "request_sha256"), ("response", "response_sha256")):
@@ -662,6 +752,15 @@ def validate_requests(root: Path, protocol: dict) -> list[dict]:
                 and file_sha(root / "provider" / f"{row['id']}-{suffix}.json") != row[key]
             ):
                 raise ValueError("provider evidence corrupted")
+        if row["status"] == "completed":
+            response = read_json(root / "provider" / f"{row['id']}-response.json")
+            usage = response["usage"]
+            if (
+                usage != row["usage"]
+                or row["peak_cost_cny"]
+                != (usage["input_tokens"] * 2 + usage["output_tokens"] * 8) / 1_000_000
+            ):
+                raise ValueError("provider usage/cost evidence corrupted")
     return ledger["requests"]
 
 
@@ -671,6 +770,10 @@ def run(root: Path, env_file: Path | None = None, *, max_trials: int = 90) -> li
         requests = validate_requests(root, protocol)
         if any(r["status"] != "completed" for r in requests):
             raise ValueError("unknown request; no automatic replay")
+        if (root / "requests.json").exists() and read_json(root / "requests.json").get(
+            "halt_reason"
+        ):
+            raise ValueError("campaign halted; no automatic replay")
         if protocol["mode"] == "live":
             load_environment_file(env_file)
         results = []
@@ -690,6 +793,10 @@ def run(root: Path, env_file: Path | None = None, *, max_trials: int = 90) -> li
             if len(results) >= max_trials:
                 break
             results.append(execute_trial(root, protocol, row, env_file))
+            if (root / "requests.json").exists() and read_json(root / "requests.json").get(
+                "halt_reason"
+            ):
+                raise ValueError("campaign halted after known counting anomaly")
             print(
                 json.dumps(
                     {
@@ -724,11 +831,13 @@ def report(root: Path) -> dict:
     requests = validate_requests(root, protocol)
     summary = summarize(protocol, trials, requests)
     write_json(root / "summary.json", summary)
+    selected = protocol_profile(protocol)
+    arms = selected["arms"]
     lines = [
-        "# Cold-start three-arm comparison",
+        "# Cold-start comparison",
         "",
         f"Mode: {protocol['mode']}; "
-        f"started {summary['started']}/90, unstarted {summary['unstarted']}.",
+        f"started {summary['started']}/{summary['planned']}, unstarted {summary['unstarted']}.",
         "",
         "| Arm | Success/started | Input | Output | Peak CNY | Seconds |",
         "|---|---:|---:|---:|---:|---:|",
@@ -738,9 +847,9 @@ def report(root: Path) -> dict:
             f"| {arm} | {row['successes']}/{row['started']} | {row['input_tokens']} | "
             f"{row['output_tokens']} | {row['conservative_peak_cny']:.6f} | {row['seconds']:.2f} |"
         )
-    lines += ["", "| Task | A | B | C |", "|---|---:|---:|---:|"]
+    lines += ["", "| Task | " + " | ".join(arms) + " |", "|---|" + "---:|" * len(arms)]
     for row in summary["per_task"]:
-        values = [f"{row[a]['successes']}/{row[a]['started']}" for a in ("A", "B", "C")]
+        values = [f"{row[a]['successes']}/{row[a]['started']}" for a in arms]
         lines.append("| " + " | ".join([row["task_id"], *values]) + " |")
     lines += [
         "",
@@ -770,6 +879,14 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--campaign-dir", type=Path, required=True)
     parser.add_argument("--catalog", type=Path)
     parser.add_argument("--prices", type=Path)
+    parser.add_argument(
+        "--profile",
+        choices=(LEGACY_PROFILE, TOKENIZER_PROFILE, CAPABILITY_PROFILE),
+        default=LEGACY_PROFILE,
+    )
+    parser.add_argument("--tokenizer", type=Path)
+    parser.add_argument("--counter-runtime", type=Path)
+    parser.add_argument("--previous-campaign", type=Path)
     parser.add_argument("--mode", choices=("live", "offline"), default="live")
     parser.add_argument("--env-file", type=Path)
     parser.add_argument("--max-trials", type=int, default=90)
@@ -778,7 +895,20 @@ def main(argv: list[str] | None = None) -> int:
     if args.action == "prepare":
         if args.catalog is None or args.prices is None:
             parser.error("prepare requires --catalog and --prices")
-        prepare(args.catalog, root, args.prices, mode=args.mode)
+        options = {"mode": args.mode}
+        if (
+            args.profile != LEGACY_PROFILE
+            or args.tokenizer
+            or args.counter_runtime
+            or args.previous_campaign
+        ):
+            options.update(
+                profile=args.profile,
+                tokenizer=args.tokenizer,
+                counter_runtime=args.counter_runtime,
+                previous_campaign=args.previous_campaign,
+            )
+        prepare(args.catalog, root, args.prices, **options)
     elif args.action == "run":
         run(root, args.env_file, max_trials=args.max_trials)
     else:
