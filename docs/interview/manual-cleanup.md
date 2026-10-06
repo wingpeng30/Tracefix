@@ -1,6 +1,6 @@
 # 需手动复核的 TraceFix 清理项
 
-共 2291 项。以下是建议精简的旧生成目录，但自动校验未通过。
+共 2287 项。以下是建议精简的旧生成目录，但自动校验未通过。
 这不是无条件删除授权清单。
 
 权限项未强改 ACL，未能读全的内容不保证已经归档。手动删除前确认没有独有代码或面试材料。
@@ -1984,12 +1984,8 @@ C 必须保留的目录编号：`002、004、008、012、013、016`。
 | `D:\Tracefix\runs\next48-temp-preflight-20260925` | 未测 | candidate changed while archiving |
 | `D:\Tracefix\runs\no-effect-recovery-paid-development-20260926-v1` | 0.805 | artifact changed after prepare |
 | `D:\Tracefix\runs\p1-revalidation-20260917` | 1.927 | artifact changed after prepare |
-| `D:\Tracefix\runs\p2-agent-simulation-20260918` | 未测 | reparse ancestor: D:\Tracefix\runs\p2-agent-simulation-20260918；只能移除此链接自身，不要删除链接目标 |
-| `D:\Tracefix\runs\p2-agent-simulation-final-20260918` | 未测 | reparse ancestor: D:\Tracefix\runs\p2-agent-simulation-final-20260918；只能移除此链接自身，不要删除链接目标 |
-| `D:\Tracefix\runs\p2-agent-simulation-final2-20260918` | 未测 | reparse ancestor: D:\Tracefix\runs\p2-agent-simulation-final2-20260918；只能移除此链接自身，不要删除链接目标 |
 | `D:\Tracefix\runs\p2-agent-simulation-final3-20260918` | 3.820 | artifact changed after prepare |
 | `D:\Tracefix\runs\p2-agent-simulation-final5-20260920` | 3.820 | artifact changed after prepare |
-| `D:\Tracefix\runs\p2-agent-simulation-v2-20260918` | 未测 | reparse ancestor: D:\Tracefix\runs\p2-agent-simulation-v2-20260918；只能移除此链接自身，不要删除链接目标 |
 | `D:\Tracefix\runs\p2-clean-sources-20260918` | 0.593 | artifact changed after prepare |
 | `D:\Tracefix\runs\p2-diagnostic-verification-20260921` | 未测 | candidate changed while archiving |
 | `D:\Tracefix\runs\p2-evidence-20260918` | 未测 | candidate changed while archiving |
