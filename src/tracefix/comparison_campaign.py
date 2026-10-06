@@ -617,17 +617,24 @@ def execute_trial(root: Path, protocol: dict, row: dict, env_file: Path | None) 
 
         @staticmethod
         def _collect_diff(workspace, protected_dirs=None):
+            nonlocal patch_seconds
             from tracefix.comparison_holdout import product_diff
 
-            return product_diff(workspace, protected_dirs or set())
+            mark = time.monotonic()
+            try:
+                return product_diff(workspace, protected_dirs or set())
+            finally:
+                patch_seconds += time.monotonic() - mark
 
     def collect(workspace):
         nonlocal patch_seconds
         mark = time.monotonic()
         try:
-            return (EvaluationRunner if holdout else TraceFixRunner)._collect_diff(
-                workspace, protected_dirs
-            )
+            if holdout:
+                from tracefix.comparison_holdout import product_diff
+
+                return product_diff(workspace, protected_dirs)
+            return TraceFixRunner._collect_diff(workspace, protected_dirs)
         finally:
             patch_seconds += time.monotonic() - mark
 

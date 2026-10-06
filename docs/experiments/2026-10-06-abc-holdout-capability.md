@@ -56,3 +56,16 @@ Ruff、compileall、Diff、editable/wheel及现有Linux Docker/MCP门槛，绑�
 
 公开题的模型训练污染无法由项目留出状态排除。置信区间跨零时只报告观察，
 不宣称证明架构提升，也不将工程验收等同于真实模型修复能力。
+
+## 候选计时修正与污染路径重放
+
+候选4dcc609的三个Linux CI门槛通过；Windows门槛仍在运行。发现C最终补丁收集
+阶段耗时未单独累计，已修正并通过17项定向测试（104.39秒）。其主墙钟不受影响。
+此前该候选180次离线演练和本地完整工程检查主动中止，证据保留，不计为完成；
+修正后的精确提交必须重新跑完整验收。
+
+已知十题资格复验全部通过：七个真实源码任务在runs/abc-development-qualification-20261006，
+三个公开任务在runs/abc-development-public-qualification-4dcc609。Click B005及Sphinx B017/B020
+旧工作区用临时Git索引重放，排除测试和构建临时目录后分别只保留原产品路径；
+原补丁SHA256保持不变，不重新评分。诊断证据在tmp/abc-pollution-replay-20261006。
+本轮供应商模型调用仍为零。

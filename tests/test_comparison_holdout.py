@@ -196,6 +196,7 @@ def test_holdout_real_agent_trial_timings_and_patch(tmp_path, arm):
     assert campaign.protocol_profile is original
     assert result["passed"] and result["agent_status"] == "completed"
     assert result["timings"]["preparation_seconds"] > 0
+    assert result["timings"]["patch_seconds"] > 0
     assert result["timings"]["delivery_seconds"] > result["timings"]["verification_seconds"]
 
 
