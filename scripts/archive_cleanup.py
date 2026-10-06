@@ -452,6 +452,33 @@ def free_space():
     return {drive: shutil.disk_usage(drive + ":\\").free for drive in ("C", "D", "E")}
 
 
+def archive_catalog():
+    entries = []
+    for path in sorted(ARCHIVE.rglob("*")):
+        if path.is_file() and path.suffix in {".zip", ".bundle"}:
+            manifest_path = path.with_suffix(".manifest.json")
+            manifest = read(manifest_path) if manifest_path.exists() else {}
+            hashed = sha(path)
+            if manifest and hashed != manifest["zip_sha256"]:
+                raise ValueError(f"catalog archive mismatch: {path}")
+            entries.append(
+                {
+                    "path": str(path),
+                    "bytes": path.stat().st_size,
+                    "sha256": hashed,
+                    "source_root": manifest.get("source_root"),
+                    "manifest": str(manifest_path) if manifest else None,
+                    "coverage": manifest.get("coverage", "Git code snapshot/history"),
+                }
+            )
+    write(ARCHIVE / "archive-catalog.json", entries)
+    sums = "".join(
+        f"{row['sha256']}  {Path(row['path']).relative_to(ARCHIVE)}\n" for row in entries
+    )
+    (ARCHIVE / "SHA256SUMS.txt").write_text(sums, encoding="utf-8")
+    return {"archives": len(entries), "bytes": sum(row["bytes"] for row in entries)}
+
+
 def prepare():
     no_link_ancestors(ARCHIVE)
     ARCHIVE.mkdir(parents=True, exist_ok=True)
@@ -763,6 +790,8 @@ def purge(remote_commit):
         "skipped": plan["skipped"] + [r for r in results if r["status"] == "skipped"],
         "scope": "Only explicit TraceFix artifact roots; shared Docker/WSL/Codex parents untouched",
     }
+    write(ARCHIVE / "final-report.json", report)
+    report["archive_catalog"] = archive_catalog()
     write(ARCHIVE / "final-report.json", report)
     print(json.dumps(report, ensure_ascii=False), flush=True)
 

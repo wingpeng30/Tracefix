@@ -34,8 +34,9 @@
 
 ```powershell
 .\.venv\Scripts\tracefix-reproduce.exe --scenario pagination --skills-enabled --output runs/interview-demo-new
-.\.venv\Scripts\tracefix.exe report --run runs/interview-demo-new --output runs/interview-demo-new/report.html
 ```
+
+入口会直接生成 `runs/interview-demo-new/report.html`，无需再运行报告命令。
 
 该入口禁止供应商构造和请求，费用不是实际模型费用。准备面试不必现场调用付费模型。
 也可演示 `regression-feedback` 场景，展示首次修改引入回归、反馈后修正和独立验证。
