@@ -786,11 +786,21 @@ def execute_trial(root: Path, protocol: dict, row: dict, env_file: Path | None) 
             timings={
                 "preparation_seconds": preparation_seconds,
                 "agent_seconds": record["seconds"] - preparation_seconds,
+                "delivery_seconds": (
+                    max(0.0, time.time() - record["prepared_at_unix_seconds"])
+                    if "prepared_at_unix_seconds" in record
+                    else record["seconds"] - preparation_seconds
+                ),
                 "patch_seconds": patch_seconds,
                 "tools_seconds": c_tools_seconds + (adapter.tools_seconds if adapter else 0),
                 "counter_seconds": adapter.counter_seconds if adapter else 0,
             },
         )
+        record["active_time_overrun_seconds"] = max(
+            0.0, record["timings"]["agent_seconds"] - selected["limits"]["active_seconds"]
+        )
+        if record["status"] == "completed" and record["active_time_overrun_seconds"] > 0:
+            record.update(status="budget_exhausted", reason="active_execution_limit")
         if (directory / "refusal.json").exists():
             refusal = read_json(directory / "refusal.json")
             record["budget_refusal"] = refusal
@@ -1110,9 +1120,12 @@ def _report_unlocked(root: Path) -> dict:
         "|---|---:|---:|---:|---:|---:|",
     ]
     for arm, row in summary["arms"].items():
+        seconds_cell = f"{row['seconds']:.2f}"
+        if not row.get("time_complete", True):
+            seconds_cell += " (known only; interrupted duration unavailable)"
         lines.append(
             f"| {arm} | {row['successes']}/{row['started']} | {row['input_tokens']} | "
-            f"{row['output_tokens']} | {row['conservative_peak_cny']:.6f} | {row['seconds']:.2f} |"
+            f"{row['output_tokens']} | {row['conservative_peak_cny']:.6f} | {seconds_cell} |"
         )
     lines += ["", "| Task | " + " | ".join(arms) + " |", "|---|" + "---:|" * len(arms)]
     for row in summary["per_task"]:

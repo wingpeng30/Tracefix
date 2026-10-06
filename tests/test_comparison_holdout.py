@@ -150,6 +150,86 @@ def test_first_block_audit_refuses_halted_ledger(tmp_path, monkeypatch):
         campaign.audit_first_block(tmp_path, {}, ["001", "002", "003"])
 
 
+@pytest.mark.parametrize("error", ["transport", "format", "interrupt"])
+def test_unknown_response_records_elapsed_time_without_settlement(tmp_path, monkeypatch, error):
+    import time
+    from types import SimpleNamespace
+
+    from tracefix.exceptions import LLMProviderError, LLMResponseFormatError, LLMTimeoutError
+
+    error_type = {
+        "transport": LLMTimeoutError,
+        "format": LLMResponseFormatError,
+        "interrupt": KeyboardInterrupt,
+    }[error]
+    monkeypatch.setattr(
+        OfficialCounter,
+        "count",
+        lambda *_: InputBound(100, "estimate", "fixture", "identity", "sha"),
+    )
+
+    class Unknown(FixtureClient):
+        exceptions = SimpleNamespace(Timeout=TimeoutError)
+
+        def completion(self, **kwargs):
+            time.sleep(0.03)
+            if error == "format":
+                result = super().completion(**kwargs)
+                result["usage"] = None
+                return result
+            self.calls += 1
+            raise (TimeoutError if error == "transport" else KeyboardInterrupt)(
+                "explicit offline failure"
+            )
+
+    client = Unknown(PATCH)
+    llm = ComparisonBudget(
+        provider_config(),
+        root=tmp_path,
+        trial={"id": "001", "arm": "B"},
+        protocol_sha="fixture",
+        profile=profile_config(HOLDOUT_PROFILE),
+        counter_runtime={"command": []},
+        client=client,
+    )
+    with pytest.raises(error_type):
+        llm.complete(messages())
+    row = read_json(tmp_path / "requests.json")["requests"][0]
+    assert row["status"] == "pending" and "usage" not in row
+    assert row["seconds"] >= 0.02 and row["reserved_peak_cny"] > 0
+    with pytest.raises(LLMProviderError, match="unknown"):
+        llm.complete(messages())
+    assert client.calls == 1
+
+
+def test_unmeasured_interruption_does_not_manufacture_time_advantage():
+    records = [
+        {
+            "id": "001",
+            "status": "unknown_request",
+            "timings": {
+                "preparation_seconds": 2,
+                "delivery_seconds": 3,
+            },
+        },
+        {"id": "002", "status": "started"},
+        {
+            "id": "003",
+            "status": "completed",
+            "passed": True,
+            "timings": {
+                "preparation_seconds": 1,
+                "delivery_seconds": 3,
+            },
+        },
+    ]
+    result = aggregate(records, [])
+    assert result["seconds"] == 6 and result["total_wall_seconds"] == 9
+    assert not result["time_complete"] and result["unmeasured_run_durations"] == 1
+    assert result["seconds_per_success"] is result["total_wall_seconds_per_success"] is None
+    assert result["median_seconds"] is None
+
+
 @pytest.mark.parametrize(
     "failure", ["balance", "reservation_identity", "infrastructure", "unknown"]
 )
@@ -321,6 +401,16 @@ def test_holdout_real_agent_trial_timings_and_patch(tmp_path, arm):
     assert result["timings"]["preparation_seconds"] > 0
     assert result["timings"]["patch_seconds"] > 0
     assert result["timings"]["delivery_seconds"] > result["timings"]["verification_seconds"]
+    root = tmp_path / "campaign"
+    request = read_json(root / "requests.json")["requests"][0]
+    body = read_json(root / "provider" / f"{request['id']}-request.json")
+    assert body["timeout"] == 300 and body["num_retries"] == 0
+    assert body["temperature"] == 0 and not body.get("stream", False)
+    assert body["extra_body"]["thinking"]["type"] == "disabled"
+    assert all(
+        tool["function"]["name"] != "load_skill" and not tool["function"]["name"].startswith("mcp")
+        for tool in body.get("tools", [])
+    )
 
 
 @pytest.mark.parametrize("arm", ["A", "B", "C"])
@@ -355,6 +445,39 @@ def test_final_truncation_keeps_valid_patch_but_is_not_normal_completion(
     assert result["passed"] and result["supplier_finish_reason"] == "length"
     assert result["status"] == "budget_exhausted" and result["agent_status"] == "completed"
     assert not main_success(result)
+
+
+def test_inflight_completion_after_active_limit_is_a_stopped_valid_patch(tmp_path, monkeypatch):
+    import time
+
+    import tracefix.comparison_campaign as campaign
+    from tracefix.comparison_holdout import main_success
+
+    catalog, _ = fixture_catalog(tmp_path)
+    spec = qualify_task(read_json(catalog)[0], tmp_path / "qualification")
+    prompt = tmp_path / "prompt.txt"
+    prompt.write_text("Fix add")
+    spec["prompt_path"] = str(prompt)
+    selected = profile_config(HOLDOUT_PROFILE)
+    selected["limits"]["active_seconds"] = 1
+    selected["input_counter"] = "legacy_utf8_bound"
+    monkeypatch.setattr(campaign, "protocol_profile", lambda *_: selected)
+    original = FixtureClient.completion
+
+    def delayed(self, **kwargs):
+        time.sleep(1.05)
+        return original(self, **kwargs)
+
+    monkeypatch.setattr(FixtureClient, "completion", delayed)
+    result = execute_trial(
+        tmp_path / "campaign",
+        {"mode": "offline", "tasks": {"one": spec}},
+        {"id": "001", "task_id": "one", "arm": "A", "repetition": 1},
+        None,
+    )
+    assert result["passed"] and result["agent_status"] == "completed"
+    assert result["status"] == "budget_exhausted" and result["reason"] == "active_execution_limit"
+    assert result["active_time_overrun_seconds"] > 0 and not main_success(result)
 
 
 def test_summary_counts_stopped_patch_separately_and_bootstraps_tasks():

@@ -393,6 +393,10 @@ class ComparisonBudget(LiteLLMAdapter):
                 {"error": str(exc), "context": exc.context},
             )
             raise
+        finally:
+            if self.profile["name"] == HOLDOUT_PROFILE:
+                row["seconds"] = time.monotonic() - started
+                write_json(self.root / "requests.json", ledger)
         response_file = self.root / "provider" / f"{request_id}-response.json"
         write_json(response_file, response.model_dump(mode="json"))
         usage = response.usage
@@ -422,7 +426,9 @@ class ComparisonBudget(LiteLLMAdapter):
                         ledger["halt_reason"] = "supplier backend identity changed"
                     else:
                         ledger["supplier_system_fingerprint"] = fingerprint
-                    if row["supplier_finish_reason"] not in {"stop", "tool_calls", "length"}:
+                    if not isinstance(row["supplier_finish_reason"], str) or row[
+                        "supplier_finish_reason"
+                    ] not in {"stop", "tool_calls", "length"}:
                         ledger["halt_reason"] = "supplier generation interrupted"
         if count is not None:
             row["official_count_delta"] = count.tokens - usage.input_tokens

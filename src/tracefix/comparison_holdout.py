@@ -102,6 +102,10 @@ def aggregate(records: list[dict], requests: list[dict]) -> dict:
     seconds = sum(
         r.get("timings", {}).get("delivery_seconds", r.get("seconds", 0)) for r in records
     )
+    unmeasured = sum(
+        "delivery_seconds" not in r.get("timings", {}) and "seconds" not in r for r in records
+    )
+    preparation_seconds = sum(r.get("timings", {}).get("preparation_seconds", 0) for r in records)
     failures = Counter()
     for r in records:
         if not main_success(r):
@@ -129,11 +133,17 @@ def aggregate(records: list[dict], requests: list[dict]) -> dict:
         "cost_complete": not unknown,
         "reserved_unknown_cny": sum(r["reserved_peak_cny"] for r in unknown),
         "seconds": seconds,
-        "seconds_per_success": seconds / successes if successes else None,
+        "time_complete": not unmeasured,
+        "unmeasured_run_durations": unmeasured,
+        "total_wall_seconds": seconds + preparation_seconds,
+        "total_wall_seconds_per_success": (
+            (seconds + preparation_seconds) / successes if successes and not unmeasured else None
+        ),
+        "seconds_per_success": seconds / successes if successes and not unmeasured else None,
         "median_seconds": statistics.median(
             [r.get("timings", {}).get("delivery_seconds", r.get("seconds", 0)) for r in records]
         )
-        if records
+        if records and not unmeasured
         else None,
         "stage_seconds": {
             stage: sum(r.get("timings", {}).get(stage, 0) for r in records)
@@ -294,11 +304,17 @@ def holdout_summary(protocol: dict, records: list[dict], requests: list[dict]) -
             {
                 r["supplier_system_fingerprint"]
                 for r in requests
-                if r.get("supplier_system_fingerprint")
+                if isinstance(r.get("supplier_system_fingerprint"), str)
+                and r["supplier_system_fingerprint"]
             }
         ),
         "supplier_finish_reasons": dict(
-            Counter(r.get("supplier_finish_reason", "unavailable") for r in requests)
+            Counter(
+                r["supplier_finish_reason"]
+                if isinstance(r.get("supplier_finish_reason"), str)
+                else "unavailable"
+                for r in requests
+            )
         ),
         "interpretation": (
             "Project holdout; public training contamination unknown; cold start only."
