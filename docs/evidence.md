@@ -1,5 +1,10 @@
 # 当前证据索引
 
+面试用结论入口见 [interview/README.md](interview/README.md)。本次精简归档的精选原始证据
+集中在 `E:\TracefixExperiments\interview-archive-20261006`，来源路径与 ZIP 内路径、哈希及
+实际删除/跳过项以该目录的 manifest 和执行报告为准。旧路径可能已被精简；历史报告和
+评分不改写，不再承诺所有旧实验能够直接原样 resume。
+
 不同证据回答不同问题；安装包版本号不是全部功能的验收身份。
 
 | 能力 | 原始身份及结论 | 范围 |

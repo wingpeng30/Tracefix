@@ -1,0 +1,1946 @@
+{
+  "kind": "offline_project_diagnosis",
+  "verification_status": "ANALYZED",
+  "date": "2026-09-26",
+  "analysis_commit": "5258dc44e324626cc9ab5345d5f7b68cc5d47613",
+  "experiment_commit": "b435368398d641e54613cc91bb701487eeafbddd",
+  "runtime": {
+    "python": "3.12.5",
+    "platform": "Windows-11-10.0.26200-SP0"
+  },
+  "scope": "Read-only analysis of saved development artifacts; no model repair calls, no acceptance reruns; original classifications retained. Prefix-based artifact diagnosis is separate from original scoring.",
+  "input_index": "docs/experiments/v0.8.22-no-effect-recovery-48-results.json",
+  "input_index_sha256": "032a5cb0744cbcbc786463ff1b543748c9dd5987dc41c036f9ce04d199c40be2",
+  "verified_artifact_hashes": 144,
+  "summary": {
+    "categories": {
+      "success": 12,
+      "evidence_issue": 20,
+      "repair_failure": 15,
+      "infrastructure_error": 1
+    },
+    "agent_stops": {
+      "agent_completed": 7,
+      "benchmark_error": 21,
+      "test_limit_exceeded": 3,
+      "agent_error": 1,
+      "p2_trial_budget_exhausted": 16
+    },
+    "artifact_only_sequences": [
+      5,
+      13,
+      14,
+      21,
+      30,
+      45
+    ],
+    "audit_diff_request_sequences": [
+      1,
+      2,
+      3,
+      4,
+      7,
+      12,
+      15,
+      17,
+      18,
+      19,
+      20,
+      23,
+      24,
+      33,
+      34,
+      35,
+      36,
+      37,
+      45
+    ],
+    "bound_stop_sequences": [
+      3,
+      4,
+      11,
+      15,
+      16,
+      19,
+      20,
+      23,
+      24,
+      26,
+      27,
+      28,
+      30,
+      32,
+      35,
+      36,
+      37,
+      39,
+      43,
+      44,
+      48
+    ]
+  },
+  "positions": [
+    {
+      "sequence": 1,
+      "task_id": "psf__requests-1142",
+      "arm": "no_compaction",
+      "raw_category": "success",
+      "evidence_valid": true,
+      "raw_verification_reason": null,
+      "raw_evidence_status": "passed",
+      "raw_agent_stop": "agent_completed",
+      "request_bound_stop": false,
+      "last_successful_request_input_tokens": 25960,
+      "patch_chars_lf": 68566,
+      "non_tracefix_patch_chars_lf": 491,
+      "non_tracefix_diff_headers": [
+        "diff --git a/requests/models.py b/requests/models.py"
+      ],
+      "artifact_only_patch": false,
+      "request_view_contains_audit_diff": true,
+      "verification_stdout_proxy_port9": false,
+      "verification_stdout_permission_error": false,
+      "artifacts": {
+        "run_result": {
+          "path": "agent-runs/20260925T165328Z-e6d0fa7c/result.json",
+          "sha256": "3835d7047f855269b350f6b6373fa6dea1ff1374c4790f0c1bbd440cc157bcd0"
+        },
+        "patch": {
+          "path": "agent-runs/20260925T165328Z-e6d0fa7c/patch.diff",
+          "sha256": "562ab7301d8e10bb35b5d2209ce756541a4c164c76d6aba9225969353ca0c2f2"
+        },
+        "verification": {
+          "path": "verification/001-p2-001-7eae4ca4d1eb4ec484affcada862679b-3e44e92f/result.json",
+          "sha256": "8f3fa40d020b23f5f01f02c4c5c56207004c0afeb2b2f97c4c6f2f5fa7e28541"
+        }
+      },
+      "trajectory_path": "runs/no-effect-recovery-paid-development-20260926-v1/experiment/agent-runs/20260925T165328Z-e6d0fa7c/trajectory.jsonl",
+      "trajectory_sha256": "700327de5cfa0d8d4365f8e795bff3175da48767f2139cb72e1a5e6a3dfc7006",
+      "execution_stdout_path": "D:\\Tracefix\\runs\\no-effect-recovery-paid-development-20260926-v1\\experiment\\verification\\001-p2-001-7eae4ca4d1eb4ec484affcada862679b-3e44e92f\\psf__requests-1142-agent\\.tracefix-validation\\execution.stdout.txt",
+      "execution_stdout_sha256": "2c451fdffc273daa5e8018222c5e379a71ec8ade3f113b33fd8aa095a5ffac5c"
+    },
+    {
+      "sequence": 2,
+      "task_id": "psf__requests-1142",
+      "arm": "no_effect_recovery",
+      "raw_category": "success",
+      "evidence_valid": true,
+      "raw_verification_reason": null,
+      "raw_evidence_status": "passed",
+      "raw_agent_stop": "agent_completed",
+      "request_bound_stop": false,
+      "last_successful_request_input_tokens": 26962,
+      "patch_chars_lf": 67148,
+      "non_tracefix_patch_chars_lf": 491,
+      "non_tracefix_diff_headers": [
+        "diff --git a/requests/models.py b/requests/models.py"
+      ],
+      "artifact_only_patch": false,
+      "request_view_contains_audit_diff": true,
+      "verification_stdout_proxy_port9": false,
+      "verification_stdout_permission_error": false,
+      "artifacts": {
+        "run_result": {
+          "path": "agent-runs/20260925T165406Z-71e8cc0e/result.json",
+          "sha256": "0889507b8ada179bf9f6622de8ac333233209c85e344b543329ec7918057f370"
+        },
+        "patch": {
+          "path": "agent-runs/20260925T165406Z-71e8cc0e/patch.diff",
+          "sha256": "b6b232ceff301490a2b92c81af212bdefe070e9a7cc3cf4a4bfcf7cfaf862e80"
+        },
+        "verification": {
+          "path": "verification/002-p2-002-7d0280f56ad74c0a95c51c840bb395fc-40355583/result.json",
+          "sha256": "2c0ececae3090c6bf11db39ebd1db832606f57e20389c2ba08e4d22d0a9ffb61"
+        }
+      },
+      "trajectory_path": "runs/no-effect-recovery-paid-development-20260926-v1/experiment/agent-runs/20260925T165406Z-71e8cc0e/trajectory.jsonl",
+      "trajectory_sha256": "ea0ed25810bfec896f03cf760c7d22da37e8be3b0269ecc5ef609d5f5b24ebdc",
+      "execution_stdout_path": "D:\\Tracefix\\runs\\no-effect-recovery-paid-development-20260926-v1\\experiment\\verification\\002-p2-002-7d0280f56ad74c0a95c51c840bb395fc-40355583\\psf__requests-1142-agent\\.tracefix-validation\\execution.stdout.txt",
+      "execution_stdout_sha256": "e57d134682c6a935232cf41451c3fb60b6902d763c40afa1f87412bfb1d60996"
+    },
+    {
+      "sequence": 3,
+      "task_id": "psf__requests-1766",
+      "arm": "no_compaction",
+      "raw_category": "evidence_issue",
+      "evidence_valid": false,
+      "raw_verification_reason": "pytest execution failed",
+      "raw_evidence_status": "network_error",
+      "raw_agent_stop": "benchmark_error",
+      "request_bound_stop": true,
+      "last_successful_request_input_tokens": 30350,
+      "patch_chars_lf": 579490,
+      "non_tracefix_patch_chars_lf": 453,
+      "non_tracefix_diff_headers": [
+        "diff --git a/requests/auth.py b/requests/auth.py"
+      ],
+      "artifact_only_patch": false,
+      "request_view_contains_audit_diff": true,
+      "verification_stdout_proxy_port9": true,
+      "verification_stdout_permission_error": false,
+      "artifacts": {
+        "run_result": {
+          "path": "agent-runs/20260925T165443Z-d0626e6b/result.json",
+          "sha256": "ab3efc9feb523910a20f95a61d8de8cce2d54bac25caf275a989bf6b46a730a8"
+        },
+        "patch": {
+          "path": "agent-runs/20260925T165443Z-d0626e6b/patch.diff",
+          "sha256": "6e23c36be98b70d888008cefdf4148b6b317afa6ef060844fd0f9be7f7cd4a89"
+        },
+        "verification": {
+          "path": "verification/003-p2-003-118ef41768094536b9b09bd28516bfcd-d465cf4d/result.json",
+          "sha256": "eeff2364dcf52c4bf615ac9468b3b676f34429a9528cac339e6dd74fd14a108d"
+        }
+      },
+      "trajectory_path": "runs/no-effect-recovery-paid-development-20260926-v1/experiment/agent-runs/20260925T165443Z-d0626e6b/trajectory.jsonl",
+      "trajectory_sha256": "e7678d7c967514b0c4113d695f6ff52d0a8a3a40096b34b9e8177ab01bc388c8",
+      "execution_stdout_path": "D:\\Tracefix\\runs\\no-effect-recovery-paid-development-20260926-v1\\experiment\\verification\\003-p2-003-118ef41768094536b9b09bd28516bfcd-d465cf4d\\psf__requests-1766-agent\\.tracefix-validation\\execution.stdout.txt",
+      "execution_stdout_sha256": "bec83463bb203469bb875992fd50ac6cc1130f7b00d3150e73e092347b780928"
+    },
+    {
+      "sequence": 4,
+      "task_id": "psf__requests-1766",
+      "arm": "no_effect_recovery",
+      "raw_category": "evidence_issue",
+      "evidence_valid": false,
+      "raw_verification_reason": "pytest execution failed",
+      "raw_evidence_status": "network_error",
+      "raw_agent_stop": "benchmark_error",
+      "request_bound_stop": true,
+      "last_successful_request_input_tokens": 20587,
+      "patch_chars_lf": 579490,
+      "non_tracefix_patch_chars_lf": 453,
+      "non_tracefix_diff_headers": [
+        "diff --git a/requests/auth.py b/requests/auth.py"
+      ],
+      "artifact_only_patch": false,
+      "request_view_contains_audit_diff": true,
+      "verification_stdout_proxy_port9": true,
+      "verification_stdout_permission_error": false,
+      "artifacts": {
+        "run_result": {
+          "path": "agent-runs/20260925T165609Z-b35a478a/result.json",
+          "sha256": "fef37eeb67999810794b9533df2e340da9bac5f617bc39f4b5cb89ad4bdf6606"
+        },
+        "patch": {
+          "path": "agent-runs/20260925T165609Z-b35a478a/patch.diff",
+          "sha256": "85c47bbcf134575132e891786e3ff2ee79858f4f17ce07acf9d51e37196b3310"
+        },
+        "verification": {
+          "path": "verification/004-p2-004-2b31e731d3f349a78476db99db5e2a9b-4c570c31/result.json",
+          "sha256": "92b959f8b834ef9038f7493f7faad09015e86be83b0248d8866de12fc4e4b5d7"
+        }
+      },
+      "trajectory_path": "runs/no-effect-recovery-paid-development-20260926-v1/experiment/agent-runs/20260925T165609Z-b35a478a/trajectory.jsonl",
+      "trajectory_sha256": "9e91502dcb1581bafc7eaa866b03e3c1f57fe174ce9ce0a836eba53a1d67b81f",
+      "execution_stdout_path": "D:\\Tracefix\\runs\\no-effect-recovery-paid-development-20260926-v1\\experiment\\verification\\004-p2-004-2b31e731d3f349a78476db99db5e2a9b-4c570c31\\psf__requests-1766-agent\\.tracefix-validation\\execution.stdout.txt",
+      "execution_stdout_sha256": "1cb8ca1b2ae2b04aca7710f7908d40775425529d4b6e78f35e2fd5f818068269"
+    },
+    {
+      "sequence": 5,
+      "task_id": "pylint-dev__pylint-4661",
+      "arm": "no_compaction",
+      "raw_category": "repair_failure",
+      "evidence_valid": true,
+      "raw_verification_reason": "pytest execution failed",
+      "raw_evidence_status": "assertion_failed",
+      "raw_agent_stop": "test_limit_exceeded",
+      "request_bound_stop": false,
+      "last_successful_request_input_tokens": 19739,
+      "patch_chars_lf": 13700,
+      "non_tracefix_patch_chars_lf": 0,
+      "non_tracefix_diff_headers": [],
+      "artifact_only_patch": true,
+      "request_view_contains_audit_diff": false,
+      "verification_stdout_proxy_port9": false,
+      "verification_stdout_permission_error": false,
+      "artifacts": {
+        "run_result": {
+          "path": "agent-runs/20260925T165735Z-061a7205/result.json",
+          "sha256": "7757e00403783c52ab14007dd09eb5c58c79ef36985258100e98639dbd5798e2"
+        },
+        "patch": {
+          "path": "agent-runs/20260925T165735Z-061a7205/patch.diff",
+          "sha256": "4c6aa4af36e427c1e2f60364175b2a348084457ad444061d6ffbd414cf311237"
+        },
+        "verification": {
+          "path": "verification/005-p2-005-dd34c803d843405c8125becab6153c8c-3fb411c5/result.json",
+          "sha256": "20d96624bcb549ced041be1281b3625579882c0e1ec6883b123e5cefa95c983c"
+        }
+      },
+      "trajectory_path": "runs/no-effect-recovery-paid-development-20260926-v1/experiment/agent-runs/20260925T165735Z-061a7205/trajectory.jsonl",
+      "trajectory_sha256": "2225508422ba29fc1e14b4ff5df90f2e4de6af0726ac48f84e9959608a597a40",
+      "execution_stdout_path": "D:\\Tracefix\\runs\\no-effect-recovery-paid-development-20260926-v1\\experiment\\verification\\005-p2-005-dd34c803d843405c8125becab6153c8c-3fb411c5\\pylint-dev__pylint-4661-agent\\.tracefix-validation\\execution.stdout.txt",
+      "execution_stdout_sha256": "bb226c76b5197f687195d0baeeb18ad38cedbc4ae0e2939e63f0547cd9bbbfd1"
+    },
+    {
+      "sequence": 6,
+      "task_id": "pylint-dev__pylint-4661",
+      "arm": "no_effect_recovery",
+      "raw_category": "repair_failure",
+      "evidence_valid": true,
+      "raw_verification_reason": "agent_modified_test_or_pytest_configuration",
+      "raw_evidence_status": null,
+      "raw_agent_stop": "test_limit_exceeded",
+      "request_bound_stop": false,
+      "last_successful_request_input_tokens": 20605,
+      "patch_chars_lf": 16293,
+      "non_tracefix_patch_chars_lf": 2593,
+      "non_tracefix_diff_headers": [
+        "diff --git a/doc/faq.rst b/doc/faq.rst",
+        "diff --git a/pylint/config/__init__.py b/pylint/config/__init__.py",
+        "diff --git a/setup.cfg b/setup.cfg"
+      ],
+      "artifact_only_patch": false,
+      "request_view_contains_audit_diff": false,
+      "verification_stdout_proxy_port9": false,
+      "verification_stdout_permission_error": false,
+      "artifacts": {
+        "run_result": {
+          "path": "agent-runs/20260925T165842Z-eed61dd8/result.json",
+          "sha256": "2e6f4e29ee0d66c707be328c60386d48d3895cf4a3e7f8ad93a998bb19877e06"
+        },
+        "patch": {
+          "path": "agent-runs/20260925T165842Z-eed61dd8/patch.diff",
+          "sha256": "5feed2b3151bd4913ab70b1c6f740dd266b3d59daa8b3eb5c31fe6bcdc90b37e"
+        },
+        "verification": {
+          "path": "verification/006-p2-006-586e1328dc214c9d8f68e3c2ce01a6de-da8ebbef/result.json",
+          "sha256": "701d7c47c8f2e9f0348bf9da82a492cd316e9127415bf1f45a431a3f68eaafe6"
+        }
+      },
+      "trajectory_path": "runs/no-effect-recovery-paid-development-20260926-v1/experiment/agent-runs/20260925T165842Z-eed61dd8/trajectory.jsonl",
+      "trajectory_sha256": "9475e6715da86bb51afc75f61b1d889d450aab5fdf1adf0b691a5544c8dfccfd",
+      "execution_stdout_path": null,
+      "execution_stdout_sha256": null
+    },
+    {
+      "sequence": 7,
+      "task_id": "pytest-dev__pytest-10051",
+      "arm": "no_compaction",
+      "raw_category": "success",
+      "evidence_valid": true,
+      "raw_verification_reason": null,
+      "raw_evidence_status": "passed",
+      "raw_agent_stop": "agent_completed",
+      "request_bound_stop": false,
+      "last_successful_request_input_tokens": 30067,
+      "patch_chars_lf": 61057,
+      "non_tracefix_patch_chars_lf": 916,
+      "non_tracefix_diff_headers": [
+        "diff --git a/src/_pytest/logging.py b/src/_pytest/logging.py"
+      ],
+      "artifact_only_patch": false,
+      "request_view_contains_audit_diff": true,
+      "verification_stdout_proxy_port9": false,
+      "verification_stdout_permission_error": false,
+      "artifacts": {
+        "run_result": {
+          "path": "agent-runs/20260925T165948Z-f44011d8/result.json",
+          "sha256": "30029f97ca2259b6298953110fc9b7077c99e78a4dccc019b41b503fa01de9e8"
+        },
+        "patch": {
+          "path": "agent-runs/20260925T165948Z-f44011d8/patch.diff",
+          "sha256": "717268967485ef83ff6c3aad22357e1fa689da026523309f76286dc6a3306d75"
+        },
+        "verification": {
+          "path": "verification/007-p2-007-574e786a07b24fc29f1a33b01b727498-adc28016/result.json",
+          "sha256": "2a71a5751bdc3eb835627a3602791e576051cd679784bb687d1dfc125edef7fb"
+        }
+      },
+      "trajectory_path": "runs/no-effect-recovery-paid-development-20260926-v1/experiment/agent-runs/20260925T165948Z-f44011d8/trajectory.jsonl",
+      "trajectory_sha256": "8e1859729cbff74eac7122182ba0d0684ac4fdaf2f2853a6940b59f0611deee8",
+      "execution_stdout_path": "D:\\Tracefix\\runs\\no-effect-recovery-paid-development-20260926-v1\\experiment\\verification\\007-p2-007-574e786a07b24fc29f1a33b01b727498-adc28016\\pytest-dev__pytest-10051-agent\\.tracefix-validation\\execution.stdout.txt",
+      "execution_stdout_sha256": "23a5cfcae7845224889da8f894d6beb3f77a251bf9b128bca7f571f8ee7814ed"
+    },
+    {
+      "sequence": 8,
+      "task_id": "pytest-dev__pytest-10051",
+      "arm": "no_effect_recovery",
+      "raw_category": "infrastructure_error",
+      "evidence_valid": true,
+      "raw_verification_reason": "pytest execution failed",
+      "raw_evidence_status": "assertion_failed",
+      "raw_agent_stop": "agent_error",
+      "request_bound_stop": false,
+      "last_successful_request_input_tokens": 6064,
+      "patch_chars_lf": 439,
+      "non_tracefix_patch_chars_lf": 439,
+      "non_tracefix_diff_headers": [
+        "diff --git a/src/_pytest/logging.py b/src/_pytest/logging.py"
+      ],
+      "artifact_only_patch": false,
+      "request_view_contains_audit_diff": false,
+      "verification_stdout_proxy_port9": false,
+      "verification_stdout_permission_error": false,
+      "artifacts": {
+        "run_result": {
+          "path": "agent-runs/20260925T170037Z-b2090809/result.partial.json",
+          "sha256": "d07f24eb9113bfe7adebe0996b1dc836bda7fb58af7c83191b5ebbd7ce8259f1"
+        },
+        "patch": {
+          "path": "agent-runs/20260925T170037Z-b2090809/patch.partial.diff",
+          "sha256": "0c7f24edf5b900db6c9393d46bb30e43eade23ed18bd8465c006650e170377e0"
+        },
+        "verification": {
+          "path": "verification/008-p2-008-668705eefefd409296b3ec5bfa7afab3-e5e825a6/result.json",
+          "sha256": "b772c0db448ec90c149626214b48a30cb93220dea33d1663098f04db06adc73a"
+        }
+      },
+      "trajectory_path": "runs/no-effect-recovery-paid-development-20260926-v1/experiment/agent-runs/20260925T170037Z-b2090809/trajectory.jsonl",
+      "trajectory_sha256": "36d5e7a189beb5264a886cabcd81a21d1282c1cd14e616c0a0bb6e39034f617d",
+      "execution_stdout_path": "D:\\Tracefix\\runs\\no-effect-recovery-paid-development-20260926-v1\\experiment\\verification\\008-p2-008-668705eefefd409296b3ec5bfa7afab3-e5e825a6\\pytest-dev__pytest-10051-agent\\.tracefix-validation\\execution.stdout.txt",
+      "execution_stdout_sha256": "559da425868f2d904ba7bc9b3ee2e3f5849be516e7c73c5a6bdc1263ff111481",
+      "category_source": "V0.8.22 report: operator interruption at position 8; raw termination field is agent_error"
+    },
+    {
+      "sequence": 9,
+      "task_id": "pytest-dev__pytest-10081",
+      "arm": "no_compaction",
+      "raw_category": "repair_failure",
+      "evidence_valid": true,
+      "raw_verification_reason": "empty_agent_patch",
+      "raw_evidence_status": null,
+      "raw_agent_stop": "p2_trial_budget_exhausted",
+      "request_bound_stop": false,
+      "last_successful_request_input_tokens": 18700,
+      "patch_chars_lf": 0,
+      "non_tracefix_patch_chars_lf": 0,
+      "non_tracefix_diff_headers": [],
+      "artifact_only_patch": false,
+      "request_view_contains_audit_diff": false,
+      "verification_stdout_proxy_port9": false,
+      "verification_stdout_permission_error": false,
+      "artifacts": {
+        "run_result": {
+          "path": "agent-runs/20260925T172233Z-78f8bf68/result.json",
+          "sha256": "74b25ccc340dbc34ca3b9dcbfdcfbabd13bb62828ec31cfe8ce13d145bda8b11"
+        },
+        "patch": {
+          "path": "agent-runs/20260925T172233Z-78f8bf68/patch.diff",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "verification": {
+          "path": "verification/009-p2-009-fe77ebffe72c4dcab799b150640e3279-67b2a9c4/result.json",
+          "sha256": "2469c204552d924d93c14c899655ac106f21617b85332db9820d490152c7ee0f"
+        }
+      },
+      "trajectory_path": "runs/no-effect-recovery-paid-development-20260926-v1/experiment/agent-runs/20260925T172233Z-78f8bf68/trajectory.jsonl",
+      "trajectory_sha256": "0e67eeac58aa9b3d680c2ef7e572e7491cac096049c99537b36c80c6985164b0",
+      "execution_stdout_path": null,
+      "execution_stdout_sha256": null
+    },
+    {
+      "sequence": 10,
+      "task_id": "pytest-dev__pytest-10081",
+      "arm": "no_effect_recovery",
+      "raw_category": "repair_failure",
+      "evidence_valid": true,
+      "raw_verification_reason": "empty_agent_patch",
+      "raw_evidence_status": null,
+      "raw_agent_stop": "p2_trial_budget_exhausted",
+      "request_bound_stop": false,
+      "last_successful_request_input_tokens": 19811,
+      "patch_chars_lf": 0,
+      "non_tracefix_patch_chars_lf": 0,
+      "non_tracefix_diff_headers": [],
+      "artifact_only_patch": false,
+      "request_view_contains_audit_diff": false,
+      "verification_stdout_proxy_port9": false,
+      "verification_stdout_permission_error": false,
+      "artifacts": {
+        "run_result": {
+          "path": "agent-runs/20260925T172327Z-05136375/result.json",
+          "sha256": "3010610ad34188b8eba30cde3c8570fb82c6b7aeab473f4e1367820c02f4e11d"
+        },
+        "patch": {
+          "path": "agent-runs/20260925T172327Z-05136375/patch.diff",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "verification": {
+          "path": "verification/010-p2-010-d7f7abb53ed645908db6c8dccc302012-348274d7/result.json",
+          "sha256": "2469c204552d924d93c14c899655ac106f21617b85332db9820d490152c7ee0f"
+        }
+      },
+      "trajectory_path": "runs/no-effect-recovery-paid-development-20260926-v1/experiment/agent-runs/20260925T172327Z-05136375/trajectory.jsonl",
+      "trajectory_sha256": "c8735a8a4f1b4429d458d1ee34da4c606aa06f5097786c15e5049455492cfe69",
+      "execution_stdout_path": null,
+      "execution_stdout_sha256": null
+    },
+    {
+      "sequence": 11,
+      "task_id": "pytest-dev__pytest-10356",
+      "arm": "no_compaction",
+      "raw_category": "repair_failure",
+      "evidence_valid": true,
+      "raw_verification_reason": "pytest execution failed",
+      "raw_evidence_status": "assertion_failed",
+      "raw_agent_stop": "benchmark_error",
+      "request_bound_stop": true,
+      "last_successful_request_input_tokens": 33799,
+      "patch_chars_lf": 271704,
+      "non_tracefix_patch_chars_lf": 1905,
+      "non_tracefix_diff_headers": [
+        "diff --git a/src/_pytest/mark/structures.py b/src/_pytest/mark/structures.py"
+      ],
+      "artifact_only_patch": false,
+      "request_view_contains_audit_diff": false,
+      "verification_stdout_proxy_port9": false,
+      "verification_stdout_permission_error": false,
+      "artifacts": {
+        "run_result": {
+          "path": "agent-runs/20260925T172413Z-84fdce28/result.json",
+          "sha256": "a3d72266f7af307b51026682d25d21b231d594a3cf47b5c7a2c173d1bf0f1491"
+        },
+        "patch": {
+          "path": "agent-runs/20260925T172413Z-84fdce28/patch.diff",
+          "sha256": "d928b00b11cfc7e9aab82c2e50b0abfe8ad9275675d305e103b9f13f053ec8a6"
+        },
+        "verification": {
+          "path": "verification/011-p2-011-113b8aa3267647b5a90a2bc874ccbfff-a94c892f/result.json",
+          "sha256": "b9cd7a411b6dafe16b6c038edeeaea8959fe97947ca1185358c03332e92285b4"
+        }
+      },
+      "trajectory_path": "runs/no-effect-recovery-paid-development-20260926-v1/experiment/agent-runs/20260925T172413Z-84fdce28/trajectory.jsonl",
+      "trajectory_sha256": "cf2376f75d3a81b87401b61a7643ba508d61f4274f7897c34bc92270c2cf1ebc",
+      "execution_stdout_path": "D:\\Tracefix\\runs\\no-effect-recovery-paid-development-20260926-v1\\experiment\\verification\\011-p2-011-113b8aa3267647b5a90a2bc874ccbfff-a94c892f\\pytest-dev__pytest-10356-agent\\.tracefix-validation\\execution.stdout.txt",
+      "execution_stdout_sha256": "ea91b1ad573ee51579e58743c847e12f6730408bc5bbf4694d4c25bf7e7520bf"
+    },
+    {
+      "sequence": 12,
+      "task_id": "pytest-dev__pytest-10356",
+      "arm": "no_effect_recovery",
+      "raw_category": "success",
+      "evidence_valid": true,
+      "raw_verification_reason": null,
+      "raw_evidence_status": "passed",
+      "raw_agent_stop": "p2_trial_budget_exhausted",
+      "request_bound_stop": false,
+      "last_successful_request_input_tokens": 22947,
+      "patch_chars_lf": 20879,
+      "non_tracefix_patch_chars_lf": 1811,
+      "non_tracefix_diff_headers": [
+        "diff --git a/src/_pytest/mark/structures.py b/src/_pytest/mark/structures.py"
+      ],
+      "artifact_only_patch": false,
+      "request_view_contains_audit_diff": true,
+      "verification_stdout_proxy_port9": false,
+      "verification_stdout_permission_error": false,
+      "artifacts": {
+        "run_result": {
+          "path": "agent-runs/20260925T172500Z-3946f2a2/result.json",
+          "sha256": "a0e676b4187835b1f657025c94fee1c5ce7d0991824cbbec3f13854c76a7868c"
+        },
+        "patch": {
+          "path": "agent-runs/20260925T172500Z-3946f2a2/patch.diff",
+          "sha256": "cbe0f0d45b72f2fdfae577c6ddb5dc8773dca6ba35d0c67894959f84f929f5a5"
+        },
+        "verification": {
+          "path": "verification/012-p2-012-4b5681b1bc17450f83e992b563137b9b-f22d5d02/result.json",
+          "sha256": "111ff044c36771130f6ed9cfa575ea32132a3dfdff3a9761379db301739f4545"
+        }
+      },
+      "trajectory_path": "runs/no-effect-recovery-paid-development-20260926-v1/experiment/agent-runs/20260925T172500Z-3946f2a2/trajectory.jsonl",
+      "trajectory_sha256": "4add5032e18ddb02772367b4f1975df596c15ca25035fe5176ffc5097fe1c473",
+      "execution_stdout_path": "D:\\Tracefix\\runs\\no-effect-recovery-paid-development-20260926-v1\\experiment\\verification\\012-p2-012-4b5681b1bc17450f83e992b563137b9b-f22d5d02\\pytest-dev__pytest-10356-agent\\.tracefix-validation\\execution.stdout.txt",
+      "execution_stdout_sha256": "d2260537cd943adac43e362690ae3d836962dd1f2c470a682db2cd57797b9833"
+    },
+    {
+      "sequence": 13,
+      "task_id": "sphinx-doc__sphinx-10435",
+      "arm": "no_compaction",
+      "raw_category": "evidence_issue",
+      "evidence_valid": false,
+      "raw_verification_reason": "executed_node_ids_differ_from_frozen_p1_set",
+      "raw_evidence_status": "report_missing",
+      "raw_agent_stop": "p2_trial_budget_exhausted",
+      "request_bound_stop": false,
+      "last_successful_request_input_tokens": 26179,
+      "patch_chars_lf": 18516,
+      "non_tracefix_patch_chars_lf": 0,
+      "non_tracefix_diff_headers": [],
+      "artifact_only_patch": true,
+      "request_view_contains_audit_diff": false,
+      "verification_stdout_proxy_port9": false,
+      "verification_stdout_permission_error": true,
+      "artifacts": {
+        "run_result": {
+          "path": "agent-runs/20260925T172555Z-e50e1f5e/result.json",
+          "sha256": "39795b81c44a1b7a88b7c8008ad0707567fc077727ae9b2a49f5e501e7a85154"
+        },
+        "patch": {
+          "path": "agent-runs/20260925T172555Z-e50e1f5e/patch.diff",
+          "sha256": "ec11ba93005d27a0cd5fb405a93ca296a953257155bc8daedc889c0ef8eb3302"
+        },
+        "verification": {
+          "path": "verification/013-p2-013-06031cc89ad740f6a237f9b3a938582f-cf2b7c27/result.json",
+          "sha256": "5fbec4b1c7132f971990ee49bbf3b92a819128dd93170d840d9413da507052c6"
+        }
+      },
+      "trajectory_path": "runs/no-effect-recovery-paid-development-20260926-v1/experiment/agent-runs/20260925T172555Z-e50e1f5e/trajectory.jsonl",
+      "trajectory_sha256": "afa9f42e8e4b00cbb3a12f6384f8acad045004e8fdf5de5de54c84cb2a33290f",
+      "execution_stdout_path": "D:\\Tracefix\\runs\\no-effect-recovery-paid-development-20260926-v1\\experiment\\verification\\013-p2-013-06031cc89ad740f6a237f9b3a938582f-cf2b7c27\\sphinx-doc__sphinx-10435-agent\\.tracefix-validation\\execution.stdout.txt",
+      "execution_stdout_sha256": "889a0b509d6ee4e1d569af02bfef7ea708cef9a23d32a1174bb2250ed89e14a1"
+    },
+    {
+      "sequence": 14,
+      "task_id": "sphinx-doc__sphinx-10435",
+      "arm": "no_effect_recovery",
+      "raw_category": "evidence_issue",
+      "evidence_valid": false,
+      "raw_verification_reason": "executed_node_ids_differ_from_frozen_p1_set",
+      "raw_evidence_status": "report_missing",
+      "raw_agent_stop": "p2_trial_budget_exhausted",
+      "request_bound_stop": false,
+      "last_successful_request_input_tokens": 30653,
+      "patch_chars_lf": 23981,
+      "non_tracefix_patch_chars_lf": 0,
+      "non_tracefix_diff_headers": [],
+      "artifact_only_patch": true,
+      "request_view_contains_audit_diff": false,
+      "verification_stdout_proxy_port9": false,
+      "verification_stdout_permission_error": true,
+      "artifacts": {
+        "run_result": {
+          "path": "agent-runs/20260925T172721Z-71867f88/result.json",
+          "sha256": "81b7449ece1b1b8c59b6b7d291ef05f88c94554e9b3ff0e8df7ed4056728898b"
+        },
+        "patch": {
+          "path": "agent-runs/20260925T172721Z-71867f88/patch.diff",
+          "sha256": "fcf9f6b0a635da60701d52c85f302ab513b92942e4e8cc61e45ad519c1357193"
+        },
+        "verification": {
+          "path": "verification/014-p2-014-6171ed9006574dc99fd43f68d7af4d8e-cd3e7e28/result.json",
+          "sha256": "f76403371a26a10e056e627c1c165f6b448d4c02a2319abcf05bc7fec145afbc"
+        }
+      },
+      "trajectory_path": "runs/no-effect-recovery-paid-development-20260926-v1/experiment/agent-runs/20260925T172721Z-71867f88/trajectory.jsonl",
+      "trajectory_sha256": "de9b7ee41a81af7af5057b672e69a8f1ad3b44189d9ec08e52d1f13cd8153975",
+      "execution_stdout_path": "D:\\Tracefix\\runs\\no-effect-recovery-paid-development-20260926-v1\\experiment\\verification\\014-p2-014-6171ed9006574dc99fd43f68d7af4d8e-cd3e7e28\\sphinx-doc__sphinx-10435-agent\\.tracefix-validation\\execution.stdout.txt",
+      "execution_stdout_sha256": "c2f78d2c022dae0f7967418d3ec1d0d880e348287c94552538be22d3bf4e0902"
+    },
+    {
+      "sequence": 15,
+      "task_id": "sphinx-doc__sphinx-10449",
+      "arm": "no_compaction",
+      "raw_category": "evidence_issue",
+      "evidence_valid": false,
+      "raw_verification_reason": "executed_node_ids_differ_from_frozen_p1_set",
+      "raw_evidence_status": "report_missing",
+      "raw_agent_stop": "benchmark_error",
+      "request_bound_stop": true,
+      "last_successful_request_input_tokens": 35370,
+      "patch_chars_lf": 36889,
+      "non_tracefix_patch_chars_lf": 743,
+      "non_tracefix_diff_headers": [
+        "diff --git a/sphinx/ext/autodoc/typehints.py b/sphinx/ext/autodoc/typehints.py"
+      ],
+      "artifact_only_patch": false,
+      "request_view_contains_audit_diff": true,
+      "verification_stdout_proxy_port9": false,
+      "verification_stdout_permission_error": true,
+      "artifacts": {
+        "run_result": {
+          "path": "agent-runs/20260925T172904Z-5c6d52b2/result.json",
+          "sha256": "9c96d4f24159edf7c783c3048d55e261cb4039a0f45bb37056825c305bd8776f"
+        },
+        "patch": {
+          "path": "agent-runs/20260925T172904Z-5c6d52b2/patch.diff",
+          "sha256": "df768896baeed956b1634636914c34a65d449f2e685825032fae7de597a3a4cb"
+        },
+        "verification": {
+          "path": "verification/015-p2-015-6a8856e8890447afbaf4f0c33b6626ec-79bddbe3/result.json",
+          "sha256": "461d40952c2a3b9ba484d148b5c9619e77c5de543d968f1892442b9d310b748b"
+        }
+      },
+      "trajectory_path": "runs/no-effect-recovery-paid-development-20260926-v1/experiment/agent-runs/20260925T172904Z-5c6d52b2/trajectory.jsonl",
+      "trajectory_sha256": "7f8c451fa039e94549fae397126dba896f513a1e287d4ec77a81ba740afdb685",
+      "execution_stdout_path": "D:\\Tracefix\\runs\\no-effect-recovery-paid-development-20260926-v1\\experiment\\verification\\015-p2-015-6a8856e8890447afbaf4f0c33b6626ec-79bddbe3\\sphinx-doc__sphinx-10449-agent\\.tracefix-validation\\execution.stdout.txt",
+      "execution_stdout_sha256": "531fa202b18f948a68e56466a6dd5a437241b4cc0b4640f521a36a551650a7de"
+    },
+    {
+      "sequence": 16,
+      "task_id": "sphinx-doc__sphinx-10449",
+      "arm": "no_effect_recovery",
+      "raw_category": "evidence_issue",
+      "evidence_valid": false,
+      "raw_verification_reason": "executed_node_ids_differ_from_frozen_p1_set",
+      "raw_evidence_status": "report_missing",
+      "raw_agent_stop": "benchmark_error",
+      "request_bound_stop": true,
+      "last_successful_request_input_tokens": 26633,
+      "patch_chars_lf": 66898,
+      "non_tracefix_patch_chars_lf": 749,
+      "non_tracefix_diff_headers": [
+        "diff --git a/sphinx/ext/autodoc/typehints.py b/sphinx/ext/autodoc/typehints.py"
+      ],
+      "artifact_only_patch": false,
+      "request_view_contains_audit_diff": false,
+      "verification_stdout_proxy_port9": false,
+      "verification_stdout_permission_error": true,
+      "artifacts": {
+        "run_result": {
+          "path": "agent-runs/20260925T173011Z-1ee30e0e/result.json",
+          "sha256": "9fdfb5e8166c50e2035c80caee7eb6f174e922575ab26860f21b922fdbe2ada1"
+        },
+        "patch": {
+          "path": "agent-runs/20260925T173011Z-1ee30e0e/patch.diff",
+          "sha256": "461931bec0f1180e7f4bb009491c9a68789ca67ea3dc147b7034f486e34c8c60"
+        },
+        "verification": {
+          "path": "verification/016-p2-016-39daa2dd2424436e8207a27f80bfdeca-620ba3b7/result.json",
+          "sha256": "e79a3ba9028ba61057fb41d977b3a6f8166805ffe5a95546ab6ea3839aa9ab77"
+        }
+      },
+      "trajectory_path": "runs/no-effect-recovery-paid-development-20260926-v1/experiment/agent-runs/20260925T173011Z-1ee30e0e/trajectory.jsonl",
+      "trajectory_sha256": "31078131d650082fdd335b48a056c1e65ff3686b3fa06c09dc45357d7b9bafa5",
+      "execution_stdout_path": "D:\\Tracefix\\runs\\no-effect-recovery-paid-development-20260926-v1\\experiment\\verification\\016-p2-016-39daa2dd2424436e8207a27f80bfdeca-620ba3b7\\sphinx-doc__sphinx-10449-agent\\.tracefix-validation\\execution.stdout.txt",
+      "execution_stdout_sha256": "e3687a8b1c997522f93fa04c208627e50731bdc3f573d6c552e3aafe55e5379e"
+    },
+    {
+      "sequence": 17,
+      "task_id": "psf__requests-1142",
+      "arm": "no_effect_recovery",
+      "raw_category": "success",
+      "evidence_valid": true,
+      "raw_verification_reason": null,
+      "raw_evidence_status": "passed",
+      "raw_agent_stop": "agent_completed",
+      "request_bound_stop": false,
+      "last_successful_request_input_tokens": 26380,
+      "patch_chars_lf": 68566,
+      "non_tracefix_patch_chars_lf": 491,
+      "non_tracefix_diff_headers": [
+        "diff --git a/requests/models.py b/requests/models.py"
+      ],
+      "artifact_only_patch": false,
+      "request_view_contains_audit_diff": true,
+      "verification_stdout_proxy_port9": false,
+      "verification_stdout_permission_error": false,
+      "artifacts": {
+        "run_result": {
+          "path": "agent-runs/20260925T173116Z-4158101c/result.json",
+          "sha256": "a150f0ce87cf813c5c610e18193954de04cf934f667ec5191b1aec215448d5e8"
+        },
+        "patch": {
+          "path": "agent-runs/20260925T173116Z-4158101c/patch.diff",
+          "sha256": "8a3db4c171401dd5137b8b49a6c7ffc6c82bc98037d9ccdc4694323e8cd8f3bf"
+        },
+        "verification": {
+          "path": "verification/017-p2-017-f4f6e4bf2e324d80949a764867d41d45-d24adf3e/result.json",
+          "sha256": "6d25deb103cba86aef0b040a382ab681e5be1ce25a260cca53b1c495d533997b"
+        }
+      },
+      "trajectory_path": "runs/no-effect-recovery-paid-development-20260926-v1/experiment/agent-runs/20260925T173116Z-4158101c/trajectory.jsonl",
+      "trajectory_sha256": "43e1fcf3747dc833f5dacc9148431a69485a93041ce04df3696824cb1cc296ec",
+      "execution_stdout_path": "D:\\Tracefix\\runs\\no-effect-recovery-paid-development-20260926-v1\\experiment\\verification\\017-p2-017-f4f6e4bf2e324d80949a764867d41d45-d24adf3e\\psf__requests-1142-agent\\.tracefix-validation\\execution.stdout.txt",
+      "execution_stdout_sha256": "7b9cee700d88c2509632f195920afff578991e1496ccc061451ba06d1e49c89e"
+    },
+    {
+      "sequence": 18,
+      "task_id": "psf__requests-1142",
+      "arm": "no_compaction",
+      "raw_category": "success",
+      "evidence_valid": true,
+      "raw_verification_reason": null,
+      "raw_evidence_status": "passed",
+      "raw_agent_stop": "agent_completed",
+      "request_bound_stop": false,
+      "last_successful_request_input_tokens": 28563,
+      "patch_chars_lf": 67148,
+      "non_tracefix_patch_chars_lf": 491,
+      "non_tracefix_diff_headers": [
+        "diff --git a/requests/models.py b/requests/models.py"
+      ],
+      "artifact_only_patch": false,
+      "request_view_contains_audit_diff": true,
+      "verification_stdout_proxy_port9": false,
+      "verification_stdout_permission_error": false,
+      "artifacts": {
+        "run_result": {
+          "path": "agent-runs/20260925T173145Z-7d3bc6cc/result.json",
+          "sha256": "563093dad1b401cb3a925487b047457e16fd8cae1c1e33f912bdb24a78e777b5"
+        },
+        "patch": {
+          "path": "agent-runs/20260925T173145Z-7d3bc6cc/patch.diff",
+          "sha256": "54704b6cfc4cac5ef09354072a25e72d0a63a9ab016477cc762ed83e9d7f652a"
+        },
+        "verification": {
+          "path": "verification/018-p2-018-f4f59803b14d4311acbc29bf331a9b0c-8cec565b/result.json",
+          "sha256": "de4c16d8194de138efc406f527d13fff61615e797269fd13a6bdb8b5b46db578"
+        }
+      },
+      "trajectory_path": "runs/no-effect-recovery-paid-development-20260926-v1/experiment/agent-runs/20260925T173145Z-7d3bc6cc/trajectory.jsonl",
+      "trajectory_sha256": "00b63add488ac43184ef42277bafcd9f8479bcaf9600d9ea85720e1363690109",
+      "execution_stdout_path": "D:\\Tracefix\\runs\\no-effect-recovery-paid-development-20260926-v1\\experiment\\verification\\018-p2-018-f4f59803b14d4311acbc29bf331a9b0c-8cec565b\\psf__requests-1142-agent\\.tracefix-validation\\execution.stdout.txt",
+      "execution_stdout_sha256": "394e8b12a735a67b89ed2e7b250aa285319cb30301b659938d428db43f6fc39d"
+    },
+    {
+      "sequence": 19,
+      "task_id": "psf__requests-1766",
+      "arm": "no_effect_recovery",
+      "raw_category": "evidence_issue",
+      "evidence_valid": false,
+      "raw_verification_reason": "pytest execution failed",
+      "raw_evidence_status": "network_error",
+      "raw_agent_stop": "benchmark_error",
+      "request_bound_stop": true,
+      "last_successful_request_input_tokens": 20510,
+      "patch_chars_lf": 578898,
+      "non_tracefix_patch_chars_lf": 453,
+      "non_tracefix_diff_headers": [
+        "diff --git a/requests/auth.py b/requests/auth.py"
+      ],
+      "artifact_only_patch": false,
+      "request_view_contains_audit_diff": true,
+      "verification_stdout_proxy_port9": true,
+      "verification_stdout_permission_error": false,
+      "artifacts": {
+        "run_result": {
+          "path": "agent-runs/20260925T173224Z-e56c0f02/result.json",
+          "sha256": "c7ca4a93856374ace5eaa87748103275af4a090cd46756bbb57ab8c044a72dff"
+        },
+        "patch": {
+          "path": "agent-runs/20260925T173224Z-e56c0f02/patch.diff",
+          "sha256": "a0ff2f58ef29c7cb56b179459c23ea31d61c41d2c8955b3f340c00ecbd300fee"
+        },
+        "verification": {
+          "path": "verification/019-p2-019-c7824814c32a401b9a074eb4f78cc006-a4309e92/result.json",
+          "sha256": "d5daf1aa8fa53ee516b2fbdbaee6b112237f7b2f08fa435e66e954fab445318e"
+        }
+      },
+      "trajectory_path": "runs/no-effect-recovery-paid-development-20260926-v1/experiment/agent-runs/20260925T173224Z-e56c0f02/trajectory.jsonl",
+      "trajectory_sha256": "b9a1283a0d2dfd129b36c4b2d1f158f94296552c929865ef14059f788572accb",
+      "execution_stdout_path": "D:\\Tracefix\\runs\\no-effect-recovery-paid-development-20260926-v1\\experiment\\verification\\019-p2-019-c7824814c32a401b9a074eb4f78cc006-a4309e92\\psf__requests-1766-agent\\.tracefix-validation\\execution.stdout.txt",
+      "execution_stdout_sha256": "74fbfdd8ba4c9eb008a26a43bb076bfbd185677a816a3eeb868a4595db0566c8"
+    },
+    {
+      "sequence": 20,
+      "task_id": "psf__requests-1766",
+      "arm": "no_compaction",
+      "raw_category": "evidence_issue",
+      "evidence_valid": false,
+      "raw_verification_reason": "pytest execution failed",
+      "raw_evidence_status": "network_error",
+      "raw_agent_stop": "benchmark_error",
+      "request_bound_stop": true,
+      "last_successful_request_input_tokens": 20441,
+      "patch_chars_lf": 579490,
+      "non_tracefix_patch_chars_lf": 453,
+      "non_tracefix_diff_headers": [
+        "diff --git a/requests/auth.py b/requests/auth.py"
+      ],
+      "artifact_only_patch": false,
+      "request_view_contains_audit_diff": true,
+      "verification_stdout_proxy_port9": true,
+      "verification_stdout_permission_error": false,
+      "artifacts": {
+        "run_result": {
+          "path": "agent-runs/20260925T173347Z-9da35826/result.json",
+          "sha256": "4394958e25369cb989b37b40a57eb5350f45734ae4720bef56bee195b5cb314b"
+        },
+        "patch": {
+          "path": "agent-runs/20260925T173347Z-9da35826/patch.diff",
+          "sha256": "35f072fccfbeefe5944df34a1785e21b903614cd1de8a0165e6da0b5810dc232"
+        },
+        "verification": {
+          "path": "verification/020-p2-020-d43a74aa7c8142e688a70d4204b655bb-c810830b/result.json",
+          "sha256": "18c623e7d5402670b8dd9c3aab66142854fa387b2eea310e23814e6e2d374d3a"
+        }
+      },
+      "trajectory_path": "runs/no-effect-recovery-paid-development-20260926-v1/experiment/agent-runs/20260925T173347Z-9da35826/trajectory.jsonl",
+      "trajectory_sha256": "e0dba178861307dcfa71aef1a4af050a118707e65c1fcc9f5254a0298d3032e9",
+      "execution_stdout_path": "D:\\Tracefix\\runs\\no-effect-recovery-paid-development-20260926-v1\\experiment\\verification\\020-p2-020-d43a74aa7c8142e688a70d4204b655bb-c810830b\\psf__requests-1766-agent\\.tracefix-validation\\execution.stdout.txt",
+      "execution_stdout_sha256": "c277bfb1841c79f0a85393d3599f812a70a28ca27e2736e75a223ab819184257"
+    },
+    {
+      "sequence": 21,
+      "task_id": "pylint-dev__pylint-4661",
+      "arm": "no_effect_recovery",
+      "raw_category": "repair_failure",
+      "evidence_valid": true,
+      "raw_verification_reason": "pytest execution failed",
+      "raw_evidence_status": "assertion_failed",
+      "raw_agent_stop": "test_limit_exceeded",
+      "request_bound_stop": false,
+      "last_successful_request_input_tokens": 20880,
+      "patch_chars_lf": 4123,
+      "non_tracefix_patch_chars_lf": 0,
+      "non_tracefix_diff_headers": [],
+      "artifact_only_patch": true,
+      "request_view_contains_audit_diff": false,
+      "verification_stdout_proxy_port9": false,
+      "verification_stdout_permission_error": false,
+      "artifacts": {
+        "run_result": {
+          "path": "agent-runs/20260925T173515Z-36a02c2e/result.json",
+          "sha256": "12f6b5e3845df8e67c9809a1ea5b9e9f679e6e6a058eef59d737f7c63164a148"
+        },
+        "patch": {
+          "path": "agent-runs/20260925T173515Z-36a02c2e/patch.diff",
+          "sha256": "6c066096766b927935dff1dea32878ede376c6f36f72ca653cedd2d3483cd974"
+        },
+        "verification": {
+          "path": "verification/021-p2-021-8091def9ab894e688fe54aecb95e8ac6-83c486cd/result.json",
+          "sha256": "21e26adc6bb7aee06ad4d2b8a2f322a1f2b0f2e25529aa2605029ff1ba21b61b"
+        }
+      },
+      "trajectory_path": "runs/no-effect-recovery-paid-development-20260926-v1/experiment/agent-runs/20260925T173515Z-36a02c2e/trajectory.jsonl",
+      "trajectory_sha256": "a96129695b4fc6b0d435f8658e84f5a978c803c3f5f727446259ff11dea047f7",
+      "execution_stdout_path": "D:\\Tracefix\\runs\\no-effect-recovery-paid-development-20260926-v1\\experiment\\verification\\021-p2-021-8091def9ab894e688fe54aecb95e8ac6-83c486cd\\pylint-dev__pylint-4661-agent\\.tracefix-validation\\execution.stdout.txt",
+      "execution_stdout_sha256": "b1e3b8db05fe4596893dc78e358ad605a3b33d5e289cf53fe28dad383a82d987"
+    },
+    {
+      "sequence": 22,
+      "task_id": "pylint-dev__pylint-4661",
+      "arm": "no_compaction",
+      "raw_category": "repair_failure",
+      "evidence_valid": true,
+      "raw_verification_reason": "pytest execution failed",
+      "raw_evidence_status": "assertion_failed",
+      "raw_agent_stop": "p2_trial_budget_exhausted",
+      "request_bound_stop": false,
+      "last_successful_request_input_tokens": 21789,
+      "patch_chars_lf": 13036,
+      "non_tracefix_patch_chars_lf": 1776,
+      "non_tracefix_diff_headers": [
+        "diff --git a/doc/faq.rst b/doc/faq.rst",
+        "diff --git a/pylint/config/__init__.py b/pylint/config/__init__.py"
+      ],
+      "artifact_only_patch": false,
+      "request_view_contains_audit_diff": false,
+      "verification_stdout_proxy_port9": false,
+      "verification_stdout_permission_error": false,
+      "artifacts": {
+        "run_result": {
+          "path": "agent-runs/20260925T173640Z-a11134d2/result.json",
+          "sha256": "7e6599d840687bedb95989a1a197cf1c0d15b5531ea1a77b70822c8b5f6503a0"
+        },
+        "patch": {
+          "path": "agent-runs/20260925T173640Z-a11134d2/patch.diff",
+          "sha256": "85f7105c9de4cb38631f9745075ed6e891b0b312ffd890819a156c429c37069a"
+        },
+        "verification": {
+          "path": "verification/022-p2-022-40a45ded80aa4e81926a4a3304b3b6b6-533e4a69/result.json",
+          "sha256": "92741fa8f772a4d12e049474c1875bcc6f4a32268a0c6529db2cb0aae0244b80"
+        }
+      },
+      "trajectory_path": "runs/no-effect-recovery-paid-development-20260926-v1/experiment/agent-runs/20260925T173640Z-a11134d2/trajectory.jsonl",
+      "trajectory_sha256": "acf0165954ae5042828f6da04974eb35bd6628999e762f2a1168a2c5f32f8b23",
+      "execution_stdout_path": "D:\\Tracefix\\runs\\no-effect-recovery-paid-development-20260926-v1\\experiment\\verification\\022-p2-022-40a45ded80aa4e81926a4a3304b3b6b6-533e4a69\\pylint-dev__pylint-4661-agent\\.tracefix-validation\\execution.stdout.txt",
+      "execution_stdout_sha256": "50a53e0e83080aa9ba0fffc963df053cc31ebfc6bb8bd8d70fc4ca31b570ad74"
+    },
+    {
+      "sequence": 23,
+      "task_id": "pytest-dev__pytest-10051",
+      "arm": "no_effect_recovery",
+      "raw_category": "success",
+      "evidence_valid": true,
+      "raw_verification_reason": null,
+      "raw_evidence_status": "passed",
+      "raw_agent_stop": "benchmark_error",
+      "request_bound_stop": true,
+      "last_successful_request_input_tokens": 32034,
+      "patch_chars_lf": 183132,
+      "non_tracefix_patch_chars_lf": 1018,
+      "non_tracefix_diff_headers": [
+        "diff --git a/src/_pytest/logging.py b/src/_pytest/logging.py"
+      ],
+      "artifact_only_patch": false,
+      "request_view_contains_audit_diff": true,
+      "verification_stdout_proxy_port9": false,
+      "verification_stdout_permission_error": false,
+      "artifacts": {
+        "run_result": {
+          "path": "agent-runs/20260925T173757Z-8f360f83/result.json",
+          "sha256": "ee9f64ff39eb4112a4e22beda4dd993376638047823ce5d395f65a47e0f845db"
+        },
+        "patch": {
+          "path": "agent-runs/20260925T173757Z-8f360f83/patch.diff",
+          "sha256": "c2b4038ee10321292c176e14df299a98e77dc385fddc1f1c4dffd5bd7f223c1a"
+        },
+        "verification": {
+          "path": "verification/023-p2-023-df3843d14d8c45da93d314437dcab129-e054d833/result.json",
+          "sha256": "1763cc6f86fe8e27cce0011032338b841e3228faeebb5a17c0ace15a8f34565a"
+        }
+      },
+      "trajectory_path": "runs/no-effect-recovery-paid-development-20260926-v1/experiment/agent-runs/20260925T173757Z-8f360f83/trajectory.jsonl",
+      "trajectory_sha256": "5af2af9691b04a2f63a18a620764fd45f1d08926aeaf8ea6dd4476bbfe1c8229",
+      "execution_stdout_path": "D:\\Tracefix\\runs\\no-effect-recovery-paid-development-20260926-v1\\experiment\\verification\\023-p2-023-df3843d14d8c45da93d314437dcab129-e054d833\\pytest-dev__pytest-10051-agent\\.tracefix-validation\\execution.stdout.txt",
+      "execution_stdout_sha256": "b42a79763bfe10512364f2aec33e2147a7dbe8bba7ab76dde76d24f84346fef2"
+    },
+    {
+      "sequence": 24,
+      "task_id": "pytest-dev__pytest-10051",
+      "arm": "no_compaction",
+      "raw_category": "success",
+      "evidence_valid": true,
+      "raw_verification_reason": null,
+      "raw_evidence_status": "passed",
+      "raw_agent_stop": "benchmark_error",
+      "request_bound_stop": true,
+      "last_successful_request_input_tokens": 33528,
+      "patch_chars_lf": 203866,
+      "non_tracefix_patch_chars_lf": 991,
+      "non_tracefix_diff_headers": [
+        "diff --git a/src/_pytest/logging.py b/src/_pytest/logging.py"
+      ],
+      "artifact_only_patch": false,
+      "request_view_contains_audit_diff": true,
+      "verification_stdout_proxy_port9": false,
+      "verification_stdout_permission_error": false,
+      "artifacts": {
+        "run_result": {
+          "path": "agent-runs/20260925T173841Z-716a9dc6/result.json",
+          "sha256": "c19db6398c3db3c016338980e38ab00a140782f6bee41a4607518e401ec32e90"
+        },
+        "patch": {
+          "path": "agent-runs/20260925T173841Z-716a9dc6/patch.diff",
+          "sha256": "e79c283f82022421ec949ec1f70ecf429d3c5b8f8ad8687e7240b606c2d7edff"
+        },
+        "verification": {
+          "path": "verification/024-p2-024-e3202f316287497592721ac21d4d92e7-8beec625/result.json",
+          "sha256": "48ecb4fe89a405272e97016e4c452cd02239c781fe612006f8fbbeba9c0f52b3"
+        }
+      },
+      "trajectory_path": "runs/no-effect-recovery-paid-development-20260926-v1/experiment/agent-runs/20260925T173841Z-716a9dc6/trajectory.jsonl",
+      "trajectory_sha256": "21174ac57301a9f05431c95f8f80c981d39e65624b9568261eadc764da0e2705",
+      "execution_stdout_path": "D:\\Tracefix\\runs\\no-effect-recovery-paid-development-20260926-v1\\experiment\\verification\\024-p2-024-e3202f316287497592721ac21d4d92e7-8beec625\\pytest-dev__pytest-10051-agent\\.tracefix-validation\\execution.stdout.txt",
+      "execution_stdout_sha256": "d96cd6fc4ca5a3fdd72b846b4343e2797667fd7ac10477617a5ee9f3edb8e163"
+    },
+    {
+      "sequence": 25,
+      "task_id": "pytest-dev__pytest-10081",
+      "arm": "no_effect_recovery",
+      "raw_category": "repair_failure",
+      "evidence_valid": true,
+      "raw_verification_reason": "empty_agent_patch",
+      "raw_evidence_status": null,
+      "raw_agent_stop": "p2_trial_budget_exhausted",
+      "request_bound_stop": false,
+      "last_successful_request_input_tokens": 18649,
+      "patch_chars_lf": 0,
+      "non_tracefix_patch_chars_lf": 0,
+      "non_tracefix_diff_headers": [],
+      "artifact_only_patch": false,
+      "request_view_contains_audit_diff": false,
+      "verification_stdout_proxy_port9": false,
+      "verification_stdout_permission_error": false,
+      "artifacts": {
+        "run_result": {
+          "path": "agent-runs/20260925T173919Z-cd9ffdfa/result.json",
+          "sha256": "a27399e8eafcac539e90211a6627ac55d081329daa8724b52c00fe807de7f439"
+        },
+        "patch": {
+          "path": "agent-runs/20260925T173919Z-cd9ffdfa/patch.diff",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "verification": {
+          "path": "verification/025-p2-025-0ca1a142570d4dd69e89a89e023806db-bde1d402/result.json",
+          "sha256": "2469c204552d924d93c14c899655ac106f21617b85332db9820d490152c7ee0f"
+        }
+      },
+      "trajectory_path": "runs/no-effect-recovery-paid-development-20260926-v1/experiment/agent-runs/20260925T173919Z-cd9ffdfa/trajectory.jsonl",
+      "trajectory_sha256": "f226c6fe7efb646843e29edbb718e3ecf67a9ff9a4efbc8c500a42b59c00cd1d",
+      "execution_stdout_path": null,
+      "execution_stdout_sha256": null
+    },
+    {
+      "sequence": 26,
+      "task_id": "pytest-dev__pytest-10081",
+      "arm": "no_compaction",
+      "raw_category": "evidence_issue",
+      "evidence_valid": false,
+      "raw_verification_reason": "executed_node_ids_differ_from_frozen_p1_set",
+      "raw_evidence_status": "permission_error",
+      "raw_agent_stop": "benchmark_error",
+      "request_bound_stop": true,
+      "last_successful_request_input_tokens": 30797,
+      "patch_chars_lf": 212263,
+      "non_tracefix_patch_chars_lf": 810,
+      "non_tracefix_diff_headers": [
+        "diff --git a/src/_pytest/unittest.py b/src/_pytest/unittest.py"
+      ],
+      "artifact_only_patch": false,
+      "request_view_contains_audit_diff": false,
+      "verification_stdout_proxy_port9": false,
+      "verification_stdout_permission_error": true,
+      "artifacts": {
+        "run_result": {
+          "path": "agent-runs/20260925T173958Z-5fc084d2/result.json",
+          "sha256": "4e1bc546e51cf822a7fa60f868f2bc2c7fb48cba26f3ee4637b3b3c8981f06e1"
+        },
+        "patch": {
+          "path": "agent-runs/20260925T173958Z-5fc084d2/patch.diff",
+          "sha256": "5dfe45ba99efce0b209368eba83b20b2d3ef3f4cab15dabe35f811febe1bc08a"
+        },
+        "verification": {
+          "path": "verification/026-p2-026-6377121cc71a46a1a9325fb66564b0ba-bf5b7ee0/result.json",
+          "sha256": "af5d160deb7f5744030da088529d1ca3acc8ca6936addeae5b67fd02215fe7fe"
+        }
+      },
+      "trajectory_path": "runs/no-effect-recovery-paid-development-20260926-v1/experiment/agent-runs/20260925T173958Z-5fc084d2/trajectory.jsonl",
+      "trajectory_sha256": "70a0a742ec924b72afc231a5e97bbd794d955fe3c14c63bb13466c13af20bc2e",
+      "execution_stdout_path": "D:\\Tracefix\\runs\\no-effect-recovery-paid-development-20260926-v1\\experiment\\verification\\026-p2-026-6377121cc71a46a1a9325fb66564b0ba-bf5b7ee0\\pytest-dev__pytest-10081-agent\\.tracefix-validation\\execution.stdout.txt",
+      "execution_stdout_sha256": "5555cad7719ac0a0af812576cee174f8d48421549fe9edd93ed19bd26fd5d38f"
+    },
+    {
+      "sequence": 27,
+      "task_id": "pytest-dev__pytest-10356",
+      "arm": "no_effect_recovery",
+      "raw_category": "repair_failure",
+      "evidence_valid": true,
+      "raw_verification_reason": "pytest execution failed",
+      "raw_evidence_status": "assertion_failed",
+      "raw_agent_stop": "benchmark_error",
+      "request_bound_stop": true,
+      "last_successful_request_input_tokens": 15846,
+      "patch_chars_lf": 271622,
+      "non_tracefix_patch_chars_lf": 1823,
+      "non_tracefix_diff_headers": [
+        "diff --git a/src/_pytest/mark/structures.py b/src/_pytest/mark/structures.py"
+      ],
+      "artifact_only_patch": false,
+      "request_view_contains_audit_diff": false,
+      "verification_stdout_proxy_port9": false,
+      "verification_stdout_permission_error": false,
+      "artifacts": {
+        "run_result": {
+          "path": "agent-runs/20260925T174048Z-9e3b68f4/result.json",
+          "sha256": "8c5748b356c72ca98917190bbd048b48fb22c15e33db519047bbc24fe4487a22"
+        },
+        "patch": {
+          "path": "agent-runs/20260925T174048Z-9e3b68f4/patch.diff",
+          "sha256": "f3fa333c2b938806b51be5fb5c54f45a50566be12b4e0608082ffadc2e567feb"
+        },
+        "verification": {
+          "path": "verification/027-p2-027-77f241cb164c419ebc727e0da7251e64-833c94c0/result.json",
+          "sha256": "a65bf1cbbfc555674e9a290659cff90ec9b44f0aa08cba5ca96586cc90b1840a"
+        }
+      },
+      "trajectory_path": "runs/no-effect-recovery-paid-development-20260926-v1/experiment/agent-runs/20260925T174048Z-9e3b68f4/trajectory.jsonl",
+      "trajectory_sha256": "588d238acb6cf7e50eb7a3af340faf4b026d8bc81618ec71f5ec45fef2495c80",
+      "execution_stdout_path": "D:\\Tracefix\\runs\\no-effect-recovery-paid-development-20260926-v1\\experiment\\verification\\027-p2-027-77f241cb164c419ebc727e0da7251e64-833c94c0\\pytest-dev__pytest-10356-agent\\.tracefix-validation\\execution.stdout.txt",
+      "execution_stdout_sha256": "5786bcb7c402977865e2202c4f0672088084fd626ce8eb1ba16b40c032e46282"
+    },
+    {
+      "sequence": 28,
+      "task_id": "pytest-dev__pytest-10356",
+      "arm": "no_compaction",
+      "raw_category": "repair_failure",
+      "evidence_valid": true,
+      "raw_verification_reason": "pytest execution failed",
+      "raw_evidence_status": "assertion_failed",
+      "raw_agent_stop": "benchmark_error",
+      "request_bound_stop": true,
+      "last_successful_request_input_tokens": 24732,
+      "patch_chars_lf": 307837,
+      "non_tracefix_patch_chars_lf": 1740,
+      "non_tracefix_diff_headers": [
+        "diff --git a/src/_pytest/mark/structures.py b/src/_pytest/mark/structures.py"
+      ],
+      "artifact_only_patch": false,
+      "request_view_contains_audit_diff": false,
+      "verification_stdout_proxy_port9": false,
+      "verification_stdout_permission_error": false,
+      "artifacts": {
+        "run_result": {
+          "path": "agent-runs/20260925T174132Z-c0935836/result.json",
+          "sha256": "d5896190f7375653663bb48464b750cd044b09c02947a45ba0d68577958b6a03"
+        },
+        "patch": {
+          "path": "agent-runs/20260925T174132Z-c0935836/patch.diff",
+          "sha256": "a057e44d8bfa5a5245eda5514a630dbc6185a15917275997c69ca3fabfded029"
+        },
+        "verification": {
+          "path": "verification/028-p2-028-8b3c0736e8ad4790b995f76805842c72-65663c7b/result.json",
+          "sha256": "8d66f08bc6d348160030427a56ad6ffd90ab0821131afdf368a7cee5cc4325ef"
+        }
+      },
+      "trajectory_path": "runs/no-effect-recovery-paid-development-20260926-v1/experiment/agent-runs/20260925T174132Z-c0935836/trajectory.jsonl",
+      "trajectory_sha256": "7e6087a6c0a239cb25345a910f5d3d5ceb64379d1dee2363d872a78e62721f83",
+      "execution_stdout_path": "D:\\Tracefix\\runs\\no-effect-recovery-paid-development-20260926-v1\\experiment\\verification\\028-p2-028-8b3c0736e8ad4790b995f76805842c72-65663c7b\\pytest-dev__pytest-10356-agent\\.tracefix-validation\\execution.stdout.txt",
+      "execution_stdout_sha256": "214fa9e4a95747b002d864b07359c3f3aec87529b1f7ab96eedef1103b5363dc"
+    },
+    {
+      "sequence": 29,
+      "task_id": "sphinx-doc__sphinx-10435",
+      "arm": "no_effect_recovery",
+      "raw_category": "evidence_issue",
+      "evidence_valid": false,
+      "raw_verification_reason": "executed_node_ids_differ_from_frozen_p1_set",
+      "raw_evidence_status": "report_missing",
+      "raw_agent_stop": "p2_trial_budget_exhausted",
+      "request_bound_stop": false,
+      "last_successful_request_input_tokens": 24605,
+      "patch_chars_lf": 20775,
+      "non_tracefix_patch_chars_lf": 1311,
+      "non_tracefix_diff_headers": [
+        "diff --git a/CHANGES b/CHANGES",
+        "diff --git a/sphinx/writers/latex.py b/sphinx/writers/latex.py"
+      ],
+      "artifact_only_patch": false,
+      "request_view_contains_audit_diff": false,
+      "verification_stdout_proxy_port9": false,
+      "verification_stdout_permission_error": true,
+      "artifacts": {
+        "run_result": {
+          "path": "agent-runs/20260925T174215Z-4387f897/result.json",
+          "sha256": "9a787ddf7b385791b1be7be601185f17fa350a48a623802a10c8e20ac9282de1"
+        },
+        "patch": {
+          "path": "agent-runs/20260925T174215Z-4387f897/patch.diff",
+          "sha256": "3f45d3de5987cc23dfdeb670835e11d05149d144015d9c8053cb11b925cb371c"
+        },
+        "verification": {
+          "path": "verification/029-p2-029-878a6d0d7f7c422bbb4a92acb327ea7a-4c613a41/result.json",
+          "sha256": "d08ba0fae0f98d3effa5e26cae7c070dc5bf87c29ea9695793c2fd59833c734a"
+        }
+      },
+      "trajectory_path": "runs/no-effect-recovery-paid-development-20260926-v1/experiment/agent-runs/20260925T174215Z-4387f897/trajectory.jsonl",
+      "trajectory_sha256": "3ddb2f475ca2f8307bfa6d95a21598810e2fa289c15e622be1816779c5e28ab9",
+      "execution_stdout_path": "D:\\Tracefix\\runs\\no-effect-recovery-paid-development-20260926-v1\\experiment\\verification\\029-p2-029-878a6d0d7f7c422bbb4a92acb327ea7a-4c613a41\\sphinx-doc__sphinx-10435-agent\\.tracefix-validation\\execution.stdout.txt",
+      "execution_stdout_sha256": "d1d15e5719c15b98705d16f9e4de979fab2d1da13ece76f727e53a7e8dd39515"
+    },
+    {
+      "sequence": 30,
+      "task_id": "sphinx-doc__sphinx-10435",
+      "arm": "no_compaction",
+      "raw_category": "evidence_issue",
+      "evidence_valid": false,
+      "raw_verification_reason": "executed_node_ids_differ_from_frozen_p1_set",
+      "raw_evidence_status": "report_missing",
+      "raw_agent_stop": "benchmark_error",
+      "request_bound_stop": true,
+      "last_successful_request_input_tokens": 24117,
+      "patch_chars_lf": 109841,
+      "non_tracefix_patch_chars_lf": 0,
+      "non_tracefix_diff_headers": [],
+      "artifact_only_patch": true,
+      "request_view_contains_audit_diff": false,
+      "verification_stdout_proxy_port9": false,
+      "verification_stdout_permission_error": true,
+      "artifacts": {
+        "run_result": {
+          "path": "agent-runs/20260925T174353Z-9ce64b9f/result.json",
+          "sha256": "207a2c66800f505087793c8eb6c4bce239d3b9e2e2f96ad39ec94fcf53074fee"
+        },
+        "patch": {
+          "path": "agent-runs/20260925T174353Z-9ce64b9f/patch.diff",
+          "sha256": "0ff4e02571d46e3b0e5771799d1142afe4f6b17911201b7e7995cd12ca59f46d"
+        },
+        "verification": {
+          "path": "verification/030-p2-030-d6f0248fae994bcd8a6bdf0545206434-910a7515/result.json",
+          "sha256": "99738948745df4e6dd8d00ea8a4cf6610dbb61a6150a7014db1a9dcea15c4637"
+        }
+      },
+      "trajectory_path": "runs/no-effect-recovery-paid-development-20260926-v1/experiment/agent-runs/20260925T174353Z-9ce64b9f/trajectory.jsonl",
+      "trajectory_sha256": "0aa1c8833fd69cc92220cf5cad943bb8923249af8fda1c918886cf7fb75847b9",
+      "execution_stdout_path": "D:\\Tracefix\\runs\\no-effect-recovery-paid-development-20260926-v1\\experiment\\verification\\030-p2-030-d6f0248fae994bcd8a6bdf0545206434-910a7515\\sphinx-doc__sphinx-10435-agent\\.tracefix-validation\\execution.stdout.txt",
+      "execution_stdout_sha256": "03404aed3fb176d0bca1e674e7a1664579500889a89d3d2c69fd75bb4dda5ea6"
+    },
+    {
+      "sequence": 31,
+      "task_id": "sphinx-doc__sphinx-10449",
+      "arm": "no_effect_recovery",
+      "raw_category": "evidence_issue",
+      "evidence_valid": false,
+      "raw_verification_reason": "executed_node_ids_differ_from_frozen_p1_set",
+      "raw_evidence_status": "report_missing",
+      "raw_agent_stop": "p2_trial_budget_exhausted",
+      "request_bound_stop": false,
+      "last_successful_request_input_tokens": 33547,
+      "patch_chars_lf": 123794,
+      "non_tracefix_patch_chars_lf": 743,
+      "non_tracefix_diff_headers": [
+        "diff --git a/sphinx/ext/autodoc/typehints.py b/sphinx/ext/autodoc/typehints.py"
+      ],
+      "artifact_only_patch": false,
+      "request_view_contains_audit_diff": false,
+      "verification_stdout_proxy_port9": false,
+      "verification_stdout_permission_error": true,
+      "artifacts": {
+        "run_result": {
+          "path": "agent-runs/20260925T174516Z-4930f272/result.json",
+          "sha256": "46ff90405d2d0087b089522efc04c0b1679f6ca644e74fddf1f9089eae68965a"
+        },
+        "patch": {
+          "path": "agent-runs/20260925T174516Z-4930f272/patch.diff",
+          "sha256": "6d9ab04ad20d83c6e825cec959f82fe878ad943bfde021c7713fa27a03e806da"
+        },
+        "verification": {
+          "path": "verification/031-p2-031-5237e63a688e49b29826c6e3a46d62f6-a1f5baf5/result.json",
+          "sha256": "21c981333cde98c910d4b89baf44f4431371360de3f8394b8c1ba15d99f16834"
+        }
+      },
+      "trajectory_path": "runs/no-effect-recovery-paid-development-20260926-v1/experiment/agent-runs/20260925T174516Z-4930f272/trajectory.jsonl",
+      "trajectory_sha256": "b722c0b6f0cffbd465815f4ebe0e2064c22157d68e08b40377a15edbb4a0b06a",
+      "execution_stdout_path": "D:\\Tracefix\\runs\\no-effect-recovery-paid-development-20260926-v1\\experiment\\verification\\031-p2-031-5237e63a688e49b29826c6e3a46d62f6-a1f5baf5\\sphinx-doc__sphinx-10449-agent\\.tracefix-validation\\execution.stdout.txt",
+      "execution_stdout_sha256": "99c71a260006b934edd79b228c27beeea475bd1188a2009c00b0a7f6d54d3591"
+    },
+    {
+      "sequence": 32,
+      "task_id": "sphinx-doc__sphinx-10449",
+      "arm": "no_compaction",
+      "raw_category": "evidence_issue",
+      "evidence_valid": false,
+      "raw_verification_reason": "executed_node_ids_differ_from_frozen_p1_set",
+      "raw_evidence_status": "report_missing",
+      "raw_agent_stop": "benchmark_error",
+      "request_bound_stop": true,
+      "last_successful_request_input_tokens": 33351,
+      "patch_chars_lf": 69124,
+      "non_tracefix_patch_chars_lf": 743,
+      "non_tracefix_diff_headers": [
+        "diff --git a/sphinx/ext/autodoc/typehints.py b/sphinx/ext/autodoc/typehints.py"
+      ],
+      "artifact_only_patch": false,
+      "request_view_contains_audit_diff": false,
+      "verification_stdout_proxy_port9": false,
+      "verification_stdout_permission_error": true,
+      "artifacts": {
+        "run_result": {
+          "path": "agent-runs/20260925T174612Z-cc7a81be/result.json",
+          "sha256": "ec25eeee9952389b67a3901c67566d36ef030447b1771c29ae68b56835d417d4"
+        },
+        "patch": {
+          "path": "agent-runs/20260925T174612Z-cc7a81be/patch.diff",
+          "sha256": "d497ae49122d801337cae719600631031103533f8f6aa8f7a4cd317a8b31c6af"
+        },
+        "verification": {
+          "path": "verification/032-p2-032-ee09da48bf124fb9b5ea6d1ef218cae8-6566bd2b/result.json",
+          "sha256": "fcb8c0de0a9184da06802411da8f889be717157bf9ae1ffe272e352aced4eb64"
+        }
+      },
+      "trajectory_path": "runs/no-effect-recovery-paid-development-20260926-v1/experiment/agent-runs/20260925T174612Z-cc7a81be/trajectory.jsonl",
+      "trajectory_sha256": "0244926f2a007002293c825c392b8cc80f3811bade563b0b80679606ed0b9a0f",
+      "execution_stdout_path": "D:\\Tracefix\\runs\\no-effect-recovery-paid-development-20260926-v1\\experiment\\verification\\032-p2-032-ee09da48bf124fb9b5ea6d1ef218cae8-6566bd2b\\sphinx-doc__sphinx-10449-agent\\.tracefix-validation\\execution.stdout.txt",
+      "execution_stdout_sha256": "f9928c3dc52b7fa2264ddbb23ba21a007684fae387896c0ade1e76702d3b944c"
+    },
+    {
+      "sequence": 33,
+      "task_id": "psf__requests-1142",
+      "arm": "no_compaction",
+      "raw_category": "success",
+      "evidence_valid": true,
+      "raw_verification_reason": null,
+      "raw_evidence_status": "passed",
+      "raw_agent_stop": "agent_completed",
+      "request_bound_stop": false,
+      "last_successful_request_input_tokens": 28578,
+      "patch_chars_lf": 68566,
+      "non_tracefix_patch_chars_lf": 491,
+      "non_tracefix_diff_headers": [
+        "diff --git a/requests/models.py b/requests/models.py"
+      ],
+      "artifact_only_patch": false,
+      "request_view_contains_audit_diff": true,
+      "verification_stdout_proxy_port9": false,
+      "verification_stdout_permission_error": false,
+      "artifacts": {
+        "run_result": {
+          "path": "agent-runs/20260925T174724Z-d6831196/result.json",
+          "sha256": "64a9bfd4594c2b2f594b0063cf58bedd9cda9aeaf7536cdafca753bd761dea97"
+        },
+        "patch": {
+          "path": "agent-runs/20260925T174724Z-d6831196/patch.diff",
+          "sha256": "6bf8c48dc48a8518834fc3b566ce90562dc947aeb2d8f20aedcbcd4890dd1b1b"
+        },
+        "verification": {
+          "path": "verification/033-p2-033-2c11b6f558f447929fc1f56d052e88fc-6ed514c2/result.json",
+          "sha256": "f512af3f36826b3db65920ab693f3d29111776536cd3402b481cce1bdadfda9d"
+        }
+      },
+      "trajectory_path": "runs/no-effect-recovery-paid-development-20260926-v1/experiment/agent-runs/20260925T174724Z-d6831196/trajectory.jsonl",
+      "trajectory_sha256": "62d2792afad6567557004bc0f4097278b6f34f2b3de60442042bbf086b493f1c",
+      "execution_stdout_path": "D:\\Tracefix\\runs\\no-effect-recovery-paid-development-20260926-v1\\experiment\\verification\\033-p2-033-2c11b6f558f447929fc1f56d052e88fc-6ed514c2\\psf__requests-1142-agent\\.tracefix-validation\\execution.stdout.txt",
+      "execution_stdout_sha256": "3313dac1a96d92780f65faafb427f66e96b8eda4fa9bc109baf7221a867d2c97"
+    },
+    {
+      "sequence": 34,
+      "task_id": "psf__requests-1142",
+      "arm": "no_effect_recovery",
+      "raw_category": "success",
+      "evidence_valid": true,
+      "raw_verification_reason": null,
+      "raw_evidence_status": "passed",
+      "raw_agent_stop": "agent_completed",
+      "request_bound_stop": false,
+      "last_successful_request_input_tokens": 27958,
+      "patch_chars_lf": 68566,
+      "non_tracefix_patch_chars_lf": 491,
+      "non_tracefix_diff_headers": [
+        "diff --git a/requests/models.py b/requests/models.py"
+      ],
+      "artifact_only_patch": false,
+      "request_view_contains_audit_diff": true,
+      "verification_stdout_proxy_port9": false,
+      "verification_stdout_permission_error": false,
+      "artifacts": {
+        "run_result": {
+          "path": "agent-runs/20260925T174801Z-ab2df33d/result.json",
+          "sha256": "e3b42394985e4c33ee36417d7b13c055a339f8c5445b909d087bde561eb423d2"
+        },
+        "patch": {
+          "path": "agent-runs/20260925T174801Z-ab2df33d/patch.diff",
+          "sha256": "2db378b6598f0051a62ad09c85cfae0c5be3fb61017b7212e028fc5e48e953c0"
+        },
+        "verification": {
+          "path": "verification/034-p2-034-1c7fa9f26ece49c8ab28cc2a01eedc2a-adea3d1b/result.json",
+          "sha256": "1f52b52721302e7e26058b41f7305134c14747694bca7ccb1b53791719d50a30"
+        }
+      },
+      "trajectory_path": "runs/no-effect-recovery-paid-development-20260926-v1/experiment/agent-runs/20260925T174801Z-ab2df33d/trajectory.jsonl",
+      "trajectory_sha256": "35acea71fa67add46aa0bd3933db51aa09e174da5e408d6843aa10c0435d2ab3",
+      "execution_stdout_path": "D:\\Tracefix\\runs\\no-effect-recovery-paid-development-20260926-v1\\experiment\\verification\\034-p2-034-1c7fa9f26ece49c8ab28cc2a01eedc2a-adea3d1b\\psf__requests-1142-agent\\.tracefix-validation\\execution.stdout.txt",
+      "execution_stdout_sha256": "c19a088918ccf4c4ed9d44c2e36c0cdaab879d3ebb8d0ac3e47f9ee91e8e3ae5"
+    },
+    {
+      "sequence": 35,
+      "task_id": "psf__requests-1766",
+      "arm": "no_compaction",
+      "raw_category": "evidence_issue",
+      "evidence_valid": false,
+      "raw_verification_reason": "pytest execution failed",
+      "raw_evidence_status": "network_error",
+      "raw_agent_stop": "benchmark_error",
+      "request_bound_stop": true,
+      "last_successful_request_input_tokens": 20465,
+      "patch_chars_lf": 579490,
+      "non_tracefix_patch_chars_lf": 453,
+      "non_tracefix_diff_headers": [
+        "diff --git a/requests/auth.py b/requests/auth.py"
+      ],
+      "artifact_only_patch": false,
+      "request_view_contains_audit_diff": true,
+      "verification_stdout_proxy_port9": true,
+      "verification_stdout_permission_error": false,
+      "artifacts": {
+        "run_result": {
+          "path": "agent-runs/20260925T174835Z-2801e0d3/result.json",
+          "sha256": "de1b9259a7b600e62c582c42ee2780a75aa2af7531e3b39f4df473ed5a491f0b"
+        },
+        "patch": {
+          "path": "agent-runs/20260925T174835Z-2801e0d3/patch.diff",
+          "sha256": "2071259e9e85be4d98fe9ec11fdcdee0da9ac37f25657f5e19552f1af97016cb"
+        },
+        "verification": {
+          "path": "verification/035-p2-035-936d4c2b70394e94b141e73e2e1796e8-3f518812/result.json",
+          "sha256": "4a725a33c392457b13eba3362ce1e718408b9e73511e204cc8a8c32be296fdb3"
+        }
+      },
+      "trajectory_path": "runs/no-effect-recovery-paid-development-20260926-v1/experiment/agent-runs/20260925T174835Z-2801e0d3/trajectory.jsonl",
+      "trajectory_sha256": "8edb01360e98045f1e743c2684992bc66bd7927889fb23d303ab15d2d6efc6b7",
+      "execution_stdout_path": "D:\\Tracefix\\runs\\no-effect-recovery-paid-development-20260926-v1\\experiment\\verification\\035-p2-035-936d4c2b70394e94b141e73e2e1796e8-3f518812\\psf__requests-1766-agent\\.tracefix-validation\\execution.stdout.txt",
+      "execution_stdout_sha256": "174ff7c11f699962cc9506f63ab9800e6022bb7784ae5334e634201b313d6176"
+    },
+    {
+      "sequence": 36,
+      "task_id": "psf__requests-1766",
+      "arm": "no_effect_recovery",
+      "raw_category": "evidence_issue",
+      "evidence_valid": false,
+      "raw_verification_reason": "pytest execution failed",
+      "raw_evidence_status": "network_error",
+      "raw_agent_stop": "benchmark_error",
+      "request_bound_stop": true,
+      "last_successful_request_input_tokens": 30292,
+      "patch_chars_lf": 579490,
+      "non_tracefix_patch_chars_lf": 453,
+      "non_tracefix_diff_headers": [
+        "diff --git a/requests/auth.py b/requests/auth.py"
+      ],
+      "artifact_only_patch": false,
+      "request_view_contains_audit_diff": true,
+      "verification_stdout_proxy_port9": true,
+      "verification_stdout_permission_error": false,
+      "artifacts": {
+        "run_result": {
+          "path": "agent-runs/20260925T174958Z-c9911724/result.json",
+          "sha256": "d0bf8421a71b1ea36a3c0ce45882660b683ce1190a375603609e0a6a152696b6"
+        },
+        "patch": {
+          "path": "agent-runs/20260925T174958Z-c9911724/patch.diff",
+          "sha256": "6f4ef7853cee6cd2ef2196c00c31cb785e37ac20d166b4a211712a56b78c4775"
+        },
+        "verification": {
+          "path": "verification/036-p2-036-22069f1c351e481d887bf3ce4a30e674-d4e119ce/result.json",
+          "sha256": "4a72a61c6df2f5baf8a5804db26017b4a63753886e797a5b64056495dbde2494"
+        }
+      },
+      "trajectory_path": "runs/no-effect-recovery-paid-development-20260926-v1/experiment/agent-runs/20260925T174958Z-c9911724/trajectory.jsonl",
+      "trajectory_sha256": "58224d5b141dcc74896524cc6fc4dbee37c703ebde197f88468ca6fd3a53ab27",
+      "execution_stdout_path": "D:\\Tracefix\\runs\\no-effect-recovery-paid-development-20260926-v1\\experiment\\verification\\036-p2-036-22069f1c351e481d887bf3ce4a30e674-d4e119ce\\psf__requests-1766-agent\\.tracefix-validation\\execution.stdout.txt",
+      "execution_stdout_sha256": "c920f06e2ebe9bef7d7331da7461370eb5fd3665a2a3e1445377d4e44aed5a9d"
+    },
+    {
+      "sequence": 37,
+      "task_id": "pylint-dev__pylint-4661",
+      "arm": "no_compaction",
+      "raw_category": "repair_failure",
+      "evidence_valid": true,
+      "raw_verification_reason": "pytest execution failed",
+      "raw_evidence_status": "assertion_failed",
+      "raw_agent_stop": "benchmark_error",
+      "request_bound_stop": true,
+      "last_successful_request_input_tokens": 34283,
+      "patch_chars_lf": 70532,
+      "non_tracefix_patch_chars_lf": 1795,
+      "non_tracefix_diff_headers": [
+        "diff --git a/doc/faq.rst b/doc/faq.rst",
+        "diff --git a/pylint/config/__init__.py b/pylint/config/__init__.py"
+      ],
+      "artifact_only_patch": false,
+      "request_view_contains_audit_diff": true,
+      "verification_stdout_proxy_port9": false,
+      "verification_stdout_permission_error": false,
+      "artifacts": {
+        "run_result": {
+          "path": "agent-runs/20260925T175128Z-bd12440a/result.json",
+          "sha256": "0103895c3ac56c702ee0cae543f9a38d8de230e3638eaac0d29f62f88c8cf6ca"
+        },
+        "patch": {
+          "path": "agent-runs/20260925T175128Z-bd12440a/patch.diff",
+          "sha256": "737d73aa5ac9655ecd252da2b2d69de7b34a53e3bd29b5b5dee1fcdd6a3947a1"
+        },
+        "verification": {
+          "path": "verification/037-p2-037-a7e34b0e10f24d4da2cdecb4f3c0c3ee-8cfb5889/result.json",
+          "sha256": "868a623d30a428c2d1e86f17ae763ec998b24c4d69490bb2ccf570800ab63135"
+        }
+      },
+      "trajectory_path": "runs/no-effect-recovery-paid-development-20260926-v1/experiment/agent-runs/20260925T175128Z-bd12440a/trajectory.jsonl",
+      "trajectory_sha256": "ad5e46981604f9b338467c5bfa5322b899d95e5ef30e8e0d4cc4ea873b4eca2e",
+      "execution_stdout_path": "D:\\Tracefix\\runs\\no-effect-recovery-paid-development-20260926-v1\\experiment\\verification\\037-p2-037-a7e34b0e10f24d4da2cdecb4f3c0c3ee-8cfb5889\\pylint-dev__pylint-4661-agent\\.tracefix-validation\\execution.stdout.txt",
+      "execution_stdout_sha256": "691b042a3e977c2bb73a96772327cf97282426d3619a458781f71d28d9ee2443"
+    },
+    {
+      "sequence": 38,
+      "task_id": "pylint-dev__pylint-4661",
+      "arm": "no_effect_recovery",
+      "raw_category": "repair_failure",
+      "evidence_valid": true,
+      "raw_verification_reason": "agent_modified_test_or_pytest_configuration",
+      "raw_evidence_status": null,
+      "raw_agent_stop": "p2_trial_budget_exhausted",
+      "request_bound_stop": false,
+      "last_successful_request_input_tokens": 24043,
+      "patch_chars_lf": 17597,
+      "non_tracefix_patch_chars_lf": 3118,
+      "non_tracefix_diff_headers": [
+        "diff --git a/ChangeLog b/ChangeLog",
+        "diff --git a/doc/faq.rst b/doc/faq.rst",
+        "diff --git a/doc/whatsnew/2.10.rst b/doc/whatsnew/2.10.rst",
+        "diff --git a/pylint/config/__init__.py b/pylint/config/__init__.py",
+        "diff --git a/setup.cfg b/setup.cfg"
+      ],
+      "artifact_only_patch": false,
+      "request_view_contains_audit_diff": false,
+      "verification_stdout_proxy_port9": false,
+      "verification_stdout_permission_error": false,
+      "artifacts": {
+        "run_result": {
+          "path": "agent-runs/20260925T175226Z-b8479f48/result.json",
+          "sha256": "13c1cbef2840295b120803a208e30cf21523cb995a3ce8b6d4e15e6a15c93ba2"
+        },
+        "patch": {
+          "path": "agent-runs/20260925T175226Z-b8479f48/patch.diff",
+          "sha256": "649cdaf8862c70a5b7c77d0a2a2e264f530872ea23b19c1f7663242e5654884c"
+        },
+        "verification": {
+          "path": "verification/038-p2-038-c159cc83249e426ea49e61216a0d37cc-bc853697/result.json",
+          "sha256": "701d7c47c8f2e9f0348bf9da82a492cd316e9127415bf1f45a431a3f68eaafe6"
+        }
+      },
+      "trajectory_path": "runs/no-effect-recovery-paid-development-20260926-v1/experiment/agent-runs/20260925T175226Z-b8479f48/trajectory.jsonl",
+      "trajectory_sha256": "868216b8fd2b55a3591f5708eca299ed094ac25e8ca406c2836845f36f85375d",
+      "execution_stdout_path": null,
+      "execution_stdout_sha256": null
+    },
+    {
+      "sequence": 39,
+      "task_id": "pytest-dev__pytest-10051",
+      "arm": "no_compaction",
+      "raw_category": "success",
+      "evidence_valid": true,
+      "raw_verification_reason": null,
+      "raw_evidence_status": "passed",
+      "raw_agent_stop": "benchmark_error",
+      "request_bound_stop": true,
+      "last_successful_request_input_tokens": 34741,
+      "patch_chars_lf": 205603,
+      "non_tracefix_patch_chars_lf": 946,
+      "non_tracefix_diff_headers": [
+        "diff --git a/src/_pytest/logging.py b/src/_pytest/logging.py"
+      ],
+      "artifact_only_patch": false,
+      "request_view_contains_audit_diff": false,
+      "verification_stdout_proxy_port9": false,
+      "verification_stdout_permission_error": false,
+      "artifacts": {
+        "run_result": {
+          "path": "agent-runs/20260925T175340Z-2c1fea88/result.json",
+          "sha256": "a86d40d8032064187e6fba059863cb816affbcb82e19d37fe17a7430100d8d0d"
+        },
+        "patch": {
+          "path": "agent-runs/20260925T175340Z-2c1fea88/patch.diff",
+          "sha256": "eff1b10ba8b28e7ad0ebefb6d99b21cd9413df38a685bfc43ccb1a348e2967b6"
+        },
+        "verification": {
+          "path": "verification/039-p2-039-6fe2e00cf25c4302966bae710907c2db-09fe4062/result.json",
+          "sha256": "50a1a17857d6c99ca8843c6a68f4cba8baa96c887b5de80929e1ee6a821767c2"
+        }
+      },
+      "trajectory_path": "runs/no-effect-recovery-paid-development-20260926-v1/experiment/agent-runs/20260925T175340Z-2c1fea88/trajectory.jsonl",
+      "trajectory_sha256": "3371bf50a059c672e32f872a34c62c3936c1996c419ca5f191f9667847d9736b",
+      "execution_stdout_path": "D:\\Tracefix\\runs\\no-effect-recovery-paid-development-20260926-v1\\experiment\\verification\\039-p2-039-6fe2e00cf25c4302966bae710907c2db-09fe4062\\pytest-dev__pytest-10051-agent\\.tracefix-validation\\execution.stdout.txt",
+      "execution_stdout_sha256": "ffd4f63f89362b8c629bb614431a654e8b8c3d5e853e793de5373a0a451a0ad8"
+    },
+    {
+      "sequence": 40,
+      "task_id": "pytest-dev__pytest-10051",
+      "arm": "no_effect_recovery",
+      "raw_category": "success",
+      "evidence_valid": true,
+      "raw_verification_reason": null,
+      "raw_evidence_status": "passed",
+      "raw_agent_stop": "p2_trial_budget_exhausted",
+      "request_bound_stop": false,
+      "last_successful_request_input_tokens": 27552,
+      "patch_chars_lf": 187324,
+      "non_tracefix_patch_chars_lf": 2212,
+      "non_tracefix_diff_headers": [
+        "diff --git a/src/_pytest/logging.py b/src/_pytest/logging.py"
+      ],
+      "artifact_only_patch": false,
+      "request_view_contains_audit_diff": false,
+      "verification_stdout_proxy_port9": false,
+      "verification_stdout_permission_error": false,
+      "artifacts": {
+        "run_result": {
+          "path": "agent-runs/20260925T175423Z-82de8836/result.json",
+          "sha256": "6d7002a9a5fc893f10f046ded737860c0b421ba08a32527b60433ce3b2aaf0b3"
+        },
+        "patch": {
+          "path": "agent-runs/20260925T175423Z-82de8836/patch.diff",
+          "sha256": "fbccd2836ec9d0c108d59f21d698e83917ce9cb6729df6a257a4bc200af45a6a"
+        },
+        "verification": {
+          "path": "verification/040-p2-040-8c7836c69f6842799ab75bc628322a46-de5cedb0/result.json",
+          "sha256": "71eab743b51c972d0a2513f5a5413af28af485f0ff31974382314555eabab65d"
+        }
+      },
+      "trajectory_path": "runs/no-effect-recovery-paid-development-20260926-v1/experiment/agent-runs/20260925T175423Z-82de8836/trajectory.jsonl",
+      "trajectory_sha256": "5968c94bc792c715081a6c9dca80948902a16df10fef0e9c1c82da5a4801d1ff",
+      "execution_stdout_path": "D:\\Tracefix\\runs\\no-effect-recovery-paid-development-20260926-v1\\experiment\\verification\\040-p2-040-8c7836c69f6842799ab75bc628322a46-de5cedb0\\pytest-dev__pytest-10051-agent\\.tracefix-validation\\execution.stdout.txt",
+      "execution_stdout_sha256": "94175a8367a73761d9e49e439d0013080bd2335775198fc6a599a6964727c1ad"
+    },
+    {
+      "sequence": 41,
+      "task_id": "pytest-dev__pytest-10081",
+      "arm": "no_compaction",
+      "raw_category": "evidence_issue",
+      "evidence_valid": false,
+      "raw_verification_reason": "executed_node_ids_differ_from_frozen_p1_set",
+      "raw_evidence_status": "permission_error",
+      "raw_agent_stop": "p2_trial_budget_exhausted",
+      "request_bound_stop": false,
+      "last_successful_request_input_tokens": 24796,
+      "patch_chars_lf": 33611,
+      "non_tracefix_patch_chars_lf": 806,
+      "non_tracefix_diff_headers": [
+        "diff --git a/src/_pytest/unittest.py b/src/_pytest/unittest.py"
+      ],
+      "artifact_only_patch": false,
+      "request_view_contains_audit_diff": false,
+      "verification_stdout_proxy_port9": false,
+      "verification_stdout_permission_error": true,
+      "artifacts": {
+        "run_result": {
+          "path": "agent-runs/20260925T175509Z-e53fe6cd/result.json",
+          "sha256": "9eab4148482895cd1c502c780bf2c84b26b574e2bf2294a6cb0a66fabf73b757"
+        },
+        "patch": {
+          "path": "agent-runs/20260925T175509Z-e53fe6cd/patch.diff",
+          "sha256": "fb19a06bc57d52e4af4de53a2b15d9f97e3fd2433b0747929bd37738b21ca02b"
+        },
+        "verification": {
+          "path": "verification/041-p2-041-30b44300e4ff45639da32944f3eda468-7b2d508f/result.json",
+          "sha256": "d10b903722d17552f4194fed2860c325ce790d7f3cc5b9e2f8550238f4bd1c12"
+        }
+      },
+      "trajectory_path": "runs/no-effect-recovery-paid-development-20260926-v1/experiment/agent-runs/20260925T175509Z-e53fe6cd/trajectory.jsonl",
+      "trajectory_sha256": "fed3616ad630c3d197e6b2fecc40c8a0c8c922fe69a581f76b4cc89fee0f6b7a",
+      "execution_stdout_path": "D:\\Tracefix\\runs\\no-effect-recovery-paid-development-20260926-v1\\experiment\\verification\\041-p2-041-30b44300e4ff45639da32944f3eda468-7b2d508f\\pytest-dev__pytest-10081-agent\\.tracefix-validation\\execution.stdout.txt",
+      "execution_stdout_sha256": "a5e64062bac26a47c7c5e43a99d389eed59965f130e3e30a3af959cb440b882a"
+    },
+    {
+      "sequence": 42,
+      "task_id": "pytest-dev__pytest-10081",
+      "arm": "no_effect_recovery",
+      "raw_category": "repair_failure",
+      "evidence_valid": true,
+      "raw_verification_reason": "empty_agent_patch",
+      "raw_evidence_status": null,
+      "raw_agent_stop": "p2_trial_budget_exhausted",
+      "request_bound_stop": false,
+      "last_successful_request_input_tokens": 17548,
+      "patch_chars_lf": 0,
+      "non_tracefix_patch_chars_lf": 0,
+      "non_tracefix_diff_headers": [],
+      "artifact_only_patch": false,
+      "request_view_contains_audit_diff": false,
+      "verification_stdout_proxy_port9": false,
+      "verification_stdout_permission_error": false,
+      "artifacts": {
+        "run_result": {
+          "path": "agent-runs/20260925T175554Z-846add37/result.json",
+          "sha256": "b26b0cd6c9660dee58f1243a7c7520c9f2bc204fe05b02bd62ed63d03567afbf"
+        },
+        "patch": {
+          "path": "agent-runs/20260925T175554Z-846add37/patch.diff",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "verification": {
+          "path": "verification/042-p2-042-8d5aff0dcf184216adf0701f4240526c-27d79435/result.json",
+          "sha256": "2469c204552d924d93c14c899655ac106f21617b85332db9820d490152c7ee0f"
+        }
+      },
+      "trajectory_path": "runs/no-effect-recovery-paid-development-20260926-v1/experiment/agent-runs/20260925T175554Z-846add37/trajectory.jsonl",
+      "trajectory_sha256": "20f84bf5c5d87d8d715a90afcbdd7c0eb998b7f2d656fbfea3f4d9af0664de09",
+      "execution_stdout_path": null,
+      "execution_stdout_sha256": null
+    },
+    {
+      "sequence": 43,
+      "task_id": "pytest-dev__pytest-10356",
+      "arm": "no_compaction",
+      "raw_category": "repair_failure",
+      "evidence_valid": true,
+      "raw_verification_reason": "pytest execution failed",
+      "raw_evidence_status": "assertion_failed",
+      "raw_agent_stop": "benchmark_error",
+      "request_bound_stop": true,
+      "last_successful_request_input_tokens": 32614,
+      "patch_chars_lf": 276520,
+      "non_tracefix_patch_chars_lf": 1873,
+      "non_tracefix_diff_headers": [
+        "diff --git a/src/_pytest/mark/structures.py b/src/_pytest/mark/structures.py"
+      ],
+      "artifact_only_patch": false,
+      "request_view_contains_audit_diff": false,
+      "verification_stdout_proxy_port9": false,
+      "verification_stdout_permission_error": false,
+      "artifacts": {
+        "run_result": {
+          "path": "agent-runs/20260925T175640Z-b5107dfc/result.json",
+          "sha256": "105e3ddb853ce2824cc1cadf40fe321f4e0cac2b13e7de5e5c4b58d71ca9212f"
+        },
+        "patch": {
+          "path": "agent-runs/20260925T175640Z-b5107dfc/patch.diff",
+          "sha256": "497fa5b700e63cba968227ddb6959083670f28a2957befb6c64716eabe84fc1b"
+        },
+        "verification": {
+          "path": "verification/043-p2-043-dc3b28ef504f4b069f7e623db21d007e-aa6b5e28/result.json",
+          "sha256": "55ad4851b9f235a8052969fbe2d1c5b09362eebf4ac39cccf5d3cd461063abd8"
+        }
+      },
+      "trajectory_path": "runs/no-effect-recovery-paid-development-20260926-v1/experiment/agent-runs/20260925T175640Z-b5107dfc/trajectory.jsonl",
+      "trajectory_sha256": "676cdc7f4763a1922cadf6c7dcd1b9a813ffbd4c962c6dd15cc9c6b4eab419ad",
+      "execution_stdout_path": "D:\\Tracefix\\runs\\no-effect-recovery-paid-development-20260926-v1\\experiment\\verification\\043-p2-043-dc3b28ef504f4b069f7e623db21d007e-aa6b5e28\\pytest-dev__pytest-10356-agent\\.tracefix-validation\\execution.stdout.txt",
+      "execution_stdout_sha256": "5eea5790dff1b31d0d252fb8f012756af83c22faaf963dcda154439308ac4c88"
+    },
+    {
+      "sequence": 44,
+      "task_id": "pytest-dev__pytest-10356",
+      "arm": "no_effect_recovery",
+      "raw_category": "repair_failure",
+      "evidence_valid": true,
+      "raw_verification_reason": "pytest execution failed",
+      "raw_evidence_status": "assertion_failed",
+      "raw_agent_stop": "benchmark_error",
+      "request_bound_stop": true,
+      "last_successful_request_input_tokens": 18065,
+      "patch_chars_lf": 271792,
+      "non_tracefix_patch_chars_lf": 1993,
+      "non_tracefix_diff_headers": [
+        "diff --git a/src/_pytest/mark/structures.py b/src/_pytest/mark/structures.py"
+      ],
+      "artifact_only_patch": false,
+      "request_view_contains_audit_diff": false,
+      "verification_stdout_proxy_port9": false,
+      "verification_stdout_permission_error": false,
+      "artifacts": {
+        "run_result": {
+          "path": "agent-runs/20260925T175718Z-d73c6d2d/result.json",
+          "sha256": "5eb3cce2b3b3a181acc672b442bb6eaa677ef289f00bf602b62ec4d04110d08b"
+        },
+        "patch": {
+          "path": "agent-runs/20260925T175718Z-d73c6d2d/patch.diff",
+          "sha256": "0edd6bed58e5722965a338392a597d0f32724e235aec7e665f7fcafdc8150910"
+        },
+        "verification": {
+          "path": "verification/044-p2-044-9186710fb43b4d8f8b2e186a269731cb-e037557a/result.json",
+          "sha256": "9bbb1ea7c0faf6a98ffa3f08f4d598f0e1bcff740fb1968c35b03a16717ed4ab"
+        }
+      },
+      "trajectory_path": "runs/no-effect-recovery-paid-development-20260926-v1/experiment/agent-runs/20260925T175718Z-d73c6d2d/trajectory.jsonl",
+      "trajectory_sha256": "fcea88070de1cf6cf1c8b1c8268e7e4aedabd5352128e2658790a8a0100c8daa",
+      "execution_stdout_path": "D:\\Tracefix\\runs\\no-effect-recovery-paid-development-20260926-v1\\experiment\\verification\\044-p2-044-9186710fb43b4d8f8b2e186a269731cb-e037557a\\pytest-dev__pytest-10356-agent\\.tracefix-validation\\execution.stdout.txt",
+      "execution_stdout_sha256": "9e4143ccdf4eb2370c1ef60e67a8e571f20b3eb23f6c78936ab1d283f460e3d1"
+    },
+    {
+      "sequence": 45,
+      "task_id": "sphinx-doc__sphinx-10435",
+      "arm": "no_compaction",
+      "raw_category": "evidence_issue",
+      "evidence_valid": false,
+      "raw_verification_reason": "executed_node_ids_differ_from_frozen_p1_set",
+      "raw_evidence_status": "report_missing",
+      "raw_agent_stop": "p2_trial_budget_exhausted",
+      "request_bound_stop": false,
+      "last_successful_request_input_tokens": 34246,
+      "patch_chars_lf": 26468,
+      "non_tracefix_patch_chars_lf": 0,
+      "non_tracefix_diff_headers": [],
+      "artifact_only_patch": true,
+      "request_view_contains_audit_diff": true,
+      "verification_stdout_proxy_port9": false,
+      "verification_stdout_permission_error": true,
+      "artifacts": {
+        "run_result": {
+          "path": "agent-runs/20260925T175816Z-0946f313/result.json",
+          "sha256": "3dd0e520c289888eb979cb559c37fcdda393f84f89096af4a6268ad6a151a858"
+        },
+        "patch": {
+          "path": "agent-runs/20260925T175816Z-0946f313/patch.diff",
+          "sha256": "105854b3e23e965090a33238f5eda1b0199d98b3f2e36ce3610e38300c0fda5b"
+        },
+        "verification": {
+          "path": "verification/045-p2-045-45843b0458a840cc9f13ffe057dccd4c-cea17901/result.json",
+          "sha256": "15d0d6cad67683e581f049ec4b31b4be191a3f9fe083bdbcb44539f02548f676"
+        }
+      },
+      "trajectory_path": "runs/no-effect-recovery-paid-development-20260926-v1/experiment/agent-runs/20260925T175816Z-0946f313/trajectory.jsonl",
+      "trajectory_sha256": "960dab08643f267745ff1e1c61c206f87d3817bcb966a6152ae551b13d4733f0",
+      "execution_stdout_path": "D:\\Tracefix\\runs\\no-effect-recovery-paid-development-20260926-v1\\experiment\\verification\\045-p2-045-45843b0458a840cc9f13ffe057dccd4c-cea17901\\sphinx-doc__sphinx-10435-agent\\.tracefix-validation\\execution.stdout.txt",
+      "execution_stdout_sha256": "6c1fa2929d15bd56c7f902a3efefb32ac12322b2f977080bf5286b89aa05bf08"
+    },
+    {
+      "sequence": 46,
+      "task_id": "sphinx-doc__sphinx-10435",
+      "arm": "no_effect_recovery",
+      "raw_category": "evidence_issue",
+      "evidence_valid": false,
+      "raw_verification_reason": "executed_node_ids_differ_from_frozen_p1_set",
+      "raw_evidence_status": "report_missing",
+      "raw_agent_stop": "p2_trial_budget_exhausted",
+      "request_bound_stop": false,
+      "last_successful_request_input_tokens": 28152,
+      "patch_chars_lf": 30847,
+      "non_tracefix_patch_chars_lf": 540,
+      "non_tracefix_diff_headers": [
+        "diff --git a/sphinx/writers/latex.py b/sphinx/writers/latex.py"
+      ],
+      "artifact_only_patch": false,
+      "request_view_contains_audit_diff": false,
+      "verification_stdout_proxy_port9": false,
+      "verification_stdout_permission_error": true,
+      "artifacts": {
+        "run_result": {
+          "path": "agent-runs/20260925T175939Z-0d801f05/result.json",
+          "sha256": "56189a8bf9956a13d2518679af636204f113b0915cc72737eb16d0e7881d691d"
+        },
+        "patch": {
+          "path": "agent-runs/20260925T175939Z-0d801f05/patch.diff",
+          "sha256": "1a1ae85a6dfe27d138c72ce7333ca24b6c45a210efca1c43bc2ec246b3c5ee42"
+        },
+        "verification": {
+          "path": "verification/046-p2-046-9f456ab0ca334516babb2fa04afabd52-1693793c/result.json",
+          "sha256": "9dc6ee1ec57c6932b30c3f67fd28fc180865699ec95739f47446f6ff7c0b5bb5"
+        }
+      },
+      "trajectory_path": "runs/no-effect-recovery-paid-development-20260926-v1/experiment/agent-runs/20260925T175939Z-0d801f05/trajectory.jsonl",
+      "trajectory_sha256": "5144405d9f7004090053b15a28f9111ca27c26fc66ddbfe88d0a5d5764503675",
+      "execution_stdout_path": "D:\\Tracefix\\runs\\no-effect-recovery-paid-development-20260926-v1\\experiment\\verification\\046-p2-046-9f456ab0ca334516babb2fa04afabd52-1693793c\\sphinx-doc__sphinx-10435-agent\\.tracefix-validation\\execution.stdout.txt",
+      "execution_stdout_sha256": "d466cac7a5314a785ea61fbc3fad09b1851ecd672aa73491499761c86262d28b"
+    },
+    {
+      "sequence": 47,
+      "task_id": "sphinx-doc__sphinx-10449",
+      "arm": "no_compaction",
+      "raw_category": "evidence_issue",
+      "evidence_valid": false,
+      "raw_verification_reason": "executed_node_ids_differ_from_frozen_p1_set",
+      "raw_evidence_status": "report_missing",
+      "raw_agent_stop": "p2_trial_budget_exhausted",
+      "request_bound_stop": false,
+      "last_successful_request_input_tokens": 30529,
+      "patch_chars_lf": 43146,
+      "non_tracefix_patch_chars_lf": 1866,
+      "non_tracefix_diff_headers": [
+        "diff --git a/sphinx/ext/autodoc/typehints.py b/sphinx/ext/autodoc/typehints.py"
+      ],
+      "artifact_only_patch": false,
+      "request_view_contains_audit_diff": false,
+      "verification_stdout_proxy_port9": false,
+      "verification_stdout_permission_error": true,
+      "artifacts": {
+        "run_result": {
+          "path": "agent-runs/20260925T180120Z-1742c38a/result.json",
+          "sha256": "1d04279e15add0e9f2785b07ee01b2de9311968760666518b7f701fa150f0683"
+        },
+        "patch": {
+          "path": "agent-runs/20260925T180120Z-1742c38a/patch.diff",
+          "sha256": "2fd90ccfb78832c048d3ee6c40535b5d37300cf2492f72ec342326187a2e8bfb"
+        },
+        "verification": {
+          "path": "verification/047-p2-047-947e8663cc8f4c3db82580c580bd2e5d-d73cd345/result.json",
+          "sha256": "567c3f099eb2c0f3f1306cfb466caa2fb23881052f2508d1ec79f5b3da55e31d"
+        }
+      },
+      "trajectory_path": "runs/no-effect-recovery-paid-development-20260926-v1/experiment/agent-runs/20260925T180120Z-1742c38a/trajectory.jsonl",
+      "trajectory_sha256": "dff43f2836d07350198eccc54f2145919bfb6ad4ea081562dc7426e2bb88ae57",
+      "execution_stdout_path": "D:\\Tracefix\\runs\\no-effect-recovery-paid-development-20260926-v1\\experiment\\verification\\047-p2-047-947e8663cc8f4c3db82580c580bd2e5d-d73cd345\\sphinx-doc__sphinx-10449-agent\\.tracefix-validation\\execution.stdout.txt",
+      "execution_stdout_sha256": "0e7fe294ba6066d77a9f535f622014f4a95ab88dc9d6c2fb26707ce261511e24"
+    },
+    {
+      "sequence": 48,
+      "task_id": "sphinx-doc__sphinx-10449",
+      "arm": "no_effect_recovery",
+      "raw_category": "evidence_issue",
+      "evidence_valid": false,
+      "raw_verification_reason": "executed_node_ids_differ_from_frozen_p1_set",
+      "raw_evidence_status": "report_missing",
+      "raw_agent_stop": "benchmark_error",
+      "request_bound_stop": true,
+      "last_successful_request_input_tokens": 27251,
+      "patch_chars_lf": 66642,
+      "non_tracefix_patch_chars_lf": 749,
+      "non_tracefix_diff_headers": [
+        "diff --git a/sphinx/ext/autodoc/typehints.py b/sphinx/ext/autodoc/typehints.py"
+      ],
+      "artifact_only_patch": false,
+      "request_view_contains_audit_diff": false,
+      "verification_stdout_proxy_port9": false,
+      "verification_stdout_permission_error": true,
+      "artifacts": {
+        "run_result": {
+          "path": "agent-runs/20260925T180234Z-76ef2db2/result.json",
+          "sha256": "1018a806c730560e771c5f866261c80ad1b1754d68f10b02b596774523789608"
+        },
+        "patch": {
+          "path": "agent-runs/20260925T180234Z-76ef2db2/patch.diff",
+          "sha256": "80c28d144663cbebfafd6b3e1c36c9f35dda5279372ce60f6ad06ee66e02743a"
+        },
+        "verification": {
+          "path": "verification/048-p2-048-55c9e0ab1ee94e818ab36e0cc56bf52c-b6b12ae3/result.json",
+          "sha256": "d7c9f2e7abd197563320786a5704eb58f7ae2ffccb02169343b1f705489f5275"
+        }
+      },
+      "trajectory_path": "runs/no-effect-recovery-paid-development-20260926-v1/experiment/agent-runs/20260925T180234Z-76ef2db2/trajectory.jsonl",
+      "trajectory_sha256": "28208925adc63baaa9df8c189da2100230886d33bdd519a22105f9dd04c2e072",
+      "execution_stdout_path": "D:\\Tracefix\\runs\\no-effect-recovery-paid-development-20260926-v1\\experiment\\verification\\048-p2-048-55c9e0ab1ee94e818ab36e0cc56bf52c-b6b12ae3\\sphinx-doc__sphinx-10449-agent\\.tracefix-validation\\execution.stdout.txt",
+      "execution_stdout_sha256": "3139f930aba093f984f51c0f76586bb83f9cbc1f3fece8642b45f25da08ebc23"
+    }
+  ]
+}
