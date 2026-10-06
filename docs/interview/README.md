@@ -5,6 +5,7 @@
 1. [项目历程与技术决策](project-story.md)：做了什么、为什么做、结果。
 2. [实验节点与证据](experiments.md)：可信结论、失败和原始材料位置。
 3. [面试问答与演示](interview-guide.md)：两分钟介绍、追问与演示命令。
+4. [需手动复核的清理项](manual-cleanup.md)：自动未删除项、拒绝原因及不能删除的 C 依赖。
 
 最新代码基线为 `6980d2e0796000b5f30327ce007ae7251daa497f`，已上传 GitHub 的
 `codex/bc-holdout-180s` 分支，不等同于已合入 main 或该提交已通过全部 CI。

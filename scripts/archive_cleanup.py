@@ -487,6 +487,85 @@ def archive_catalog():
     return {"archives": len(entries), "bytes": sum(row["bytes"] for row in entries)}
 
 
+def manual_cleanup_report():
+    report_path = ARCHIVE / "final-report.json"
+    if not report_path.exists():
+        report_path = ARCHIVE / "cleanup-plan.json"
+    report = read(report_path)
+    protected, _, _ = protected_paths()
+    targets = {}
+    retained = []
+
+    def add(path, reason):
+        try:
+            guard(path, allowed_roots(), [])
+        except ValueError as error:
+            if "reparse" not in str(error):
+                retained.append(str(path) + "（不在允许的手动清理范围）")
+                return
+        except OSError:
+            pass
+        try:
+            info = path.lstat()
+        except FileNotFoundError:
+            return
+        except PermissionError:
+            info = None
+        if any(within(path, keep) for keep in protected):
+            retained.append(str(path))
+            return
+        if any(within(keep, path) for keep in protected):
+            retained.append(str(path) + "（含 C 必要依赖，不可整目录删除）")
+            try:
+                if info and stat.S_ISDIR(info.st_mode) and not linked(info):
+                    for child in path.iterdir():
+                        add(child, "原父目录含 C 依赖；此子项尚未单独完成删除校验")
+            except OSError:
+                pass
+            return
+        if info and linked(info):
+            reason += "；只能移除此链接自身，不要删除链接目标"
+        targets[key(path)] = {"path": str(path), "reason": reason}
+
+    for row in report["skipped"]:
+        add(Path(row["path"]), row["reason"])
+    rows = sorted(targets.values(), key=lambda row: key(row["path"]))
+    write(
+        ARCHIVE / "manual-cleanup.json",
+        {
+            "source_report": str(report_path),
+            "targets": rows,
+            "required_retained": retained,
+        },
+    )
+    lines = [
+        "# 需手动复核的 TraceFix 清理项",
+        "",
+        f"共 {len(rows)} 项。以下是建议精简的旧生成目录，但自动校验未通过。",
+        "这不是无条件删除授权清单。",
+        "",
+        "权限项未强改 ACL，未能读全的内容不保证已经归档。手动删除前确认没有独有代码或面试材料。",
+        "变化项先核对新文件与归档；链接项只移除链接自身，不跟随或删除目标。",
+        "不要删除 C 的六次记录、共同 provider/费用账本、冻结源码、实际环境、",
+        "原始 prompts 或归档目录。",
+        "",
+        "| 绝对路径 | 自动拒绝原因 |",
+        "| --- | --- |",
+    ]
+    for row in rows:
+        reason = row["reason"].replace("|", "\\|").replace("\n", " ")
+        if "WinError 5" in reason:
+            reason = "访问被拒绝，未修改权限；完整内容及归档状态需人工核对"
+        lines.append(f"| `{row['path']}` | {reason} |")
+    if retained:
+        lines.extend(["", "## 明确保留", ""])
+        lines.extend(f"- `{name}`" for name in sorted(set(retained)))
+    (REPO / "docs" / "interview" / "manual-cleanup.md").write_text(
+        "\n".join(lines) + "\n", encoding="utf-8"
+    )
+    return {"manual_items": len(rows), "required_retained": len(set(retained))}
+
+
 def prepare():
     no_link_ancestors(ARCHIVE)
     ARCHIVE.mkdir(parents=True, exist_ok=True)
@@ -622,6 +701,7 @@ def remove_owned_tree(path, expected_snapshot=None):
     if expected_snapshot is not None and current != expected_snapshot:
         raise ValueError("artifact changed immediately before deletion")
     if stat.S_ISDIR(info.st_mode):
+
         def readonly_file(function, filename, error):
             child = Path(filename)
             child_info = child.lstat()
@@ -723,27 +803,41 @@ def trim_current_ab():
     plan = read(ARCHIVE / "cleanup-plan.json")
     index = read(ARCHIVE / "archive-index.json")
     trimmed = []
-    for row in plan["deletions"]:
-        source = Path(row["path"])
-        if source.parent != CURRENT / "trials":
+    protected, _, _ = protected_paths()
+    for trial in csv.DictReader((CURRENT / "per-run.csv").open(encoding="utf-8")):
+        if trial["arm"] not in {"A", "B"}:
             continue
-        if read(source / "record.json")["arm"] == "C":
-            raise ValueError("C trial in deletion list")
-        if snapshot(source) != row["snapshot"]:
-            raise ValueError("A/B trial changed before summary archival")
-        old = Path(row["archive"])
+        source = CURRENT / "trials" / trial["id"]
+        if source.parent != CURRENT / "trials":
+            raise ValueError("A/B trial outside direct trial scope")
+        guard(source, allowed_roots(), protected)
+        record_path = source / "record.json"
+        before = snapshot(record_path)
+        record = read(record_path)
+        if record["arm"] != trial["arm"] or record["id"] != trial["id"]:
+            raise ValueError("A/B result identity mismatch")
+        unsigned = dict(record)
+        if (
+            digest({k: v for k, v in unsigned.items() if k != "record_sha256"})
+            != record["record_sha256"]
+        ):
+            raise ValueError("A/B result digest mismatch")
         expected_name = hashlib.sha256(key(source).encode()).hexdigest()[:16] + ".zip"
-        if old.parent != ARCHIVE / "datasets" or old.name != expected_name:
-            raise ValueError("A/B archive association outside generated dataset scope")
+        old = ARCHIVE / "datasets" / expected_name
         original = read(old.with_suffix(".manifest.json"))
-        if original["source_root"] != str(source) or original["zip_sha256"] != row["zip_sha256"]:
+        if original["source_root"] != str(source):
             raise ValueError("A/B archive association corrupted")
+        archived_record = next(r for r in original["files"] if r["member"] == "record.json")
+        if archived_record["sha256"] != sha(record_path):
+            raise ValueError("A/B result changed since initial archive")
         verify_zip(original)
         output = old.with_name(old.stem + "-summary.zip")
         retained = zip_archive(source, output, shallow=True, summary_only=True)
-        if snapshot(source) != row["snapshot"]:
-            raise ValueError("A/B trial changed during summary archival")
-        row.update(archive=retained["archive"], zip_sha256=retained["zip_sha256"])
+        if snapshot(record_path) != before:
+            raise ValueError("A/B result changed during summary archival")
+        for row in plan["deletions"]:
+            if row["path"] == str(source):
+                row.update(archive=retained["archive"], zip_sha256=retained["zip_sha256"])
         for entry in index:
             if entry["source"] == str(source):
                 entry.update(
@@ -883,7 +977,9 @@ def purge(remote_commit):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("mode", choices=("prepare", "retry", "trim-ab", "verify", "purge"))
+    parser.add_argument(
+        "mode", choices=("prepare", "retry", "trim-ab", "manual-list", "verify", "purge")
+    )
     parser.add_argument("--github-commit")
     args = parser.parse_args()
     if args.mode == "prepare":
@@ -892,6 +988,8 @@ def main():
         retry_skipped()
     elif args.mode == "trim-ab":
         trim_current_ab()
+    elif args.mode == "manual-list":
+        print(json.dumps(manual_cleanup_report()))
     elif args.mode == "verify":
         print(json.dumps(verify_c()))
     elif args.github_commit:

@@ -134,6 +134,30 @@ def test_current_ab_summary_discards_trajectories_and_checkpoints(tmp_path):
     assert [row["member"] for row in manifest["files"]] == ["record.json"]
 
 
+def test_manual_list_excludes_required_and_unrelated_directories(tmp_path, monkeypatch):
+    repo = tmp_path / "repo"
+    archive = tmp_path / "archive"
+    safe, required, unrelated = repo / "test-old", repo / "test-c", tmp_path / "other"
+    for path in (safe, required, unrelated, archive, repo / "docs" / "interview"):
+        path.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(cleanup, "REPO", repo)
+    monkeypatch.setattr(cleanup, "ARCHIVE", archive)
+    monkeypatch.setattr(cleanup, "allowed_roots", lambda: [repo])
+    monkeypatch.setattr(cleanup, "protected_paths", lambda: ([required], [], []))
+    cleanup.write(
+        archive / "final-report.json",
+        {
+            "skipped": [
+                {"path": str(p), "reason": "permission"} for p in (safe, required, unrelated)
+            ]
+        },
+    )
+    cleanup.manual_cleanup_report()
+    rows = cleanup.read(archive / "manual-cleanup.json")["targets"]
+    assert [row["path"] for row in rows] == [str(safe)]
+    assert safe.exists() and required.exists() and unrelated.exists()
+
+
 def test_real_symlink_does_not_delete_other_directory(tmp_path):
     other = tmp_path / "other"
     other.mkdir()
