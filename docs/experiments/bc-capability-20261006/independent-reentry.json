@@ -1,0 +1,9 @@
+{
+  "requests_sha256": "a1198abdbad56f56e7b704cfe3bb3de0e8a0f3d251260b24f9828f654973396d",
+  "supplier_requests": 345,
+  "source": "paid-audit.json, completed before independent reentry",
+  "exit_code": 0,
+  "unchanged": true,
+  "new_supplier_requests": 0,
+  "completed_trials_reused": 20
+}

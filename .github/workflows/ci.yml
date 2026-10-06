@@ -4,7 +4,7 @@ on:
   push:
     branches: [main, 'codex/experience-memory', 'codex/continuous-dialogue',
                'codex/docker-recovery', 'codex/memory-dialogue-integration',
-               'codex/agent-model-comparison']
+               'codex/agent-model-comparison', 'codex/bc-350k-tokenizer']
   pull_request:
   workflow_dispatch:
 
@@ -242,6 +242,12 @@ jobs:
           python -m pip install --require-hashes -r requirements/locks/engineering-py311.txt
           python -m pip install --no-deps --no-build-isolation -e .
 
+      - name: Validate official tokenizer with zero supplier calls
+        run: |
+          python -m pip install --no-deps deepseek-recipe==0.1.1
+          curl --fail --location https://raw.githubusercontent.com/deepseek-ai/deepseek-recipe/8cadfede7063c896b944e7bae05daa3549ae97ea/static/tokenizers/v41/tokenizer.json --output "$RUNNER_TEMP/v41-tokenizer.json"
+          python scripts/check_comparison_tokenizer.py --tokenizer "$RUNNER_TEMP/v41-tokenizer.json" --output "$RUNNER_TEMP/tokenizer-smoke.json"
+
       - name: 构建隔离的合成任务镜像
         run: |
           docker build --pull=true -f docker/zero-call-smoke.Dockerfile -t tracefix-zero-call-smoke:${{ github.sha }} .
@@ -272,6 +278,7 @@ jobs:
           name: docker-zero-call-smoke-${{ github.sha }}
           path: |
             ${{ runner.temp }}/tracefix-image-id.txt
+            ${{ runner.temp }}/tokenizer-smoke.json
             ${{ runner.temp }}/tracefix-smoke/*/reproduction.json
             ${{ runner.temp }}/tracefix-smoke/*/runs/*/result.json
             ${{ runner.temp }}/tracefix-smoke/*/runs/*/trajectory.jsonl

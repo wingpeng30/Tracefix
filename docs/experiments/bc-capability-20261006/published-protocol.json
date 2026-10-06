@@ -1,0 +1,279 @@
+{
+  "schema_version": 2,
+  "product_base": "bc7dd7df4939a374062ea0c7039279de81112cd2",
+  "implementation_commit": "09f97556dd6ac67a8d318a1fbd524e92c6ca7e2e",
+  "implementation_sha256": "b5602ed263875a3f374672e8c8a39ad9cbc0705afe752a4cde9daea5cd751035",
+  "limits": {
+    "input_tokens": 1250000,
+    "output_tokens": 312500,
+    "requests": 2147483647,
+    "tests": 2147483647,
+    "active_seconds": 2147483647,
+    "timeout_seconds": 120,
+    "limit_cny": 50.0
+  },
+  "mode": "live",
+  "bootstrap": {
+    "seed": 20261005,
+    "resamples": 10000
+  },
+  "schedule": [
+    {
+      "id": "001",
+      "task_id": "more-itertools-windowed-empty-462",
+      "repetition": 1,
+      "arm": "B"
+    },
+    {
+      "id": "002",
+      "task_id": "more-itertools-windowed-empty-462",
+      "repetition": 1,
+      "arm": "C"
+    },
+    {
+      "id": "003",
+      "task_id": "markdown-quoted-braces-1414",
+      "repetition": 1,
+      "arm": "C"
+    },
+    {
+      "id": "004",
+      "task_id": "markdown-quoted-braces-1414",
+      "repetition": 1,
+      "arm": "B"
+    },
+    {
+      "id": "005",
+      "task_id": "click-completion-resources-2800",
+      "repetition": 1,
+      "arm": "B"
+    },
+    {
+      "id": "006",
+      "task_id": "click-completion-resources-2800",
+      "repetition": 1,
+      "arm": "C"
+    },
+    {
+      "id": "007",
+      "task_id": "psf__requests-1142",
+      "repetition": 1,
+      "arm": "C"
+    },
+    {
+      "id": "008",
+      "task_id": "psf__requests-1142",
+      "repetition": 1,
+      "arm": "B"
+    },
+    {
+      "id": "009",
+      "task_id": "psf__requests-1766",
+      "repetition": 1,
+      "arm": "B"
+    },
+    {
+      "id": "010",
+      "task_id": "psf__requests-1766",
+      "repetition": 1,
+      "arm": "C"
+    },
+    {
+      "id": "011",
+      "task_id": "pytest-dev__pytest-10051",
+      "repetition": 1,
+      "arm": "C"
+    },
+    {
+      "id": "012",
+      "task_id": "pytest-dev__pytest-10051",
+      "repetition": 1,
+      "arm": "B"
+    },
+    {
+      "id": "013",
+      "task_id": "pytest-dev__pytest-10081",
+      "repetition": 1,
+      "arm": "B"
+    },
+    {
+      "id": "014",
+      "task_id": "pytest-dev__pytest-10081",
+      "repetition": 1,
+      "arm": "C"
+    },
+    {
+      "id": "015",
+      "task_id": "pytest-dev__pytest-10356",
+      "repetition": 1,
+      "arm": "C"
+    },
+    {
+      "id": "016",
+      "task_id": "pytest-dev__pytest-10356",
+      "repetition": 1,
+      "arm": "B"
+    },
+    {
+      "id": "017",
+      "task_id": "sphinx-doc__sphinx-10435",
+      "repetition": 1,
+      "arm": "B"
+    },
+    {
+      "id": "018",
+      "task_id": "sphinx-doc__sphinx-10435",
+      "repetition": 1,
+      "arm": "C"
+    },
+    {
+      "id": "019",
+      "task_id": "sphinx-doc__sphinx-10449",
+      "repetition": 1,
+      "arm": "C"
+    },
+    {
+      "id": "020",
+      "task_id": "sphinx-doc__sphinx-10449",
+      "repetition": 1,
+      "arm": "B"
+    }
+  ],
+  "profile": {
+    "name": "bc-capability-tokenizer",
+    "arms": [
+      "B",
+      "C"
+    ],
+    "repetitions": 1,
+    "limits": {
+      "input_tokens": 1250000,
+      "output_tokens": 312500,
+      "requests": 2147483647,
+      "tests": 2147483647,
+      "active_seconds": 2147483647,
+      "timeout_seconds": 120,
+      "limit_cny": 50.0
+    },
+    "per_request_output_tokens": 393216,
+    "arm_limit_cny": 25.0,
+    "trial_limit_cny": 2.5,
+    "input_counter": "official_estimate",
+    "capability_mode": true
+  },
+  "full_protocol_sha256": "e0bf8579dba8eb47fa45de6ff4565d13b3d9a7ed1f2befd83277d1c41cd6e6a1",
+  "model": {
+    "requested": "deepseek/deepseek-flash",
+    "returned": [
+      "deepseek-flash"
+    ],
+    "thinking": "disabled",
+    "temperature": 0,
+    "streaming": false,
+    "retries": 0,
+    "endpoint": "https://api.deepseek.com"
+  },
+  "arm_c_default_config_sha256": "2f3e0eb9417397bc07f56a78d3e89870218498a83556adcfc84fe2072cdfdb13",
+  "tasks": {
+    "more-itertools-windowed-empty-462": {
+      "source_commit": "82bb61c19e2c7553c499c7e80b176334cecfa6d9",
+      "source_identity_sha256": "ae9183155e657749639dc1858b020e29b27830ae8ec0e438cb8368b6c2852447",
+      "environment_sha256": "7095450a6f5792c65f3675fc49a2df23edbab487e13c5ef3fb723c75269baf94",
+      "prompt_sha256": "10d98849d342a932ac1f3496a0823a0960568c2f76d8c20e04f6458c6e6ed62f",
+      "qualification_sha256": "64119e264dc7b37e311851718df1efc3281e30973f02cdbb720604dbafb1c56b",
+      "verification_nodes_sha256": "5d87e37d7c82a2d1e3663e70df19d7ca8ec5c92e8838ffb0acf71e27ab0532dd",
+      "reference_kind": "original_reference",
+      "reference_correction_sha256": null
+    },
+    "markdown-quoted-braces-1414": {
+      "source_commit": "e8a97f5e8cd9c666cd4159082323a2ffe2840b59",
+      "source_identity_sha256": "475f1f9076c49b317f6b3845d3279b5c28c16905cecad3c54bd882ac1565af38",
+      "environment_sha256": "7095450a6f5792c65f3675fc49a2df23edbab487e13c5ef3fb723c75269baf94",
+      "prompt_sha256": "bdfe4ed8ab881df07a9503dffcd987f6f93627106d42ff66f3945d29f05a84fd",
+      "qualification_sha256": "ea63b0a2638b0cb8a4d5cbdcb48f42b7ee588bbf0685e9d7b25994924c545fb8",
+      "verification_nodes_sha256": "40e266a387a8a37ff6f6b1b25d7351be210858cbd82bf03da3ec7a48d4cb22ca",
+      "reference_kind": "upstream_product_patch_plus_reviewed_correction",
+      "reference_correction_sha256": "2d6b4a521ecc9cd1b9376a6d4eafb995f715dfb716d7e38578e4c3644026b242"
+    },
+    "click-completion-resources-2800": {
+      "source_commit": "94afe7bca2c3ed3188c94d3e844b1894be12af1a",
+      "source_identity_sha256": "e12f987656dc5bb6d210a5c2f29549a974c3015c75a209e74a4783fafe7447a3",
+      "environment_sha256": "7095450a6f5792c65f3675fc49a2df23edbab487e13c5ef3fb723c75269baf94",
+      "prompt_sha256": "ea8fbec75428c8c55c67c66f8d04392012e56c3b3d94afcbfb708e600b81be5a",
+      "qualification_sha256": "485d3e59be01fe583ddfe5aa3a5c7a1bff2391e331dd66ea7f0991a0015e4f5f",
+      "verification_nodes_sha256": "3bfcec4545e57c859404efa8df5f3020e88aad2284a61f7e7b800ddc3b5f6d05",
+      "reference_kind": "upstream_product_patch_plus_reviewed_correction",
+      "reference_correction_sha256": "90952f6ec431df799746107e8e3d27224664c6289087f0268c4b5af751e0e702"
+    },
+    "psf__requests-1142": {
+      "source_commit": "22623bd8c265b78b161542663ee980738441c307",
+      "source_identity_sha256": "3f136a3af567fb7ebfabc2dd1a32a19bdef04aab72293b30065d803c5c1bcf2c",
+      "environment_sha256": "7e1d467a3118d23b64e55d3e116ed58e751a01337dd35b2f38ced0225769b109",
+      "prompt_sha256": "e1e780a3ad4a6b73697019ff04021ffdf42fe4eb97344e9053f24df2e7e594ce",
+      "qualification_sha256": "03cc4e99d1f776aba9d805937ecda2d4a3e8f6290a437b1b7b7713fceaae9dfe",
+      "verification_nodes_sha256": "1a0e89b948595c2f916c00ca458e846e4768f0d43e20986c57849709dcff7c1c",
+      "reference_kind": "original_reference",
+      "reference_correction_sha256": null
+    },
+    "psf__requests-1766": {
+      "source_commit": "847735553aeda6e6633f2b32e14ba14ba86887a4",
+      "source_identity_sha256": "41a7bd9067ae5d7a2321604cfb520a32d211ee64c1178f7e51bc1a0d18b59d78",
+      "environment_sha256": "3b6cfd0cf615015a61392c75af9c90817ccbfccd27e3817a634559b4e4a20185",
+      "prompt_sha256": "31c61d3f225af0f0e3127147937cd5c12a72ecb0e4cd6da0c69db75b569a93d1",
+      "qualification_sha256": "5810a96ddfcfbf676bae50b288060cb05d1213519f63e264892945dde34034fe",
+      "verification_nodes_sha256": "88940302ac1ff8992fdb8a1e28e5a7a92b9e897806b5a2b1827a5e1b900fdf98",
+      "reference_kind": "original_reference",
+      "reference_correction_sha256": null
+    },
+    "pytest-dev__pytest-10051": {
+      "source_commit": "aa55975c7d3f6c9f6d7f68accc41bb7cadf0eb9a",
+      "source_identity_sha256": "242fff82cf79a5ca8a6ffa64e316889915856f0b24b9373903007516d62c5820",
+      "environment_sha256": "1958f58475dd3d4e92c6f2c795000f96c5e0fe7499c75093d132135ead491a2e",
+      "prompt_sha256": "ebe22577b6789220f450210c74737e7992aec1b0367e27ed7cb411dab354c231",
+      "qualification_sha256": "e35958b7a30c78459862ef878d94bf303848e34b5f75810a56da85f43afca493",
+      "verification_nodes_sha256": "467ace260daa89445eda5ca6887b0a28aae597a9795c2b875fe1f13dc81fa02c",
+      "reference_kind": "original_reference",
+      "reference_correction_sha256": null
+    },
+    "pytest-dev__pytest-10081": {
+      "source_commit": "da9a2b584eb7a6c7e924b2621ed0ddaeca0a7bea",
+      "source_identity_sha256": "4358d3b6b58f2058abd7bf7e5f0badfa36f4f83cfa84267486c53278e13c947f",
+      "environment_sha256": "1586c22a191bde2d3c1b142328c4de5091ebdade37d3ea84a4cf95cab93da5df",
+      "prompt_sha256": "d9c95778d8eaf039c7e083d3b997b780f60365fa1033ca9cd590f981410a0864",
+      "qualification_sha256": "4b03b3768ab24ea02dbac19c9aa7a9ce1a761894a4199874d00fd7bc1e8bc3aa",
+      "verification_nodes_sha256": "28c78c1d290d44a43ccaf2f9cfa0ebeb6f992b46cee53d46231f244bda0524e5",
+      "reference_kind": "original_reference",
+      "reference_correction_sha256": null
+    },
+    "pytest-dev__pytest-10356": {
+      "source_commit": "3c1534944cbd34e8a41bc9e76818018fadefc9a1",
+      "source_identity_sha256": "06539d6836c89ad402ceb7a46a1f89204f62977577d607db5ff942b444667bc5",
+      "environment_sha256": "7eca2236950b34f56293fdbf555ebe39c3ad9820b831954c12e33547b4236027",
+      "prompt_sha256": "efde69b39ae3ecd7f2cdc23002e312e385720a0dea9508b54b72c8008b867251",
+      "qualification_sha256": "891ff16c630ac33b4910db7451776078a927cfb4902d0245434a8d0e34aec0c3",
+      "verification_nodes_sha256": "11953efb305105873eef822293933d1b56861eaf375b7a89319be7822ed8e30c",
+      "reference_kind": "original_reference",
+      "reference_correction_sha256": null
+    },
+    "sphinx-doc__sphinx-10435": {
+      "source_commit": "f1061c012e214f16fd8790dec3c283d787e3daa8",
+      "source_identity_sha256": "3a2c0a465d5fbb59c622ed57cbc7ad1033c92f62961f5f63ea8a5ecee68bed6b",
+      "environment_sha256": "d2950f940df34532b959f9d187c3e950bf234e30f53d595220a4fbfd45178d2b",
+      "prompt_sha256": "291484f471c522f9ea9108bdaf539b5ed70244ebe94cc1563b352afe84e99125",
+      "qualification_sha256": "f32bdbd569b90c32b967bb8d438c157bf833e42d8b1c253311da63d6d4eceecc",
+      "verification_nodes_sha256": "81af166cecf0c41065a07bb3fe17b405de1114831216e0adac88b1d19034f117",
+      "reference_kind": "original_reference",
+      "reference_correction_sha256": null
+    },
+    "sphinx-doc__sphinx-10449": {
+      "source_commit": "36367765fe780f962bba861bf368a765380bbc68",
+      "source_identity_sha256": "87b8dae67f53a93c6b30b4d91dfa0940b560d91cbb315503d6e43bb129501530",
+      "environment_sha256": "5d08b8ec31d21300aae21c3a971d5407a9507cc82555fe20a8dfbe570b56acc5",
+      "prompt_sha256": "35549d81b52be684e0899ab14f8fe1dca15e88fc7906b4cae1471a012c5030c3",
+      "qualification_sha256": "141034360ceb079266bd2c8243dd536927cc3e7d0ecddfdb76e6e818cae5f5bd",
+      "verification_nodes_sha256": "3284ebf7e4e623aa2075e3ed0ddbf584b9f0365f44b028c1e934842a93f3653e",
+      "reference_kind": "original_reference",
+      "reference_correction_sha256": null
+    }
+  }
+}

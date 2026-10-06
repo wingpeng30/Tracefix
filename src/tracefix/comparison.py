@@ -13,8 +13,10 @@ from pathlib import Path
 from typing import Any
 
 from tracefix.agent.base import DEFAULT_SYSTEM_PROMPT
+from tracefix.comparison_profiles import OfficialCounter, profile_config, protocol_profile
 from tracefix.exceptions import LLMProviderError, LLMResponseFormatError, PreRequestBudgetExceeded
 from tracefix.messages import Message, MessageRole
+from tracefix.models.input_bounds import InputBound
 from tracefix.models.litellm_adapter import LiteLLMAdapter
 from tracefix.tools.base import ToolResult
 
@@ -32,15 +34,7 @@ TASK_IDS = (
     "sphinx-doc__sphinx-10449",
 )
 ARMS = ("A", "B", "C")
-LIMITS = {
-    "input_tokens": 60000,
-    "output_tokens": 8000,
-    "requests": 20,
-    "tests": 16,
-    "active_seconds": 900,
-    "timeout_seconds": 60,
-    "limit_cny": 20.0,
-}
+LIMITS = profile_config()["limits"]
 PATCH_RULE = (
     "只修改产品源码；禁止修改、新增、删除或重命名测试、pytest配置、conftest及setup.cfg。"
     "修复必须保留已有行为，不得跳过测试。"
@@ -72,12 +66,17 @@ def read_json(path: Path) -> Any:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-def schedule() -> list[dict[str, Any]]:
+def schedule(profile: dict | None = None) -> list[dict[str, Any]]:
+    selected = profile or profile_config()
     rows = []
-    for repetition in range(1, 4):
+    for repetition in range(1, selected["repetitions"] + 1):
         for index, task in enumerate(TASK_IDS):
             order = ("A", "B", "C") if index % 2 == 0 else ("A", "C", "B")
-            offset = (index + repetition - 1) % 3
+            if selected["arms"] == ["B", "C"]:
+                order = ("B", "C") if index % 2 == 0 else ("C", "B")
+            offset = (index + repetition - 1) % len(order)
+            if selected["arms"] == ["B", "C"]:
+                offset = 0
             for arm in order[offset:] + order[:offset]:
                 rows.append(
                     {
@@ -144,7 +143,17 @@ def extract_patch(content: str) -> str:
 class ComparisonBudget(LiteLLMAdapter):
     """Shared durable CNY ledger plus identical per-trial pre-request protection."""
 
-    def __init__(self, config, *, root: Path, trial: dict, protocol_sha: str, client=None):
+    def __init__(
+        self,
+        config,
+        *,
+        root: Path,
+        trial: dict,
+        protocol_sha: str,
+        client=None,
+        profile: dict | None = None,
+        counter_runtime: dict | None = None,
+    ):
         super().__init__(config, client=client)
         if (
             config.model_name != "deepseek/deepseek-flash"
@@ -158,6 +167,9 @@ class ComparisonBudget(LiteLLMAdapter):
             raise ValueError("official non-thinking endpoint with no retries required")
         self.root, self.trial, self.protocol_sha = root, trial, protocol_sha
         self.started = time.monotonic()
+        self.profile = profile or profile_config()
+        self.limits = self.profile["limits"]
+        self.counter = OfficialCounter(counter_runtime) if counter_runtime else None
 
     def ledger(self) -> dict:
         path = self.root / "requests.json"
@@ -167,49 +179,136 @@ class ComparisonBudget(LiteLLMAdapter):
             else {
                 "schema_version": 1,
                 "protocol_sha256": self.protocol_sha,
-                "limit_cny": 20.0,
+                "limit_cny": self.limits["limit_cny"],
                 "requests": [],
             }
         )
         if (
             data.get("schema_version") != 1
             or data.get("protocol_sha256") != self.protocol_sha
-            or data.get("limit_cny") != 20.0
+            or data.get("limit_cny") != self.limits["limit_cny"]
         ):
             raise ValueError("ledger identity mismatch")
+        if data.get("halt_reason"):
+            raise LLMProviderError("campaign halted: " + data["halt_reason"])
         if any(row.get("status") != "completed" for row in data["requests"]):
             raise LLMProviderError("unknown prior request; no automatic replay")
         return data
+
+    def count_input_bound(self, messages, tools=()) -> InputBound:
+        if self.counter is None:
+            raise LLMProviderError("official counter unavailable")
+        kwargs = self.request_kwargs(messages, tools)
+        count = self.counter.count(kwargs)
+        return InputBound(count.tokens, count.status, count.method, count.identity, digest(kwargs))
 
     def complete(self, messages, tools=()):
         ledger = self.ledger()
         previous = [r for r in ledger["requests"] if r["trial_id"] == self.trial["id"]]
         used_input = sum(r["usage"]["input_tokens"] for r in previous)
         used_output = sum(r["usage"]["output_tokens"] for r in previous)
-        maximum = 1 if self.trial["arm"] == "A" else LIMITS["requests"]
-        if len(previous) >= maximum or time.monotonic() - self.started >= 900:
+        maximum = 1 if self.trial["arm"] == "A" else self.limits["requests"]
+        if (
+            len(previous) >= maximum
+            or time.monotonic() - self.started >= self.limits["active_seconds"]
+        ):
             write_json(
                 self.root / "trials" / self.trial["id"] / "refusal.json",
                 {"trial_id": self.trial["id"], "sent": False, "reason": "request/time limit"},
             )
             raise PreRequestBudgetExceeded("request/time limit; request not sent")
-        remaining = LIMITS["output_tokens"] - used_output
+        remaining = self.limits["output_tokens"] - used_output
         if remaining <= 0:
             write_json(
                 self.root / "trials" / self.trial["id"] / "refusal.json",
                 {"trial_id": self.trial["id"], "sent": False, "reason": "output budget exhausted"},
             )
             raise PreRequestBudgetExceeded("output budget exhausted; request not sent")
-        self.config.max_output_tokens = min(remaining, 8000 if maximum == 1 else 2048)
+        self.config.max_output_tokens = min(
+            remaining, 8000 if maximum == 1 else self.profile["per_request_output_tokens"]
+        )
         bound = self.count_input_tokens(messages, tools)
-        reservation = (bound * 2 + self.config.max_output_tokens * 8) / 1_000_000
+        count = None
+        admission = bound
+        if self.profile["input_counter"] == "official_estimate":
+            try:
+                count = self.count_input_bound(messages, tools)
+                if (
+                    count.status != "estimate"
+                    or not isinstance(count.tokens, int)
+                    or count.tokens <= 0
+                ):
+                    raise ValueError("official count unavailable")
+                admission = count.tokens
+            except Exception as exc:
+                ledger["halt_reason"] = f"official counter unavailable: {type(exc).__name__}"
+                write_json(self.root / "requests.json", ledger)
+                write_json(
+                    self.root / "trials" / self.trial["id"] / "refusal.json",
+                    {"sent": False, "reason": ledger["halt_reason"]},
+                )
+                raise LLMProviderError(ledger["halt_reason"]) from exc
         spent = sum(r["peak_cost_cny"] for r in ledger["requests"])
-        if used_input + bound > 60000 or spent + reservation > 20.0:
+        same_arm = [r for r in ledger["requests"] if r.get("arm") == self.trial["arm"]]
+        arm_spent = sum(r["peak_cost_cny"] for r in same_arm)
+        trial_spent = sum(r["peak_cost_cny"] for r in previous)
+        arm_limit, trial_limit = self.profile["arm_limit_cny"], self.profile["trial_limit_cny"]
+        if self.profile["capability_mode"]:
+            from tracefix.models.input_bounds import DEEPSEEK_FLASH_CONTEXT
+
+            available = min(
+                self.limits["limit_cny"] - spent, arm_limit - arm_spent, trial_limit - trial_spent
+            )
+            affordable_output = (round(available * 1_000_000) - bound * 2) // 8
+            output_allowance = (
+                min(
+                    self.config.max_output_tokens,
+                    affordable_output,
+                    DEEPSEEK_FLASH_CONTEXT - admission,
+                )
+                if affordable_output > 0 and DEEPSEEK_FLASH_CONTEXT > admission
+                else 0
+            )
+            if output_allowance <= 0:
+                write_json(
+                    self.root / "trials" / self.trial["id"] / "refusal.json",
+                    {"sent": False, "reason": "fee or provider context exhausted"},
+                )
+                raise PreRequestBudgetExceeded(
+                    "fee or provider context exhausted; request not sent"
+                )
+            self.config.max_output_tokens = output_allowance
+            if count is not None:
+                count = InputBound(
+                    count.tokens,
+                    count.status,
+                    count.method,
+                    count.identity,
+                    digest(self.request_kwargs(messages, tools)),
+                )
+        reservation = (bound * 2 + self.config.max_output_tokens * 8) / 1_000_000
+        if (
+            (
+                not self.profile["capability_mode"]
+                and used_input + admission > self.limits["input_tokens"]
+            )
+            or round((spent + reservation) * 1_000_000)
+            > round(self.limits["limit_cny"] * 1_000_000)
+            or (
+                arm_limit is not None
+                and round((arm_spent + reservation) * 1_000_000) > round(arm_limit * 1_000_000)
+            )
+            or (
+                trial_limit is not None
+                and round((trial_spent + reservation) * 1_000_000) > round(trial_limit * 1_000_000)
+            )
+        ):
             refusal = {
                 "trial_id": self.trial["id"],
                 "sent": False,
                 "reason": "input/CNY reservation exceeds remaining budget",
                 "input_bound": bound,
+                "input_admission": admission,
                 "reserved_peak_cny": reservation,
             }
             write_json(self.root / "trials" / self.trial["id"] / "refusal.json", refusal)
@@ -220,6 +319,17 @@ class ComparisonBudget(LiteLLMAdapter):
         write_json(request_file, kwargs)
         row = {
             "trial_id": self.trial["id"],
+            "arm": self.trial["arm"],
+            "input_admission": admission,
+            "official_count": None
+            if count is None
+            else {
+                "tokens": count.tokens,
+                "status": count.status,
+                "method": count.method,
+                "identity": count.identity,
+                "request_sha256": count.request_sha256,
+            },
             "id": request_id,
             "status": "pending",
             "request_sha256": file_sha(request_file),
@@ -232,6 +342,9 @@ class ComparisonBudget(LiteLLMAdapter):
         write_json(self.root / "requests.json", ledger)
         # Any failure after this point leaves pending: transport/usage is unknown.
         started = time.monotonic()
+        if count is not None and hasattr(self.client, "fixture_input_tokens"):
+            # Explicit zero-provider fixtures emulate usage for admission tests only.
+            self.client.fixture_input_tokens = count.tokens
         try:
             response = super().complete(messages, tools)
         except LLMResponseFormatError as exc:
@@ -252,9 +365,17 @@ class ComparisonBudget(LiteLLMAdapter):
             response_model=response.model_name,
             seconds=time.monotonic() - started,
         )
+        if count is not None:
+            row["official_count_delta"] = count.tokens - usage.input_tokens
+            if row["official_count_delta"] != 0:
+                ledger["halt_reason"] = "official count differs from supplier usage"
+            if used_input + usage.input_tokens > self.limits["input_tokens"]:
+                ledger["halt_reason"] = "actual cumulative input exceeds trial limit"
         if usage.input_tokens > bound or usage.output_tokens > row["output_limit"]:
             row["status"] = "reservation_violation"
         write_json(self.root / "requests.json", ledger)
+        if ledger.get("halt_reason"):
+            raise LLMProviderError(ledger["halt_reason"])
         if row["status"] != "completed":
             raise LLMProviderError("supplier usage exceeds reservation; stop campaign")
         return response
@@ -267,14 +388,15 @@ def simple_loop(llm: ComparisonBudget, tools, task: str, trace: Path) -> dict:
         Message(role=MessageRole.USER, content=task),
     ]
     tests = 0
-    for _ in range(20):
+    limits = getattr(llm, "limits", LIMITS)
+    for _ in range(limits["requests"]):
         response = llm.complete(history, tools.specs())
         history.append(response.message)
         if not response.message.tool_calls:
             write_json(trace, [m.model_dump(mode="json") for m in history])
             return {"status": "completed", "final_output": response.message.content}
         for call in response.message.tool_calls:
-            if call.name == "run_tests" and tests >= 16:
+            if call.name == "run_tests" and tests >= limits["tests"]:
                 result = ToolResult(
                     call_id=call.id, tool_name=call.name, success=False, error="test limit reached"
                 )
@@ -301,10 +423,14 @@ def simple_loop(llm: ComparisonBudget, tools, task: str, trace: Path) -> dict:
 
 
 def summarize(protocol: dict, trials: list[dict], requests: list[dict]) -> dict:
+    selected = protocol_profile(protocol)
+    arms = selected["arms"]
+    repetitions = selected["repetitions"]
+    planned = len(protocol.get("schedule", schedule(selected)))
     by_task = []
     for task in TASK_IDS:
         row = {"task_id": task}
-        for arm in ARMS:
+        for arm in arms:
             subset = [r for r in trials if r["task_id"] == task and r["arm"] == arm]
             row[arm] = {
                 "started": len(subset),
@@ -313,14 +439,18 @@ def summarize(protocol: dict, trials: list[dict], requests: list[dict]) -> dict:
             }
         by_task.append(row)
     aggregates = {}
-    for arm in ARMS:
+    for arm in arms:
         subset = [r for r in trials if r["arm"] == arm]
         ids = {r["id"] for r in subset}
         usage = [r for r in requests if r["trial_id"] in ids and r["status"] == "completed"]
         successes = sum(bool(r.get("passed")) for r in subset)
         cost = sum(r["peak_cost_cny"] for r in usage)
         aggregates[arm] = {
-            "planned": 30,
+            "planned": len(TASK_IDS) * repetitions,
+            "normal_completions": sum(r.get("status") == "completed" for r in subset),
+            "completed_and_passed": sum(
+                r.get("status") == "completed" and r.get("passed", False) for r in subset
+            ),
             "started": len(subset),
             "successes": successes,
             "success_rate": successes / len(subset) if subset else None,
@@ -345,16 +475,22 @@ def summarize(protocol: dict, trials: list[dict], requests: list[dict]) -> dict:
             ),
         }
     comparisons = {}
-    for baseline in ("A", "B"):
-        matched = [row for row in by_task if all(row[a]["finished"] == 3 for a in (baseline, "C"))]
-        values = [(r["C"]["successes"] - r[baseline]["successes"]) / 3 for r in matched]
+    for baseline in [a for a in arms if a != "C"]:
+        matched = [
+            row
+            for row in by_task
+            if all(row[a]["finished"] == repetitions for a in (baseline, "C"))
+        ]
+        values = [(r["C"]["successes"] - r[baseline]["successes"]) / repetitions for r in matched]
         if values:
             rng = random.Random(20261005)
             samples = sorted(
                 sum(rng.choices(values, k=len(values))) / len(values) for _ in range(10000)
             )
             delta = sum(values) / len(values)
-            base_rate = sum(r[baseline]["successes"] for r in matched) / (3 * len(matched))
+            base_rate = sum(r[baseline]["successes"] for r in matched) / (
+                repetitions * len(matched)
+            )
             comparisons[f"C-{baseline}"] = {
                 "matched_tasks": len(matched),
                 "percentage_point_difference": delta * 100,
@@ -369,10 +505,10 @@ def summarize(protocol: dict, trials: list[dict], requests: list[dict]) -> dict:
     return {
         "protocol_sha256": digest(protocol),
         "mode": protocol["mode"],
-        "complete": len(trials) == 90 and all(r.get("finished") for r in trials),
-        "planned": 90,
+        "complete": len(trials) == planned and all(r.get("finished") for r in trials),
+        "planned": planned,
         "started": len(trials),
-        "unstarted": 90 - len(trials),
+        "unstarted": planned - len(trials),
         "arms": aggregates,
         "comparisons": comparisons,
         "per_task": by_task,
