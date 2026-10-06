@@ -47,7 +47,9 @@ def test_link_detection_without_privileged_windows_symlinks(tmp_path, monkeypatc
     nested.mkdir()
     original = cleanup.linked
     monkeypatch.setattr(
-        cleanup, "linked", lambda info: info.st_ino == nested.stat().st_ino or original(info)
+        cleanup,
+        "linked",
+        lambda info: info.st_ctime_ns == nested.stat().st_ctime_ns or original(info),
     )
     with pytest.raises(ValueError, match="reparse"):
         cleanup.snapshot(tmp_path)

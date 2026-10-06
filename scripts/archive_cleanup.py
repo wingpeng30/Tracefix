@@ -131,22 +131,29 @@ def snapshot(path):
     no_link_ancestors(path)
     h = hashlib.sha256()
     size, count = 0, 0
-    stack = [str(path)]
+    stack = [(str(path), path.lstat())]
     while stack:
-        current = stack.pop()
-        info = os.lstat(current)
+        current, info = stack.pop()
         if linked(info):
             raise ValueError(f"nested reparse point: {current}")
         relative = os.path.relpath(current, path)
         h.update(
             json.dumps(
-                [relative, info.st_size, info.st_mtime_ns, info.st_ino, info.st_mode],
+                [relative, info.st_size, info.st_mtime_ns, info.st_ctime_ns, info.st_mode],
                 ensure_ascii=False,
             ).encode()
         )
         if stat.S_ISDIR(info.st_mode):
             with os.scandir(current) as entries:
-                stack.extend(sorted((e.path for e in entries), reverse=True))
+                # Windows enumeration supplies timestamps and reparse attributes without
+                # reopening every file. Creation time identifies replacement files.
+                stack.extend(
+                    sorted(
+                        ((e.path, e.stat(follow_symlinks=False)) for e in entries),
+                        key=lambda row: row[0],
+                        reverse=True,
+                    )
+                )
         elif stat.S_ISREG(info.st_mode):
             size += info.st_size
             count += 1
