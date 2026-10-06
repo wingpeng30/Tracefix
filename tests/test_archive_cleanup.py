@@ -112,6 +112,16 @@ def test_cached_archive_rejects_new_evidence(tmp_path):
         cleanup.zip_archive(source, output, full=True)
 
 
+def test_current_ab_summary_discards_trajectories_and_checkpoints(tmp_path):
+    source = tmp_path / "ab"
+    source.mkdir()
+    (source / "record.json").write_text("{}")
+    (source / "trajectory.jsonl").write_text("analysis")
+    (source / "checkpoint.json").write_text("checkpoint")
+    manifest = cleanup.zip_archive(source, tmp_path / "ab.zip", shallow=True, summary_only=True)
+    assert [row["member"] for row in manifest["files"]] == ["record.json"]
+
+
 def test_real_symlink_does_not_delete_other_directory(tmp_path):
     other = tmp_path / "other"
     other.mkdir()

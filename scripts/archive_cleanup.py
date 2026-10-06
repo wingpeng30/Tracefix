@@ -281,7 +281,7 @@ def candidates(protected, tracked):
     return [p for p in unique if not any(key(parent) in names for parent in p.parents)]
 
 
-def archive_files(root, important=False, full=False, shallow=False):
+def archive_files(root, important=False, full=False, shallow=False, summary_only=False):
     root = Path(root)
     if root.is_file():
         yield root
@@ -327,6 +327,13 @@ def archive_files(root, important=False, full=False, shallow=False):
                         if full or not (path / ".git").exists():
                             stack.append(path)
                 elif stat.S_ISREG(info.st_mode):
+                    if summary_only and path.name not in {
+                        "record.json",
+                        "result.json",
+                        "summary.json",
+                        "verification.json",
+                    }:
+                        continue
                     if full or path.suffix.lower() in SUFFIXES:
                         if not full and not important:
                             if (
@@ -689,6 +696,56 @@ def retry_skipped():
     )
 
 
+def trim_current_ab():
+    plan = read(ARCHIVE / "cleanup-plan.json")
+    index = read(ARCHIVE / "archive-index.json")
+    trimmed = []
+    for row in plan["deletions"]:
+        source = Path(row["path"])
+        if source.parent != CURRENT / "trials":
+            continue
+        if read(source / "record.json")["arm"] == "C":
+            raise ValueError("C trial in deletion list")
+        if snapshot(source) != row["snapshot"]:
+            raise ValueError("A/B trial changed before summary archival")
+        old = Path(row["archive"])
+        original = read(old.with_suffix(".manifest.json"))
+        verify_zip(original)
+        output = old.with_name(old.stem + "-summary.zip")
+        retained = zip_archive(source, output, shallow=True, summary_only=True)
+        if snapshot(source) != row["snapshot"]:
+            raise ValueError("A/B trial changed during summary archival")
+        row.update(archive=retained["archive"], zip_sha256=retained["zip_sha256"])
+        for entry in index:
+            if entry["source"] == str(source):
+                entry.update(
+                    archive=retained["archive"],
+                    retained_files=len(retained["files"]),
+                    coverage="Current A/B result summary only; trajectories/checkpoints discarded",
+                )
+        trimmed.append(
+            {
+                "source": str(source),
+                "removed_archive": str(old),
+                "removed_sha256": original["zip_sha256"],
+                "summary_archive": str(output),
+            }
+        )
+    # Save the replacement association before discarding this run's redundant A/B archives.
+    write(ARCHIVE / "cleanup-plan.json", plan)
+    write(ARCHIVE / "archive-index.json", index)
+    write(ARCHIVE / "ab-trimming.json", trimmed)
+    for item in trimmed:
+        old = Path(item["removed_archive"])
+        if old.parent != ARCHIVE / "datasets" or sha(old) != item["removed_sha256"]:
+            raise ValueError("A/B archive trimming scope/digest mismatch")
+        no_link_ancestors(old)
+        no_link_ancestors(old.with_suffix(".manifest.json"))
+        old.unlink()
+        old.with_suffix(".manifest.json").unlink()
+    print(json.dumps({"current_ab_summarized": len(trimmed)}), flush=True)
+
+
 def purge(remote_commit):
     if subprocess.check_output(
         ["git", "status", "--porcelain", "--untracked-files=no"], cwd=REPO
@@ -798,13 +855,15 @@ def purge(remote_commit):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("mode", choices=("prepare", "retry", "verify", "purge"))
+    parser.add_argument("mode", choices=("prepare", "retry", "trim-ab", "verify", "purge"))
     parser.add_argument("--github-commit")
     args = parser.parse_args()
     if args.mode == "prepare":
         prepare()
     elif args.mode == "retry":
         retry_skipped()
+    elif args.mode == "trim-ab":
+        trim_current_ab()
     elif args.mode == "verify":
         print(json.dumps(verify_c()))
     elif args.github_commit:
