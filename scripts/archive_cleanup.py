@@ -201,6 +201,7 @@ def protected_paths():
         protocol = read(root / "protocol.json")
         for task in protocol["tasks"].values():
             protected.extend([Path(task["source"]), Path(task["python"]).parent.parent])
+            protected.append(Path(task["prompt_path"]).parent)
     protected.extend(
         REPO / "tmp" / name
         for name in (
@@ -731,7 +732,12 @@ def trim_current_ab():
         if snapshot(source) != row["snapshot"]:
             raise ValueError("A/B trial changed before summary archival")
         old = Path(row["archive"])
+        expected_name = hashlib.sha256(key(source).encode()).hexdigest()[:16] + ".zip"
+        if old.parent != ARCHIVE / "datasets" or old.name != expected_name:
+            raise ValueError("A/B archive association outside generated dataset scope")
         original = read(old.with_suffix(".manifest.json"))
+        if original["source_root"] != str(source) or original["zip_sha256"] != row["zip_sha256"]:
+            raise ValueError("A/B archive association corrupted")
         verify_zip(original)
         output = old.with_name(old.stem + "-summary.zip")
         retained = zip_archive(source, output, shallow=True, summary_only=True)
