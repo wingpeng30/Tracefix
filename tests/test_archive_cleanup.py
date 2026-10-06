@@ -87,6 +87,18 @@ def test_full_backup_preserves_workspace_and_safe_removal(tmp_path):
     assert output.exists()
 
 
+def test_cached_archive_rejects_changed_source(tmp_path):
+    source = tmp_path / "source"
+    source.mkdir()
+    original = source / "record.json"
+    original.write_text("original")
+    output = tmp_path / "saved.zip"
+    cleanup.zip_archive(source, output, full=True)
+    original.write_text("changed")
+    with pytest.raises(ValueError, match="source changed"):
+        cleanup.zip_archive(source, output, full=True)
+
+
 def test_real_symlink_does_not_delete_other_directory(tmp_path):
     other = tmp_path / "other"
     other.mkdir()

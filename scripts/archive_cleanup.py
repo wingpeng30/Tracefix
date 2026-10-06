@@ -13,6 +13,7 @@ import stat
 import subprocess
 import time
 import zipfile
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 REPO = Path(r"D:\Tracefix")
@@ -337,6 +338,12 @@ def zip_archive(root, output, **options):
         manifest = read(output.with_suffix(".manifest.json"))
         if sha(output) != manifest["zip_sha256"]:
             raise ValueError(f"existing archive corrupted: {output}")
+        selected = {str(p) for p in archive_files(root, **options)}
+        if selected != {row["source"] for row in manifest["files"]}:
+            raise ValueError(f"archived source membership changed: {root}")
+        for row in manifest["files"]:
+            if not within(row["source"], root) or sha(row["source"]) != row["sha256"]:
+                raise ValueError(f"archived source changed: {row['source']}")
         return manifest
     items = []
     temporary = output.with_suffix(".zip.writing")
@@ -472,7 +479,8 @@ def prepare():
     planned, skipped, index = [], [], []
     roots = allowed_roots()
     todo = candidates(protected, tracked)
-    for number, path in enumerate(todo, 1):
+
+    def process(path):
         try:
             guard(path, roots, protected)
             before = snapshot(path)
@@ -488,40 +496,51 @@ def prepare():
             after = snapshot(path)
             if before != after:
                 raise ValueError("candidate changed while archiving")
-            planned.append(
-                {
-                    "path": str(path),
-                    "snapshot": before,
-                    "archive": m["archive"],
-                    "zip_sha256": m["zip_sha256"],
-                    "reason": (
-                        "Archived conclusions/evidence; disposable experiment workspace "
-                        "or generated test/build artifact"
-                    ),
-                }
-            )
-            index.append(
-                {
-                    "source": str(path),
-                    "archive": m["archive"],
-                    "retained_files": len(m["files"]),
-                    "coverage": m["coverage"],
-                }
-            )
-        except (OSError, ValueError, zipfile.BadZipFile) as error:
-            skipped.append({"path": str(path), "reason": str(error)})
-        if number % 20 == 0:
-            print(
-                json.dumps(
-                    {
-                        "prepared": number,
-                        "total": len(todo),
-                        "deletable": len(planned),
-                        "skipped": len(skipped),
-                    }
+            row = {
+                "path": str(path),
+                "snapshot": before,
+                "archive": m["archive"],
+                "zip_sha256": m["zip_sha256"],
+                "reason": (
+                    "Archived conclusions/evidence; disposable experiment workspace "
+                    "or generated test/build artifact"
                 ),
-                flush=True,
-            )
+            }
+            entry = {
+                "source": str(path),
+                "archive": m["archive"],
+                "retained_files": len(m["files"]),
+                "coverage": m["coverage"],
+            }
+            return row, entry, None
+        except (OSError, ValueError, zipfile.BadZipFile) as error:
+            return None, None, {"path": str(path), "reason": str(error)}
+
+    with ThreadPoolExecutor(max_workers=4) as workers:
+        futures = [workers.submit(process, path) for path in todo]
+        for number, future in enumerate(as_completed(futures), 1):
+            row, entry, failure = future.result()
+            if failure:
+                skipped.append(failure)
+            else:
+                planned.append(row)
+                index.append(entry)
+            if number % 100 == 0:
+                write(ARCHIVE / "skipped-progress.json", skipped)
+                print(
+                    json.dumps(
+                        {
+                            "prepared": number,
+                            "total": len(todo),
+                            "deletable": len(planned),
+                            "skipped": len(skipped),
+                            "sample_skips": skipped[:2],
+                        }
+                    ),
+                    flush=True,
+                )
+    planned.sort(key=lambda row: key(row["path"]))
+    index.sort(key=lambda row: key(row["source"]))
     write(ARCHIVE / "archive-index.json", index)
     write(
         ARCHIVE / "cleanup-plan.json",
@@ -574,6 +593,10 @@ def remove_owned_tree(path):
 
 
 def purge(remote_commit):
+    if subprocess.check_output(
+        ["git", "status", "--porcelain", "--untracked-files=no"], cwd=REPO
+    ).strip():
+        raise ValueError("tracked changes must be committed and uploaded before cleanup")
     head = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=REPO).decode().strip()
     branch = subprocess.check_output(["git", "branch", "--show-current"], cwd=REPO).decode().strip()
     remote = (
@@ -606,8 +629,17 @@ def purge(remote_commit):
         raise ValueError("C evidence changed since prepare")
     write(ARCHIVE / "github-backup.json", {"commit": head, "branch": branch, "remote": remote})
     bundle = ARCHIVE / "tracefix-code.bundle"
-    if not bundle.exists():
-        subprocess.run(["git", "bundle", "create", str(bundle), "--all"], cwd=REPO, check=True)
+    heads = (
+        subprocess.check_output(["git", "bundle", "list-heads", str(bundle)], cwd=REPO).decode()
+        if bundle.exists()
+        else ""
+    )
+    if head not in heads:
+        temporary_bundle = bundle.with_suffix(".bundle.writing")
+        subprocess.run(
+            ["git", "bundle", "create", str(temporary_bundle), "--all"], cwd=REPO, check=True
+        )
+        os.replace(temporary_bundle, bundle)
     subprocess.run(
         ["git", "bundle", "verify", str(bundle)], cwd=REPO, check=True, stdout=subprocess.DEVNULL
     )
