@@ -99,6 +99,17 @@ def test_cached_archive_rejects_changed_source(tmp_path):
         cleanup.zip_archive(source, output, full=True)
 
 
+def test_cached_archive_rejects_new_evidence(tmp_path):
+    source = tmp_path / "source"
+    source.mkdir()
+    (source / "record.json").write_text("original")
+    output = tmp_path / "saved.zip"
+    cleanup.zip_archive(source, output, full=True)
+    (source / "new-result.json").write_text("new")
+    with pytest.raises(ValueError, match="membership changed"):
+        cleanup.zip_archive(source, output, full=True)
+
+
 def test_real_symlink_does_not_delete_other_directory(tmp_path):
     other = tmp_path / "other"
     other.mkdir()

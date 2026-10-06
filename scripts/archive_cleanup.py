@@ -592,6 +592,69 @@ def remove_owned_tree(path):
             os.unlink(path)
 
 
+def retry_skipped():
+    """Create a fresh proposal for skipped paths; never reuse their stale fingerprints."""
+    plan = read(ARCHIVE / "cleanup-plan.json")
+    protected, _, _ = protected_paths()
+    roots = allowed_roots()
+    remaining = []
+    index = read(ARCHIVE / "archive-index.json")
+    for number, item in enumerate(plan["skipped"], 1):
+        path = Path(item["path"])
+        try:
+            guard(path, roots, protected)
+            before = snapshot(path)
+            output = (
+                ARCHIVE
+                / "datasets"
+                / (hashlib.sha256(key(path).encode()).hexdigest()[:16] + ".zip")
+            )
+            manifest = zip_archive(
+                path,
+                output,
+                important=path.name in IMPORTANT,
+                shallow=path.parent == CURRENT / "trials"
+                or path.parent == REPO
+                or path.parent == TEMP,
+            )
+            if snapshot(path) != before:
+                raise ValueError("candidate changed during fresh proposal")
+            plan["deletions"].append(
+                {
+                    "path": str(path),
+                    "snapshot": before,
+                    "archive": manifest["archive"],
+                    "zip_sha256": manifest["zip_sha256"],
+                    "reason": "Fresh stable snapshot with matching archived evidence",
+                }
+            )
+            index.append(
+                {
+                    "source": str(path),
+                    "archive": manifest["archive"],
+                    "retained_files": len(manifest["files"]),
+                    "coverage": manifest["coverage"],
+                }
+            )
+        except (OSError, ValueError, zipfile.BadZipFile) as error:
+            remaining.append({"path": str(path), "reason": str(error)})
+        if number % 100 == 0:
+            print(json.dumps({"retried": number, "remaining": len(remaining)}), flush=True)
+    plan["skipped"] = remaining
+    write(ARCHIVE / "archive-index.json", index)
+    write(ARCHIVE / "cleanup-plan.json", plan)
+    print(
+        json.dumps(
+            {
+                "candidates": len(plan["deletions"]),
+                "skipped": remaining,
+                "logical_gib": sum(r["snapshot"]["bytes"] for r in plan["deletions"]) / 1024**3,
+            }
+        ),
+        flush=True,
+    )
+
+
 def purge(remote_commit):
     if subprocess.check_output(
         ["git", "status", "--porcelain", "--untracked-files=no"], cwd=REPO
@@ -699,11 +762,13 @@ def purge(remote_commit):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("mode", choices=("prepare", "verify", "purge"))
+    parser.add_argument("mode", choices=("prepare", "retry", "verify", "purge"))
     parser.add_argument("--github-commit")
     args = parser.parse_args()
     if args.mode == "prepare":
         prepare()
+    elif args.mode == "retry":
+        retry_skipped()
     elif args.mode == "verify":
         print(json.dumps(verify_c()))
     elif args.github_commit:
