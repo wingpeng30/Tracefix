@@ -1,0 +1,16 @@
+{
+  "original_evidence_index_sha256": "2973a8fd61bdf9c2d6d746896227c731ab273b66d54f90ecce14b5ba28922033",
+  "original_index_files": 44294,
+  "supplementary_artifacts": {
+    "published-protocol.json": "db740cb63237c1650c11043c1fa336c3a78556d5ef800ba122377d7d6d554bb1",
+    "per-run.csv": "4af5b6207f64050565edac43f5b36737691e6b3ea24bb5445af927c2f0345882",
+    "per-task.csv": "5aac0b6e54c6e1b44edd6993312408bbcf5697d6aefffd1c57355682f6e7501d",
+    "failure-audit.json": "f6d3c99f4fb4822fe1b58aaf29b7fe01625e3a4a260defc3a368c68e3b9cb462",
+    "paid-audit.json": "d898dcf118bbd5387a94c2de9c9efedcc55d733ebdf7ce9a2f2451e4df3d3f51",
+    "independent-reentry.json": "25b8136d46518543c6df9cea3694137fa1524cc6e4412aa349d03a83944430c6",
+    "service-cleanup.json": "d04c28bdf2b2a0ae7c0edfeae65f1af234e792cc979eb42e0857ca1ed7c58a6d",
+    "017-raw-patch-check.log": "f0a9028440a54e9b6d4a2e2dd1e0381d08a371dbf43c1d6030e8d1a1a24dfe1b",
+    "020-raw-patch-check.log": "271b74a7042189b56ab75f667f795de2789176b05053a6c7640392a4d6694200"
+  },
+  "immutable_ledger_sha256": "a1198abdbad56f56e7b704cfe3bb3de0e8a0f3d251260b24f9828f654973396d"
+}

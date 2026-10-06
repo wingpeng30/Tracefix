@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import subprocess
 import sys
 from types import SimpleNamespace
 
@@ -24,6 +25,49 @@ from tracefix.comparison_campaign import (
 from tracefix.messages import Message, MessageRole, ToolCall
 from tracefix.models.base import LLMResponse, TokenUsage
 from tracefix.tools.base import ToolResult
+
+
+@pytest.mark.parametrize("budget_stop", [False, True])
+def test_simple_trial_excludes_real_pytest_products_from_patch(tmp_path, monkeypatch, budget_stop):
+    import tracefix.comparison_campaign as campaign
+    from tracefix.exceptions import PreRequestBudgetExceeded
+
+    catalog, _ = fixture_catalog(tmp_path)
+    spec = read_json(catalog)[0]
+    source = tmp_path / "source"
+    with (source / "test_sample.py").open("a", encoding="utf-8") as stream:
+        stream.write(
+            "def test_binary_product(tmp_path):\n"
+            "    (tmp_path / 'generated.bin').write_bytes(bytes(range(256)))\n"
+        )
+    subprocess.run(["git", "add", "."], cwd=source, check=True, capture_output=True)
+    subprocess.run(
+        ["git", "-c", "user.name=Fixture", "-c", "user.email=f@example.invalid",
+         "commit", "-m", "real temporary products"],
+        cwd=source, check=True, capture_output=True,
+    )
+    spec = qualify_task(spec, tmp_path / "qualification")
+    prompt = tmp_path / "prompt.txt"
+    prompt.write_text("Fix add", encoding="utf-8")
+    spec["prompt_path"] = str(prompt)
+    protocol = {"mode": "offline", "tasks": {TASK_IDS[0]: spec}}
+    original = campaign.simple_loop
+
+    def stop_after_tools(*args, **kwargs):
+        result = original(*args, **kwargs)
+        if budget_stop:
+            raise PreRequestBudgetExceeded("offline fee refusal")
+        return result
+
+    monkeypatch.setattr(campaign, "simple_loop", stop_after_tools)
+    root = tmp_path / "campaign"
+    row = schedule()[1]
+    result = campaign.execute_trial(root, protocol, row, None)
+    directory = root / "trials" / row["id"]
+    assert list((directory / "workspace" / ".tracefix-test-tmp").rglob("generated.bin"))
+    assert ".tracefix-test-tmp" not in (directory / "patch.diff").read_text(encoding="utf-8")
+    assert result["passed"]
+    assert result["status"] == ("budget_exhausted" if budget_stop else "completed")
 
 
 def test_cli_dispatch_preserves_explicit_campaign_limits(tmp_path, monkeypatch, capsys):

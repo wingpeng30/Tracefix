@@ -1,0 +1,195 @@
+{
+  "protocol_sha256": "e0bf8579dba8eb47fa45de6ff4565d13b3d9a7ed1f2befd83277d1c41cd6e6a1",
+  "mode": "live",
+  "complete": true,
+  "planned": 20,
+  "started": 20,
+  "unstarted": 0,
+  "arms": {
+    "B": {
+      "planned": 10,
+      "normal_completions": 8,
+      "completed_and_passed": 5,
+      "started": 10,
+      "successes": 6,
+      "success_rate": 0.6,
+      "input_tokens": 5180060,
+      "output_tokens": 42005,
+      "conservative_peak_cny": 10.696159999999999,
+      "cost_per_success_cny": 1.7826933333333332,
+      "seconds": 1698.2480000000214,
+      "infrastructure_failures": 0,
+      "failure_reasons": {
+        "infrastructure: raw patch includes harness .tracefix-test-tmp products; independent RunTestsTool rejected existing temporary path": 1,
+        "fee or provider context exhausted; request not sent": 1,
+        "real experiment git command failed": 2
+      }
+    },
+    "C": {
+      "planned": 10,
+      "normal_completions": 9,
+      "completed_and_passed": 6,
+      "started": 10,
+      "successes": 6,
+      "success_rate": 0.6,
+      "input_tokens": 2545686,
+      "output_tokens": 30951,
+      "conservative_peak_cny": 5.33898,
+      "cost_per_success_cny": 0.88983,
+      "seconds": 1302.7050000000163,
+      "infrastructure_failures": 0,
+      "failure_reasons": {
+        "agent_completed": 3,
+        "token_budget_exceeded": 1
+      }
+    }
+  },
+  "comparisons": {
+    "C-B": {
+      "matched_tasks": 10,
+      "percentage_point_difference": 0.0,
+      "bootstrap_95_percent_points": [
+        -30.0,
+        30.0
+      ],
+      "relative_improvement": 0.0,
+      "wins": 1,
+      "losses": 1,
+      "ties": 8
+    }
+  },
+  "per_task": [
+    {
+      "task_id": "more-itertools-windowed-empty-462",
+      "B": {
+        "started": 1,
+        "finished": 1,
+        "successes": 1
+      },
+      "C": {
+        "started": 1,
+        "finished": 1,
+        "successes": 1
+      }
+    },
+    {
+      "task_id": "markdown-quoted-braces-1414",
+      "B": {
+        "started": 1,
+        "finished": 1,
+        "successes": 1
+      },
+      "C": {
+        "started": 1,
+        "finished": 1,
+        "successes": 1
+      }
+    },
+    {
+      "task_id": "click-completion-resources-2800",
+      "B": {
+        "started": 1,
+        "finished": 1,
+        "successes": 0
+      },
+      "C": {
+        "started": 1,
+        "finished": 1,
+        "successes": 1
+      }
+    },
+    {
+      "task_id": "psf__requests-1142",
+      "B": {
+        "started": 1,
+        "finished": 1,
+        "successes": 1
+      },
+      "C": {
+        "started": 1,
+        "finished": 1,
+        "successes": 1
+      }
+    },
+    {
+      "task_id": "psf__requests-1766",
+      "B": {
+        "started": 1,
+        "finished": 1,
+        "successes": 1
+      },
+      "C": {
+        "started": 1,
+        "finished": 1,
+        "successes": 1
+      }
+    },
+    {
+      "task_id": "pytest-dev__pytest-10051",
+      "B": {
+        "started": 1,
+        "finished": 1,
+        "successes": 1
+      },
+      "C": {
+        "started": 1,
+        "finished": 1,
+        "successes": 0
+      }
+    },
+    {
+      "task_id": "pytest-dev__pytest-10081",
+      "B": {
+        "started": 1,
+        "finished": 1,
+        "successes": 1
+      },
+      "C": {
+        "started": 1,
+        "finished": 1,
+        "successes": 1
+      }
+    },
+    {
+      "task_id": "pytest-dev__pytest-10356",
+      "B": {
+        "started": 1,
+        "finished": 1,
+        "successes": 0
+      },
+      "C": {
+        "started": 1,
+        "finished": 1,
+        "successes": 0
+      }
+    },
+    {
+      "task_id": "sphinx-doc__sphinx-10435",
+      "B": {
+        "started": 1,
+        "finished": 1,
+        "successes": 0
+      },
+      "C": {
+        "started": 1,
+        "finished": 1,
+        "successes": 0
+      }
+    },
+    {
+      "task_id": "sphinx-doc__sphinx-10449",
+      "B": {
+        "started": 1,
+        "finished": 1,
+        "successes": 0
+      },
+      "C": {
+        "started": 1,
+        "finished": 1,
+        "successes": 0
+      }
+    }
+  ],
+  "unknown_requests": [],
+  "interpretation": "Known development tasks; cold start; exploratory, not holdout accuracy."
+}

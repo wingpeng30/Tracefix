@@ -1,0 +1,11 @@
+﻿task_id,B_successes,C_successes,repetitions
+more-itertools-windowed-empty-462,1,1,1
+markdown-quoted-braces-1414,1,1,1
+click-completion-resources-2800,0,1,1
+psf__requests-1142,1,1,1
+psf__requests-1766,1,1,1
+pytest-dev__pytest-10051,1,0,1
+pytest-dev__pytest-10081,1,1,1
+pytest-dev__pytest-10356,0,0,1
+sphinx-doc__sphinx-10435,0,0,1
+sphinx-doc__sphinx-10449,0,0,1

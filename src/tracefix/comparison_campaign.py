@@ -606,6 +606,7 @@ def execute_trial(root: Path, protocol: dict, row: dict, env_file: Path | None) 
         return adapter
 
     patch = directory / "patch.diff"
+    protected_dirs = {".tracefix-build-tmp"}
     try:
         config = config_for(spec, prompt, directory / "agent", env_file, selected)
         if row["arm"] == "C":
@@ -633,7 +634,7 @@ def execute_trial(root: Path, protocol: dict, row: dict, env_file: Path | None) 
                 if config.environment_recipe
                 else None,
                 test_environment_variables=config.test_environment_variables,
-                protected_dirs={".tracefix-build-tmp"},
+                protected_dirs=protected_dirs,
                 evidence_dir=directory / "tools",
             )
             llm_config = LLMConfig(
@@ -673,7 +674,7 @@ def execute_trial(root: Path, protocol: dict, row: dict, env_file: Path | None) 
                 record["status"] = "completed" if application.success else "invalid_patch"
             else:
                 record.update(simple_loop(llm, tools, prompt, directory / "messages.json"))
-            diff, _ = TraceFixRunner._collect_diff(workspace, {".tracefix-build-tmp"})
+            diff, _ = TraceFixRunner._collect_diff(workspace, protected_dirs)
             patch.write_text(diff, encoding="utf-8")
     except PreRequestBudgetExceeded as exc:
         record.update(status="budget_exhausted", reason=str(exc))
@@ -685,7 +686,7 @@ def execute_trial(root: Path, protocol: dict, row: dict, env_file: Path | None) 
         )
     # Preserve candidate patches even when a simple loop reaches its limit.
     if not patch.exists() and (directory / "workspace").exists():
-        diff, _ = TraceFixRunner._collect_diff(directory / "workspace", {".tracefix-build-tmp"})
+        diff, _ = TraceFixRunner._collect_diff(directory / "workspace", protected_dirs)
         patch.write_text(diff, encoding="utf-8")
     record["seconds"] = time.monotonic() - started
     write_json(directory / "record.json", record)

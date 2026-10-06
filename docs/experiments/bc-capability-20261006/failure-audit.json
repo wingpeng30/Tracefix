@@ -1,0 +1,109 @@
+{
+  "raw_summary_unchanged": true,
+  "summary_infrastructure_field_limitation": "Only catches transport/run exceptions; misses verifier and temporary-product collection failures. Do not interpret its zero as absence of infrastructure failures.",
+  "harness_patch_contamination": 3,
+  "budget_stops": 3,
+  "independent_test_failures": 3,
+  "rows": [
+    {
+      "id": "005",
+      "task_id": "click-completion-resources-2800",
+      "repetition": 1,
+      "arm": "B",
+      "classification": "harness_patch_contamination",
+      "status": "completed",
+      "passed": false,
+      "raw_reason": "infrastructure: raw patch includes harness .tracefix-test-tmp products; independent RunTestsTool rejected existing temporary path",
+      "record_sha256": "d261b6436e0b6cca608bd0f380f59dc52c8f5ff5659a59b747de0048f0376e2f"
+    },
+    {
+      "id": "011",
+      "task_id": "pytest-dev__pytest-10051",
+      "repetition": 1,
+      "arm": "C",
+      "classification": "independent_test_failure",
+      "status": "completed",
+      "passed": false,
+      "raw_reason": "pytest execution failed",
+      "record_sha256": "7885c7358c8c16d19325afc478bc7c81bd80d9872ed23b1fa2bba7718843a981"
+    },
+    {
+      "id": "013",
+      "task_id": "pytest-dev__pytest-10081",
+      "repetition": 1,
+      "arm": "B",
+      "classification": "budget_stop",
+      "status": "budget_exhausted",
+      "passed": true,
+      "raw_reason": "fee or provider context exhausted; request not sent",
+      "record_sha256": "1e1604be98ccd704506e8556f25a78999cdf5f459dcdb9cbc2686593092fdbd6"
+    },
+    {
+      "id": "015",
+      "task_id": "pytest-dev__pytest-10356",
+      "repetition": 1,
+      "arm": "C",
+      "classification": "independent_test_failure",
+      "status": "completed",
+      "passed": false,
+      "raw_reason": "pytest execution failed",
+      "record_sha256": "a9b19ca20f30e0c034812a76953958623aa4f60aec3795001ca72b2bbf8ff4cb"
+    },
+    {
+      "id": "016",
+      "task_id": "pytest-dev__pytest-10356",
+      "repetition": 1,
+      "arm": "B",
+      "classification": "budget_stop",
+      "status": "budget_exhausted",
+      "passed": false,
+      "raw_reason": "pytest execution failed",
+      "record_sha256": "339511731dffd48ffe01e4de649a6d48a07910e85ce77638c8eeb185b924fc10"
+    },
+    {
+      "id": "017",
+      "task_id": "sphinx-doc__sphinx-10435",
+      "repetition": 1,
+      "arm": "B",
+      "classification": "harness_patch_contamination",
+      "status": "completed",
+      "passed": false,
+      "raw_reason": "real experiment git command failed",
+      "record_sha256": "59440dce3e33e27379f6cf496852c486ee39874851426c0188a85a764a9250a3"
+    },
+    {
+      "id": "018",
+      "task_id": "sphinx-doc__sphinx-10435",
+      "repetition": 1,
+      "arm": "C",
+      "classification": "independent_test_failure",
+      "status": "completed",
+      "passed": false,
+      "raw_reason": "pytest execution failed",
+      "record_sha256": "f974be879c489a214678f6b981a984b61a043355c26a87032fc3adffe9781e92"
+    },
+    {
+      "id": "019",
+      "task_id": "sphinx-doc__sphinx-10449",
+      "repetition": 1,
+      "arm": "C",
+      "classification": "budget_stop",
+      "status": "interrupted",
+      "passed": false,
+      "raw_reason": "empty patch",
+      "record_sha256": "c8f7e345ce51d8b5bbb3568bf5df0180d8cee74b88be3b6c206fa77b7f2e3e63"
+    },
+    {
+      "id": "020",
+      "task_id": "sphinx-doc__sphinx-10449",
+      "repetition": 1,
+      "arm": "B",
+      "classification": "harness_patch_contamination",
+      "status": "completed",
+      "passed": false,
+      "raw_reason": "real experiment git command failed",
+      "record_sha256": "e6a7904469d2aad9cdad72ef898a33b9505b7f4b104fbf55f75456be7d1921e1"
+    }
+  ],
+  "C019_actual_refusal": "fee or provider context exhausted, sent=false; token_budget_exceeded is mapped agent status, not proof of cumulative token cutoff"
+}
