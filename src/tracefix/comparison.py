@@ -14,7 +14,7 @@ from typing import Any
 
 from tracefix.agent.base import DEFAULT_SYSTEM_PROMPT
 from tracefix.comparison_profiles import (
-    HOLDOUT_PROFILE,
+    HOLDOUT_PROFILES,
     OfficialCounter,
     profile_config,
     protocol_profile,
@@ -75,10 +75,10 @@ def schedule(
     profile: dict | None = None, task_ids: list[str] | None = None
 ) -> list[dict[str, Any]]:
     selected = profile or profile_config()
-    if selected["name"] == HOLDOUT_PROFILE:
+    if selected["name"] in HOLDOUT_PROFILES:
         from tracefix.comparison_holdout import balanced_schedule
 
-        return balanced_schedule(task_ids or list(TASK_IDS))
+        return balanced_schedule(task_ids or list(TASK_IDS), "".join(selected["arms"]))
     rows = []
     for repetition in range(1, selected["repetitions"] + 1):
         for index, task in enumerate(TASK_IDS):
@@ -180,6 +180,11 @@ class ComparisonBudget(LiteLLMAdapter):
         profile: dict | None = None,
         counter_runtime: dict | None = None,
     ):
+        selected = profile or profile_config()
+        if client is None and selected.get("hard_request_deadline_seconds"):
+            from tracefix.comparison_transport import HardDeadlineClient
+
+            client = HardDeadlineClient(selected["hard_request_deadline_seconds"])
         super().__init__(config, client=client)
         if (
             config.model_name != "deepseek/deepseek-flash"
@@ -193,7 +198,7 @@ class ComparisonBudget(LiteLLMAdapter):
             raise ValueError("official non-thinking endpoint with no retries required")
         self.root, self.trial, self.protocol_sha = root, trial, protocol_sha
         self.started = time.monotonic()
-        self.profile = profile or profile_config()
+        self.profile = selected
         self.limits = self.profile["limits"]
         self.counter = OfficialCounter(counter_runtime) if counter_runtime else None
         self.counter_seconds = 0.0
@@ -259,7 +264,7 @@ class ComparisonBudget(LiteLLMAdapter):
         self.config.max_output_tokens = min(
             remaining,
             8000
-            if maximum == 1 and self.profile["name"] != HOLDOUT_PROFILE
+            if maximum == 1 and self.profile["name"] not in HOLDOUT_PROFILES
             else self.profile["per_request_output_tokens"],
         )
         bound = self.count_input_tokens(messages, tools)
@@ -283,7 +288,15 @@ class ComparisonBudget(LiteLLMAdapter):
                     {"sent": False, "reason": ledger["halt_reason"]},
                 )
                 raise LLMProviderError(ledger["halt_reason"]) from exc
-        spent = sum(r["peak_cost_cny"] for r in ledger["requests"])
+        from tracefix.comparison_funding import prior_spend
+
+        prior = (
+            prior_spend(read_json(self.root / "protocol.json"))
+            if self.profile.get("hard_request_deadline_seconds")
+            and (self.root / "protocol.json").exists()
+            else 0.0
+        )
+        spent = prior + sum(r["peak_cost_cny"] for r in ledger["requests"])
         same_arm = [r for r in ledger["requests"] if r.get("arm") == self.trial["arm"]]
         arm_spent = sum(r["peak_cost_cny"] for r in same_arm)
         trial_spent = sum(r["peak_cost_cny"] for r in previous)
@@ -308,7 +321,7 @@ class ComparisonBudget(LiteLLMAdapter):
             )
             if output_allowance <= 0:
                 reason = "fee or provider context exhausted"
-                if self.profile["name"] == HOLDOUT_PROFILE:
+                if self.profile["name"] in HOLDOUT_PROFILES:
                     reason = (
                         "trial_fee_limit" if affordable_output <= 0 else "provider_context_limit"
                     )
@@ -394,7 +407,7 @@ class ComparisonBudget(LiteLLMAdapter):
             )
             raise
         finally:
-            if self.profile["name"] == HOLDOUT_PROFILE:
+            if self.profile["name"] in HOLDOUT_PROFILES:
                 row["seconds"] = time.monotonic() - started
                 write_json(self.root / "requests.json", ledger)
         response_file = self.root / "provider" / f"{request_id}-response.json"
@@ -409,7 +422,7 @@ class ComparisonBudget(LiteLLMAdapter):
             response_model=response.model_name,
             seconds=time.monotonic() - started,
         )
-        if self.profile["name"] == HOLDOUT_PROFILE:
+        if self.profile["name"] in HOLDOUT_PROFILES:
             row["supplier_raw_usage"] = response.raw_response.get("usage", {})
             row["supplier_system_fingerprint"] = response.raw_response.get("system_fingerprint")
             choices = response.raw_response.get("choices") or []
@@ -493,7 +506,7 @@ def simple_loop(llm: ComparisonBudget, tools, task: str, trace: Path) -> dict:
 
 def summarize(protocol: dict, trials: list[dict], requests: list[dict]) -> dict:
     selected = protocol_profile(protocol)
-    if selected["name"] == HOLDOUT_PROFILE:
+    if selected["name"] in HOLDOUT_PROFILES:
         from tracefix.comparison_holdout import holdout_summary
 
         return holdout_summary(protocol, trials, requests)

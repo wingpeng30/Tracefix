@@ -31,7 +31,7 @@ from tracefix.comparison import (
 )
 from tracefix.comparison_profiles import (
     CAPABILITY_PROFILE,
-    HOLDOUT_PROFILE,
+    HOLDOUT_PROFILES,
     LEGACY_PROFILE,
     TOKENIZER_PROFILE,
     OfficialCounter,
@@ -276,12 +276,21 @@ def prepare(
     tokenizer: Path | None = None,
     counter_runtime: Path | None = None,
     previous_campaign: Path | None = None,
+    budget_parent_campaign: Path | None = None,
 ) -> dict:
     root.mkdir(parents=True, exist_ok=True)
     with ProcessLock(root):
         if (root / "protocol.json").exists():
             raise ValueError("protocol already frozen; cannot overwrite")
         selected = profile_config(profile)
+        funding = None
+        if selected.get("hard_request_deadline_seconds"):
+            if mode == "live" and budget_parent_campaign is None:
+                raise ValueError("new paid batch requires the prior authorization ledger")
+            if budget_parent_campaign is not None:
+                from tracefix.comparison_funding import freeze_parent_budget
+
+                funding = freeze_parent_budget(budget_parent_campaign.resolve())
         runtime = None
         calibration = None
         if profile != LEGACY_PROFILE:
@@ -311,7 +320,7 @@ def prepare(
             runtime = calibration["runtime"]
         specifications = read_json(catalog)
         task_ids = [s["task_id"] for s in specifications]
-        if profile == HOLDOUT_PROFILE:
+        if profile in HOLDOUT_PROFILES:
             from tracefix.comparison_holdout import HOLDOUT_TASK_IDS
 
             if mode == "live" and task_ids != list(HOLDOUT_TASK_IDS):
@@ -346,7 +355,7 @@ def prepare(
                 source,
                 spec["issue"],
                 list(spec["source_identity"]["files"]),
-                full_files=profile == HOLDOUT_PROFILE,
+                full_files=profile in HOLDOUT_PROFILES,
             )
             prompt = (
                 spec["issue"]
@@ -357,7 +366,7 @@ def prepare(
                 + "\n"
                 + material
             )
-            if selected["name"] not in {LEGACY_PROFILE, HOLDOUT_PROFILE}:
+            if selected["name"] not in {LEGACY_PROFILE, *HOLDOUT_PROFILES}:
                 previous_protocol = read_json(previous_campaign / "protocol.json")
                 previous_spec = previous_protocol["tasks"][spec["task_id"]]
                 previous_prompt = Path(previous_spec["prompt_path"])
@@ -379,7 +388,7 @@ def prepare(
         protocol = {
             "schema_version": 2 if profile != LEGACY_PROFILE else 1,
             "product_base": PRODUCT_BASE
-            if profile != HOLDOUT_PROFILE
+            if profile not in HOLDOUT_PROFILES
             else "e380329d2a007a83dd317944bafd426d4b829c82",
             "implementation_commit": git(implementation, "rev-parse", "HEAD"),
             "implementation_sha256": TraceFixRunner._implementation_sha256(),
@@ -391,12 +400,18 @@ def prepare(
             "arm_c_config": AgentConfig().model_dump(mode="json"),
             "arm_b": "plain tool loop; no reminders, caching, repo map or compression",
             "bootstrap": {
-                "seed": 20261006 if profile == HOLDOUT_PROFILE else 20261005,
+                "seed": 20261006 if profile in HOLDOUT_PROFILES else 20261005,
                 "resamples": 10000,
             },
         }
         if profile != LEGACY_PROFILE:
             protocol.update(profile=selected, counter_runtime=runtime)
+        if selected.get("hard_request_deadline_seconds"):
+            from tracefix.comparison_transport import transport_identity
+
+            protocol["provider_transport"] = transport_identity()
+            if funding is not None:
+                protocol["funding"] = funding
         write_json(root / "protocol.json", protocol)
         write_json(root / "protocol.sha256.json", {"sha256": digest(protocol)})
         return protocol
@@ -407,6 +422,15 @@ def check_protocol(root: Path, *, require_ci: bool = True) -> dict:
     if digest(protocol) != read_json(root / "protocol.sha256.json")["sha256"]:
         raise ValueError("protocol corrupted")
     selected = protocol_profile(protocol)
+    if selected.get("hard_request_deadline_seconds"):
+        from tracefix.comparison_funding import prior_spend
+        from tracefix.comparison_transport import transport_identity
+
+        if protocol["provider_transport"] != transport_identity():
+            raise ValueError("hard-deadline transport identity changed")
+        if protocol["mode"] == "live" and "funding" not in protocol:
+            raise ValueError("prior authorization funding missing")
+        prior_spend(protocol)
     if protocol["limits"] != selected["limits"] or protocol["schedule"] != schedule(
         selected, list(protocol["tasks"])
     ):
@@ -603,7 +627,7 @@ def execute_trial(root: Path, protocol: dict, row: dict, env_file: Path | None) 
     client = FixtureClient(spec["fixture_patch"]) if protocol["mode"] == "offline" else None
     adapter = None
     selected = protocol_profile(protocol)
-    holdout = selected["name"] == HOLDOUT_PROFILE
+    holdout = selected["name"] in HOLDOUT_PROFILES
     preparation_seconds = 0.0
     c_tools_seconds = 0.0
     patch_seconds = 0.0
@@ -710,7 +734,7 @@ def execute_trial(root: Path, protocol: dict, row: dict, env_file: Path | None) 
                 model_name=config.model_name,
                 temperature=0.0,
                 max_output_tokens=8000
-                if row["arm"] == "A" and selected["name"] != HOLDOUT_PROFILE
+                if row["arm"] == "A" and selected["name"] not in HOLDOUT_PROFILES
                 else selected["per_request_output_tokens"],
                 timeout_seconds=selected["limits"]["timeout_seconds"],
                 max_retries=0,
@@ -927,8 +951,8 @@ def audit_first_block(root: Path, protocol: dict, identifiers: list[str]) -> dic
         if not record.get("finished") or record.get("infrastructure_failure"):
             raise ValueError("first block has incomplete infrastructure evidence")
         records.append(record)
-    if {r["arm"] for r in records} != {"A", "B", "C"}:
-        raise ValueError("first audit needs all three arms")
+    if {r["arm"] for r in records} != set(protocol_profile(protocol)["arms"]):
+        raise ValueError("first audit needs all protocol arms")
     schemas = []
     for arm in ("B", "C"):
         request = next((r for r in selected if r["arm"] == arm), None)
@@ -954,7 +978,9 @@ def audit_first_block(root: Path, protocol: dict, identifiers: list[str]) -> dic
 def run(root: Path, env_file: Path | None = None, *, max_trials: int = 180) -> list[dict]:
     with ProcessLock(root):
         protocol = check_protocol(root)
-        holdout = protocol_profile(protocol)["name"] == HOLDOUT_PROFILE
+        selected = protocol_profile(protocol)
+        holdout = selected["name"] in HOLDOUT_PROFILES
+        block_reservation = len(selected["arms"]) * selected["trial_limit_cny"] if holdout else 0
         if holdout and (root / "halt.json").exists():
             raise ValueError("campaign halted; no automatic replay")
         requests = validate_requests(root, protocol)
@@ -1017,13 +1043,18 @@ def run(root: Path, env_file: Path | None = None, *, max_trials: int = 180) -> l
                 if not block_path.exists():
                     requests = validate_requests(root, protocol)
                     spent = sum(r["peak_cost_cny"] for r in requests)
-                    if round((300.0 - spent) * 1_000_000) < 30_000_000:
+                    from tracefix.comparison_funding import prior_spend
+
+                    remaining_funds = (
+                        selected["limits"]["limit_cny"] - prior_spend(protocol) - spent
+                    )
+                    if round(remaining_funds * 1_000_000) < round(block_reservation * 1_000_000):
                         write_json(
                             root / "budget-stop.json",
                             {
                                 "sent": False,
-                                "reason": "insufficient funds for complete ABC block",
-                                "remaining_cny": 300.0 - spent,
+                                "reason": "insufficient funds for complete protocol block",
+                                "remaining_cny": remaining_funds,
                                 "block": row["block"],
                             },
                         )
@@ -1033,7 +1064,7 @@ def run(root: Path, env_file: Path | None = None, *, max_trials: int = 180) -> l
                         {
                             "protocol_sha256": digest(protocol),
                             "block": row["block"],
-                            "reserved_cny": 30.0,
+                            "reserved_cny": block_reservation,
                             "status": "reserved",
                             "trials": [
                                 r["id"] for r in protocol["schedule"] if r["block"] == row["block"]
@@ -1142,7 +1173,7 @@ def _report_unlocked(root: Path) -> dict:
         "Memory, continuous dialogue and Docker recovery gains were not measured.",
     ]
     (root / "report.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
-    if selected["name"] == HOLDOUT_PROFILE:
+    if selected["name"] in HOLDOUT_PROFILES:
         import csv
 
         for filename, rows in (
@@ -1199,12 +1230,13 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--prices", type=Path)
     parser.add_argument(
         "--profile",
-        choices=(LEGACY_PROFILE, TOKENIZER_PROFILE, CAPABILITY_PROFILE, HOLDOUT_PROFILE),
+        choices=(LEGACY_PROFILE, TOKENIZER_PROFILE, CAPABILITY_PROFILE, *HOLDOUT_PROFILES),
         default=LEGACY_PROFILE,
     )
     parser.add_argument("--tokenizer", type=Path)
     parser.add_argument("--counter-runtime", type=Path)
     parser.add_argument("--previous-campaign", type=Path)
+    parser.add_argument("--budget-parent-campaign", type=Path)
     parser.add_argument("--mode", choices=("live", "offline"), default="live")
     parser.add_argument("--env-file", type=Path)
     parser.add_argument("--max-trials", type=int, default=180)
@@ -1225,6 +1257,7 @@ def main(argv: list[str] | None = None) -> int:
                 tokenizer=args.tokenizer,
                 counter_runtime=args.counter_runtime,
                 previous_campaign=args.previous_campaign,
+                budget_parent_campaign=args.budget_parent_campaign,
             )
         prepare(args.catalog, root, args.prices, **options)
     elif args.action == "run":

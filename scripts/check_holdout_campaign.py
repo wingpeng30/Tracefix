@@ -10,7 +10,7 @@ from pathlib import Path
 from tracefix.comparison import read_json, write_json
 from tracefix.comparison_campaign import prepare, report, run
 from tracefix.comparison_holdout import HOLDOUT_TASK_IDS
-from tracefix.comparison_profiles import HOLDOUT_PROFILE
+from tracefix.comparison_profiles import HOLDOUT_PROFILE, HOLDOUT_PROFILES
 
 PATCH = """diff --git a/sample.py b/sample.py
 --- a/sample.py
@@ -28,6 +28,7 @@ def main() -> int:
     parser.add_argument("--tokenizer", type=Path, required=True)
     parser.add_argument("--counter-runtime", type=Path, required=True)
     parser.add_argument("--previous-campaign", type=Path, required=True)
+    parser.add_argument("--profile", choices=HOLDOUT_PROFILES, default=HOLDOUT_PROFILE)
     args = parser.parse_args()
     root = args.output.resolve()
     root.mkdir(parents=True, exist_ok=True)
@@ -87,7 +88,7 @@ def main() -> int:
         campaign,
         prices,
         mode="offline",
-        profile=HOLDOUT_PROFILE,
+        profile=args.profile,
         tokenizer=args.tokenizer.resolve(),
         counter_runtime=args.counter_runtime.resolve(),
         previous_campaign=args.previous_campaign.resolve(),
@@ -116,7 +117,7 @@ def main() -> int:
         {
             "accepted": accepted,
             "supplier_calls": 0,
-            "planned": 180,
+            "planned": summary["planned"],
             "independent_process_reentry": True,
             "requests": len(read_json(campaign / "requests.json")["requests"]),
         },

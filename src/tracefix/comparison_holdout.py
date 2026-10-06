@@ -66,12 +66,14 @@ def product_diff(workspace: Path, protected_dirs: set[str]) -> tuple[str, tuple[
         return git("diff", "--cached", "--binary", "HEAD").decode("utf-8"), changed
 
 
-def balanced_schedule(task_ids: list[str]) -> list[dict]:
+def balanced_schedule(task_ids: list[str], arms: str = "ABC") -> list[dict]:
     if len(task_ids) != 20 or len(set(task_ids)) != 20:
         raise ValueError("exactly twenty distinct holdout tasks required")
+    if arms not in {"ABC", "BC"}:
+        raise ValueError("unsupported holdout arms")
     rng = random.Random(SEED)
     blocks = [(task, repetition) for task in task_ids for repetition in (1, 2, 3)]
-    orders = list(itertools.permutations("ABC")) * 10
+    orders = list(itertools.permutations(arms)) * (10 if arms == "ABC" else 30)
     rng.shuffle(blocks)
     rng.shuffle(orders)
     rows = []
@@ -90,7 +92,11 @@ def balanced_schedule(task_ids: list[str]) -> list[dict]:
 
 
 def main_success(record: dict) -> bool:
-    return record.get("status") == "completed" and bool(record.get("passed"))
+    return (
+        record.get("finished", True)
+        and record.get("status") == "completed"
+        and bool(record.get("passed"))
+    )
 
 
 def aggregate(records: list[dict], requests: list[dict]) -> dict:
@@ -103,7 +109,9 @@ def aggregate(records: list[dict], requests: list[dict]) -> dict:
         r.get("timings", {}).get("delivery_seconds", r.get("seconds", 0)) for r in records
     )
     unmeasured = sum(
-        "delivery_seconds" not in r.get("timings", {}) and "seconds" not in r for r in records
+        not r.get("finished", True)
+        or ("delivery_seconds" not in r.get("timings", {}) and "seconds" not in r)
+        for r in records
     )
     preparation_seconds = sum(r.get("timings", {}).get("preparation_seconds", 0) for r in records)
     failures = Counter()
@@ -233,13 +241,15 @@ def holdout_summary(protocol: dict, records: list[dict], requests: list[dict]) -
     planned = len(protocol["schedule"])
     planned_by_arm = Counter(r["arm"] for r in protocol["schedule"])
     repetitions = protocol["profile"]["repetitions"]
+    arms = protocol["profile"]["arms"]
+    baselines = [a for a in arms if a != "C"]
     rows = []
     for task in task_ids:
         row = {
             "task_id": task,
             "repository": protocol["tasks"][task].get("repository", task.split("__")[0]),
         }
-        for arm in "ABC":
+        for arm in arms:
             subset = [r for r in records if r["task_id"] == task and r["arm"] == arm]
             row[arm] = {
                 **aggregate(subset, requests),
@@ -247,7 +257,7 @@ def holdout_summary(protocol: dict, records: list[dict], requests: list[dict]) -
             }
         rows.append(row)
     repositories = sorted({r["repository"] for r in rows})
-    comparisons = {f"C-{a}": paired_statistics(rows, a, repetitions) for a in "AB"}
+    comparisons = {f"C-{a}": paired_statistics(rows, a, repetitions) for a in baselines}
     return {
         "protocol_sha256": digest(protocol),
         "mode": protocol["mode"],
@@ -260,7 +270,7 @@ def holdout_summary(protocol: dict, records: list[dict], requests: list[dict]) -
                 **aggregate([r for r in records if r["arm"] == a], requests),
                 "planned": planned_by_arm[a],
             }
-            for a in "ABC"
+            for a in arms
         },
         "comparisons": comparisons,
         "per_task": rows,
@@ -269,7 +279,7 @@ def holdout_summary(protocol: dict, records: list[dict], requests: list[dict]) -
                 f"C-{a}": paired_statistics(
                     [r for r in rows if r["repository"] != repo], a, repetitions
                 )
-                for a in "AB"
+                for a in baselines
             }
             for repo in repositories
         },
@@ -284,17 +294,17 @@ def holdout_summary(protocol: dict, records: list[dict], requests: list[dict]) -
                     ],
                     requests,
                 )
-                for a in "ABC"
+                for a in arms
             }
             for repo in repositories
         },
         "infrastructure_sensitivity": {
             f"C-{a}": paired_statistics(
-                [r for r in rows if not any(r[b]["infrastructure_failures"] for b in "ABC")],
+                [r for r in rows if not any(r[b]["infrastructure_failures"] for b in arms)],
                 a,
                 repetitions,
             )
-            for a in "AB"
+            for a in baselines
         },
         "unknown_requests": [r["id"] for r in requests if r["status"] != "completed"],
         "supplier_models": sorted(

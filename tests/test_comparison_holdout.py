@@ -554,7 +554,8 @@ def test_large_public_source_skips_complete_file_without_hidden_hints(tmp_path):
     assert "large.py" in material and "完整文件未纳入" in material
 
 
-def test_first_complete_block_audit_report_and_crash_reentry(tmp_path, monkeypatch):
+@pytest.mark.parametrize("profile_name", [HOLDOUT_PROFILE, "bc-holdout-180s-v1"])
+def test_first_complete_block_audit_report_and_crash_reentry(tmp_path, monkeypatch, profile_name):
     """Real tool/pytest block; explicitly synthetic counter, never a live qualification gate."""
     import tracefix.comparison_campaign as campaign
     from tracefix.comparison import digest, file_sha
@@ -597,23 +598,25 @@ def test_first_complete_block_audit_report_and_crash_reentry(tmp_path, monkeypat
         root,
         prices,
         mode="offline",
-        profile=HOLDOUT_PROFILE,
+        profile=profile_name,
         tokenizer=tokenizer,
         previous_campaign=tmp_path,
     )
-    result = campaign.run(root, max_trials=3)
-    assert len(result) == 3 and all(r["passed"] for r in result)
+    block_size = len(profile_config(profile_name)["arms"])
+    result = campaign.run(root, max_trials=block_size)
+    assert len(result) == block_size and all(r["passed"] for r in result)
     assert read_json(root / "first-block-audit.json")["accepted"]
     ledger = (root / "requests.json").read_bytes()
     # Simulate interruption between the durable third result and closing its block.
     block = read_json(root / "blocks/01.json")
-    block.update(status="reserved", reserved_cny=30)
+    block.update(status="reserved", reserved_cny=block_size * 10)
     write_json(root / "blocks/01.json", block)
     (root / "first-block-audit.json").unlink()
-    assert len(campaign.run(root, max_trials=3)) == 3
+    assert len(campaign.run(root, max_trials=block_size)) == block_size
     assert ledger == (root / "requests.json").read_bytes()
     summary = campaign.report(root)
-    assert summary["started"] == 3 and summary["unstarted"] == 177
+    assert summary["started"] == block_size
+    assert summary["unstarted"] == block_size * 59
     assert (root / "per-run.csv").is_file() and (root / "per-task.csv").is_file()
     block["protocol_sha256"] = digest({"changed": True})
     write_json(root / "blocks/01.json", block)
