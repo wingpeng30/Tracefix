@@ -492,9 +492,10 @@ def manual_cleanup_report():
     if not report_path.exists():
         report_path = ARCHIVE / "cleanup-plan.json"
     report = read(report_path)
-    protected, _, _ = protected_paths()
+    protected, c_rows, _ = protected_paths()
     targets = {}
     retained = []
+    sizes = {key(row["path"]): row.get("bytes") for row in report["skipped"]}
 
     def add(path, reason):
         try:
@@ -525,7 +526,7 @@ def manual_cleanup_report():
             return
         if info and linked(info):
             reason += "；只能移除此链接自身，不要删除链接目标"
-        targets[key(path)] = {"path": str(path), "reason": reason}
+        targets[key(path)] = {"path": str(path), "reason": reason, "bytes": sizes.get(key(path))}
 
     for row in report["skipped"]:
         add(Path(row["path"]), row["reason"])
@@ -549,14 +550,26 @@ def manual_cleanup_report():
         "不要删除 C 的六次记录、共同 provider/费用账本、冻结源码、实际环境、",
         "原始 prompts 或归档目录。",
         "",
-        "| 绝对路径 | 自动拒绝原因 |",
-        "| --- | --- |",
     ]
+    if c_rows:
+        lines.extend(["C 必须保留的目录编号：`" + "、".join(r["id"] for r in c_rows) + "`。", ""])
+    ab = [row for row in rows if Path(row["path"]).parent == CURRENT / "trials"]
+    if ab:
+        lines.extend(["## 当前 A/B 残留", "", "对应结果摘要已保留；下列工作区仍需手动复核：", ""])
+        lines.extend(f"- `{row['path']}`" for row in ab)
+        lines.append("")
+    biggest = sorted(rows, key=lambda row: row["bytes"] or 0, reverse=True)[:15]
+    lines.extend(["## 大型副本", "", "仅列已有快照大小的较大项，大小是逻辑值。", ""])
+    lines.extend(f"- `{r['path']}`：{r['bytes'] / 1024**3:.2f} GiB" for r in biggest if r["bytes"])
+    lines.extend(
+        ["", "## 完整清单", "", "| 绝对路径 | 逻辑 GiB | 自动拒绝原因 |", "| --- | --- | --- |"]
+    )
     for row in rows:
         reason = row["reason"].replace("|", "\\|").replace("\n", " ")
         if "WinError 5" in reason:
             reason = "访问被拒绝，未修改权限；完整内容及归档状态需人工核对"
-        lines.append(f"| `{row['path']}` | {reason} |")
+        size = "未测" if row["bytes"] is None else f"{row['bytes'] / 1024**3:.3f}"
+        lines.append(f"| `{row['path']}` | {size} | {reason} |")
     if retained:
         lines.extend(["", "## 明确保留", ""])
         lines.extend(f"- `{name}`" for name in sorted(set(retained)))
