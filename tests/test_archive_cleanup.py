@@ -89,6 +89,18 @@ def test_full_backup_preserves_workspace_and_safe_removal(tmp_path):
     assert output.exists()
 
 
+def test_removal_rejects_last_minute_change(tmp_path):
+    source = tmp_path / "source"
+    source.mkdir()
+    file = source / "result.json"
+    file.write_text("before")
+    expected = cleanup.snapshot(source)
+    file.write_text("changed")
+    with pytest.raises(ValueError, match="immediately before"):
+        cleanup.remove_owned_tree(source, expected)
+    assert file.read_text() == "changed"
+
+
 def test_cached_archive_rejects_changed_source(tmp_path):
     source = tmp_path / "source"
     source.mkdir()

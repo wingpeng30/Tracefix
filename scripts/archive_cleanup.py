@@ -611,18 +611,33 @@ def prepare():
     )
 
 
-def remove_owned_tree(path):
+def remove_owned_tree(path, expected_snapshot=None):
     """Native file operations only, after validation; no shell interpolation or link traversal."""
     path = Path(path)
     info = path.lstat()
     if linked(info):
         raise ValueError("reparse deletion forbidden")
-    if path.is_dir():
-        with os.scandir(path) as entries:
-            children = [Path(e.path) for e in entries]
-        for child in children:
-            remove_owned_tree(child)
-        os.rmdir(path)
+    if stat.S_ISDIR(info.st_mode):
+        current = snapshot(path)
+        if expected_snapshot is not None and current != expected_snapshot:
+            raise ValueError("artifact changed immediately before deletion")
+
+        def readonly_file(function, filename, error):
+            child = Path(filename)
+            child_info = child.lstat()
+            if (
+                function is not os.unlink
+                or not isinstance(error, PermissionError)
+                or linked(child_info)
+                or not within(child, path)
+                or not getattr(child_info, "st_file_attributes", 0) & stat.FILE_ATTRIBUTE_READONLY
+            ):
+                raise error
+            os.chmod(child, child_info.st_mode | stat.S_IWRITE)
+            function(filename)
+
+        # Python 3.12's Windows walker treats junctions/symlinks as leaves, never targets.
+        shutil.rmtree(path, onexc=readonly_file)
     else:
         try:
             os.unlink(path)
@@ -823,7 +838,7 @@ def purge(remote_commit):
             if manifest["source_root"] != str(path) or manifest["zip_sha256"] != row["zip_sha256"]:
                 raise ValueError("candidate archive association corrupted")
             verify_zip(manifest)
-            remove_owned_tree(path)
+            remove_owned_tree(path, row["snapshot"])
             result["status"] = "deleted"
         except (OSError, ValueError, zipfile.BadZipFile) as error:
             result.update(status="skipped", reason=str(error))
