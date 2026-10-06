@@ -31,6 +31,7 @@ from tracefix.comparison import (
 )
 from tracefix.comparison_profiles import (
     CAPABILITY_PROFILE,
+    HOLDOUT_PROFILE,
     LEGACY_PROFILE,
     TOKENIZER_PROFILE,
     OfficialCounter,
@@ -164,6 +165,7 @@ def checked_test(source: Path, directory: Path, spec: dict, selectors: list[str]
 
 def qualify_task(spec: dict, root: Path) -> dict:
     """Reference material is handled only here, never passed to model executors."""
+    root = root.resolve()
     source = Path(spec["source"])
     output = root / "qualification" / spec["task_id"]
     if spec["kind"] == "public":
@@ -308,7 +310,15 @@ def prepare(
                 raise ValueError("previous 212-request tokenizer calibration failed; no paid calls")
             runtime = calibration["runtime"]
         specifications = read_json(catalog)
-        if [s["task_id"] for s in specifications] != list(TASK_IDS):
+        task_ids = [s["task_id"] for s in specifications]
+        if profile == HOLDOUT_PROFILE:
+            from tracefix.comparison_holdout import HOLDOUT_TASK_IDS
+
+            if mode == "live" and task_ids != list(HOLDOUT_TASK_IDS):
+                raise ValueError("exact sealed twenty-task catalog required")
+            if len(task_ids) != 20 or len(set(task_ids)) != 20:
+                raise ValueError("exactly twenty distinct tasks required")
+        elif task_ids != list(TASK_IDS):
             raise ValueError("exact ten-task catalog required")
         if (
             mode == "live"
@@ -333,7 +343,10 @@ def prepare(
         for spec in qualified:
             source = Path(spec["source"])
             material = static_material(
-                source, spec["issue"], list(spec["source_identity"]["files"])
+                source,
+                spec["issue"],
+                list(spec["source_identity"]["files"]),
+                full_files=profile == HOLDOUT_PROFILE,
             )
             prompt = (
                 spec["issue"]
@@ -344,7 +357,7 @@ def prepare(
                 + "\n"
                 + material
             )
-            if selected["name"] != LEGACY_PROFILE:
+            if selected["name"] not in {LEGACY_PROFILE, HOLDOUT_PROFILE}:
                 previous_protocol = read_json(previous_campaign / "protocol.json")
                 previous_spec = previous_protocol["tasks"][spec["task_id"]]
                 previous_prompt = Path(previous_spec["prompt_path"])
@@ -365,17 +378,22 @@ def prepare(
         implementation = Path(__file__).resolve().parents[2]
         protocol = {
             "schema_version": 2 if profile != LEGACY_PROFILE else 1,
-            "product_base": PRODUCT_BASE,
+            "product_base": PRODUCT_BASE
+            if profile != HOLDOUT_PROFILE
+            else "e380329d2a007a83dd317944bafd426d4b829c82",
             "implementation_commit": git(implementation, "rev-parse", "HEAD"),
             "implementation_sha256": TraceFixRunner._implementation_sha256(),
             "mode": mode,
             "limits": selected["limits"],
             "tasks": tasks,
-            "schedule": schedule(selected),
+            "schedule": schedule(selected, task_ids),
             "artifacts": artifacts,
             "arm_c_config": AgentConfig().model_dump(mode="json"),
             "arm_b": "plain tool loop; no reminders, caching, repo map or compression",
-            "bootstrap": {"seed": 20261005, "resamples": 10000},
+            "bootstrap": {
+                "seed": 20261006 if profile == HOLDOUT_PROFILE else 20261005,
+                "resamples": 10000,
+            },
         }
         if profile != LEGACY_PROFILE:
             protocol.update(profile=selected, counter_runtime=runtime)
@@ -389,7 +407,9 @@ def check_protocol(root: Path, *, require_ci: bool = True) -> dict:
     if digest(protocol) != read_json(root / "protocol.sha256.json")["sha256"]:
         raise ValueError("protocol corrupted")
     selected = protocol_profile(protocol)
-    if protocol["limits"] != selected["limits"] or protocol["schedule"] != schedule(selected):
+    if protocol["limits"] != selected["limits"] or protocol["schedule"] != schedule(
+        selected, list(protocol["tasks"])
+    ):
         raise ValueError("frozen schedule/limits changed")
     if selected["name"] != LEGACY_PROFILE:
         OfficialCounter(protocol["counter_runtime"]).invoke()
@@ -529,6 +549,8 @@ def verify(spec: dict, patch: Path, root: Path) -> dict:
             regressions = checked_test(checkout, root / "regressions", spec, spec["regressions"])
             result["regressions"] = regressions
             result["passed"] = regressions["passed"]
+            if not regressions["passed"]:
+                result["reason"] = "independent_regression_failed"
             actual_nodes = sorted(regressions["test"]["output"]["test_counts"]["node_ids"])
             if actual_nodes != spec["regression_nodes"]:
                 result.update(passed=False, reason="regression execution set changed")
@@ -581,6 +603,41 @@ def execute_trial(root: Path, protocol: dict, row: dict, env_file: Path | None) 
     client = FixtureClient(spec["fixture_patch"]) if protocol["mode"] == "offline" else None
     adapter = None
     selected = protocol_profile(protocol)
+    holdout = selected["name"] == HOLDOUT_PROFILE
+    preparation_seconds = 0.0
+    c_tools_seconds = 0.0
+    patch_seconds = 0.0
+
+    class EvaluationRunner(TraceFixRunner):
+        def _prepare_workspace(self, *args):
+            nonlocal preparation_seconds
+            prepared = TraceFixRunner._prepare_workspace(*args)
+            preparation_seconds = time.monotonic() - started
+            record["prepared_at_unix_seconds"] = time.time()
+            return prepared
+
+        @staticmethod
+        def _collect_diff(workspace, protected_dirs=None):
+            nonlocal patch_seconds
+            from tracefix.comparison_holdout import product_diff
+
+            mark = time.monotonic()
+            try:
+                return product_diff(workspace, protected_dirs or set())
+            finally:
+                patch_seconds += time.monotonic() - mark
+
+    def collect(workspace):
+        nonlocal patch_seconds
+        mark = time.monotonic()
+        try:
+            if holdout:
+                from tracefix.comparison_holdout import product_diff
+
+                return product_diff(workspace, protected_dirs)
+            return TraceFixRunner._collect_diff(workspace, protected_dirs)
+        finally:
+            patch_seconds += time.monotonic() - mark
 
     def factory(config):
         nonlocal adapter
@@ -612,10 +669,19 @@ def execute_trial(root: Path, protocol: dict, row: dict, env_file: Path | None) 
         if row["arm"] == "C":
             if protocol["mode"] == "offline":
                 config = config.model_copy(update={"model_name": "offline/comparison-fixture"})
-            result = TraceFixRunner(llm_factory=factory).run(config)
+            result = (EvaluationRunner if holdout else TraceFixRunner)(llm_factory=factory).run(
+                config
+            )
+            c_tools_seconds = result.tool_execution_seconds
             record["agent_result"] = result.result_path
             record["status"] = result.status.value
             record["reason"] = result.stop_reason
+            if holdout and adapter is None:
+                record.update(
+                    infrastructure_failure=True,
+                    reason=f"preparation: {result.stop_reason}",
+                    patch_collection_status="not_attempted",
+                )
             saved = Path(result.result_path).parent / "patch.diff"
             if saved.exists():
                 patch.write_bytes(saved.read_bytes())
@@ -624,6 +690,9 @@ def execute_trial(root: Path, protocol: dict, row: dict, env_file: Path | None) 
                 Path(spec["source"]), directory / "workspace"
             )
             preparation = TraceFixRunner._prepare_workspace(config, workspace, directory)
+            preparation_seconds = time.monotonic() - started
+            if holdout:
+                record["prepared_at_unix_seconds"] = time.time()
             if preparation.get("success") is not True:
                 raise ValueError("workspace preparation failed")
             tools = create_default_tool_registry(
@@ -641,7 +710,7 @@ def execute_trial(root: Path, protocol: dict, row: dict, env_file: Path | None) 
                 model_name=config.model_name,
                 temperature=0.0,
                 max_output_tokens=8000
-                if row["arm"] == "A"
+                if row["arm"] == "A" and selected["name"] != HOLDOUT_PROFILE
                 else selected["per_request_output_tokens"],
                 timeout_seconds=selected["limits"]["timeout_seconds"],
                 max_retries=0,
@@ -674,25 +743,85 @@ def execute_trial(root: Path, protocol: dict, row: dict, env_file: Path | None) 
                 record["status"] = "completed" if application.success else "invalid_patch"
             else:
                 record.update(simple_loop(llm, tools, prompt, directory / "messages.json"))
-            diff, _ = TraceFixRunner._collect_diff(workspace, protected_dirs)
+            diff, _ = collect(workspace)
             patch.write_text(diff, encoding="utf-8")
     except PreRequestBudgetExceeded as exc:
         record.update(status="budget_exhausted", reason=str(exc))
     except (ValueError, ToolError) as exc:
         record.update(status="invalid_patch" if row["arm"] == "A" else "failed", reason=str(exc))
+        if holdout and adapter is None:
+            record.update(
+                status="failed",
+                infrastructure_failure=True,
+                reason=f"preparation: {type(exc).__name__}: {exc}",
+                patch_collection_status="not_attempted",
+            )
     except Exception as exc:
         record.update(
             status="failed", reason=f"{type(exc).__name__}: {exc}", infrastructure_failure=True
         )
     # Preserve candidate patches even when a simple loop reaches its limit.
     if not patch.exists() and (directory / "workspace").exists():
-        diff, _ = TraceFixRunner._collect_diff(directory / "workspace", protected_dirs)
-        patch.write_text(diff, encoding="utf-8")
+        try:
+            diff, _ = collect(directory / "workspace")
+            patch.write_text(diff, encoding="utf-8")
+        except Exception as exc:
+            if not holdout:
+                raise
+            record.update(
+                infrastructure_failure=True,
+                patch_collection_status="failed",
+                reason=f"patch_collection: {type(exc).__name__}: {exc}",
+            )
     record["seconds"] = time.monotonic() - started
+    if holdout:
+        if record.get("infrastructure_failure") and adapter is None:
+            preparation_seconds = record["seconds"]
+        record.update(
+            holdout_protocol=True,
+            agent_status=record["status"],
+            patch_collection_status=record.get(
+                "patch_collection_status", "completed" if patch.exists() else "not_attempted"
+            ),
+            timings={
+                "preparation_seconds": preparation_seconds,
+                "agent_seconds": record["seconds"] - preparation_seconds,
+                "delivery_seconds": (
+                    max(0.0, time.time() - record["prepared_at_unix_seconds"])
+                    if "prepared_at_unix_seconds" in record
+                    else record["seconds"] - preparation_seconds
+                ),
+                "patch_seconds": patch_seconds,
+                "tools_seconds": c_tools_seconds + (adapter.tools_seconds if adapter else 0),
+                "counter_seconds": adapter.counter_seconds if adapter else 0,
+            },
+        )
+        record["active_time_overrun_seconds"] = max(
+            0.0, record["timings"]["agent_seconds"] - selected["limits"]["active_seconds"]
+        )
+        if record["status"] == "completed" and record["active_time_overrun_seconds"] > 0:
+            record.update(status="budget_exhausted", reason="active_execution_limit")
+        if (directory / "refusal.json").exists():
+            refusal = read_json(directory / "refusal.json")
+            record["budget_refusal"] = refusal
+            if refusal.get("sent") is False:
+                record["reason"] = refusal["reason"]
     write_json(directory / "record.json", record)
     requests = (
         read_json(root / "requests.json")["requests"] if (root / "requests.json").exists() else []
     )
+    if holdout:
+        record["timings"]["provider_seconds"] = sum(
+            r.get("seconds", 0) for r in requests if r["trial_id"] == row["id"]
+        )
+        trial_requests = [r for r in requests if r["trial_id"] == row["id"]]
+        if trial_requests:
+            record["supplier_finish_reason"] = trial_requests[-1].get("supplier_finish_reason")
+            if record["status"] == "completed" and record["supplier_finish_reason"] == "length":
+                record.update(
+                    status="budget_exhausted",
+                    reason="provider_output_or_context_limit",
+                )
     if any(r["status"] != "completed" for r in requests):
         record["status"] = "unknown_request"
         write_json(directory / "record.json", record)
@@ -711,7 +840,24 @@ def finalize_trial(directory: Path, record: dict, spec: dict) -> dict:
     if verification_dir.exists():
         # A crashed verifier's products are evidence: never overwrite them.
         verification_dir = directory / f"verification-{time.time_ns()}"
-    verification = verify(spec, patch, verification_dir)
+    started = time.monotonic()
+    try:
+        verification = verify(spec, patch, verification_dir)
+    except Exception as exc:
+        if not record.get("holdout_protocol"):
+            raise
+        verification = {"passed": False, "reason": f"infrastructure: {type(exc).__name__}: {exc}"}
+        record["infrastructure_failure"] = True
+        write_json(verification_dir / "infrastructure-error.json", verification)
+    if record.get("holdout_protocol"):
+        timings = record["timings"]
+        timings["verification_seconds"] = time.monotonic() - started
+        timings["delivery_seconds"] = (
+            max(0.0, time.time() - record["prepared_at_unix_seconds"])
+            if "prepared_at_unix_seconds" in record
+            else timings["agent_seconds"] + timings["verification_seconds"]
+        )
+        record["verification_status"] = "passed" if verification["passed"] else "failed"
     record.update(finished=True, passed=verification["passed"], verification=verification)
     record["artifacts"] = {
         str(p.relative_to(directory)): file_sha(p)
@@ -765,9 +911,52 @@ def validate_requests(root: Path, protocol: dict) -> list[dict]:
     return ledger["requests"]
 
 
-def run(root: Path, env_file: Path | None = None, *, max_trials: int = 90) -> list[dict]:
+def audit_first_block(root: Path, protocol: dict, identifiers: list[str]) -> dict:
+    requests = validate_requests(root, protocol)
+    if (root / "requests.json").exists() and read_json(root / "requests.json").get("halt_reason"):
+        raise ValueError("first-block request ledger halted")
+    selected = [r for r in requests if r["trial_id"] in identifiers]
+    if any(r["status"] != "completed" or r.get("official_count_delta") != 0 for r in selected):
+        raise ValueError("first block has unknown usage or tokenizer discrepancy")
+    records = []
+    for identifier in identifiers:
+        directory = root / "trials" / identifier
+        record = read_json(directory / "record.json")
+        row = next(r for r in protocol["schedule"] if r["id"] == identifier)
+        validate_record(record, directory, row)
+        if not record.get("finished") or record.get("infrastructure_failure"):
+            raise ValueError("first block has incomplete infrastructure evidence")
+        records.append(record)
+    if {r["arm"] for r in records} != {"A", "B", "C"}:
+        raise ValueError("first audit needs all three arms")
+    schemas = []
+    for arm in ("B", "C"):
+        request = next((r for r in selected if r["arm"] == arm), None)
+        if request is None:
+            raise ValueError("first block missing tool arm request")
+        body = read_json(root / "provider" / f"{request['id']}-request.json")
+        schemas.append(body.get("tools", []))
+    if schemas[0] != schemas[1]:
+        raise ValueError("B/C tool schemas differ")
+    return {
+        "protocol_sha256": digest(protocol),
+        "accepted": True,
+        "trials": identifiers,
+        "request_count": len(selected),
+        "tool_schema_sha256": digest(schemas[0]),
+        "records": {
+            identifier: file_sha(root / "trials" / identifier / "record.json")
+            for identifier in identifiers
+        },
+    }
+
+
+def run(root: Path, env_file: Path | None = None, *, max_trials: int = 180) -> list[dict]:
     with ProcessLock(root):
         protocol = check_protocol(root)
+        holdout = protocol_profile(protocol)["name"] == HOLDOUT_PROFILE
+        if holdout and (root / "halt.json").exists():
+            raise ValueError("campaign halted; no automatic replay")
         requests = validate_requests(root, protocol)
         if any(r["status"] != "completed" for r in requests):
             raise ValueError("unknown request; no automatic replay")
@@ -777,6 +966,34 @@ def run(root: Path, env_file: Path | None = None, *, max_trials: int = 90) -> li
             raise ValueError("campaign halted; no automatic replay")
         if protocol["mode"] == "live":
             load_environment_file(env_file)
+        if holdout:
+            # A crash after the durable third record may precede closing its reservation/audit.
+            # Reconcile only already completed evidence; never resend a model request.
+            for block_path in sorted((root / "blocks").glob("*.json")):
+                block = read_json(block_path)
+                if block["protocol_sha256"] != digest(protocol):
+                    raise ValueError("block reservation identity changed")
+                members = [r for r in protocol["schedule"] if r["block"] == block["block"]]
+                if block["trials"] != [r["id"] for r in members]:
+                    raise ValueError("block members changed")
+                complete = True
+                for member in members:
+                    directory = root / "trials" / member["id"]
+                    path = directory / "record.json"
+                    if not path.exists() or not read_json(path).get("finished"):
+                        complete = False
+                        break
+                    validate_record(read_json(path), directory, member)
+                    if read_json(path).get("infrastructure_failure"):
+                        raise ValueError("prior infrastructure failure; no automatic replay")
+                if complete:
+                    if block["block"] == 1 and not (root / "first-block-audit.json").exists():
+                        write_json(
+                            root / "first-block-audit.json",
+                            audit_first_block(root, protocol, block["trials"]),
+                        )
+                    block.update(status="completed", reserved_cny=0.0)
+                    write_json(block_path, block)
         results = []
         for row in protocol["schedule"]:
             path = root / "trials" / row["id"] / "record.json"
@@ -793,7 +1010,61 @@ def run(root: Path, env_file: Path | None = None, *, max_trials: int = 90) -> li
                 continue
             if len(results) >= max_trials:
                 break
+            if holdout:
+                if row["block"] > 1 and not read_json(root / "first-block-audit.json")["accepted"]:
+                    raise ValueError("first-block audit gate not passed")
+                block_path = root / "blocks" / f"{row['block']:02d}.json"
+                if not block_path.exists():
+                    requests = validate_requests(root, protocol)
+                    spent = sum(r["peak_cost_cny"] for r in requests)
+                    if round((300.0 - spent) * 1_000_000) < 30_000_000:
+                        write_json(
+                            root / "budget-stop.json",
+                            {
+                                "sent": False,
+                                "reason": "insufficient funds for complete ABC block",
+                                "remaining_cny": 300.0 - spent,
+                                "block": row["block"],
+                            },
+                        )
+                        break
+                    write_json(
+                        block_path,
+                        {
+                            "protocol_sha256": digest(protocol),
+                            "block": row["block"],
+                            "reserved_cny": 30.0,
+                            "status": "reserved",
+                            "trials": [
+                                r["id"] for r in protocol["schedule"] if r["block"] == row["block"]
+                            ],
+                        },
+                    )
+                block_identity = read_json(block_path)
+                if block_identity["protocol_sha256"] != digest(protocol):
+                    raise ValueError("block reservation identity changed")
             results.append(execute_trial(root, protocol, row, env_file))
+            if holdout:
+                if results[-1].get("infrastructure_failure"):
+                    write_json(
+                        root / "halt.json", {"reason": "infrastructure failure", "trial": row["id"]}
+                    )
+                    raise ValueError("campaign halted after infrastructure failure")
+                block = read_json(block_path)
+                if all(
+                    (root / "trials" / identifier / "record.json").exists()
+                    and read_json(root / "trials" / identifier / "record.json").get("finished")
+                    for identifier in block["trials"]
+                ):
+                    block.update(status="completed", reserved_cny=0.0)
+                    write_json(block_path, block)
+                    if row["block"] == 1:
+                        try:
+                            audit = audit_first_block(root, protocol, block["trials"])
+                        except Exception as exc:
+                            write_json(root / "halt.json", {"reason": f"first block audit: {exc}"})
+                            raise
+                        write_json(root / "first-block-audit.json", audit)
             if (root / "requests.json").exists() and read_json(root / "requests.json").get(
                 "halt_reason"
             ):
@@ -814,6 +1085,11 @@ def run(root: Path, env_file: Path | None = None, *, max_trials: int = 90) -> li
 
 
 def report(root: Path) -> dict:
+    with ProcessLock(root):
+        return _report_unlocked(root)
+
+
+def _report_unlocked(root: Path) -> dict:
     protocol = read_json(root / "protocol.json")
     if digest(protocol) != read_json(root / "protocol.sha256.json")["sha256"]:
         raise ValueError("protocol corrupted")
@@ -844,9 +1120,12 @@ def report(root: Path) -> dict:
         "|---|---:|---:|---:|---:|---:|",
     ]
     for arm, row in summary["arms"].items():
+        seconds_cell = f"{row['seconds']:.2f}"
+        if not row.get("time_complete", True):
+            seconds_cell += " (known only; interrupted duration unavailable)"
         lines.append(
             f"| {arm} | {row['successes']}/{row['started']} | {row['input_tokens']} | "
-            f"{row['output_tokens']} | {row['conservative_peak_cny']:.6f} | {row['seconds']:.2f} |"
+            f"{row['output_tokens']} | {row['conservative_peak_cny']:.6f} | {seconds_cell} |"
         )
     lines += ["", "| Task | " + " | ".join(arms) + " |", "|---|" + "---:|" * len(arms)]
     for row in summary["per_task"]:
@@ -858,17 +1137,55 @@ def report(root: Path) -> dict:
         json.dumps(summary["comparisons"], indent=2),
         "```",
         "",
-        "Known development tasks, exploratory only. Repetitions are clustered by task.",
+        summary["interpretation"],
         "Peak-cache-miss accounting is conservative, not a supplier invoice.",
         "Memory, continuous dialogue and Docker recovery gains were not measured.",
     ]
     (root / "report.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    if selected["name"] == HOLDOUT_PROFILE:
+        import csv
+
+        for filename, rows in (
+            (
+                "per-run.csv",
+                [
+                    {
+                        "id": r["id"],
+                        "task_id": r["task_id"],
+                        "arm": r["arm"],
+                        "repetition": r["repetition"],
+                        "agent_status": r.get("status"),
+                        "independent_pass": r.get("passed", False),
+                        "infrastructure_failure": r.get("infrastructure_failure", False),
+                        "verification_reason": (r.get("verification") or {}).get("reason"),
+                        **r.get("timings", {}),
+                    }
+                    for r in trials
+                ],
+            ),
+            (
+                "per-task.csv",
+                [
+                    {"task_id": r["task_id"], "repository": r["repository"], "arm": a, **r[a]}
+                    for r in summary["per_task"]
+                    for a in arms
+                ],
+            ),
+        ):
+            keys = sorted({key for row in rows for key in row})
+            with (root / filename).open("w", encoding="utf-8", newline="") as stream:
+                writer = csv.DictWriter(stream, fieldnames=keys)
+                writer.writeheader()
+                writer.writerows(rows)
     write_json(
         root / "evidence-index.json",
         {
             str(p.relative_to(root)): file_sha(p)
             for p in root.rglob("*")
-            if p.is_file() and ".git" not in p.parts and p.name != "evidence-index.json"
+            if p.is_file()
+            and ".git" not in p.parts
+            and p.name != "evidence-index.json"
+            and not p.name.endswith(".lock")
         },
     )
     return summary
@@ -882,7 +1199,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--prices", type=Path)
     parser.add_argument(
         "--profile",
-        choices=(LEGACY_PROFILE, TOKENIZER_PROFILE, CAPABILITY_PROFILE),
+        choices=(LEGACY_PROFILE, TOKENIZER_PROFILE, CAPABILITY_PROFILE, HOLDOUT_PROFILE),
         default=LEGACY_PROFILE,
     )
     parser.add_argument("--tokenizer", type=Path)
@@ -890,7 +1207,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--previous-campaign", type=Path)
     parser.add_argument("--mode", choices=("live", "offline"), default="live")
     parser.add_argument("--env-file", type=Path)
-    parser.add_argument("--max-trials", type=int, default=90)
+    parser.add_argument("--max-trials", type=int, default=180)
     args = parser.parse_args(argv)
     root = args.campaign_dir.resolve()
     if args.action == "prepare":

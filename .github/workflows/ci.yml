@@ -4,7 +4,8 @@ on:
   push:
     branches: [main, 'codex/experience-memory', 'codex/continuous-dialogue',
                'codex/docker-recovery', 'codex/memory-dialogue-integration',
-               'codex/agent-model-comparison', 'codex/bc-350k-tokenizer']
+               'codex/agent-model-comparison', 'codex/bc-350k-tokenizer',
+               'codex/abc-holdout-capability']
   pull_request:
   workflow_dispatch:
 
