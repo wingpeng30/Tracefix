@@ -804,6 +804,14 @@ def execute_trial(root: Path, protocol: dict, row: dict, env_file: Path | None) 
         record["timings"]["provider_seconds"] = sum(
             r.get("seconds", 0) for r in requests if r["trial_id"] == row["id"]
         )
+        trial_requests = [r for r in requests if r["trial_id"] == row["id"]]
+        if trial_requests:
+            record["supplier_finish_reason"] = trial_requests[-1].get("supplier_finish_reason")
+            if record["status"] == "completed" and record["supplier_finish_reason"] == "length":
+                record.update(
+                    status="budget_exhausted",
+                    reason="provider_output_or_context_limit",
+                )
     if any(r["status"] != "completed" for r in requests):
         record["status"] = "unknown_request"
         write_json(directory / "record.json", record)
@@ -895,6 +903,8 @@ def validate_requests(root: Path, protocol: dict) -> list[dict]:
 
 def audit_first_block(root: Path, protocol: dict, identifiers: list[str]) -> dict:
     requests = validate_requests(root, protocol)
+    if (root / "requests.json").exists() and read_json(root / "requests.json").get("halt_reason"):
+        raise ValueError("first-block request ledger halted")
     selected = [r for r in requests if r["trial_id"] in identifiers]
     if any(r["status"] != "completed" or r.get("official_count_delta") != 0 for r in selected):
         raise ValueError("first block has unknown usage or tokenizer discrepancy")

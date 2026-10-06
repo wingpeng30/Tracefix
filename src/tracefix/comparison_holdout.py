@@ -287,6 +287,19 @@ def holdout_summary(protocol: dict, records: list[dict], requests: list[dict]) -
             for a in "AB"
         },
         "unknown_requests": [r["id"] for r in requests if r["status"] != "completed"],
+        "supplier_models": sorted(
+            {r["response_model"] for r in requests if r.get("response_model")}
+        ),
+        "supplier_system_fingerprints": sorted(
+            {
+                r["supplier_system_fingerprint"]
+                for r in requests
+                if r.get("supplier_system_fingerprint")
+            }
+        ),
+        "supplier_finish_reasons": dict(
+            Counter(r.get("supplier_finish_reason", "unavailable") for r in requests)
+        ),
         "interpretation": (
             "Project holdout; public training contamination unknown; cold start only."
         ),

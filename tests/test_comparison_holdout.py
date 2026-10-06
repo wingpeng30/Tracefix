@@ -81,6 +81,75 @@ def test_cumulative_input_can_cross_previous_cap(tmp_path, monkeypatch):
     assert sum(r["usage"]["input_tokens"] for r in llm.ledger()["requests"]) == 1500000
 
 
+@pytest.mark.parametrize("failure", ["changed", "missing", "model", "aborted", "unknown_finish"])
+def test_known_supplier_identity_failure_settles_and_blocks_replay(tmp_path, monkeypatch, failure):
+    from tracefix.exceptions import LLMProviderError
+
+    monkeypatch.setattr(
+        OfficialCounter,
+        "count",
+        lambda *_: InputBound(100, "estimate", "fixture", "identity", "sha"),
+    )
+    write_json(tmp_path / "protocol.json", {"mode": "live", "fixture_client_no_http": True})
+
+    class Responses(FixtureClient):
+        def completion(self, **kwargs):
+            result = super().completion(**kwargs)
+            result["model"] = "deepseek-flash"
+            result["system_fingerprint"] = "stable"
+            if self.calls == 2:
+                if failure == "changed":
+                    result["system_fingerprint"] = "changed"
+                elif failure == "missing":
+                    result["system_fingerprint"] = None
+                elif failure == "model":
+                    result["model"] = "unexpected-model"
+                elif failure == "aborted":
+                    result["choices"][0]["finish_reason"] = "aborted"
+                else:
+                    result["choices"][0]["finish_reason"] = None
+            return result
+
+    client = Responses(PATCH)
+    llm = ComparisonBudget(
+        provider_config(),
+        root=tmp_path,
+        trial={"id": "001", "arm": "B"},
+        protocol_sha="fixture",
+        profile=profile_config(HOLDOUT_PROFILE),
+        counter_runtime={"command": []},
+        client=client,
+    )
+    llm.complete(messages())
+    with pytest.raises(LLMProviderError):
+        llm.complete(messages())
+    ledger = read_json(tmp_path / "requests.json")
+    assert ledger["halt_reason"] and ledger["supplier_system_fingerprint"] == "stable"
+    assert all(r["status"] == "completed" and r["peak_cost_cny"] > 0 for r in ledger["requests"])
+    with pytest.raises(LLMProviderError, match="halted"):
+        llm.complete(messages())
+    assert client.calls == 2
+    protocol = {
+        "mode": "offline",
+        "profile": profile_config(HOLDOUT_PROFILE),
+        "tasks": {task: {} for task in ids()},
+        "schedule": schedule(profile_config(HOLDOUT_PROFILE), ids()),
+    }
+    summary = summarize(protocol, [], ledger["requests"])
+    assert "deepseek-flash" in summary["supplier_models"]
+    assert "stable" in summary["supplier_system_fingerprints"]
+    assert summary["supplier_finish_reasons"]["stop"] >= 1
+
+
+def test_first_block_audit_refuses_halted_ledger(tmp_path, monkeypatch):
+    import tracefix.comparison_campaign as campaign
+
+    write_json(tmp_path / "requests.json", {"halt_reason": "identity changed"})
+    monkeypatch.setattr(campaign, "validate_requests", lambda *_: [])
+    with pytest.raises(ValueError, match="ledger halted"):
+        campaign.audit_first_block(tmp_path, {}, ["001", "002", "003"])
+
+
 @pytest.mark.parametrize(
     "failure", ["balance", "reservation_identity", "infrastructure", "unknown"]
 )
@@ -252,6 +321,40 @@ def test_holdout_real_agent_trial_timings_and_patch(tmp_path, arm):
     assert result["timings"]["preparation_seconds"] > 0
     assert result["timings"]["patch_seconds"] > 0
     assert result["timings"]["delivery_seconds"] > result["timings"]["verification_seconds"]
+
+
+@pytest.mark.parametrize("arm", ["A", "B", "C"])
+def test_final_truncation_keeps_valid_patch_but_is_not_normal_completion(
+    tmp_path, monkeypatch, arm
+):
+    import tracefix.comparison_campaign as campaign
+    from tracefix.comparison_holdout import main_success
+
+    catalog, _ = fixture_catalog(tmp_path)
+    spec = qualify_task(read_json(catalog)[0], tmp_path / "qualification")
+    prompt = tmp_path / "prompt.txt"
+    prompt.write_text("Fix add")
+    spec["prompt_path"] = str(prompt)
+    selected = {**profile_config(HOLDOUT_PROFILE), "input_counter": "legacy_utf8_bound"}
+    monkeypatch.setattr(campaign, "protocol_profile", lambda *_: selected)
+    original = FixtureClient.completion
+
+    def truncated(self, **kwargs):
+        raw = original(self, **kwargs)
+        if raw["choices"][0]["finish_reason"] == "stop":
+            raw["choices"][0]["finish_reason"] = "length"
+        return raw
+
+    monkeypatch.setattr(FixtureClient, "completion", truncated)
+    result = execute_trial(
+        tmp_path / "campaign",
+        {"mode": "offline", "tasks": {"one": spec}},
+        {"id": "001", "task_id": "one", "arm": arm, "repetition": 1},
+        None,
+    )
+    assert result["passed"] and result["supplier_finish_reason"] == "length"
+    assert result["status"] == "budget_exhausted" and result["agent_status"] == "completed"
+    assert not main_success(result)
 
 
 def test_summary_counts_stopped_patch_separately_and_bootstraps_tasks():

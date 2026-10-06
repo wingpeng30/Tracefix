@@ -407,10 +407,23 @@ class ComparisonBudget(LiteLLMAdapter):
         )
         if self.profile["name"] == HOLDOUT_PROFILE:
             row["supplier_raw_usage"] = response.raw_response.get("usage", {})
+            row["supplier_system_fingerprint"] = response.raw_response.get("system_fingerprint")
+            choices = response.raw_response.get("choices") or []
+            row["supplier_finish_reason"] = choices[0].get("finish_reason") if choices else None
             if self.root.joinpath("protocol.json").exists():
                 mode = read_json(self.root / "protocol.json").get("mode")
                 if mode == "live" and response.model_name != "deepseek-flash":
                     ledger["halt_reason"] = "supplier model identity changed"
+                if mode == "live":
+                    fingerprint = row["supplier_system_fingerprint"]
+                    if not isinstance(fingerprint, str) or not fingerprint:
+                        ledger["halt_reason"] = "supplier backend identity unavailable"
+                    elif ledger.get("supplier_system_fingerprint", fingerprint) != fingerprint:
+                        ledger["halt_reason"] = "supplier backend identity changed"
+                    else:
+                        ledger["supplier_system_fingerprint"] = fingerprint
+                    if row["supplier_finish_reason"] not in {"stop", "tool_calls", "length"}:
+                        ledger["halt_reason"] = "supplier generation interrupted"
         if count is not None:
             row["official_count_delta"] = count.tokens - usage.input_tokens
             if row["official_count_delta"] != 0:
