@@ -11,9 +11,30 @@ from tracefix.models.input_bounds import InputBound
 LEGACY_PROFILE = "abc-60k-v1"
 TOKENIZER_PROFILE = "bc-350k-tokenizer"
 CAPABILITY_PROFILE = "bc-capability-tokenizer"
+HOLDOUT_PROFILE = "abc-holdout-capability-v1"
 
 
 def profile_config(name: str = LEGACY_PROFILE) -> dict:
+    if name == HOLDOUT_PROFILE:
+        return {
+            "name": name,
+            "arms": ["A", "B", "C"],
+            "repetitions": 3,
+            "limits": {
+                "input_tokens": 9223372036854775807,
+                "output_tokens": 9223372036854775807,
+                "requests": 2147483647,
+                "tests": 2147483647,
+                "active_seconds": 3600,
+                "timeout_seconds": 300,
+                "limit_cny": 300.0,
+            },
+            "per_request_output_tokens": 393216,
+            "arm_limit_cny": None,
+            "trial_limit_cny": 10.0,
+            "input_counter": "official_estimate",
+            "capability_mode": True,
+        }
     if name not in {LEGACY_PROFILE, TOKENIZER_PROFILE, CAPABILITY_PROFILE}:
         raise ValueError("unknown comparison profile")
     new = name != LEGACY_PROFILE

@@ -13,7 +13,12 @@ from pathlib import Path
 from typing import Any
 
 from tracefix.agent.base import DEFAULT_SYSTEM_PROMPT
-from tracefix.comparison_profiles import OfficialCounter, profile_config, protocol_profile
+from tracefix.comparison_profiles import (
+    HOLDOUT_PROFILE,
+    OfficialCounter,
+    profile_config,
+    protocol_profile,
+)
 from tracefix.exceptions import LLMProviderError, LLMResponseFormatError, PreRequestBudgetExceeded
 from tracefix.messages import Message, MessageRole
 from tracefix.models.input_bounds import InputBound
@@ -66,8 +71,14 @@ def read_json(path: Path) -> Any:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-def schedule(profile: dict | None = None) -> list[dict[str, Any]]:
+def schedule(
+    profile: dict | None = None, task_ids: list[str] | None = None
+) -> list[dict[str, Any]]:
     selected = profile or profile_config()
+    if selected["name"] == HOLDOUT_PROFILE:
+        from tracefix.comparison_holdout import balanced_schedule
+
+        return balanced_schedule(task_ids or list(TASK_IDS))
     rows = []
     for repetition in range(1, selected["repetitions"] + 1):
         for index, task in enumerate(TASK_IDS):
@@ -89,7 +100,9 @@ def schedule(profile: dict | None = None) -> list[dict[str, Any]]:
     return rows
 
 
-def static_material(source: Path, issue: str, tracked: list[str]) -> str:
+def static_material(
+    source: Path, issue: str, tracked: list[str], *, full_files: bool = False
+) -> str:
     """Issue-only lexical retrieval. Never reads task answer metadata."""
     tokens = set(re.findall(r"[A-Za-z_][A-Za-z_0-9]{2,}", issue.casefold()))
     candidates = []
@@ -113,6 +126,19 @@ def static_material(source: Path, issue: str, tracked: list[str]) -> str:
         score += 30 * sum(token in name.casefold() for token in tokens)
         candidates.append((-score, name, content))
     result = "[共同静态源码材料；按问题词频检索，不代表正确修改位置]\n"
+    if full_files:
+        remaining = 1_000_000
+        result += (
+            "[产品源码路径索引]\n" + "\n".join(name for _, name, _ in sorted(candidates)) + "\n"
+        )
+        for _, name, content in sorted(candidates):
+            encoded = content.encode("utf-8")
+            if len(encoded) > remaining:
+                result += f"\n--- {name} (完整文件未纳入：共同静态材料容量不足) ---\n"
+                continue
+            result += f"\n--- {name} (完整文件) ---\n{content}\n"
+            remaining -= len(encoded)
+        return result
     for _, name, content in sorted(candidates)[:6]:
         # UTF-8 truncation is deterministic; total source excerpts <= 18 KiB.
         lines = content.splitlines(keepends=True)
@@ -170,6 +196,8 @@ class ComparisonBudget(LiteLLMAdapter):
         self.profile = profile or profile_config()
         self.limits = self.profile["limits"]
         self.counter = OfficialCounter(counter_runtime) if counter_runtime else None
+        self.counter_seconds = 0.0
+        self.tools_seconds = 0.0
 
     def ledger(self) -> dict:
         path = self.root / "requests.json"
@@ -199,7 +227,11 @@ class ComparisonBudget(LiteLLMAdapter):
         if self.counter is None:
             raise LLMProviderError("official counter unavailable")
         kwargs = self.request_kwargs(messages, tools)
-        count = self.counter.count(kwargs)
+        started = time.monotonic()
+        try:
+            count = self.counter.count(kwargs)
+        finally:
+            self.counter_seconds += time.monotonic() - started
         return InputBound(count.tokens, count.status, count.method, count.identity, digest(kwargs))
 
     def complete(self, messages, tools=()):
@@ -225,7 +257,10 @@ class ComparisonBudget(LiteLLMAdapter):
             )
             raise PreRequestBudgetExceeded("output budget exhausted; request not sent")
         self.config.max_output_tokens = min(
-            remaining, 8000 if maximum == 1 else self.profile["per_request_output_tokens"]
+            remaining,
+            8000
+            if maximum == 1 and self.profile["name"] != HOLDOUT_PROFILE
+            else self.profile["per_request_output_tokens"],
         )
         bound = self.count_input_tokens(messages, tools)
         count = None
@@ -257,7 +292,9 @@ class ComparisonBudget(LiteLLMAdapter):
             from tracefix.models.input_bounds import DEEPSEEK_FLASH_CONTEXT
 
             available = min(
-                self.limits["limit_cny"] - spent, arm_limit - arm_spent, trial_limit - trial_spent
+                self.limits["limit_cny"] - spent,
+                arm_limit - arm_spent if arm_limit is not None else float("inf"),
+                trial_limit - trial_spent,
             )
             affordable_output = (round(available * 1_000_000) - bound * 2) // 8
             output_allowance = (
@@ -270,13 +307,16 @@ class ComparisonBudget(LiteLLMAdapter):
                 else 0
             )
             if output_allowance <= 0:
+                reason = "fee or provider context exhausted"
+                if self.profile["name"] == HOLDOUT_PROFILE:
+                    reason = (
+                        "trial_fee_limit" if affordable_output <= 0 else "provider_context_limit"
+                    )
                 write_json(
                     self.root / "trials" / self.trial["id"] / "refusal.json",
-                    {"sent": False, "reason": "fee or provider context exhausted"},
+                    {"sent": False, "reason": reason},
                 )
-                raise PreRequestBudgetExceeded(
-                    "fee or provider context exhausted; request not sent"
-                )
+                raise PreRequestBudgetExceeded(reason + "; request not sent")
             self.config.max_output_tokens = output_allowance
             if count is not None:
                 count = InputBound(
@@ -365,6 +405,12 @@ class ComparisonBudget(LiteLLMAdapter):
             response_model=response.model_name,
             seconds=time.monotonic() - started,
         )
+        if self.profile["name"] == HOLDOUT_PROFILE:
+            row["supplier_raw_usage"] = response.raw_response.get("usage", {})
+            if self.root.joinpath("protocol.json").exists():
+                mode = read_json(self.root / "protocol.json").get("mode")
+                if mode == "live" and response.model_name != "deepseek-flash":
+                    ledger["halt_reason"] = "supplier model identity changed"
         if count is not None:
             row["official_count_delta"] = count.tokens - usage.input_tokens
             if row["official_count_delta"] != 0:
@@ -402,6 +448,7 @@ def simple_loop(llm: ComparisonBudget, tools, task: str, trace: Path) -> dict:
                 )
             else:
                 tests += int(call.name == "run_tests")
+                started = time.monotonic()
                 try:
                     result = tools.get(call.name).execute(call)
                 except Exception as exc:
@@ -411,6 +458,9 @@ def simple_loop(llm: ComparisonBudget, tools, task: str, trace: Path) -> dict:
                         success=False,
                         error=f"{type(exc).__name__}: {exc}",
                     )
+                finally:
+                    if hasattr(llm, "tools_seconds"):
+                        llm.tools_seconds += time.monotonic() - started
             history.append(
                 Message(
                     role=MessageRole.TOOL,
@@ -424,6 +474,10 @@ def simple_loop(llm: ComparisonBudget, tools, task: str, trace: Path) -> dict:
 
 def summarize(protocol: dict, trials: list[dict], requests: list[dict]) -> dict:
     selected = protocol_profile(protocol)
+    if selected["name"] == HOLDOUT_PROFILE:
+        from tracefix.comparison_holdout import holdout_summary
+
+        return holdout_summary(protocol, trials, requests)
     arms = selected["arms"]
     repetitions = selected["repetitions"]
     planned = len(protocol.get("schedule", schedule(selected)))
