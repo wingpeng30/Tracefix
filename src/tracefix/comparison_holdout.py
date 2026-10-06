@@ -166,13 +166,16 @@ def aggregate(records: list[dict], requests: list[dict]) -> dict:
     }
 
 
-def paired_statistics(rows: list[dict], baseline: str) -> dict:
+def paired_statistics(rows: list[dict], baseline: str, repetitions: int = 3) -> dict:
     # Only completed three-repetition task pairs estimate the frozen full-task contrast.
     # Started failures still remain in unconditional arm totals; incomplete tasks are explicit.
     matched = [
         r
         for r in rows
-        if all(r[a]["started"] == 3 and r[a]["finished"] == 3 for a in (baseline, "C"))
+        if all(
+            r[a]["started"] == repetitions and r[a]["finished"] == repetitions
+            for a in (baseline, "C")
+        )
     ]
     if not matched:
         return {"matched_tasks": 0, "difference": None, "excluded_incomplete_tasks": len(rows)}
@@ -183,9 +186,10 @@ def paired_statistics(rows: list[dict], baseline: str) -> dict:
         c_cost = sum(r["C"]["conservative_peak_cny"] for r in sample)
         b_cost = sum(r[baseline]["conservative_peak_cny"] for r in sample)
         return (
-            (c - b) / (len(sample) * 3) * 100,
+            (c - b) / (len(sample) * repetitions) * 100,
             (c_cost / c) / (b_cost / b) if c and b and b_cost else None,
-            sum(r["C"]["seconds"] - r[baseline]["seconds"] for r in sample) / (len(sample) * 3),
+            sum(r["C"]["seconds"] - r[baseline]["seconds"] for r in sample)
+            / (len(sample) * repetitions),
         )
 
     point = contrast(matched)
@@ -216,6 +220,9 @@ def holdout_summary(protocol: dict, records: list[dict], requests: list[dict]) -
     from tracefix.comparison import digest
 
     task_ids = list(protocol["tasks"])
+    planned = len(protocol["schedule"])
+    planned_by_arm = Counter(r["arm"] for r in protocol["schedule"])
+    repetitions = protocol["profile"]["repetitions"]
     rows = []
     for task in task_ids:
         row = {
@@ -230,23 +237,28 @@ def holdout_summary(protocol: dict, records: list[dict], requests: list[dict]) -
             }
         rows.append(row)
     repositories = sorted({r["repository"] for r in rows})
-    comparisons = {f"C-{a}": paired_statistics(rows, a) for a in "AB"}
+    comparisons = {f"C-{a}": paired_statistics(rows, a, repetitions) for a in "AB"}
     return {
         "protocol_sha256": digest(protocol),
         "mode": protocol["mode"],
-        "complete": len(records) == 180 and all(r.get("finished") for r in records),
-        "planned": 180,
+        "complete": len(records) == planned and all(r.get("finished") for r in records),
+        "planned": planned,
         "started": len(records),
-        "unstarted": 180 - len(records),
+        "unstarted": planned - len(records),
         "arms": {
-            a: {**aggregate([r for r in records if r["arm"] == a], requests), "planned": 60}
+            a: {
+                **aggregate([r for r in records if r["arm"] == a], requests),
+                "planned": planned_by_arm[a],
+            }
             for a in "ABC"
         },
         "comparisons": comparisons,
         "per_task": rows,
         "leave_one_repository_out": {
             repo: {
-                f"C-{a}": paired_statistics([r for r in rows if r["repository"] != repo], a)
+                f"C-{a}": paired_statistics(
+                    [r for r in rows if r["repository"] != repo], a, repetitions
+                )
                 for a in "AB"
             }
             for repo in repositories
@@ -268,7 +280,9 @@ def holdout_summary(protocol: dict, records: list[dict], requests: list[dict]) -
         },
         "infrastructure_sensitivity": {
             f"C-{a}": paired_statistics(
-                [r for r in rows if not any(r[b]["infrastructure_failures"] for b in "ABC")], a
+                [r for r in rows if not any(r[b]["infrastructure_failures"] for b in "ABC")],
+                a,
+                repetitions,
             )
             for a in "AB"
         },

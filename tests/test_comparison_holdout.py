@@ -171,6 +171,60 @@ def test_verifier_exception_is_durable_infrastructure_failure(tmp_path, monkeypa
 
 
 @pytest.mark.parametrize("arm", ["A", "B", "C"])
+def test_preparation_value_error_is_infrastructure_failure(tmp_path, monkeypatch, arm):
+    import time
+
+    import tracefix.comparison_campaign as campaign
+
+    catalog, _ = fixture_catalog(tmp_path)
+    spec = read_json(catalog)[0]
+    prompt = tmp_path / "prompt.txt"
+    prompt.write_text("Fix add")
+    spec["prompt_path"] = str(prompt)
+    monkeypatch.setattr(campaign, "protocol_profile", lambda *_: profile_config(HOLDOUT_PROFILE))
+
+    def unavailable(*_):
+        time.sleep(0.03)  # Exceed Windows' monotonic clock resolution.
+        raise ValueError("workspace unavailable")
+
+    monkeypatch.setattr(campaign.TraceFixRunner, "_clone_repository", unavailable)
+    result = execute_trial(
+        tmp_path / "campaign",
+        {"mode": "offline", "tasks": {"one": spec}},
+        {"id": "001", "task_id": "one", "arm": arm, "repetition": 1},
+        None,
+    )
+    assert result["finished"] and result["infrastructure_failure"]
+    assert result["agent_status"] == "failed" and not result["passed"]
+    assert result["reason"].startswith("preparation:")
+    assert result["patch_collection_status"] == "not_attempted"
+    assert result["timings"]["preparation_seconds"] > 0
+
+
+def test_delivery_wall_time_includes_gap_before_verification(tmp_path, monkeypatch):
+    import time
+
+    import tracefix.comparison_campaign as campaign
+    from tracefix.comparison import file_sha
+
+    patch = tmp_path / "patch.diff"
+    patch.write_text(PATCH)
+    monkeypatch.setattr(campaign, "verify", lambda *_: {"passed": True})
+    result = finalize_trial(
+        tmp_path,
+        {
+            "patch_sha256": file_sha(patch),
+            "holdout_protocol": True,
+            "status": "completed",
+            "prepared_at_unix_seconds": time.time() - 5,
+            "timings": {"agent_seconds": 1},
+        },
+        {},
+    )
+    assert result["timings"]["delivery_seconds"] >= 5
+
+
+@pytest.mark.parametrize("arm", ["A", "B", "C"])
 def test_holdout_real_agent_trial_timings_and_patch(tmp_path, arm):
     catalog, _ = fixture_catalog(tmp_path)
     spec = qualify_task(read_json(catalog)[0], tmp_path / "qualification")

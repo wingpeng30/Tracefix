@@ -613,6 +613,7 @@ def execute_trial(root: Path, protocol: dict, row: dict, env_file: Path | None) 
             nonlocal preparation_seconds
             prepared = TraceFixRunner._prepare_workspace(*args)
             preparation_seconds = time.monotonic() - started
+            record["prepared_at_unix_seconds"] = time.time()
             return prepared
 
         @staticmethod
@@ -675,6 +676,12 @@ def execute_trial(root: Path, protocol: dict, row: dict, env_file: Path | None) 
             record["agent_result"] = result.result_path
             record["status"] = result.status.value
             record["reason"] = result.stop_reason
+            if holdout and adapter is None:
+                record.update(
+                    infrastructure_failure=True,
+                    reason=f"preparation: {result.stop_reason}",
+                    patch_collection_status="not_attempted",
+                )
             saved = Path(result.result_path).parent / "patch.diff"
             if saved.exists():
                 patch.write_bytes(saved.read_bytes())
@@ -684,6 +691,8 @@ def execute_trial(root: Path, protocol: dict, row: dict, env_file: Path | None) 
             )
             preparation = TraceFixRunner._prepare_workspace(config, workspace, directory)
             preparation_seconds = time.monotonic() - started
+            if holdout:
+                record["prepared_at_unix_seconds"] = time.time()
             if preparation.get("success") is not True:
                 raise ValueError("workspace preparation failed")
             tools = create_default_tool_registry(
@@ -740,6 +749,13 @@ def execute_trial(root: Path, protocol: dict, row: dict, env_file: Path | None) 
         record.update(status="budget_exhausted", reason=str(exc))
     except (ValueError, ToolError) as exc:
         record.update(status="invalid_patch" if row["arm"] == "A" else "failed", reason=str(exc))
+        if holdout and adapter is None:
+            record.update(
+                status="failed",
+                infrastructure_failure=True,
+                reason=f"preparation: {type(exc).__name__}: {exc}",
+                patch_collection_status="not_attempted",
+            )
     except Exception as exc:
         record.update(
             status="failed", reason=f"{type(exc).__name__}: {exc}", infrastructure_failure=True
@@ -759,10 +775,14 @@ def execute_trial(root: Path, protocol: dict, row: dict, env_file: Path | None) 
             )
     record["seconds"] = time.monotonic() - started
     if holdout:
+        if record.get("infrastructure_failure") and adapter is None:
+            preparation_seconds = record["seconds"]
         record.update(
             holdout_protocol=True,
             agent_status=record["status"],
-            patch_collection_status=record.get("patch_collection_status", "completed"),
+            patch_collection_status=record.get(
+                "patch_collection_status", "completed" if patch.exists() else "not_attempted"
+            ),
             timings={
                 "preparation_seconds": preparation_seconds,
                 "agent_seconds": record["seconds"] - preparation_seconds,
@@ -814,7 +834,11 @@ def finalize_trial(directory: Path, record: dict, spec: dict) -> dict:
     if record.get("holdout_protocol"):
         timings = record["timings"]
         timings["verification_seconds"] = time.monotonic() - started
-        timings["delivery_seconds"] = timings["agent_seconds"] + timings["verification_seconds"]
+        timings["delivery_seconds"] = (
+            max(0.0, time.time() - record["prepared_at_unix_seconds"])
+            if "prepared_at_unix_seconds" in record
+            else timings["agent_seconds"] + timings["verification_seconds"]
+        )
         record["verification_status"] = "passed" if verification["passed"] else "failed"
     record.update(finished=True, passed=verification["passed"], verification=verification)
     record["artifacts"] = {
