@@ -617,11 +617,10 @@ def remove_owned_tree(path, expected_snapshot=None):
     info = path.lstat()
     if linked(info):
         raise ValueError("reparse deletion forbidden")
+    current = snapshot(path)
+    if expected_snapshot is not None and current != expected_snapshot:
+        raise ValueError("artifact changed immediately before deletion")
     if stat.S_ISDIR(info.st_mode):
-        current = snapshot(path)
-        if expected_snapshot is not None and current != expected_snapshot:
-            raise ValueError("artifact changed immediately before deletion")
-
         def readonly_file(function, filename, error):
             child = Path(filename)
             child_info = child.lstat()
@@ -694,7 +693,15 @@ def retry_skipped():
             )
         except (OSError, ValueError, zipfile.BadZipFile) as error:
             remaining.append({"path": str(path), "reason": str(error)})
+        if number <= 5:
+            print(
+                json.dumps(
+                    {"retried": number, "recent_failure": remaining[-1:]}, ensure_ascii=False
+                ),
+                flush=True,
+            )
         if number % 100 == 0:
+            write(ARCHIVE / "retry-skipped-progress.json", remaining)
             print(json.dumps({"retried": number, "remaining": len(remaining)}), flush=True)
     plan["skipped"] = remaining
     write(ARCHIVE / "archive-index.json", index)
