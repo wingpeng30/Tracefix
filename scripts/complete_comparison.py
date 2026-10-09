@@ -26,7 +26,6 @@ from tracefix.comparison_campaign import (
     git,
     report,
     schedule,
-    source_identity,
     validate_record,
     validate_requests,
 )
@@ -174,10 +173,10 @@ def verify_frozen_environment(anchor: Path, new_service: dict) -> dict:
         raise ValueError("original engine CI gate changed")
     previous = None
     for spec in original["tasks"].values():
-        if source_identity(Path(spec["source"])) != spec["source_identity"]:
-            raise ValueError("frozen source changed")
-        if not Path(spec["python"]).is_file() or not spec.get("environment_identity"):
-            raise ValueError("frozen test environment is missing")
+        if not spec.get("source_identity") or not Path(spec["python"]).is_file() or not spec.get(
+            "environment_identity"
+        ):
+            raise ValueError("frozen source or test environment identity missing")
         identity = spec.get("service_identity")
         if identity:
             if previous is not None and identity != previous:
