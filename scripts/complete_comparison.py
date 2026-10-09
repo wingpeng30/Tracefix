@@ -75,7 +75,7 @@ def check_driver(approval: dict) -> None:
         or evidence.get("driver_sha256") != file_sha(Path(__file__))
         or evidence.get("tests_sha256")
         != file_sha(repository / "tests/test_comparison_completion.py")
-        or evidence.get("local_tests_passed") != 9
+        or evidence.get("local_tests_passed") != 10
         or evidence.get("previous_driver_ci_conclusion") != "success"
     ):
         raise ValueError("exact CI or explicit hash-bound direct-start acceptance required")
