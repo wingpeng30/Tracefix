@@ -92,6 +92,10 @@ def test_suffix_claim_liability_and_parent_immutability(parent, tmp_path):
     assert result == continuation.prepare(root, child, approval)
     with pytest.raises(ValueError, match="claimed"):
         continuation.prepare(root, tmp_path / "other", approval)
+    copied_approval = tmp_path / "copied-approval.json"
+    copied_approval.write_bytes(approval.read_bytes())
+    with pytest.raises(ValueError, match="claimed"):
+        continuation.prepare(root, tmp_path / "other", copied_approval)
     with pytest.raises(ValueError, match="outside"):
         continuation.prepare(root, root / "other", approval)
     assert continuation.run(child, None, max_trials=0) == []

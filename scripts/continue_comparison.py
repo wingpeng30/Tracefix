@@ -123,7 +123,9 @@ def prepare(parent: Path, root: Path, approval_path: Path) -> dict:
         approval = read_json(approval_path)
         check_driver(approval)
         protocol, manifest = plan(parent, approval)
-        claim_path = approval_path.with_suffix(".claim.json")
+        # The claim belongs to the parent, not the approval filename. Copying an
+        # approval must not create a second child spending the same remaining funds.
+        claim_path = parent.with_name(parent.name + "-continuation.claim.json")
         claim = {"child": str(root), "approval_sha256": file_sha(approval_path)}
         if claim_path.exists() and read_json(claim_path) != claim:
             raise ValueError("continuation approval already claimed")
@@ -146,14 +148,14 @@ def run(root: Path, env_file: Path | None, *, max_trials: int = 60) -> list[dict
         identity = read_json(root / "approval-identity.json")
         approval_path = Path(identity["path"])
         check_driver(read_json(approval_path))
+        parent = Path(manifest["funding"]["parent_campaign"])
         if (
             identity["child"] != str(root.resolve())
             or file_sha(approval_path) != identity["approval_sha256"]
-            or read_json(approval_path.with_suffix(".claim.json"))
+            or read_json(parent.with_name(parent.name + "-continuation.claim.json"))
             != {k: identity[k] for k in ("child", "approval_sha256")}
         ):
             raise ValueError("continuation claim changed")
-        parent = Path(manifest["funding"]["parent_campaign"])
         with ProcessLock(parent):
             check_protocol(parent)
             expected, _ = plan(parent, read_json(approval_path))
