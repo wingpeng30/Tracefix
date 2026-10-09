@@ -5,7 +5,7 @@ on:
     branches: [main, 'codex/experience-memory', 'codex/continuous-dialogue',
                'codex/docker-recovery', 'codex/memory-dialogue-integration',
                'codex/agent-model-comparison', 'codex/bc-350k-tokenizer',
-               'codex/abc-holdout-capability', 'codex/bc-holdout-180s']
+               'codex/abc-holdout-capability', 'codex/bc-holdout-180s', 'codex/ac-30-180s']
   pull_request:
   workflow_dispatch:
 

@@ -67,6 +67,23 @@ def product_diff(workspace: Path, protected_dirs: set[str]) -> tuple[str, tuple[
 
 
 def balanced_schedule(task_ids: list[str], arms: str = "ABC") -> list[dict]:
+    if arms == "AC" and len(task_ids) == 30 and len(set(task_ids)) == 30:
+        rng = random.Random(SEED)
+        blocks = [(task, 1) for task in task_ids]
+        orders = [("A", "C"), ("C", "A")] * 15
+        rng.shuffle(blocks)
+        rng.shuffle(orders)
+        return [
+            {
+                "id": f"{(block - 1) * 2 + offset + 1:03d}",
+                "task_id": task,
+                "repetition": repetition,
+                "arm": arm,
+                "block": block,
+            }
+            for block, ((task, repetition), order) in enumerate(zip(blocks, orders, strict=True), 1)
+            for offset, arm in enumerate(order)
+        ]
     if len(task_ids) != 20 or len(set(task_ids)) != 20:
         raise ValueError("exactly twenty distinct holdout tasks required")
     if arms not in {"ABC", "BC"}:
@@ -185,7 +202,7 @@ def aggregate(records: list[dict], requests: list[dict]) -> dict:
 
 
 def paired_statistics(rows: list[dict], baseline: str, repetitions: int = 3) -> dict:
-    # Only completed three-repetition task pairs estimate the frozen full-task contrast.
+    # Only complete task pairs estimate the frozen contrast (one or three repetitions).
     # Started failures still remain in unconditional arm totals; incomplete tasks are explicit.
     matched = [
         r
@@ -236,6 +253,7 @@ def paired_statistics(rows: list[dict], baseline: str, repetitions: int = 3) -> 
 
 def holdout_summary(protocol: dict, records: list[dict], requests: list[dict]) -> dict:
     from tracefix.comparison import digest
+    from tracefix.comparison_profiles import AC_HOLDOUT_PROFILE
 
     task_ids = list(protocol["tasks"])
     planned = len(protocol["schedule"])
@@ -258,7 +276,7 @@ def holdout_summary(protocol: dict, records: list[dict], requests: list[dict]) -
         rows.append(row)
     repositories = sorted({r["repository"] for r in rows})
     comparisons = {f"C-{a}": paired_statistics(rows, a, repetitions) for a in baselines}
-    return {
+    result = {
         "protocol_sha256": digest(protocol),
         "mode": protocol["mode"],
         "complete": len(records) == planned and all(r.get("finished") for r in records),
@@ -330,3 +348,26 @@ def holdout_summary(protocol: dict, records: list[dict], requests: list[dict]) -
             "Project holdout; public training contamination unknown; cold start only."
         ),
     }
+    if protocol["profile"]["name"] == AC_HOLDOUT_PROFILE:
+        result["task_cohorts"] = {}
+        for cohort, original in (("original_twenty", True), ("additional_ten", False)):
+            cohort_rows = [r for r in rows if (r["task_id"] in HOLDOUT_TASK_IDS) == original]
+            cohort_ids = {r["task_id"] for r in cohort_rows}
+            result["task_cohorts"][cohort] = {
+                "planned_tasks": len(cohort_rows),
+                "arms": {
+                    a: aggregate(
+                        [r for r in records if r["arm"] == a and r["task_id"] in cohort_ids],
+                        requests,
+                    )
+                    for a in arms
+                },
+                "comparisons": {"C-A": paired_statistics(cohort_rows, "A", repetitions)},
+            }
+        result["interpretation"] = (
+            "Thirty-task exploratory A/C comparison; "
+            "original twenty include previously used tasks; "
+            "one run per task, no within-task variability estimate; public training contamination "
+            "unknown; cold start only; no comparison with a plain tool loop."
+        )
+    return result

@@ -30,6 +30,7 @@ from tracefix.comparison import (
     write_json,
 )
 from tracefix.comparison_profiles import (
+    AC_HOLDOUT_PROFILE,
     CAPABILITY_PROFILE,
     HOLDOUT_PROFILES,
     LEGACY_PROFILE,
@@ -277,6 +278,8 @@ def prepare(
     counter_runtime: Path | None = None,
     previous_campaign: Path | None = None,
     budget_parent_campaign: Path | None = None,
+    authorization: Path | None = None,
+    task_freeze: Path | None = None,
 ) -> dict:
     root.mkdir(parents=True, exist_ok=True)
     with ProcessLock(root):
@@ -284,7 +287,18 @@ def prepare(
             raise ValueError("protocol already frozen; cannot overwrite")
         selected = profile_config(profile)
         funding = None
-        if selected.get("hard_request_deadline_seconds"):
+        if profile == AC_HOLDOUT_PROFILE:
+            if budget_parent_campaign is not None:
+                raise ValueError("independent authorization cannot inherit a parent ledger")
+            if mode == "live" and authorization is None:
+                raise ValueError("A/C requires an explicit new authorization")
+            if authorization is not None:
+                from tracefix.comparison_funding import freeze_new_budget
+
+                funding = freeze_new_budget(authorization, root)
+        elif authorization is not None or task_freeze is not None:
+            raise ValueError("new authorization/task freeze only supported by A/C")
+        elif selected.get("hard_request_deadline_seconds"):
             if mode == "live" and budget_parent_campaign is None:
                 raise ValueError("new paid batch requires the prior authorization ledger")
             if budget_parent_campaign is not None:
@@ -323,9 +337,18 @@ def prepare(
         if profile in HOLDOUT_PROFILES:
             from tracefix.comparison_holdout import HOLDOUT_TASK_IDS
 
-            if mode == "live" and task_ids != list(HOLDOUT_TASK_IDS):
+            if profile == AC_HOLDOUT_PROFILE:
+                if len(task_ids) != 30 or len(set(task_ids)) != 30:
+                    raise ValueError("exactly thirty distinct tasks required")
+                if mode == "live":
+                    from tracefix.comparison_selection import validate_selection
+
+                    if task_freeze is None:
+                        raise ValueError("A/C requires the thirty-task selection freeze")
+                    validate_selection(read_json(task_freeze), task_ids)
+            elif mode == "live" and task_ids != list(HOLDOUT_TASK_IDS):
                 raise ValueError("exact sealed twenty-task catalog required")
-            if len(task_ids) != 20 or len(set(task_ids)) != 20:
+            elif len(task_ids) != 20 or len(set(task_ids)) != 20:
                 raise ValueError("exactly twenty distinct tasks required")
         elif task_ids != list(TASK_IDS):
             raise ValueError("exact ten-task catalog required")
@@ -347,6 +370,9 @@ def prepare(
             qualified.append(qualify_task(spec, root))
         tasks = {}
         artifacts = {}
+        if task_freeze is not None:
+            write_json(root / "task-selection.json", read_json(task_freeze))
+            artifacts["task-selection.json"] = file_sha(root / "task-selection.json")
         if calibration is not None:
             artifacts["tokenizer-calibration.json"] = file_sha(root / "tokenizer-calibration.json")
         for spec in qualified:
@@ -431,6 +457,14 @@ def check_protocol(root: Path, *, require_ci: bool = True) -> dict:
         if protocol["mode"] == "live" and "funding" not in protocol:
             raise ValueError("prior authorization funding missing")
         prior_spend(protocol)
+        if selected["name"] == AC_HOLDOUT_PROFILE and protocol["mode"] == "live":
+            from tracefix.comparison_selection import validate_selection
+
+            if protocol["funding"].get("kind") != "independent_authorization":
+                raise ValueError("A/C independent authorization missing")
+            if protocol["funding"]["campaign"] != str(root.resolve()):
+                raise ValueError("authorization belongs to another campaign")
+            validate_selection(read_json(root / "task-selection.json"), list(protocol["tasks"]))
     if protocol["limits"] != selected["limits"] or protocol["schedule"] != schedule(
         selected, list(protocol["tasks"])
     ):
@@ -954,14 +988,27 @@ def audit_first_block(root: Path, protocol: dict, identifiers: list[str]) -> dic
     if {r["arm"] for r in records} != set(protocol_profile(protocol)["arms"]):
         raise ValueError("first audit needs all protocol arms")
     schemas = []
-    for arm in ("B", "C"):
+    for arm in (a for a in protocol_profile(protocol)["arms"] if a != "A"):
         request = next((r for r in selected if r["arm"] == arm), None)
         if request is None:
             raise ValueError("first block missing tool arm request")
         body = read_json(root / "provider" / f"{request['id']}-request.json")
         schemas.append(body.get("tools", []))
-    if schemas[0] != schemas[1]:
+    if any(schema != schemas[0] for schema in schemas[1:]):
         raise ValueError("B/C tool schemas differ")
+    if protocol_profile(protocol)["name"] == AC_HOLDOUT_PROFILE:
+        for arm in ("A", "C"):
+            arm_requests = [r for r in selected if r["arm"] == arm]
+            if not arm_requests or (arm == "A" and len(arm_requests) != 1):
+                raise ValueError("A/C first-block request policy changed")
+            body = read_json(root / "provider" / f"{arm_requests[0]['id']}-request.json")
+            if arm == "A" and body.get("tools"):
+                raise ValueError("bare model must not receive tools")
+            users = [m["content"] for m in body["messages"] if m["role"] == "user"]
+            task = next(r["task_id"] for r in records if r["arm"] == arm)
+            prompt = Path(protocol["tasks"][task]["prompt_path"]).read_text(encoding="utf-8")
+            if not users or users[0].rstrip("\n") != prompt.rstrip("\n"):
+                raise ValueError("A/C initial public material differs")
     return {
         "protocol_sha256": digest(protocol),
         "accepted": True,
@@ -1237,6 +1284,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--counter-runtime", type=Path)
     parser.add_argument("--previous-campaign", type=Path)
     parser.add_argument("--budget-parent-campaign", type=Path)
+    parser.add_argument("--authorization", type=Path)
+    parser.add_argument("--task-freeze", type=Path)
     parser.add_argument("--mode", choices=("live", "offline"), default="live")
     parser.add_argument("--env-file", type=Path)
     parser.add_argument("--max-trials", type=int, default=180)
@@ -1259,6 +1308,8 @@ def main(argv: list[str] | None = None) -> int:
                 previous_campaign=args.previous_campaign,
                 budget_parent_campaign=args.budget_parent_campaign,
             )
+        if args.authorization is not None or args.task_freeze is not None:
+            options.update(authorization=args.authorization, task_freeze=args.task_freeze)
         prepare(args.catalog, root, args.prices, **options)
     elif args.action == "run":
         run(root, args.env_file, max_trials=args.max_trials)

@@ -10,7 +10,7 @@ from pathlib import Path
 from tracefix.comparison import read_json, write_json
 from tracefix.comparison_campaign import prepare, report, run
 from tracefix.comparison_holdout import HOLDOUT_TASK_IDS
-from tracefix.comparison_profiles import HOLDOUT_PROFILE, HOLDOUT_PROFILES
+from tracefix.comparison_profiles import AC_HOLDOUT_PROFILE, HOLDOUT_PROFILE, HOLDOUT_PROFILES
 
 PATCH = """diff --git a/sample.py b/sample.py
 --- a/sample.py
@@ -69,7 +69,11 @@ def main() -> int:
                 "selectors": ["test_sample.py"],
                 "fixture_patch": PATCH,
             }
-            for task in HOLDOUT_TASK_IDS
+            for task in (
+                (*HOLDOUT_TASK_IDS, *(f"offline__additional-{i}" for i in range(10)))
+                if args.profile == AC_HOLDOUT_PROFILE
+                else HOLDOUT_TASK_IDS
+            )
         ],
     )
     prices = root / "prices.json"
@@ -109,7 +113,7 @@ def main() -> int:
     )
     accepted = (
         summary["complete"]
-        and all(r["successes"] == 60 for r in summary["arms"].values())
+        and all(r["successes"] == r["planned"] for r in summary["arms"].values())
         and before == (campaign / "requests.json").read_bytes()
     )
     write_json(

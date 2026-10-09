@@ -12,6 +12,62 @@ from tracefix.exceptions import BenchmarkError
 from tracefix.real_environment import resolve_managed_environment_python
 
 
+def public_regressions(source: Path, task: str) -> list[str]:
+    if task.startswith("pytest"):
+        regressions = [
+            "testing/test_compat.py::" + name
+            for name in (
+                "test_is_generator",
+                "test_real_func_loop_limit",
+                "test_get_real_func",
+                "test_get_real_func_partial",
+                "test_helper_failures",
+                "test_safe_getattr",
+                "test_safe_isclass",
+                "test_cached_property",
+            )
+        ]
+        # Version compatibility is determined from public base source, never pass/fail results.
+        module = ast.parse((source / "testing/test_compat.py").read_text(encoding="utf-8"))
+        names = {node.name for node in module.body if isinstance(node, ast.FunctionDef)}
+        regressions = [node for node in regressions if node.split("::")[-1] in names]
+        if not regressions:
+            raise ValueError("no public compatibility regression nodes")
+    elif task.startswith("sphinx"):
+        regressions = ["tests/test_util_matching.py"]
+    elif task.startswith("pylint"):
+        regressions = ["tests/test_numversion.py", "tests/test_pragma_parser.py"]
+    elif (source / "tests/test_structures.py").exists():
+        regressions = ["tests/test_structures.py", "tests/test_hooks.py"]
+    else:
+        regressions = [
+            "test_requests.py::RequestsTestCase::" + name
+            for name in (
+                "test_entry_points",
+                "test_invalid_url",
+                "test_basic_building",
+                "test_path_is_not_double_encoded",
+                "test_params_are_added_before_fragment",
+            )
+        ]
+        module = ast.parse((source / "test_requests.py").read_text(encoding="utf-8"))
+        methods = {
+            node.name: cls.name
+            for cls in module.body
+            if isinstance(cls, ast.ClassDef)
+            for node in cls.body
+            if isinstance(node, ast.FunctionDef)
+        }
+        regressions = [
+            "test_requests.py::" + methods[node.split("::")[-1]] + "::" + node.split("::")[-1]
+            for node in regressions
+            if node.split("::")[-1] in methods
+        ]
+        if not regressions:
+            raise ValueError("no public Requests regression nodes")
+    return regressions
+
+
 def build_catalog(project: Path, service_identity: dict | None = None) -> list[dict]:
     freeze = read_json(FREEZE)
     if freeze["selected_task_ids"] != list(HOLDOUT_TASK_IDS):
@@ -34,58 +90,7 @@ def build_catalog(project: Path, service_identity: dict | None = None) -> list[d
                 project / "runs/holdout-envs-20260921", task
             )
         recipe = read_json(project / "benchmarks/holdout_recipes" / f"{task}.json")
-        if task.startswith("pytest"):
-            regressions = [
-                "testing/test_compat.py::" + name
-                for name in (
-                    "test_is_generator",
-                    "test_real_func_loop_limit",
-                    "test_get_real_func",
-                    "test_get_real_func_partial",
-                    "test_helper_failures",
-                    "test_safe_getattr",
-                    "test_safe_isclass",
-                    "test_cached_property",
-                )
-            ]
-            # Version compatibility is determined from public base source, never pass/fail results.
-            module = ast.parse((source / "testing/test_compat.py").read_text(encoding="utf-8"))
-            names = {node.name for node in module.body if isinstance(node, ast.FunctionDef)}
-            regressions = [node for node in regressions if node.split("::")[-1] in names]
-            if not regressions:
-                raise ValueError("no public compatibility regression nodes")
-        elif task.startswith("sphinx"):
-            regressions = ["tests/test_util_matching.py"]
-        elif task.startswith("pylint"):
-            regressions = ["tests/test_numversion.py", "tests/test_pragma_parser.py"]
-        elif (source / "tests/test_structures.py").exists():
-            regressions = ["tests/test_structures.py", "tests/test_hooks.py"]
-        else:
-            regressions = [
-                "test_requests.py::RequestsTestCase::" + name
-                for name in (
-                    "test_entry_points",
-                    "test_invalid_url",
-                    "test_basic_building",
-                    "test_path_is_not_double_encoded",
-                    "test_params_are_added_before_fragment",
-                )
-            ]
-            module = ast.parse((source / "test_requests.py").read_text(encoding="utf-8"))
-            methods = {
-                node.name: cls.name
-                for cls in module.body
-                if isinstance(cls, ast.ClassDef)
-                for node in cls.body
-                if isinstance(node, ast.FunctionDef)
-            }
-            regressions = [
-                "test_requests.py::" + methods[node.split("::")[-1]] + "::" + node.split("::")[-1]
-                for node in regressions
-                if node.split("::")[-1] in methods
-            ]
-            if not regressions:
-                raise ValueError("no public Requests regression nodes")
+        regressions = public_regressions(source, task)
         spec = {
             "task_id": task,
             "kind": "real",

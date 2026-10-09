@@ -554,7 +554,7 @@ def test_large_public_source_skips_complete_file_without_hidden_hints(tmp_path):
     assert "large.py" in material and "完整文件未纳入" in material
 
 
-@pytest.mark.parametrize("profile_name", [HOLDOUT_PROFILE, "bc-holdout-180s-v1"])
+@pytest.mark.parametrize("profile_name", [HOLDOUT_PROFILE, "bc-holdout-180s-v1", "ac-30-180s-v1"])
 def test_first_complete_block_audit_report_and_crash_reentry(tmp_path, monkeypatch, profile_name):
     """Real tool/pytest block; explicitly synthetic counter, never a live qualification gate."""
     import tracefix.comparison_campaign as campaign
@@ -563,7 +563,10 @@ def test_first_complete_block_audit_report_and_crash_reentry(tmp_path, monkeypat
 
     catalog, prices = fixture_catalog(tmp_path)
     specs = read_json(catalog)
-    write_json(catalog, [{**specs[0], "task_id": task} for task in ids()])
+    tasks = ids() + (
+        [f"new__task-{i}" for i in range(10)] if profile_name == "ac-30-180s-v1" else []
+    )
+    write_json(catalog, [{**specs[0], "task_id": task} for task in tasks])
     tokenizer = tmp_path / "fixture-tokenizer.json"
     tokenizer.write_text("explicit offline counter fixture")
     monkeypatch.setattr(
@@ -593,6 +596,13 @@ def test_first_complete_block_audit_report_and_crash_reentry(tmp_path, monkeypat
 
     monkeypatch.setattr(OfficialCounter, "invoke", count)
     root = tmp_path / "campaign"
+    options = {}
+    if profile_name == "ac-30-180s-v1":
+        from test_comparison_ac import authorization
+
+        auth_path = tmp_path / "authorization.json"
+        authorization(auth_path)
+        options["authorization"] = auth_path
     campaign.prepare(
         catalog,
         root,
@@ -601,6 +611,7 @@ def test_first_complete_block_audit_report_and_crash_reentry(tmp_path, monkeypat
         profile=profile_name,
         tokenizer=tokenizer,
         previous_campaign=tmp_path,
+        **options,
     )
     block_size = len(profile_config(profile_name)["arms"])
     result = campaign.run(root, max_trials=block_size)
@@ -616,7 +627,7 @@ def test_first_complete_block_audit_report_and_crash_reentry(tmp_path, monkeypat
     assert ledger == (root / "requests.json").read_bytes()
     summary = campaign.report(root)
     assert summary["started"] == block_size
-    assert summary["unstarted"] == block_size * 59
+    assert summary["unstarted"] == len(schedule(profile_config(profile_name), tasks)) - block_size
     assert (root / "per-run.csv").is_file() and (root / "per-task.csv").is_file()
     block["protocol_sha256"] = digest({"changed": True})
     write_json(root / "blocks/01.json", block)

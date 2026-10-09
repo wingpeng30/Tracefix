@@ -13,22 +13,25 @@ TOKENIZER_PROFILE = "bc-350k-tokenizer"
 CAPABILITY_PROFILE = "bc-capability-tokenizer"
 HOLDOUT_PROFILE = "abc-holdout-capability-v1"
 BC_HOLDOUT_PROFILE = "bc-holdout-180s-v1"
-HOLDOUT_PROFILES = (HOLDOUT_PROFILE, BC_HOLDOUT_PROFILE)
+AC_HOLDOUT_PROFILE = "ac-30-180s-v1"
+HOLDOUT_PROFILES = (HOLDOUT_PROFILE, BC_HOLDOUT_PROFILE, AC_HOLDOUT_PROFILE)
 
 
 def profile_config(name: str = LEGACY_PROFILE) -> dict:
     if name in HOLDOUT_PROFILES:
         selected = {
             "name": name,
-            "arms": ["B", "C"] if name == BC_HOLDOUT_PROFILE else ["A", "B", "C"],
-            "repetitions": 3,
+            "arms": ["A", "C"]
+            if name == AC_HOLDOUT_PROFILE
+            else (["B", "C"] if name == BC_HOLDOUT_PROFILE else ["A", "B", "C"]),
+            "repetitions": 1 if name == AC_HOLDOUT_PROFILE else 3,
             "limits": {
                 "input_tokens": 9223372036854775807,
                 "output_tokens": 9223372036854775807,
                 "requests": 2147483647,
                 "tests": 2147483647,
                 "active_seconds": 3600,
-                "timeout_seconds": 180 if name == BC_HOLDOUT_PROFILE else 300,
+                "timeout_seconds": 300 if name == HOLDOUT_PROFILE else 180,
                 "limit_cny": 300.0,
             },
             "per_request_output_tokens": 393216,
@@ -37,8 +40,10 @@ def profile_config(name: str = LEGACY_PROFILE) -> dict:
             "input_counter": "official_estimate",
             "capability_mode": True,
         }
-        if name == BC_HOLDOUT_PROFILE:
+        if name != HOLDOUT_PROFILE:
             selected["hard_request_deadline_seconds"] = 180
+        if name == AC_HOLDOUT_PROFILE:
+            selected.update(task_count=30, funding_mode="new_authorization")
         return selected
     if name not in {LEGACY_PROFILE, TOKENIZER_PROFILE, CAPABILITY_PROFILE}:
         raise ValueError("unknown comparison profile")
