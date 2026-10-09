@@ -213,6 +213,12 @@ def plan(parent: Path, approval: dict) -> dict:
     previous_approval = protocol["continuation"]["approval"]
     validator.check_driver(previous_approval)
     anchor = Path(previous_approval["parent_campaign"])
+    gate_path = Path(approval["accepted_environment_gate"])
+    if (
+        file_sha(gate_path) != approval["accepted_environment_gate_sha256"]
+        or read_json(gate_path).get("accepted") is not True
+    ):
+        raise ValueError("previous complete qualification receipt changed")
     service_path = Path(approval["service_identity_file"])
     if file_sha(service_path) != approval["service_identity_sha256"]:
         raise ValueError("restarted service identity file changed")
