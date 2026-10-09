@@ -81,6 +81,8 @@ def prepared(tmp_path, monkeypatch):
             ],
         },
     )
+    for filename in ("summary.json", "per-run.csv", "per-task.csv", "evidence-index.json"):
+        (parent / filename).write_text("fixture evidence", encoding="utf-8")
     write_json(
         parent / "trials/001/record.json",
         {
@@ -91,6 +93,16 @@ def prepared(tmp_path, monkeypatch):
     )
     approval = tmp_path / "approval.json"
     service_identity_file = tmp_path / "service-identity.json"
+    gate_file = tmp_path / "accepted-gate.json"
+    write_json(
+        gate_file,
+        {
+            "accepted": True,
+            "planned": 55,
+            "new_supplier_inference_calls": 0,
+            "engine_commit": "e602c74d707e33d72cfd7cd8d832a8b0198a6a2d",
+        },
+    )
     service_identity = {
         "pid": 2,
         "python": "python39",
@@ -116,6 +128,12 @@ def prepared(tmp_path, monkeypatch):
             "unknown_reservations": {"001-01": 5},
             "service_identity_file": str(service_identity_file),
             "service_identity_sha256": file_sha(service_identity_file),
+            "accepted_environment_gate": str(gate_file),
+            "accepted_environment_gate_sha256": file_sha(gate_file),
+            "parent_report_evidence": {
+                name: file_sha(parent / name)
+                for name in ("summary.json", "per-run.csv", "per-task.csv", "evidence-index.json")
+            },
         },
     )
     validator = SimpleNamespace(check_driver=lambda _: None, plan=lambda *_: (protocol, {}))
@@ -259,3 +277,13 @@ def test_service_rebind_rejects_dependency_change():
     }
     with pytest.raises(ValueError, match="environment changed"):
         completion.verify_restarted_service(old, new)
+
+
+def test_parent_record_digest_rejects_tamper():
+    row = {"id": "006", "task_id": "t", "arm": "A", "repetition": 1}
+    record = {**row, "finished": True, "artifacts": {"patch.diff": "abc"}}
+    record["record_sha256"] = digest(record)
+    completion.validate_parent_record_metadata(record, row)
+    record["passed"] = True
+    with pytest.raises(ValueError, match="corrupted"):
+        completion.validate_parent_record_metadata(record, row)

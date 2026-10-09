@@ -72,7 +72,7 @@ def check_driver(approval: dict) -> None:
         or evidence.get("driver_sha256") != file_sha(Path(__file__))
         or evidence.get("tests_sha256")
         != file_sha(repository / "tests/test_comparison_completion.py")
-        or evidence.get("local_tests_passed") != 10
+        or evidence.get("local_tests_passed") != 11
         or evidence.get("previous_driver_ci_conclusion") != "success"
     ):
         raise ValueError("exact CI or explicit hash-bound direct-start acceptance required")
@@ -196,6 +196,17 @@ def verify_frozen_environment(anchor: Path, new_service: dict) -> dict:
     return {"previous": previous, "current": new_service}
 
 
+def validate_parent_record_metadata(record: dict, row: dict) -> None:
+    """Check the frozen record hash; its artifact hashes were verified on parent reentry."""
+    for field in ("id", "task_id", "arm", "repetition"):
+        if record.get(field) != row[field]:
+            raise ValueError("parent trial identity mismatch")
+    copied = dict(record)
+    expected = copied.pop("record_sha256", None)
+    if not expected or digest(copied) != expected:
+        raise ValueError("parent trial record corrupted")
+
+
 def plan(parent: Path, approval: dict) -> dict:
     protocol = read_json(parent / "protocol.json")
     if (
@@ -218,6 +229,9 @@ def plan(parent: Path, approval: dict) -> dict:
         or read_json(gate_path).get("accepted") is not True
     ):
         raise ValueError("previous complete qualification receipt changed")
+    for name, expected_sha in approval["parent_report_evidence"].items():
+        if file_sha(parent / name) != expected_sha:
+            raise ValueError("parent report evidence changed")
     service_path = Path(approval["service_identity_file"])
     if file_sha(service_path) != approval["service_identity_sha256"]:
         raise ValueError("restarted service identity file changed")
@@ -253,7 +267,7 @@ def plan(parent: Path, approval: dict) -> dict:
             if record.get("finished") or record.get("status") != "unknown_request":
                 raise ValueError("unknown trial state changed")
         else:
-            validate_record(record, path.parent, row)
+            validate_parent_record_metadata(record, row)
             if not record.get("finished"):
                 raise ValueError("unapproved incomplete parent trial")
     rebound_tasks = {
