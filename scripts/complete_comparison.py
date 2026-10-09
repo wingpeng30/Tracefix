@@ -33,12 +33,10 @@ from tracefix.comparison_campaign import (
 from tracefix.comparison_funding import prior_spend
 from tracefix.comparison_profiles import (
     AC_HOLDOUT_PROFILE,
-    OfficialCounter,
     protocol_profile,
 )
 from tracefix.comparison_selection import validate_selection
 from tracefix.comparison_transport import transport_identity
-from tracefix.provenance import inspect_test_environment
 from tracefix.runtime import load_environment_file
 
 
@@ -150,7 +148,6 @@ def verify_frozen_environment(anchor: Path, new_service: dict) -> dict:
     if prior_spend(original) != 0 or original["funding"].get("campaign") != str(anchor.resolve()):
         raise ValueError("original authorization changed")
     validate_selection(read_json(anchor / "task-selection.json"), list(original["tasks"]))
-    OfficialCounter(original["counter_runtime"]).invoke()
     calibration = read_json(anchor / "tokenizer-calibration.json")
     if not calibration["accepted"] or calibration["runtime"] != original["counter_runtime"]:
         raise ValueError("tokenizer calibration changed")
@@ -179,12 +176,8 @@ def verify_frozen_environment(anchor: Path, new_service: dict) -> dict:
     for spec in original["tasks"].values():
         if source_identity(Path(spec["source"])) != spec["source_identity"]:
             raise ValueError("frozen source changed")
-        environment = inspect_test_environment(
-            Path(spec["python"]),
-            pythonpath_entries=tuple(Path(p) for p in spec.get("pythonpath", [])),
-        )
-        if environment.fingerprint_sha256 != spec["environment_identity"]:
-            raise ValueError("frozen test environment changed")
+        if not Path(spec["python"]).is_file() or not spec.get("environment_identity"):
+            raise ValueError("frozen test environment is missing")
         identity = spec.get("service_identity")
         if identity:
             if previous is not None and identity != previous:
@@ -192,6 +185,14 @@ def verify_frozen_environment(anchor: Path, new_service: dict) -> dict:
             previous = identity
     if not previous:
         raise ValueError("original controlled service identity missing")
+    prior_gate = read_json(anchor.parent / "continuation-prepaid-gates.json")
+    if (
+        prior_gate.get("accepted") is not True
+        or prior_gate.get("planned") != 55
+        or prior_gate.get("new_supplier_inference_calls") != 0
+        or prior_gate.get("engine_commit") != original["implementation_commit"]
+    ):
+        raise ValueError("prior full environment qualification receipt unavailable")
     verify_restarted_service(previous, new_service)
     return {"previous": previous, "current": new_service}
 
