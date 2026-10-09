@@ -101,6 +101,30 @@ def test_removal_rejects_last_minute_change(tmp_path):
     assert file.read_text() == "changed"
 
 
+@pytest.mark.parametrize("version,callback", [((3, 11), "onerror"), ((3, 12), "onexc")])
+def test_removal_callback_compatibility(tmp_path, monkeypatch, version, callback):
+    source = tmp_path / "owned"
+    source.mkdir()
+    file = source / "code.py"
+    file.write_text("product")
+    real_rmtree = cleanup.shutil.rmtree
+    observed = []
+
+    def compatible_rmtree(path, **kwargs):
+        observed.append(set(kwargs))
+        error = PermissionError("unrelated denial")
+        argument = (PermissionError, error, None) if callback == "onerror" else error
+        with pytest.raises(PermissionError, match="unrelated denial"):
+            kwargs[callback](os.unlink, str(file), argument)
+        real_rmtree(path)
+
+    monkeypatch.setattr(cleanup.sys, "version_info", version)
+    monkeypatch.setattr(cleanup.shutil, "rmtree", compatible_rmtree)
+    cleanup.remove_owned_tree(source)
+    assert observed == [{callback}]
+    assert not source.exists()
+
+
 def test_cached_archive_rejects_changed_source(tmp_path):
     source = tmp_path / "source"
     source.mkdir()

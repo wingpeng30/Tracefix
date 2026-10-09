@@ -11,6 +11,7 @@ import re
 import shutil
 import stat
 import subprocess
+import sys
 import time
 import zipfile
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -729,8 +730,16 @@ def remove_owned_tree(path, expected_snapshot=None):
             os.chmod(child, child_info.st_mode | stat.S_IWRITE)
             function(filename)
 
-        # Python 3.12's Windows walker treats junctions/symlinks as leaves, never targets.
-        shutil.rmtree(path, onexc=readonly_file)
+        # Both versions reject links during snapshot; callback signatures differ.
+        if sys.version_info >= (3, 12):
+            shutil.rmtree(path, onexc=readonly_file)
+        else:
+            shutil.rmtree(
+                path,
+                onerror=lambda function, filename, error: readonly_file(
+                    function, filename, error[1]
+                ),
+            )
     else:
         try:
             os.unlink(path)
