@@ -90,6 +90,20 @@ def prepared(tmp_path, monkeypatch):
         },
     )
     approval = tmp_path / "approval.json"
+    service_identity_file = tmp_path / "service-identity.json"
+    service_identity = {
+        "pid": 2,
+        "python": "python39",
+        "python_version": "3.9.21",
+        "started_at": "now",
+        "startup_nonce": "nonce",
+        "port": 8768,
+        "identity_url": "http://127.0.0.1:8768/id",
+        "health_url": "http://127.0.0.1:8768/get",
+        "script_sha256": "script",
+        "dependency_versions": {"httpbin": "0.10.2"},
+    }
+    write_json(service_identity_file, service_identity)
     write_json(
         approval,
         {
@@ -100,12 +114,18 @@ def prepared(tmp_path, monkeypatch):
             "parent_protocol_sha256": file_sha(parent / "protocol.json"),
             "requests_sha256": file_sha(parent / "requests.json"),
             "unknown_reservations": {"001-01": 5},
+            "service_identity_file": str(service_identity_file),
+            "service_identity_sha256": file_sha(service_identity_file),
         },
     )
     validator = SimpleNamespace(check_driver=lambda _: None, plan=lambda *_: (protocol, {}))
     monkeypatch.setattr(completion, "load_validator", lambda _: validator)
-    monkeypatch.setattr(completion, "check_protocol", lambda _: None)
     monkeypatch.setattr(completion, "check_driver", lambda _: None)
+    monkeypatch.setattr(
+        completion,
+        "verify_frozen_environment",
+        lambda _anchor, current: {"previous": current, "current": current},
+    )
     monkeypatch.setattr(
         OfficialCounter,
         "count",
@@ -216,3 +236,26 @@ def test_driver_and_validator_identity_fail_before_calls(tmp_path):
     path.write_text("", encoding="utf-8")
     with pytest.raises(ValueError, match="identity"):
         completion.load_validator({"parent_driver": str(path), "parent_driver_sha256": "bad"})
+
+
+def test_service_rebind_rejects_dependency_change():
+    old = {
+        "pid": 1,
+        "started_at": "old",
+        "startup_nonce": "a",
+        "identity_url": "old-url",
+        "port": 8768,
+        "health_url": "http://127.0.0.1:8768/get",
+        "script_sha256": "same",
+        "dependency_versions": {"httpbin": "0.10.2"},
+    }
+    new = {
+        **old,
+        "pid": 2,
+        "started_at": "new",
+        "startup_nonce": "b",
+        "identity_url": "new-url",
+        "dependency_versions": {"httpbin": "0.11"},
+    }
+    with pytest.raises(ValueError, match="environment changed"):
+        completion.verify_restarted_service(old, new)

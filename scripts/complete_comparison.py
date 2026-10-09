@@ -13,22 +13,32 @@ import json
 import math
 import os
 import shutil
+import sys
 from pathlib import Path
 from urllib.request import ProxyHandler, Request, build_opener
+from urllib.request import build_opener as opener_factory
 
 from tracefix.checkpoint import ProcessLock
 from tracefix.comparison import digest, file_sha, read_json, write_json
 from tracefix.comparison_campaign import (
-    check_protocol,
     execute_trial,
     finalize_trial,
     git,
     report,
+    schedule,
+    source_identity,
     validate_record,
     validate_requests,
 )
 from tracefix.comparison_funding import prior_spend
-from tracefix.comparison_profiles import protocol_profile
+from tracefix.comparison_profiles import (
+    AC_HOLDOUT_PROFILE,
+    OfficialCounter,
+    protocol_profile,
+)
+from tracefix.comparison_selection import validate_selection
+from tracefix.comparison_transport import transport_identity
+from tracefix.provenance import inspect_test_environment
 from tracefix.runtime import load_environment_file
 
 
@@ -108,6 +118,84 @@ def wallet(root: Path, block: int) -> bool:
     return bool(balance["is_available"]) and float(cny["total_balance"]) > 0
 
 
+def verify_restarted_service(previous: dict, current: dict) -> None:
+    mutable = {"pid", "started_at", "startup_nonce", "identity_url"}
+    if any(previous.get(k) != current.get(k) for k in previous if k not in mutable):
+        raise ValueError("restarted service code or environment changed")
+    if current.get("port") != previous.get("port") or current.get("health_url") != previous.get(
+        "health_url"
+    ):
+        raise ValueError("restarted service endpoint changed")
+    opener = opener_factory(ProxyHandler({}))
+    with opener.open(current["identity_url"], timeout=5) as response:
+        if json.load(response) != current:
+            raise ValueError("service identity endpoint mismatch")
+    with opener.open(current["health_url"], timeout=5) as response:
+        if json.load(response).get("url") != current["health_url"]:
+            raise ValueError("service health check failed")
+
+
+def verify_frozen_environment(anchor: Path, new_service: dict) -> dict:
+    """Verify the original freeze, accepting only an attested same-build restart."""
+    original = read_json(anchor / "protocol.json")
+    if digest(original) != read_json(anchor / "protocol.sha256.json")["sha256"]:
+        raise ValueError("original protocol changed")
+    selected = protocol_profile(original)
+    if selected["name"] != AC_HOLDOUT_PROFILE or original["schedule"] != schedule(
+        selected, list(original["tasks"])
+    ):
+        raise ValueError("original A/C protocol changed")
+    if original["provider_transport"] != transport_identity():
+        raise ValueError("provider transport identity changed")
+    if prior_spend(original) != 0 or original["funding"].get("campaign") != str(anchor.resolve()):
+        raise ValueError("original authorization changed")
+    validate_selection(read_json(anchor / "task-selection.json"), list(original["tasks"]))
+    OfficialCounter(original["counter_runtime"]).invoke()
+    calibration = read_json(anchor / "tokenizer-calibration.json")
+    if not calibration["accepted"] or calibration["runtime"] != original["counter_runtime"]:
+        raise ValueError("tokenizer calibration changed")
+    from tracefix import TraceFixRunner
+
+    engine = Path(sys.modules["tracefix"].__file__).resolve().parents[2]
+    if (
+        git(engine, "rev-parse", "HEAD") != original["implementation_commit"]
+        or TraceFixRunner._implementation_sha256() != original["implementation_sha256"]
+        or original["product_base"] != "e380329d2a007a83dd317944bafd426d4b829c82"
+    ):
+        raise ValueError("frozen engine identity changed")
+    for name, expected in original["artifacts"].items():
+        path = (anchor / name).resolve()
+        if not path.is_relative_to(anchor.resolve()) or file_sha(path) != expected:
+            raise ValueError("frozen prompt/material changed")
+    ci = read_json(anchor / "ci-evidence.json")
+    if (
+        ci["head_sha"] != original["implementation_commit"]
+        or ci["conclusion"] != "success"
+        or len(ci["jobs"]) != 5
+        or any(job["conclusion"] != "success" for job in ci["jobs"])
+    ):
+        raise ValueError("original engine CI gate changed")
+    previous = None
+    for spec in original["tasks"].values():
+        if source_identity(Path(spec["source"])) != spec["source_identity"]:
+            raise ValueError("frozen source changed")
+        environment = inspect_test_environment(
+            Path(spec["python"]),
+            pythonpath_entries=tuple(Path(p) for p in spec.get("pythonpath", [])),
+        )
+        if environment.fingerprint_sha256 != spec["environment_identity"]:
+            raise ValueError("frozen test environment changed")
+        identity = spec.get("service_identity")
+        if identity:
+            if previous is not None and identity != previous:
+                raise ValueError("frozen service identities diverge")
+            previous = identity
+    if not previous:
+        raise ValueError("original controlled service identity missing")
+    verify_restarted_service(previous, new_service)
+    return {"previous": previous, "current": new_service}
+
+
 def plan(parent: Path, approval: dict) -> dict:
     protocol = read_json(parent / "protocol.json")
     if (
@@ -124,7 +212,11 @@ def plan(parent: Path, approval: dict) -> dict:
     previous_approval = protocol["continuation"]["approval"]
     validator.check_driver(previous_approval)
     anchor = Path(previous_approval["parent_campaign"])
-    check_protocol(anchor)
+    service_path = Path(approval["service_identity_file"])
+    if file_sha(service_path) != approval["service_identity_sha256"]:
+        raise ValueError("restarted service identity file changed")
+    current_service = read_json(service_path)
+    rebound = verify_frozen_environment(anchor, current_service)
     expected, _ = validator.plan(anchor, previous_approval)
     if expected != protocol:
         raise ValueError("parent continuation identity changed")
@@ -158,8 +250,13 @@ def plan(parent: Path, approval: dict) -> dict:
             validate_record(record, path.parent, row)
             if not record.get("finished"):
                 raise ValueError("unapproved incomplete parent trial")
+    rebound_tasks = {
+        task_id: {**spec, "service_identity": current_service}
+        for task_id, spec in protocol["tasks"].items()
+    }
     return {
         **protocol,
+        "tasks": rebound_tasks,
         "schedule": remaining,
         "funding": funding(parent, protocol),
         "completion": {
@@ -168,6 +265,15 @@ def plan(parent: Path, approval: dict) -> dict:
             "skipped_unknown_trials": sorted(skip),
             "driver_sha256": file_sha(Path(__file__)),
             "interpretation": "Separate suffix; provider unknowns fail and are never replayed.",
+            "service_rebind": {
+                "reason": (
+                    "The previous owned process exited. Rechecked all frozen source and Python "
+                    "environment fingerprints; restarted the same script, Python, dependencies, "
+                    "port and health endpoint under a new process identity."
+                ),
+                "previous_identity_sha256": digest(rebound["previous"]),
+                "current_identity_sha256": approval["service_identity_sha256"],
+            },
         },
     }
 
