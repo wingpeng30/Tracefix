@@ -70,6 +70,10 @@ C相对B交付更多、累计Token更少、每成功缓存费用估算更低，�
 本次上传是最新工作区快照备份，不是正式发布验收。源码/测试 Ruff、Python 编译及 diff 检查通过；
 定向离线复验 75 passed、1 skipped、1 failed，失败为比较实验的进程重入测试 C 臂 agent_error/空补丁，
 跳过项为 Windows symlink 权限。历史实验驱动另有 74 项 Ruff 诊断，保留原始哈希和内容。
+后续只读归因已复现进程重入失败：父进程 UTF-8 JSON 与 Windows 子进程 GBK stdin 不一致，
+导致 fake_counter 的 JSONDecodeError；同一请求以 `-X utf8` 启动计数器则成功。
+实际 comparison_counter 同样从文本 stdin 读取，Windows 非 UTF-8 计数运行环境需修复/验证；
+这不是模型生成失败，原始实验成绩不改写。
 详见[本次开发记录](development-history.md#2026-10-13-最新工作区提交与-github-上传)；未运行全量测试、
 覆盖率、精确 CI 或付费调用，原有发布验收限制保持。
 

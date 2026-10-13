@@ -2,6 +2,16 @@
 
 ## 2026-10-13 最新工作区提交与 GitHub 上传
 
+失败归因补记：上传提交 `41a5912d40d1ed240a1ea9d88f908b80f8b2b151` 后，按用户询问只读复核
+trajectory 的原始 AgentError，定位 `fake_counter.py` 子进程退出码 1。将同一失败轨迹的
+model_request_view 消息/工具正文输入该计数器，默认子进程（stdin=gbk）复现 JSONDecodeError
+（Expecting ',' delimiter），相同正文仅增加 Python `-X utf8` 后退出码 0。
+`OfficialCounter.invoke` 以 UTF-8 写入、ensure_ascii=False；测试 worker 使用 json.load(sys.stdin)，
+实际 comparison_counter 的一次性与长驻入口也从文本 stdin 读取，没有显式编码设置。
+因此确认存在 Windows 非 UTF-8 子进程的编码契约风险，空补丁是首步计数失败后的结果，
+不是模型补丁质量证据；不推断已在固定 Linux/WSL tokenizer 环境复现。本轮没有修改运行代码、
+重跑整个进程重入测试或调用供应商，尚需统一 worker 编码并验证中文及跨进程恢复。
+
 用户要求上传最新项目代码。读取固定状态入口、路线图、近期开发记录及当前报告，并核对 cwd、
 HEAD、全部已跟踪修改和 src/tests/scripts/docs 下新增与忽略文件；Git 已能定位最新工作区修改，
 因此不需要从对话恢复源码。纳入上下文修复、共享 LLMGateway、长驻 tokenizer worker、基础安全边界、
