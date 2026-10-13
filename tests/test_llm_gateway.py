@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+import subprocess
 import sys
 from dataclasses import replace
 from pathlib import Path
@@ -249,6 +251,97 @@ def _fake_worker(tmp_path: Path, mode: str = "ok") -> tuple[OfficialCounter, Pat
 
 def _count_request() -> dict:
     return {"model": "deepseek-flash", "messages": [{"role": "user", "content": "x"}]}
+
+
+@pytest.mark.parametrize("persistent", [False, True])
+def test_counter_client_preserves_unicode_under_non_utf8_environment(
+    tmp_path, monkeypatch, persistent
+):
+    monkeypatch.setenv("PYTHONIOENCODING", "gbk")
+    monkeypatch.setenv("PYTHONUTF8", "0")
+    content = "修复中文请求，保留原文与工具参数。 café 🐍"
+    identity = {"worker": "中文计数器"}
+    worker = tmp_path / "unicode_counter.py"
+    worker.write_text(
+        "import hashlib,json,sys\n"
+        "identity=" + ascii(identity) + "\n"
+        "assert sys.stdin.encoding.lower() == 'utf-8'\n"
+        "assert sys.stdout.encoding.lower() == 'utf-8'\n"
+        "digest=hashlib.sha256(json.dumps(identity,sort_keys=True,ensure_ascii=False,"
+        "separators=(',',':')).encode('utf-8')).hexdigest()\n"
+        "def counts(request):\n"
+        " return [{'tokens':len(body['messages'][0]['content']),'status':'estimate',"
+        "'method':body['messages'][0]['content'],'identity':'fixture',"
+        "'request_sha256':None} for body in request['bodies']]\n"
+        "if '--serve' in sys.argv:\n"
+        " print(json.dumps({'protocol':1,'ready':True,'identity':identity,"
+        "'identity_sha256':digest},ensure_ascii=False),flush=True)\n"
+        " for line in sys.stdin:\n"
+        "  request=json.loads(line)\n"
+        "  print(json.dumps({'protocol':1,'id':request['id'],'ok':True,"
+        "'identity_sha256':digest,'counts':counts(request)},ensure_ascii=False),flush=True)\n"
+        "else:\n"
+        " print(json.dumps({'identity':identity,'counts':counts(json.load(sys.stdin))},"
+        "ensure_ascii=False))\n",
+        encoding="utf-8",
+    )
+    runtime = {"command": [sys.executable, str(worker)], "identity": identity}
+    if persistent:
+        runtime["mode"] = "jsonl-v1"
+    counter = OfficialCounter(runtime)
+    request = {"model": "deepseek-flash", "messages": [{"content": content}]}
+    try:
+        for _ in range(2):
+            measured = counter.count(request)
+            assert measured.tokens == len(content)
+            assert measured.method == content
+    finally:
+        counter.close()
+    assert os.environ["PYTHONIOENCODING"] == "gbk"
+
+
+@pytest.mark.parametrize("persistent", [False, True])
+def test_real_counter_entrypoint_overrides_gbk_stdio(tmp_path, persistent):
+    content = "你是 TraceFix，修复中文 JSON。 café 🐍"
+    worker = tmp_path / "entrypoint.py"
+    worker.write_text(
+        "import sys\n"
+        "from tracefix import comparison_counter as worker\n"
+        "from tracefix.models.input_bounds import InputBound\n"
+        "import tracefix.models.input_bounds as bounds\n"
+        "for stream in (sys.stdin,sys.stdout,sys.stderr): stream.reconfigure(encoding='gbk')\n"
+        "worker.identity=lambda *args,**kwargs: {'worker':'fixture'}\n"
+        "worker._runtime_files=lambda *args: ()\n"
+        "bounds._cached_v41_encoding=lambda *args: object()\n"
+        "worker.count_deepseek_v41_request=lambda body: InputBound("
+        "len(body['messages'][0]['content']),'estimate',body['messages'][0]['content'],"
+        "'fixture')\n"
+        "raise SystemExit(worker.main(sys.argv[1:]))\n",
+        encoding="utf-8",
+    )
+    tokenizer = tmp_path / "tokenizer.json"
+    tokenizer.write_text("explicit offline fixture", encoding="utf-8")
+    bodies = [{"messages": [{"content": content}]}]
+    command = [sys.executable, str(worker), "--tokenizer", str(tokenizer)]
+    if persistent:
+        command.append("--serve")
+        payload = "".join(json.dumps(
+            {"protocol": 1, "id": rid, "bodies": bodies}, ensure_ascii=False
+        ) + "\n" for rid in (1, 2))
+    else:
+        payload = json.dumps({"bodies": bodies}, ensure_ascii=False)
+    result = subprocess.run(
+        command, input=payload.encode("utf-8"), capture_output=True, timeout=15,
+        env={**os.environ, "PYTHONPATH": str(Path(__file__).parents[1] / "src"),
+             "PYTHONIOENCODING": "gbk", "PYTHONUTF8": "0"},
+    )
+    assert result.returncode == 0, result.stderr.decode("utf-8")
+    frames = [json.loads(line) for line in result.stdout.decode("utf-8").splitlines()]
+    responses = frames[1:] if persistent else frames
+    assert len(responses) == (2 if persistent else 1)
+    for response in responses:
+        assert response["counts"][0]["tokens"] == len(content)
+        assert response["counts"][0]["method"] == content
 
 
 def test_official_counter_reuses_one_process_and_drains_stderr(tmp_path, monkeypatch):

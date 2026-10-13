@@ -62,8 +62,20 @@ def _runtime_files(tokenizer: Path) -> tuple[tuple[str, int, int], ...]:
     return tuple(sorted((path, stat.st_size, stat.st_mtime_ns) for path, stat in files.items()))
 
 
+def _configure_utf8_stdio() -> None:
+    """The wire protocol is UTF-8 regardless of locale or launcher environment."""
+    for name in ("stdin", "stdout", "stderr"):
+        stream = getattr(sys, name)
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is not None:
+            reconfigure(
+                encoding="utf-8", errors="backslashreplace" if name == "stderr" else "strict"
+            )
+
+
 def serve(tokenizer: Path) -> int:
     """Serve newline-delimited count requests until EOF or an identity change."""
+    _configure_utf8_stdio()
     resolved = tokenizer.resolve()
     stat = resolved.stat()
     # Load the native tokenizer before declaring readiness, so all later requests
@@ -133,6 +145,7 @@ def serve(tokenizer: Path) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
+    _configure_utf8_stdio()
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--tokenizer", type=Path, required=True)
     parser.add_argument("--serve", action="store_true", help="serve persistent JSONL requests")

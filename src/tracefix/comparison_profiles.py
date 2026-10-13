@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import queue
 import subprocess
 import threading
@@ -146,6 +147,7 @@ class OfficialCounter:
         process = subprocess.Popen(
             command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             bufsize=0,
+            env={**os.environ, "PYTHONIOENCODING": "utf-8:strict"},
         )
         self._process = process
         threading.Thread(
@@ -277,6 +279,7 @@ class OfficialCounter:
             input=json.dumps({} if bodies is None else {"bodies": bodies}, ensure_ascii=False),
             capture_output=True,
             encoding="utf-8",
+            env={**os.environ, "PYTHONIOENCODING": "utf-8:strict"},
             timeout=1800 if bodies and len(bodies) > 1 else 120,
             check=True,
         )

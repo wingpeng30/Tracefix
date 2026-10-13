@@ -1,5 +1,32 @@
 # TraceFix 开发历程与代码说明
 
+## 2026-10-13 计数器 UTF-8 进程协议修复
+
+按用户要求修复编码、运行相关测试并上传 GitHub。`OfficialCounter` 一次性 subprocess.run 和
+长驻 Popen 均通过独立子进程环境固定 `PYTHONIOENCODING=utf-8:strict`，不修改父进程环境、
+冻结 runtime 命令或身份。实际 comparison_counter 的 main/serve 入口显式重设 stdin/stdout
+为严格 UTF-8，stderr 为 UTF-8/backslashreplace，覆盖直接启动及 WSL 启动器未传递环境的情况。
+JSON 正文继续保留 Unicode 原文，没有通过 ASCII 转义绕过问题；计数、费用和身份规则保持。
+
+新增四项真实子进程回归：一次性/长驻客户端在父环境 GBK、UTF-8 mode 关闭时往返中文、重音字母和
+emoji，核对逐字符内容及计数，长驻模式处理两帧；实际 worker main 的一次性/长驻入口先强制 GBK
+stdio，再用显式离线计数替身核对 UTF-8 消息与响应。不加载真实官方 tokenizer、不访问供应商。
+网关模块先行验证 20 passed（2.84 秒）；源码/测试 Ruff、compileall 和 diff 检查通过。
+相关回归最终 **123 passed、1 skipped、0 failed**（404.51 秒），覆盖七模块：网关、安全边界、
+上下文命令、上下文、比较 profile、比较流程及 LiteLLM 适配器。此前失败的
+`test_new_prepare_and_process_reentry` 正常完成 B/C 并通过独立补丁验收和新进程重入；
+完整离线90条比较流程及重入不新增请求检查通过。跳过项仍为 Windows symlink WinError 1314。
+测试命令使用工作区 `related-temp` basetemp、独立 cache_dir 和普通 Windows 权限，退出码0，
+日志在 `related.txt`；20项先行检查在 `focused.txt`，静态检查日志亦保存在同一目录。
+
+执行身份：`D:\Tracefix`，`codex/ac-30-180s`，父提交
+`b6898c2152df8b217bee27d88da44dcd8a6ddfe9`；Windows / Python 3.12.5，解释器
+`D:\Python\window-python3.12.5\python.exe`，导入 `D:\Tracefix\src\tracefix\__init__.py`。
+修复提交主题 `fix: enforce UTF-8 tokenizer worker protocol`，推送
+`origin/codex/ac-30-180s`，精确提交与远端核验见同目录 `remote-verification.json`。
+原始日志与测试临时证据在 `D:\Tracefix\runs\counter-utf8-fix-20261013`。本次只修计数进程编码，
+未执行付费实验、真实 tokenizer 计时、全量 pytest、覆盖率或精确 CI；原有发布工程限制保持。
+
 ## 2026-10-13 最新工作区提交与 GitHub 上传
 
 失败归因补记：上传提交 `41a5912d40d1ed240a1ea9d88f908b80f8b2b151` 后，按用户询问只读复核

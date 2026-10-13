@@ -11,6 +11,10 @@
   `chore: upload latest context gateway and security workspace`。精确身份以该提交及远端核验记录为准。
   本机导入路径核对为 `D:\Tracefix\src\tracefix\__init__.py`。临时测试目录、第三方实验仓库、
   本机凭据及原始 runs 仍留在本地。开始后续任务仍需重新核对 HEAD、状态及实际导入路径。
+- 同日已修复计数进程 UTF-8 编码契约，父提交 `b6898c2152df8b217bee27d88da44dcd8a6ddfe9`，
+  修复提交主题 `fix: enforce UTF-8 tokenizer worker protocol`，上传同一分支；精确提交及远端核验
+  记录在 `runs/counter-utf8-fix-20261013/remote-verification.json`。本次相关回归 123 passed、
+  1 skipped、0 failed（404.51 秒），此前失败的进程重入测试及完整90条离线比较流程均通过。
 - 包版本仍为`0.8.4`，不是当前全部功能的发布/验收身份。没有将最新上下文及网关工作区宣称为
   已通过完整发布门槛的新版本；不能把旧wheel或旧精确提交CI当作这些修改的验收。
 - `ac-thirty-frozen`与`ac-continuation-frozen`是有意保留的旧实验工作树。它们不跟随本工作区更新，
@@ -67,13 +71,16 @@ C相对B交付更多、累计Token更少、每成功缓存费用估算更低，�
 
 ## 下一任务的起点
 
-本次上传是最新工作区快照备份，不是正式发布验收。源码/测试 Ruff、Python 编译及 diff 检查通过；
+首次上传是最新工作区快照备份，不是正式发布验收。源码/测试 Ruff、Python 编译及 diff 检查通过；
 定向离线复验 75 passed、1 skipped、1 failed，失败为比较实验的进程重入测试 C 臂 agent_error/空补丁，
 跳过项为 Windows symlink 权限。历史实验驱动另有 74 项 Ruff 诊断，保留原始哈希和内容。
-后续只读归因已复现进程重入失败：父进程 UTF-8 JSON 与 Windows 子进程 GBK stdin 不一致，
+后续归因已复现进程重入失败：父进程 UTF-8 JSON 与 Windows 子进程 GBK stdin 不一致，
 导致 fake_counter 的 JSONDecodeError；同一请求以 `-X utf8` 启动计数器则成功。
-实际 comparison_counter 同样从文本 stdin 读取，Windows 非 UTF-8 计数运行环境需修复/验证；
-这不是模型生成失败，原始实验成绩不改写。
+现已在一次性/长驻客户端固定子进程 UTF-8 环境，并在真实 worker 入口显式设置 UTF-8。
+四项新回归核对 GBK 环境下中文、重音字母及 emoji 原文往返，相关回归最终 123 passed、1 skipped，
+原先失败已解决；Windows symlink 权限跳过项及历史实验驱动 lint 限制仍保留。
+本次不加载实际官方 tokenizer、不新增付费请求、不改原始实验成绩。
+详见[编码修复记录](development-history.md#2026-10-13-计数器-utf-8-进程协议修复)。
 详见[本次开发记录](development-history.md#2026-10-13-最新工作区提交与-github-上传)；未运行全量测试、
 覆盖率、精确 CI 或付费调用，原有发布验收限制保持。
 
