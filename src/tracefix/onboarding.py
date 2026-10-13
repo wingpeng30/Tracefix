@@ -20,6 +20,7 @@ from tracefix.report import _read_run
 from tracefix.runtime import (
     RunConfig,
     TraceFixRunner,
+    _saved_run_config,
     config_identity_sha256,
     load_environment_file,
 )
@@ -202,6 +203,7 @@ def doctor(settings: dict[str, Any], *, prepare: bool = False) -> dict[str, Any]
                         workspace = TraceFixRunner._clone_repository(Path(repo), root / "workspace")
                         config = RunConfig(
                             repo=Path(repo), task="TraceFix environment preflight",
+                            execution_backend="local",
                             test_python_executable=python, test_target=target,
                             source_import=module,
                         )
@@ -257,7 +259,7 @@ def verify_patch(
     if not manifest_path.is_file():
         raise ValueError("运行缺少可核验的 session.json 配置")
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    config = RunConfig.model_validate(manifest["config"])
+    config = _saved_run_config(manifest["config"])
     saved_regression_targets = tuple(config.regression_targets)
     if len(set(regression_targets)) != len(regression_targets):
         raise ValueError("追加回归目标不能重复")

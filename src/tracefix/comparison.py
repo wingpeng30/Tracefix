@@ -228,16 +228,34 @@ class ComparisonBudget(LiteLLMAdapter):
             raise LLMProviderError("unknown prior request; no automatic replay")
         return data
 
-    def count_input_bound(self, messages, tools=()) -> InputBound:
+    def _count_input_bound_for_kwargs(self, kwargs) -> InputBound:
         if self.counter is None:
-            raise LLMProviderError("official counter unavailable")
-        kwargs = self.request_kwargs(messages, tools)
+            return InputBound(None, "unavailable", "official-counter", "counter unavailable")
         started = time.monotonic()
         try:
             count = self.counter.count(kwargs)
         finally:
             self.counter_seconds += time.monotonic() - started
-        return InputBound(count.tokens, count.status, count.method, count.identity, digest(kwargs))
+        return InputBound(count.tokens, count.status, count.method, count.identity)
+
+    def _counter_identity(self, kwargs) -> str:
+        identity = super()._counter_identity(kwargs)
+        runtime_identity = (
+            self.counter.runtime.get("identity") if self.counter is not None else None
+        )
+        if runtime_identity is None:
+            return identity
+        return digest({
+            "request_counter": identity,
+            "official_counter_runtime": runtime_identity,
+        })
+
+    def close(self) -> None:
+        try:
+            if self.counter is not None:
+                self.counter.close()
+        finally:
+            super().close()
 
     def complete(self, messages, tools=()):
         ledger = self.ledger()
@@ -366,7 +384,16 @@ class ComparisonBudget(LiteLLMAdapter):
             }
             write_json(self.root / "trials" / self.trial["id"] / "refusal.json", refusal)
             raise PreRequestBudgetExceeded(refusal["reason"])
-        kwargs = self.request_kwargs(messages, tools)
+        prepared = self.prepare_request(messages, tools)
+        kwargs = prepared.kwargs()
+        if count is not None:
+            count = InputBound(
+                count.tokens,
+                count.status,
+                count.method,
+                count.identity,
+                prepared.request_sha256,
+            )
         request_id = f"{self.trial['id']}-{len(previous) + 1:02d}"
         request_file = self.root / "provider" / f"{request_id}-request.json"
         write_json(request_file, kwargs)
@@ -399,7 +426,7 @@ class ComparisonBudget(LiteLLMAdapter):
             # Explicit zero-provider fixtures emulate usage for admission tests only.
             self.client.fixture_input_tokens = count.tokens
         try:
-            response = super().complete(messages, tools)
+            response = self.complete_prepared(prepared)
         except LLMResponseFormatError as exc:
             write_json(
                 self.root / "provider" / f"{request_id}-response-error.json",

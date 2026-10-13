@@ -123,8 +123,10 @@ def test_serena_snapshot_rejects_symlink_and_image_identity(tmp_path, monkeypatc
     subprocess.run(["git", "add", "link.py"], cwd=repo, check=True)
     original = Path.is_symlink
     monkeypatch.setattr(Path, "is_symlink", lambda path: path == link or original(path))
-    with pytest.raises(ValueError, match="symlink"):
-        manager._snapshot(tmp_path / "snapshot")
+    snapshot = tmp_path / "snapshot"
+    snapshot.mkdir()
+    manager._snapshot(snapshot)
+    assert not (snapshot / "link.py").exists()
 
 
 def test_serena_tool_definitions_are_stable_and_noncolliding(tmp_path):
@@ -149,6 +151,7 @@ def test_runner_mcp_preflight_stops_before_model_construction(tmp_path, monkeypa
         repo=repo, task="inspect next_page", model_name="offline/replay",
         output_dir=tmp_path / "runs", env_file=None,
         mcp_serena_image_id="sha256:" + "a" * 64,
+        execution_backend="local",
     ))
     assert result.status.value == "failed"
     assert "isolated image unavailable" in str(result.error)
@@ -209,8 +212,10 @@ def test_serena_snapshot_bounds_and_text_blocks(tmp_path, monkeypatch):
         "tracefix.mcp_serena.subprocess.run",
         lambda *_args, **_kwargs: SimpleNamespace(stdout=b"../outside.py\0"),
     )
-    with pytest.raises(ValueError, match="escaped"):
-        manager._snapshot(tmp_path / "snapshot")
+    snapshot = tmp_path / "snapshot"
+    snapshot.mkdir()
+    source_hash = manager._snapshot(snapshot)
+    assert source_hash == "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
     monkeypatch.setattr(
         "tracefix.mcp_serena.subprocess.run",
         lambda *_args, **_kwargs: SimpleNamespace(

@@ -229,7 +229,9 @@ def inspect_session(root: Path, manifest: dict, config, *, implementation_sha256
                         raise CheckpointError("conversation round artifact changed")
     for line in trace[size:].splitlines():
         event = json.loads(line)
-        if event["event_type"] not in {"agent_state_changed", "task_finished"}:
+        if event["event_type"] not in {
+            "agent_state_changed", "task_finished", "context_prepared", "context_compacted",
+        }:
             reasons.append("uncommitted model or tool outcome after checkpoint")
         elif event["event_type"] == "task_finished" and event.get("payload", {}).get(
             "state", {}).get("status") not in allowed_status:

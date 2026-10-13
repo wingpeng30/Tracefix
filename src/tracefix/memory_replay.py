@@ -112,7 +112,8 @@ def worker(output: Path, phase: str) -> dict:
     client = RecordedMemoryClient(recall=phase == "recall")
     config = RunConfig(
         repo=source, task="Fix pagination", output_dir=output / "runs",
-        model_name="offline/memory-experience", env_file=None, memory_enabled=True,
+        model_name="offline/memory-experience", env_file=None, execution_backend="local",
+        memory_enabled=True,
         test_target="tests/test_widget.py", source_import="widget",
         test_python_executable=Path(sys.executable),
     )

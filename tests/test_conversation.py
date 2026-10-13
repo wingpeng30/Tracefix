@@ -43,6 +43,7 @@ def test_three_real_rounds_correction_archives_and_cumulative_budget(tmp_path):
         repo=repo, output_dir=tmp_path / "runs", task="Increment a page",
         model_name="offline/dialogue", env_file=None,
         test_target="tests/test_widget.py", conversation_enabled=True,
+        execution_backend="local",
     ))
     root = Path(result.result_path).parent
     assert result.status is AgentStatus.COMPLETED
@@ -84,7 +85,7 @@ def test_legacy_single_task_does_not_become_a_session(tmp_path):
     result = runner().run(RunConfig(
         repo=repository(tmp_path), output_dir=tmp_path / "runs", task="Increment page",
         model_name="offline/dialogue", env_file=None,
-        test_target="tests/test_widget.py",
+        test_target="tests/test_widget.py", execution_backend="local",
     ))
     with pytest.raises(Exception, match="cannot be continued"):
         runner().continue_turn(Path(result.result_path).parent, "new requirement")
@@ -104,6 +105,7 @@ def test_safe_pause_can_append_a_turn_and_concurrent_writes_are_rejected(tmp_pat
         repo=repository(tmp_path), output_dir=tmp_path / "runs", task="Increment page",
         model_name="offline/dialogue", env_file=None,
         test_target="tests/test_widget.py", conversation_enabled=True,
+        execution_backend="local",
     ))
     root = Path(result.result_path).parent
     assert result.status is AgentStatus.INTERRUPTED and result.session_status == "paused"
@@ -124,6 +126,7 @@ def test_round_corruption_pending_outcome_and_budget_fail_closed(tmp_path):
         repo=repository(tmp_path), output_dir=tmp_path / "runs", task="Increment page",
         model_name="offline/dialogue", env_file=None,
         test_target="tests/test_widget.py", conversation_enabled=True,
+        execution_backend="local",
     ))
     root = Path(result.result_path).parent
     pointer = root / "turns/0001/latest.json"
@@ -196,12 +199,14 @@ def test_chat_loop_blank_resume_exit_and_legacy_rejection(tmp_path, monkeypatch)
     fake = SimpleNamespace(
         continue_turn=lambda root, message: calls.append(("continue", root, message)),
         resume=lambda root: calls.append(("resume", root)),
+        compact_context=lambda root: calls.append(("compact", root)),
     )
     monkeypatch.setattr(cli, "_print_run_result", lambda result: None)
-    inputs = iter([" ", "new message", ":resume", ":quit"])
+    monkeypatch.setattr(cli, "_print_json", lambda value: None)
+    inputs = iter([" ", "/compact", "new message", ":resume", ":quit"])
     monkeypatch.setattr("builtins.input", lambda _prompt: next(inputs))
     assert cli._chat_loop(fake, tmp_path) == 0
-    assert [item[0] for item in calls] == ["continue", "resume"]
+    assert [item[0] for item in calls] == ["compact", "continue", "resume"]
     (tmp_path / "session.json").write_text('{"schema_version":1}', encoding="utf-8")
     with pytest.raises(ValueError, match="连续会话"):
         cli._chat_loop(fake, tmp_path)

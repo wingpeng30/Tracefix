@@ -1,5 +1,10 @@
 # 当前证据索引
 
+当前代码与验证状态先看[固定入口](current-status.md)。最新模型比较为[ABC同题30题](experiments/2026-10-11-abc-full30-comparison.md)，
+上下文修复后C为19/30；[上下文复测](experiments/2026-10-11-c-context-retest-30.md)验证了尾部追加的缓存复用。
+随后已实现统一网关和长驻worker，179项定向离线检查见[开发记录](development-history.md#2026-10-11-统一-llm-网关与长驻-tokenizer-worker)，
+尚无该版本真实提速与完整发布验收结论。下方9月及10月初记录保留各自版本的平台/功能边界，不代表最新工作区全部状态。
+
 面试用结论入口见 [interview/README.md](interview/README.md)。本次精简归档的精选原始证据
 集中在 `E:\TracefixExperiments\interview-archive-20261006`，来源路径与 ZIP 内路径、哈希及
 实际删除/跳过项以该目录的 manifest 和执行报告为准。旧路径可能已被精简；历史报告和

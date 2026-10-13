@@ -1,6 +1,6 @@
 # 普通 Python 仓库的 Docker 路径
 
-此路径用于干净的 Git 仓库和 pytest 项目。它与冻结历史任务的 Docker profile 分开；依赖必须在显式准备镜像时安装，运行时不联网、不安装依赖。本地 Agent 控制进程仍会读取任务源码并向模型发送选中的内容；容器只隔离工具和测试代码。当前验证目标为 Linux Docker。Windows Docker Desktop 未实测，不能据此认定可用。
+此路径用于干净的 Git 仓库和 pytest 项目，也是普通新任务的默认后端。它与冻结历史任务的 Docker profile 分开；依赖必须在显式准备镜像时安装，运行时不联网、不安装依赖。本地 Agent 控制进程仍会读取经过文件边界筛选的任务源码并向模型发送选中内容；容器隔离工具和测试代码。本机 Windows Docker Desktop/Linux Engine 已完成一次录制响应驱动的零供应商调用闭环；这只验证该机器和镜像，不代表 Windows 平台的完整支持保证。总体安全边界见 [`security.md`](security.md)。
 
 ## 准备镜像
 
@@ -47,7 +47,9 @@ tracefix export --run ./runs/<run-id> --output ./fix.patch
 
 快速 `doctor` 检查 Docker CLI、镜像精确 ID、Git 仓库和测试目标；`doctor --prepare` 在临时容器中执行与运行相同的源码导入探针，完成后清理，不构造供应商客户端。
 
-`run` 把指定提交的 Git archive 复制到独立容器，探测 `source_import` 是否来自该 checkout，然后才开始模型循环。容器为非 root、只读根文件系统、独立 tmpfs、无网络、无宿主源码挂载或 Docker socket，限制 CPU、内存和进程数。测试目标应是仓库中现有的 pytest 目标；TraceFix 不会替用户准备外部服务或复杂构建环境。`verify` 使用同一镜像 ID 建立**新容器**，重新应用结果中的补丁并执行记录的公开测试，保存与源码提交、补丁哈希、镜像 ID 绑定的独立证据。原仓库不会被修改。
+`run` 把指定提交的 Git archive 复制到独立容器，探测 `source_import` 是否来自该 checkout，然后才开始模型循环。容器为 UID 10001 非 root、只读根文件系统、独立 tmpfs、无网络、无宿主源码挂载或 Docker socket，限制 CPU、内存和进程数。可信执行器由宿主在运行仓库代码前通过固定初始化步骤解包到 root 所有的 `/opt/tracefix`，文件设为 `0444`、目录设为 `0555`；初始化后核验文件身份，并以 UID 10001 验证该目录不可写。工具桥只导入可信执行器路径，pytest 则可正常导入任务 checkout。任何身份或写保护检查失败均停止运行。测试目标应是仓库中现有的 pytest 目标；TraceFix 不会替用户准备外部服务或复杂构建环境。`verify` 使用同一镜像 ID 建立**新容器**，重新应用结果中的补丁并执行记录的公开测试，保存与源码提交、补丁哈希、镜像 ID 绑定的独立证据。原仓库不会被修改。
+
+测试和构建只继承最小操作系统环境；项目需要的变量必须通过显式配置加入，凭据和 pytest 控制变量不允许传给项目子进程。测试目标路径及 pytest 参数在进程启动和计次前验证，固定输出目录由 TraceFix 管理。测试通过只说明所列测试成功，不证明补丁没有危险行为。
 
 不能在普通 Docker profile 上使用 `resume`。桥接断连、执行结果未知或容器丢失时应检查保存的轨迹和容器身份，并从新运行开始；不得自动重放可能有副作用的工具。正常与异常退出都会尝试清理 TraceFix 拥有的容器；如果 daemon 不可达导致清理失败，结果会标为 `container_cleanup_failed`，`docker-run-state.json` 记录待人工核对的容器 ID。清理前必须验证容器的 `tracefix.run_id` 标签。
 

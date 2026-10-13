@@ -14,6 +14,8 @@ from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from tracefix.security import UnsafeWorkspacePath, resolve_workspace_path
+
 _SKIPPED_DIRS = {".git", ".venv", "venv", "__pycache__", "node_modules", "build", "dist"}
 _WORDS = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 _DOTTED_NAME = re.compile(r"\b(?:[A-Za-z_]\w*\.)+[A-Za-z_]\w*\b")
@@ -189,23 +191,30 @@ class RepositoryIndexer:
         files: list[IndexedFile] = []
         skipped: list[str] = []
         for path in sorted(self.workspace.rglob("*.py")):
-            relative = path.relative_to(self.workspace)
-            if any(part in _SKIPPED_DIRS for part in relative.parts):
+            try:
+                lexical = path.relative_to(self.workspace)
+                resolved = resolve_workspace_path(
+                    self.workspace, lexical.as_posix(), must_exist=True
+                )
+            except (ValueError, UnsafeWorkspacePath):
                 continue
-            if (
-                len(files) >= self.config.max_indexed_files
-                or path.stat().st_size > self.config.max_file_bytes
-            ):
+            relative = resolved.relative_to(self.workspace)
+            if any(part in _SKIPPED_DIRS for part in relative.parts) or not resolved.is_file():
+                continue
+            if len(files) >= self.config.max_indexed_files:
                 skipped.append(relative.as_posix())
                 continue
             try:
+                if resolved.stat().st_size > self.config.max_file_bytes:
+                    skipped.append(relative.as_posix())
+                    continue
                 # 真实仓库常把非法转义写进诊断测试夹具。Python 3.12 会在 AST
                 # 解析时输出 SyntaxWarning；索引只需知道是否能构建语法树，不应把
                 # 上游夹具的预期警告混入 Agent 运行日志。
                 with warnings.catch_warnings():
                     warnings.simplefilter("ignore", SyntaxWarning)
                     tree = ast.parse(
-                        path.read_text(encoding="utf-8"), filename=relative.as_posix()
+                        resolved.read_text(encoding="utf-8"), filename=relative.as_posix()
                     )
             except (OSError, UnicodeError, SyntaxError):
                 skipped.append(relative.as_posix())

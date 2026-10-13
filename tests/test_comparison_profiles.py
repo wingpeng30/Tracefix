@@ -289,6 +289,16 @@ def test_worker_identity_and_real_entrypoint(tmp_path, monkeypatch, capsys):
         worker.identity(tokenizer)
 
 
+def test_gateway_rejects_official_counter_runtime_identity_drift(tmp_path, official):
+    llm = budget(tmp_path)
+    assert llm.counter is not None
+    llm.counter.runtime["identity"] = {"tokenizer": "pinned-v1"}
+    llm.count_input_bound(messages())
+    llm.counter.runtime["identity"] = {"tokenizer": "changed-v2"}
+    with pytest.raises(LLMProviderError, match="counter identity changed"):
+        llm.count_input_bound(messages())
+
+
 def test_new_prepare_and_process_reentry(tmp_path, monkeypatch):
     """Real files/pytest/processes with an explicitly synthetic tokenizer worker."""
     import sys

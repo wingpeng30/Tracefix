@@ -27,6 +27,14 @@ from tracefix.exceptions import RunConfigurationError
 from tracefix.real_recipes import EnvironmentRecipe
 
 
+def _local_run_config(**kwargs):
+    """Keep legacy runtime unit cases explicit about their trusted local backend."""
+    kwargs.setdefault("execution_backend", "local")
+    if kwargs.get("execution_backend") == "docker" and kwargs.get("docker_task_id"):
+        kwargs.setdefault("docker_profile", "frozen")
+    return RunConfig(**kwargs)
+
+
 def _git(repo: Path, *arguments: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         ["git", *arguments],
@@ -87,17 +95,17 @@ def _response(
 def test_run_config_uses_tracefix_runs_root_environment(tmp_path, monkeypatch) -> None:
     output_root = tmp_path / "external-runs"
     monkeypatch.setenv("TRACEFIX_RUNS_ROOT", str(output_root))
-    config = RunConfig(repo=tmp_path, task="output root test")
+    config = _local_run_config(repo=tmp_path, task="output root test")
     assert config.output_dir == output_root
 
 
 def test_run_config_defaults_to_local_runs_root(monkeypatch) -> None:
     monkeypatch.delenv("TRACEFIX_RUNS_ROOT", raising=False)
-    assert RunConfig(repo=Path("."), task="platform default").output_dir == Path("runs")
+    assert _local_run_config(repo=Path("."), task="platform default").output_dir == Path("runs")
 
 
 def test_default_model_uses_current_deepseek_name_without_provider_call() -> None:
-    config = RunConfig(repo=Path("."), task="model default")
+    config = _local_run_config(repo=Path("."), task="model default")
     assert config.model_name == "deepseek/deepseek-flash"
 
 
@@ -109,7 +117,7 @@ def test_ordinary_source_probe_rejects_wrong_import_before_model(tmp_path, modul
         raise AssertionError("model must not be constructed")
 
     result = TraceFixRunner(llm_factory=no_model).run(
-        RunConfig(
+        _local_run_config(
             repo=repo,
             task="fix",
             model_name="offline/scripted",
@@ -129,7 +137,7 @@ def test_run_rejects_output_inside_source_before_creating_artifacts(tmp_path) ->
     repo = _make_repo(tmp_path)
     with pytest.raises(RunConfigurationError, match="output directory must be outside"):
         TraceFixRunner().run(
-            RunConfig(
+            _local_run_config(
                 repo=repo, task="fix", output_dir=repo / "runs", model_name="offline/scripted"
             )
         )
@@ -146,7 +154,7 @@ def test_run_rejects_output_inside_source_before_creating_artifacts(tmp_path) ->
 )
 def test_ordinary_configuration_rejects_unsafe_inputs(field, value, expected) -> None:
     with pytest.raises(ValueError, match=expected):
-        RunConfig(repo=Path("."), task="fix", **{field: value})
+        _local_run_config(repo=Path("."), task="fix", **{field: value})
 
 
 @pytest.mark.parametrize(
@@ -165,7 +173,7 @@ def test_ordinary_preflight_stops_before_model_for_missing_environment(
         raise AssertionError("model must not be constructed")
 
     result = TraceFixRunner(llm_factory=no_model).run(
-        RunConfig(
+        _local_run_config(
             repo=repo,
             task="fix",
             model_name="offline/scripted",
@@ -198,7 +206,7 @@ def test_ordinary_preflight_rejects_missing_pytest_before_model(tmp_path, monkey
         raise AssertionError("model must not be constructed")
 
     result = TraceFixRunner(llm_factory=no_model).run(
-        RunConfig(
+        _local_run_config(
             repo=repo,
             task="fix",
             model_name="offline/scripted",
@@ -246,7 +254,7 @@ def test_runner_clones_runs_agent_writes_artifacts_and_converts_cost(tmp_path, m
         return ScriptedLLM(config, scripted)
 
     result = TraceFixRunner(factory).run(
-        RunConfig(
+        _local_run_config(
             repo=repo,
             task="修改常量",
             output_dir=tmp_path / "runs",
@@ -353,7 +361,7 @@ def test_end_of_task_regression_gate_feedback_repairs_before_independent_verify(
     ]
     result = TraceFixRunner(
         lambda config: ScriptedLLM(config, responses)
-    ).run(RunConfig(
+    ).run(_local_run_config(
         repo=repo,
         task="分页从 1 开始，并保留负数哨兵与 identity 行为。",
         model_name="offline/gated",
@@ -411,7 +419,7 @@ def _regression_baseline_config(repo: Path, targets: tuple[str, ...]) -> RunConf
         repo, "-c", "user.name=Tests", "-c", "user.email=tests@example.invalid",
         "commit", "--quiet", "-m", "add validation targets",
     )
-    return RunConfig(
+    return _local_run_config(
         repo=repo, task="validate frozen baseline", model_name="offline/replay",
         output_dir=repo.parent / "runs", env_file=None,
         test_python_executable=Path(sys.executable), test_target="tests/test_primary.py",
@@ -593,7 +601,7 @@ def test_run_config_validates_regression_contract(tmp_path, overrides, message) 
     }
 
     with pytest.raises(ValueError, match=message):
-        RunConfig(**(baseline | overrides))
+        _local_run_config(**(baseline | overrides))
 
 
 def test_regression_baseline_rejects_pytest_policy_target(tmp_path) -> None:
@@ -686,7 +694,7 @@ def test_runner_builds_agent_checkout_and_verifies_source_import_before_model(
 
     monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-build-fixture")
     result = ObservedRunner(factory).run(
-        RunConfig(
+        _local_run_config(
             repo=repo,
             task="inspect generated module",
             output_dir=tmp_path / "runs",
@@ -712,7 +720,7 @@ def test_runner_does_not_construct_model_when_agent_source_probe_fails(
     result = TraceFixRunner(
         lambda config: calls.append(config) or ScriptedLLM(config, [_response("no")])
     ).run(
-        RunConfig(
+        _local_run_config(
             repo=repo,
             task="probe failure",
             output_dir=tmp_path / "runs",
@@ -736,7 +744,7 @@ def test_runner_marks_unknown_cost_incomplete(tmp_path, monkeypatch) -> None:
     runner = TraceFixRunner(lambda config: ScriptedLLM(config, [_response("done", cost_usd=None)]))
 
     result = runner.run(
-        RunConfig(repo=repo, task="inspect", output_dir=tmp_path / "runs", env_file=None)
+        _local_run_config(repo=repo, task="inspect", output_dir=tmp_path / "runs", env_file=None)
     )
 
     assert result.status is AgentStatus.COMPLETED
@@ -751,7 +759,7 @@ def test_runner_returns_failed_result_for_dirty_source(tmp_path, monkeypatch) ->
     monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-test-dirty-source")
 
     result = TraceFixRunner().run(
-        RunConfig(repo=repo, task="fix", output_dir=tmp_path / "runs", env_file=None)
+        _local_run_config(repo=repo, task="fix", output_dir=tmp_path / "runs", env_file=None)
     )
 
     assert result.status is AgentStatus.FAILED
@@ -805,7 +813,7 @@ def test_runner_loads_dotenv_without_overriding_existing_environment(tmp_path, m
         return ScriptedLLM(config, [_response("done")])
 
     result = TraceFixRunner(factory).run(
-        RunConfig(repo=repo, task="fix", output_dir=tmp_path / "runs", env_file=env_file)
+        _local_run_config(repo=repo, task="fix", output_dir=tmp_path / "runs", env_file=env_file)
     )
 
     assert result.status is AgentStatus.COMPLETED
@@ -817,7 +825,7 @@ def test_runner_missing_deepseek_key_is_structured_failure(tmp_path, monkeypatch
     monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
 
     result = TraceFixRunner().run(
-        RunConfig(repo=repo, task="fix", output_dir=tmp_path / "runs", env_file=None)
+        _local_run_config(repo=repo, task="fix", output_dir=tmp_path / "runs", env_file=None)
     )
 
     assert result.status is AgentStatus.FAILED
@@ -838,7 +846,7 @@ def test_runner_redacts_secret_from_unexpected_provider_message(tmp_path, monkey
             raise LLMProviderError(f"provider rejected {secret}")
 
     result = TraceFixRunner(BrokenLLM).run(
-        RunConfig(repo=repo, task="fix", output_dir=tmp_path / "runs", env_file=None)
+        _local_run_config(repo=repo, task="fix", output_dir=tmp_path / "runs", env_file=None)
     )
 
     combined = Path(result.result_path).read_text(encoding="utf-8") + Path(
@@ -876,7 +884,7 @@ def test_non_deepseek_model_does_not_require_deepseek_key(tmp_path, monkeypatch)
     runner = TraceFixRunner(lambda config: ScriptedLLM(config, [_response("done")]))
 
     result = runner.run(
-        RunConfig(
+        _local_run_config(
             repo=repo,
             task="fix",
             model_name="provider/model",
@@ -910,7 +918,7 @@ def test_runner_records_keyboard_interrupt_and_diff_collection_failure(
             raise KeyboardInterrupt
 
     interrupted = TraceFixRunner(InterruptedLLM).run(
-        RunConfig(repo=repo, task="fix", output_dir=tmp_path / "interrupt", env_file=None)
+        _local_run_config(repo=repo, task="fix", output_dir=tmp_path / "interrupt", env_file=None)
     )
     assert interrupted.status is AgentStatus.INTERRUPTED
     assert interrupted.stop_reason == "keyboard_interrupt"
@@ -922,7 +930,7 @@ def test_runner_records_keyboard_interrupt_and_diff_collection_failure(
         lambda workspace: (_ for _ in ()).throw(RuntimeError("diff broke")),
     )
     failed = runner.run(
-        RunConfig(repo=repo, task="fix", output_dir=tmp_path / "diff", env_file=None)
+        _local_run_config(repo=repo, task="fix", output_dir=tmp_path / "diff", env_file=None)
     )
     assert failed.status is AgentStatus.FAILED
     assert failed.error["code"] == "unexpected_run_error"
@@ -984,7 +992,7 @@ def test_docker_runner_persists_result_before_terminal_phase(tmp_path, monkeypat
     monkeypatch.setattr(runtime, "DockerToolBackend", FakeDockerBackend)
     runner = TraceFixRunner(lambda config: ScriptedLLM(config, [_response("done")]))
     result = runner.run(
-        RunConfig(
+        _local_run_config(
             repo=repo,
             task="verify durable terminal phase",
             model_name="offline/scripted",
@@ -1068,7 +1076,7 @@ def test_docker_runner_persists_export_failure_and_preserves_first_error(
     monkeypatch.setattr(runtime, "DockerToolBackend", FakeDockerBackend)
     runner = TraceFixRunner(lambda config: ScriptedLLM(config, [_response("done")]))
     result = runner.run(
-        RunConfig(
+        _local_run_config(
             repo=repo,
             task="verify durable export failure",
             model_name="offline/scripted",
@@ -1134,7 +1142,7 @@ def test_docker_runner_preserves_prepare_error_when_export_also_fails(
 
     monkeypatch.setattr(runtime, "DockerToolBackend", FakeDockerBackend)
     result = TraceFixRunner(llm_factory).run(
-        RunConfig(
+        _local_run_config(
             repo=repo,
             task="preserve container preparation failure",
             model_name="offline/scripted",
@@ -1166,9 +1174,9 @@ def test_runtime_validation_errors_are_explicit(tmp_path) -> None:
     with pytest.raises(RunConfigurationError):
         load_environment_file(tmp_path)
     with pytest.raises(ValidationError):
-        RunConfig(repo=tmp_path, task="   ")
+        _local_run_config(repo=tmp_path, task="   ")
     with pytest.raises(ValidationError):
-        RunConfig(repo=tmp_path, task="x", model_name="   ")
+        _local_run_config(repo=tmp_path, task="x", model_name="   ")
     with pytest.raises(WorkspaceError):
         TraceFixRunner._validate_source_repository(tmp_path / "missing")
     with pytest.raises(WorkspaceError):

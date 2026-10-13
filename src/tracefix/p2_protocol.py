@@ -45,6 +45,7 @@ from tracefix.messages import Message, MessageRole, ToolCall
 from tracefix.models import BaseLLM, LLMConfig, LLMResponse, TokenUsage
 from tracefix.models.input_bounds import (
     DEEPSEEK_FLASH_SOURCE,
+    InputBound,
     deepseek_flash_capability,
 )
 from tracefix.models.litellm_adapter import LiteLLMAdapter
@@ -680,6 +681,28 @@ class P2BudgetedLLM(BaseLLM):
             raise P2ModelContextExceeded(
                 "P2 request exceeds the official model context window"
             )
+        prepare_request = getattr(self._delegate, "prepare_request", None)
+        prepared = None
+        if callable(prepare_request):
+            original_delegate_config = getattr(self._delegate, "config", None)
+            if original_delegate_config is not None:
+                try:
+                    self._delegate.config = original_delegate_config.model_copy(
+                        update={"max_output_tokens": output_upper_bound}
+                    )
+                    prepared = prepare_request(messages, tools)
+                finally:
+                    self._delegate.config = original_delegate_config
+            else:
+                prepared = prepare_request(messages, tools)
+        if not self._legacy_input_counting:
+            qualified = InputBound(
+                qualified.tokens,
+                qualified.status,
+                qualified.method,
+                qualified.identity,
+                prepared.request_sha256 if prepared is not None else qualified.request_sha256,
+            )
         reservation = estimated_request_reservation(
             self._formal,
             input_tokens=input_upper_bound,
@@ -728,11 +751,15 @@ class P2BudgetedLLM(BaseLLM):
             }
         )
         _write_cost_ledger(self._ledger_path, ledger)
-        if hasattr(self._delegate, "config"):
+        if prepared is not None and hasattr(self._delegate, "config"):
             self._delegate.config = self._delegate.config.model_copy(
                 update={"max_output_tokens": output_upper_bound}
             )
-        response = self._delegate.complete(messages, tools)
+        complete_prepared = getattr(self._delegate, "complete_prepared", None)
+        if prepared is not None and callable(complete_prepared):
+            response = complete_prepared(prepared)
+        else:
+            response = self._delegate.complete(messages, tools)
         evidence_path, evidence_sha256 = _write_response_evidence(
             self._ledger_path, request_id, response
         )
@@ -849,6 +876,9 @@ class P2BudgetedLLM(BaseLLM):
                 )
             }
         )
+
+    def close(self) -> None:
+        self._delegate.close()
 
 
 def _write_response_evidence(
@@ -3146,6 +3176,7 @@ def _run_p2_locked(
                     repo=config.source_root / task.id,
                     task=task.problem_statement,
                     model_name=model_name,
+                    execution_backend="local",
                     output_dir=root / "agent-runs",
                     # 正式实验只从本机 .env 加载凭据；模拟模式保持完全离线，
                     # 避免测试或工程演练接触供应商配置。

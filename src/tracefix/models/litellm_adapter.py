@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import importlib
 import json
 from collections.abc import Mapping, Sequence
@@ -20,7 +19,13 @@ from tracefix.exceptions import (
 )
 from tracefix.messages import Message, MessageRole, ToolCall
 from tracefix.models.base import BaseLLM, LLMConfig, LLMResponse, TokenUsage
-from tracefix.models.input_bounds import InputBound, count_deepseek_v41_request
+from tracefix.models.gateway import LLMGateway, PreparedRequest, canonical_json, sha256_bytes
+from tracefix.models.input_bounds import (
+    V41_RECIPE_VERSION,
+    V41_TOKENIZER_SHA256,
+    InputBound,
+    count_deepseek_v41_request,
+)
 from tracefix.tools.base import ToolSpec
 
 
@@ -36,7 +41,7 @@ class LiteLLMAdapter(BaseLLM):
     def __init__(self, config: LLMConfig, *, client: Any | None = None) -> None:
         super().__init__(config)
         self._client = client
-        self._counted_request_sha256: str | None = None
+        self.gateway = LLMGateway()
 
     @property
     def client(self) -> Any:
@@ -55,16 +60,21 @@ class LiteLLMAdapter(BaseLLM):
         messages: Sequence[Message],
         tools: Sequence[ToolSpec] = (),
     ) -> LLMResponse:
+        return self.complete_prepared(self.prepare_request(messages, tools))
+
+    def prepare_request(
+        self, messages: Sequence[Message], tools: Sequence[ToolSpec] = ()
+    ) -> PreparedRequest:
         kwargs = self.request_kwargs(messages, tools)
-        if self._counted_request_sha256 is not None:
-            serialized = json.dumps(
-                kwargs, ensure_ascii=False, sort_keys=True, separators=(",", ":")
-            ).encode("utf-8")
-            actual_sha256 = hashlib.sha256(serialized).hexdigest()
-            expected_sha256 = self._counted_request_sha256
-            self._counted_request_sha256 = None
-            if actual_sha256 != expected_sha256:
-                raise LLMProviderError("serialized request changed after input counting")
+        # Preparing is the final point at which a changed body can be counted
+        # before send. A prior context-window or budget check hits this same
+        # cache entry; a changed body or tool schema is measured again here.
+        measurement = self._measure_request(kwargs)
+        counter_identity = measurement.counter_identity
+        return self.gateway.freeze(kwargs, counter_identity=counter_identity)
+
+    def complete_prepared(self, request: PreparedRequest) -> LLMResponse:
+        kwargs = self.gateway.validate(request)
         client = self.client
 
         try:
@@ -127,6 +137,9 @@ class LiteLLMAdapter(BaseLLM):
             raw_response=raw_response,
         )
 
+    def close(self) -> None:
+        self.gateway.close()
+
     def request_kwargs(
         self, messages: Sequence[Message], tools: Sequence[ToolSpec] = ()
     ) -> dict[str, Any]:
@@ -158,6 +171,68 @@ class LiteLLMAdapter(BaseLLM):
         The fixed allowance covers provider-added chat framing.
         """
         kwargs = self.request_kwargs(messages, tools)
+        value = self._measure_request(kwargs).conservative_input_tokens
+        if value is None:
+            raise LLMProviderError("provider adapter exposes no auditable token counter")
+        return value
+
+    def count_input_bound(
+        self, messages: Sequence[Message], tools: Sequence[ToolSpec] = ()
+    ) -> InputBound:
+        """Count the exact input once per wire body and bind the result to this request."""
+        kwargs = self.request_kwargs(messages, tools)
+        measured = self._measure_request(kwargs)
+        return InputBound(
+            measured.input_bound.tokens,
+            measured.input_bound.status,
+            measured.input_bound.method,
+            measured.input_bound.identity,
+            sha256_bytes(canonical_json(kwargs)),
+        )
+
+    def _counter_identity(self, kwargs: dict[str, Any]) -> str:
+        if self.config.model_name.casefold() == "deepseek/deepseek-flash":
+            return sha256_bytes(canonical_json({
+                "kind": "deepseek-v41",
+                "model": kwargs.get("model"),
+                "tokenizer": V41_TOKENIZER_SHA256,
+                "recipe": V41_RECIPE_VERSION,
+                "api_base": kwargs.get("api_base"),
+            }))
+        counter = getattr(self.client, "token_counter", None)
+        counter_type = type(counter)
+        target = getattr(counter, "__func__", counter)
+        return sha256_bytes(canonical_json({
+            "kind": "provider-token-counter-v1",
+            "model": self.config.model_name,
+            "api_base": kwargs.get("api_base"),
+            "counter_module": getattr(counter_type, "__module__", "unknown"),
+            "counter_name": getattr(counter_type, "__qualname__", "unknown"),
+            "callable_module": getattr(target, "__module__", "unknown"),
+            "callable_name": getattr(target, "__qualname__", "unknown"),
+        }))
+
+    def _measure_request(self, kwargs: dict[str, Any]):
+        identity = self._counter_identity(kwargs)
+
+        def compute() -> tuple[InputBound, int | None]:
+            bound = self._count_input_bound_for_kwargs(kwargs)
+            try:
+                conservative = self._count_input_tokens_for_kwargs(kwargs)
+            except LLMProviderError:
+                # Ordinary unbudgeted calls may still use a provider without a
+                # local tokenizer. Budgeted paths call count_input_tokens and
+                # fail closed; P2 separately requires a qualified bound.
+                conservative = None
+            return bound, conservative
+
+        return self.gateway.measure(
+            kwargs,
+            counter_identity=identity,
+            compute=compute,
+        )
+
+    def _count_input_tokens_for_kwargs(self, kwargs: dict[str, Any]) -> int:
         if self.config.model_name.casefold().startswith("deepseek/"):
             payload = {
                 "model": kwargs["model"].split("/", 1)[-1],
@@ -178,11 +253,8 @@ class LiteLLMAdapter(BaseLLM):
             raise LLMProviderError("provider token counter returned an invalid input bound")
         return value
 
-    def count_input_bound(
-        self, messages: Sequence[Message], tools: Sequence[ToolSpec] = ()
-    ) -> InputBound:
+    def _count_input_bound_for_kwargs(self, kwargs: dict[str, Any]) -> InputBound:
         """Qualified model count for new formal requests; legacy byte counts stay diagnostic."""
-        kwargs = self.request_kwargs(messages, tools)
         if self.config.model_name.casefold() == "deepseek/deepseek-flash":
             allowed = {
                 "model", "messages", "tools", "timeout", "num_retries", "temperature",
@@ -200,13 +272,8 @@ class LiteLLMAdapter(BaseLLM):
                 "tools": kwargs.get("tools", []),
                 "thinking": kwargs.get("extra_body", {}).get("thinking"),
             })
-            serialized = json.dumps(
-                kwargs, ensure_ascii=False, sort_keys=True, separators=(",", ":")
-            ).encode("utf-8")
-            request_sha256 = hashlib.sha256(serialized).hexdigest()
-            self._counted_request_sha256 = request_sha256
             return InputBound(
-                bound.tokens, bound.status, bound.method, bound.identity, request_sha256
+                bound.tokens, bound.status, bound.method, bound.identity, None
             )
         return InputBound(None, "unavailable", "unknown", "no qualified model counter")
 

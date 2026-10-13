@@ -22,6 +22,7 @@ from tracefix.exceptions import BenchmarkError
 from tracefix.provenance import TestEnvironmentProvenance, inspect_test_environment
 from tracefix.real_benchmark import RealIssueTask, load_real_issue_tasks
 from tracefix.real_recipes import EnvironmentRecipe, load_environment_recipes
+from tracefix.security import minimal_subprocess_environment
 
 TUNA_INDEX_URL = "https://pypi.tuna.tsinghua.edu.cn/simple"
 _OWNER_MARKER = ".tracefix-owner.json"
@@ -547,8 +548,18 @@ def _managed_process_environment(environment: Path) -> dict[str, str]:
     """让 venv、ensurepip 与 pip 都使用可控的项目临时目录。"""
     temporary = environment.parent / ".tracefix-environment-tmp"
     temporary.mkdir(parents=True, exist_ok=True)
-    values = dict(os.environ)
-    values.update({"TEMP": str(temporary), "TMP": str(temporary), "PIP_NO_CACHE_DIR": "1"})
+    values = minimal_subprocess_environment()
+    values.update(
+        {
+            "TEMP": str(temporary),
+            "TMP": str(temporary),
+            "TMPDIR": str(temporary),
+            "HOME": str(temporary),
+            "PIP_CACHE_DIR": str(temporary / "pip-cache"),
+            "PIP_NO_CACHE_DIR": "1",
+            "PYTHONDONTWRITEBYTECODE": "1",
+        }
+    )
     return values
 
 

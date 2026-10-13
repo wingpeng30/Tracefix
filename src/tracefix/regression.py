@@ -14,20 +14,20 @@ from uuid import uuid4
 from tracefix.messages import ToolCall
 from tracefix.provenance import inspect_test_environment
 from tracefix.report import _read_run
-from tracefix.runtime import RunConfig, TraceFixRunner, config_identity_sha256
+from tracefix.runtime import TraceFixRunner, _saved_run_config, config_identity_sha256
+from tracefix.security import UnsafeWorkspacePath, pytest_target_path, resolve_workspace_path
 from tracefix.tools.builtin import ApplyPatchTool, RunTestsTool
 
 
 def _target_path(root: Path, target: str) -> Path:
-    name = target.split("::", 1)[0]
-    path = Path(name)
-    if (
-        not name or path.is_absolute() or ".." in path.parts
-        or "\n" in target or "\r" in target or name.startswith("-")
-    ):
-        raise ValueError(f"回归目标必须是仓库内相对 pytest 文件或 node ID: {target}")
-    resolved = (root / path).resolve()
-    if not resolved.is_relative_to(root.resolve()) or not resolved.is_file():
+    try:
+        name = pytest_target_path(target)
+        resolved = resolve_workspace_path(root, name, must_exist=True)
+    except (ValueError, UnsafeWorkspacePath) as exc:
+        raise ValueError(
+            f"回归目标必须是仓库内相对 pytest 文件或 node ID: {target}"
+        ) from exc
+    if not resolved.is_file():
         raise ValueError(f"回归目标不在冻结源码中: {target}")
     # Also apply the production pytest command parser's shell and option restrictions.
     RunTestsTool._parse_command(f"pytest -q {shlex.quote(target)}")
@@ -65,7 +65,7 @@ def verify_regressions(run: Path, targets: tuple[str, ...]) -> dict[str, Any]:
     if not session.is_file():
         raise ValueError("运行缺少可核验的 session.json 配置")
     manifest = json.loads(session.read_text(encoding="utf-8"))
-    config = RunConfig.model_validate(manifest["config"])
+    config = _saved_run_config(manifest["config"])
     identity = manifest["identity"]
     if config.execution_backend != "local" or not config.test_target or not config.source_import:
         raise ValueError("追加回归验证仅支持普通本地运行")

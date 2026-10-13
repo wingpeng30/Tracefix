@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import shlex
@@ -13,6 +14,7 @@ from uuid import uuid4
 
 from tracefix.agent.base import AgentPhase, AgentState, AgentStatus, BaseAgent
 from tracefix.agent.presentation import ToolResultPresenter
+from tracefix.context import ContextSessionState
 from tracefix.exceptions import (
     AgentCompleted,
     AgentError,
@@ -31,7 +33,7 @@ from tracefix.exceptions import (
 )
 from tracefix.messages import Message, MessageRole, ToolCall
 from tracefix.models.base import LLMResponse, TokenUsage
-from tracefix.tools.base import ReservedToolName, ToolResult
+from tracefix.tools.base import ReservedToolName, ToolResult, ToolSpec
 from tracefix.tracing.base import TraceEvent, TraceEventType
 
 
@@ -54,6 +56,7 @@ class MinimalAgent(BaseAgent):
         "_late_targeted_retrievals",
         "_last_test_evidence",
         "_validation_gate_attempted_sha",
+        "_context_session_state", "_force_context_compaction", "_last_task_fact_digest",
     )
 
     def checkpoint_payload(self) -> dict[str, Any]:
@@ -61,6 +64,7 @@ class MinimalAgent(BaseAgent):
         if self.history.pending_tool_call_ids:
             raise AgentError("cannot checkpoint with pending tool calls")
         memory = {name: getattr(self, name) for name in self._RECOVERY_FIELDS}
+        memory["_context_session_state"] = self._context_session_state.model_dump(mode="json")
         memory["_repo_map_candidate_reads"] = sorted(self._repo_map_candidate_reads)
         memory["_budget_guidance_sent"] = sorted(self._budget_guidance_sent)
         return {
@@ -84,6 +88,7 @@ class MinimalAgent(BaseAgent):
             evidence["invalidated_by"] = "checkout_changed_after_test"
             self._tests_passed = False
             self.state.validation_status = "unverified"
+            self._append_task_fact()
 
     def resume(self, payload: dict[str, Any], *, message: str | None = None) -> AgentState:
         """Continue a previously validated local checkpoint without resetting history."""
@@ -98,6 +103,9 @@ class MinimalAgent(BaseAgent):
             if name not in memory:
                 raise AgentError(f"checkpoint missing runtime state: {name}")
             setattr(self, name, memory[name])
+        self._context_session_state = ContextSessionState.model_validate(
+            memory["_context_session_state"]
+        )
         self._repo_map_candidate_reads = set(memory["_repo_map_candidate_reads"])
         self._budget_guidance_sent = set(memory["_budget_guidance_sent"])
         self._successful_tool_cache = {}
@@ -115,7 +123,13 @@ class MinimalAgent(BaseAgent):
             if not message.strip():
                 raise AgentError("message cannot be empty")
             self._check_pre_request_budgets()
+            context_session_state = self._context_session_state
+            last_task_fact_digest = self._last_task_fact_digest
+            force_context_compaction = self._force_context_compaction
             self._reset_turn_runtime()
+            self._context_session_state = context_session_state
+            self._last_task_fact_digest = last_task_fact_digest
+            self._force_context_compaction = force_context_compaction
             self.state.turn_number += 1
             self.state.turn_start_steps = self.state.step_count
             self.state.turn_start_searches = self.state.search_calls
@@ -167,6 +181,9 @@ class MinimalAgent(BaseAgent):
         self._late_targeted_retrievals = 0
         self._last_test_evidence: dict[str, Any] | None = None
         self._validation_gate_attempted_sha: str | None = None
+        self._context_session_state = ContextSessionState()
+        self._force_context_compaction = False
+        self._last_task_fact_digest: str | None = None
 
     def run(self, task: str) -> AgentState:
         """初始化消息历史并运行，正常完成或预算终止时返回最终状态。"""
@@ -223,19 +240,23 @@ class MinimalAgent(BaseAgent):
         if not resume and self.config.skills_enabled:
             catalog = self.tools.skill_catalog
             if catalog:
-                entries = "\n".join(
-                    f"- {item.name}: {item.description}"
-                    for item in catalog
+                catalog_data = json.dumps(
+                    {
+                        "source": "TraceFix skill catalog",
+                        "trust": "untrusted_reference_data",
+                        "items": [item.model_dump(mode="json") for item in catalog],
+                    },
+                    ensure_ascii=False,
+                    sort_keys=True,
                 )
                 self._append_message(
                     Message(
-                        role=MessageRole.SYSTEM,
-                        content=(
-                            "可按需加载以下 TraceFix skills。仅在任务匹配时调用 load_skill；"
-                            "技能只提供指令，不授予额外工具权限。相对引用通过 load_skill 的 "
-                            "reference 参数读取。\n" + entries
-                        ),
-                        metadata={"kind": "skill_catalog"},
+                        role=MessageRole.USER,
+                        content=catalog_data,
+                        metadata={
+                            "kind": "skill_catalog",
+                            "trust_level": "untrusted_reference_data",
+                        },
                     )
                 )
                 self._emit(
@@ -243,13 +264,22 @@ class MinimalAgent(BaseAgent):
                     {"skills": [entry.model_dump(mode="json") for entry in catalog]},
                 )
         if not resume and self.repository_map:
-            # 将静态地图作为 system 锚点加入完整历史：压缩器会永久保留它，模型请求视图
-            # 与 JSONL 审计也能明确区分“索引提供的候选”和 Agent 自己确认的事实。
+            # 保留 Repo Map 锚点，但以显式标记的用户数据加入，避免其内容获得系统指令级信任。
             self._append_message(
                 Message(
-                    role=MessageRole.SYSTEM,
-                    content=self.repository_map,
-                    metadata={"kind": "repository_map"},
+                    role=MessageRole.USER,
+                    content=json.dumps(
+                        {
+                            "source": "deterministic repository index",
+                            "trust": "untrusted_reference_data",
+                            "content": self.repository_map,
+                        },
+                        ensure_ascii=False,
+                    ),
+                    metadata={
+                        "kind": "repository_map",
+                        "trust_level": "untrusted_reference_data",
+                    },
                 )
             )
             self._emit(
@@ -317,30 +347,30 @@ class MinimalAgent(BaseAgent):
         # 累计 Token 是多轮请求之和；在真正越限前把收敛要求放进下一次请求。
         self._append_budget_guidance_if_needed()
         self.state.step_count += 1
-        tool_specs = self.tools.specs()
+        tool_specs = self._request_tool_specs()
         context_started = time.perf_counter()
         full_history = self.history.snapshot()
-        request_history = full_history
-        if self._last_test_evidence is not None:
-            fact = {
-                "source": "tool_result",
-                "latest_test": self._last_test_evidence,
-                "validation_status": self.state.validation_status,
-            }
-            anchor = Message(
-                role=MessageRole.SYSTEM,
-                content="[TraceFix 已核验任务事实]\n" + json.dumps(
-                    fact, ensure_ascii=False, sort_keys=True
-                ),
-                metadata={"kind": "task_fact_anchor"},
-            )
-            request_history = (full_history[0], anchor, *full_history[1:])
-        context_view = self.context_manager.prepare(request_history, tool_specs)
+        output_reserve = self.config.context.output_reserve_for_request(
+            self.llm.config.max_output_tokens
+        )
+        context_view = self.context_manager.prepare(
+            full_history,
+            tool_specs,
+            state=self._context_session_state,
+            force=self._force_context_compaction,
+            output_reserve_tokens=output_reserve,
+            token_counter=self._count_context_tokens,
+        )
+        self._force_context_compaction = False
         self.state.context_preparation_seconds += time.perf_counter() - context_started
         self._visible_tool_result_ids = {
             message.tool_call_id
             for message in context_view.messages
-            if message.role is MessageRole.TOOL and message.tool_call_id is not None
+            if message.role is MessageRole.TOOL
+            and message.tool_call_id is not None
+            and message.metadata.get("full_result_presented") is True
+            and message.metadata.get("context_pruned") is not True
+            and "TraceFix 已裁剪" not in (message.content or "")
         }
         self.state.context_metrics.add_view(context_view)
         self._emit(
@@ -354,6 +384,15 @@ class MinimalAgent(BaseAgent):
                 "messages_compacted": context_view.messages_compacted,
                 "batches_compacted": context_view.batches_compacted,
                 "compacted": context_view.compacted,
+                "projection_reused": context_view.projection_reused,
+                "compaction_no_op": context_view.compaction_no_op,
+                "count_method": context_view.count_method,
+                "tokenizer_identity": context_view.tokenizer_identity,
+                "projection_epoch": self._context_session_state.epoch,
+                "unique_pruned_tool_call_ids": list(context_view.pruned_tool_call_ids),
+                "compaction_target_tokens": context_view.compaction_target_tokens,
+                "compaction_target_met": context_view.compaction_target_met,
+                "compaction_target_reason": context_view.compaction_target_reason,
             },
         )
         if context_view.compacted or context_view.tool_results_pruned:
@@ -367,6 +406,24 @@ class MinimalAgent(BaseAgent):
                     "tool_results_pruned": context_view.tool_results_pruned,
                     "messages_compacted": context_view.messages_compacted,
                     "batches_compacted": context_view.batches_compacted,
+                    "projection_epoch": self._context_session_state.epoch,
+                    "unique_pruned_tool_call_ids": list(context_view.pruned_tool_call_ids),
+                    "count_method": context_view.count_method,
+                },
+            )
+        elif context_view.compaction_no_op:
+            self._emit(
+                TraceEventType.CONTEXT_COMPACTED,
+                {
+                    "compacted": False,
+                    "no_op": True,
+                    "estimated_tokens_before": context_view.estimated_tokens_before,
+                    "estimated_tokens_after": context_view.estimated_tokens_after,
+                    "tool_results_pruned": context_view.tool_results_pruned,
+                    "messages_compacted": context_view.messages_compacted,
+                    "batches_compacted": context_view.batches_compacted,
+                    "projection_epoch": self._context_session_state.epoch,
+                    "count_method": context_view.count_method,
                 },
             )
         if self.config.record_request_views:
@@ -393,7 +450,7 @@ class MinimalAgent(BaseAgent):
             TraceEventType.MODEL_REQUESTED,
             {
                 "message_count": context_view.request_message_count,
-                "tool_names": list(self.tools.names),
+                "tool_names": [spec.name for spec in tool_specs],
             },
         )
 
@@ -484,6 +541,7 @@ class MinimalAgent(BaseAgent):
             )
 
         pending_skill_messages: list[tuple[Message, dict[str, object]]] = []
+        task_fact_changed = False
         for index, call in enumerate(response.message.tool_calls):
             try:
                 self._check_time_budget()
@@ -535,9 +593,17 @@ class MinimalAgent(BaseAgent):
             except AgentLimitExceeded as exc:
                 # 消息历史要求每个 tool call 都有结果，因此为未执行调用补齐失败消息。
                 self._append_skipped_results(response.message.tool_calls[index:], exc)
+                if task_fact_changed:
+                    self._append_task_fact()
                 raise
 
             self._append_tool_result(result)
+            if call.name in {
+                ReservedToolName.APPLY_PATCH.value,
+                ReservedToolName.RUN_TESTS.value,
+                ReservedToolName.GET_GIT_DIFF.value,
+            }:
+                task_fact_changed = True
             if (
                 result.success
                 and result.tool_name == "load_skill"
@@ -557,13 +623,17 @@ class MinimalAgent(BaseAgent):
                 pending_skill_messages.append(
                     (
                         Message(
-                            role=MessageRole.SYSTEM,
-                            content=(
-                                "<tracefix_skill_instructions>\n"
-                                + content
-                                + "\n</tracefix_skill_instructions>"
+                            role=MessageRole.USER,
+                            content=json.dumps(
+                                {
+                                    "source": result.output.get("path"),
+                                    "skill_name": result.output.get("name"),
+                                    "trust": "untrusted_reference_data",
+                                    "instructions_as_data": content,
+                                },
+                                ensure_ascii=False,
                             ),
-                            metadata=metadata,
+                            metadata={**metadata, "trust_level": "untrusted_reference_data"},
                         ),
                         metadata,
                     )
@@ -581,7 +651,66 @@ class MinimalAgent(BaseAgent):
         self._append_exploration_guidance_if_needed()
         self._append_patch_action_guidance_if_needed()
         self._append_finish_reminder_if_ready()
+        if task_fact_changed:
+            self._append_task_fact()
         self._check_time_budget()
+
+    def _request_tool_specs(self) -> tuple[ToolSpec, ...]:
+        """Expose an Agent-only compaction control without changing tool identity."""
+        specs = self.tools.specs()
+        if not self.config.context.enabled or not self.config.context.agent_tool_enabled:
+            return specs
+        return (*specs, ToolSpec(
+            name="compact_context",
+            description="在当前工具批次结束后主动压缩旧上下文。",
+            input_schema={
+                "type": "object",
+                "properties": {"reason": {"type": "string", "maxLength": 280}},
+                "required": [],
+                "additionalProperties": False,
+            },
+        ))
+
+    def _count_context_tokens(self, messages, tools):
+        counter = getattr(self.llm, "count_input_bound", None)
+        if counter is None:
+            return None
+        try:
+            return counter(messages, tools)
+        except (TraceFixError, TypeError, ValueError, OSError):
+            return None
+
+    def _append_task_fact(self) -> None:
+        """Append current test and validation evidence after a closed tool batch."""
+        fact = {
+            "source": "tool_result",
+            "latest_test": self._last_test_evidence,
+            "validation_status": self.state.validation_status,
+        }
+        serialized = json.dumps(
+            fact, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        )
+        digest = hashlib.sha256(serialized.encode("utf-8")).hexdigest()
+        if digest == self._last_task_fact_digest:
+            return
+        self._append_message(Message(
+            role=MessageRole.USER,
+            content=json.dumps(
+                {
+                    "source": "TraceFix tool evidence",
+                    "trust": "untrusted_observation_data",
+                    "fact": json.loads(serialized),
+                },
+                ensure_ascii=False,
+                sort_keys=True,
+            ),
+            metadata={
+                "kind": "task_fact_anchor",
+                "trust_level": "untrusted_observation_data",
+                "fact_sha256": digest,
+            },
+        ))
+        self._last_task_fact_digest = digest
 
     def _finish_through_validation_gate(self, candidate: str) -> bool:
         """Run the configured acceptance targets before accepting a model's final answer."""
@@ -771,6 +900,23 @@ class MinimalAgent(BaseAgent):
             })
         started = time.monotonic()
         signature = self._tool_signature(call)
+
+        if call.name == "compact_context":
+            if not self.config.context.enabled:
+                return ToolResult(
+                    call_id=call.id, tool_name=call.name, success=False,
+                    error="context compaction is disabled",
+                )
+            self._force_context_compaction = True
+            result = ToolResult(
+                call_id=call.id, tool_name=call.name, success=True,
+                output={"status": "queued", "reason": call.arguments.get("reason", "")},
+                metadata={"compaction_scheduled": True},
+                duration_ms=(time.monotonic() - started) * 1000,
+            )
+            self.state.tool_execution_seconds += time.monotonic() - started
+            self._record_tool_outcome(call, result, signature)
+            return result
 
         if call.name == ReservedToolName.SEARCH_CODE.value:
             self.state.search_calls += 1
@@ -1402,13 +1548,28 @@ class MinimalAgent(BaseAgent):
             receipt = {key: value for key, value in result.output.items() if key != "content"}
             model_result = result.model_copy(update={"output": receipt}, deep=True)
         presented = self._presenter.present(model_result)
+        try:
+            presented_payload = json.loads(presented)
+        except json.JSONDecodeError:
+            presented_payload = None
+        full_result_presented = (
+            isinstance(presented_payload, dict)
+            and presented_payload.get("output") == model_result.output
+            and result.tool_name in {
+                ReservedToolName.READ_FILE.value, ReservedToolName.SEARCH_CODE.value,
+            }
+        )
         self.state.presentation_metrics.add(original, presented)
         self._append_message(
             Message(
                 role=MessageRole.TOOL,
                 content=presented,
                 tool_call_id=result.call_id,
-                metadata={"tool_name": result.tool_name, "success": result.success},
+                metadata={
+                    "tool_name": result.tool_name,
+                    "success": result.success,
+                    "full_result_presented": full_result_presented,
+                },
             )
         )
         self._emit(

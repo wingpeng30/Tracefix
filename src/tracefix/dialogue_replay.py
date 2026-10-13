@@ -91,6 +91,7 @@ def prepare_dialogue(output: Path) -> None:
     (output / "chat.toml").write_text(
         '[run]\nrepo = "source"\noutput_dir = "runs"\ntask = "Fix pagination"\n'
         'model = "offline/dialogue"\n'
+        'execution_backend = "local"\n'
         'source_import = "widget"\n'
         'test_target = "tests/test_widget.py::test_positive"\nmemory = true\n'
         f'test_python = {json.dumps(sys.executable)}\n', encoding="utf-8",

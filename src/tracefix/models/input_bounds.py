@@ -7,6 +7,7 @@ import importlib
 import json
 import os
 from dataclasses import dataclass
+from functools import lru_cache
 from importlib import metadata
 from pathlib import Path
 from typing import Any, Literal
@@ -112,15 +113,14 @@ def count_deepseek_v41_request(body: dict[str, Any]) -> InputBound:
         return unavailable("official tokenizer not configured")
     path = Path(tokenizer_path).expanduser().resolve()
     try:
-        if metadata.version("deepseek-recipe") != V41_RECIPE_VERSION:
-            raise ValueError("official recipe package version differs from pinned identity")
-        if hashlib.sha256(path.read_bytes()).hexdigest() != V41_TOKENIZER_SHA256:
-            raise ValueError("tokenizer SHA-256 does not match the pinned official copy")
+        stat = path.stat()
+        encoding = _cached_v41_encoding(
+            str(path), V41_TOKENIZER_SHA256, V41_RECIPE_VERSION,
+            stat.st_size, stat.st_mtime_ns,
+        )
         recipe = importlib.import_module("deepseek_recipe")
         request = recipe.ChatCompletionRequest(body)
         converted = request.convert(recipe.ConversionOptions())
-        tokenizer = recipe.Tokenizer.from_file(str(path))
-        encoding = recipe.DeepseekV41Encoding().with_tokenizer(tokenizer)
         value = len(encoding.encode(converted.conversation))
     except (ImportError, OSError, ValueError, AttributeError, RuntimeError) as exc:
         return unavailable(type(exc).__name__)
@@ -132,3 +132,18 @@ def count_deepseek_v41_request(body: dict[str, Any]) -> InputBound:
     return InputBound(
         value, "estimate", "deepseek-recipe-v41", V41_TOKENIZER_SHA256, request_sha256
     )
+
+
+@lru_cache(maxsize=4)
+def _cached_v41_encoding(path_text: str, expected_sha: str, recipe_version: str,
+                         size: int, modified_ns: int):
+    """Load one tokenizer per immutable file identity and reuse its encoding."""
+    del size, modified_ns
+    path = Path(path_text)
+    if metadata.version("deepseek-recipe") != recipe_version:
+        raise ValueError("official recipe package version differs from pinned identity")
+    if hashlib.sha256(path.read_bytes()).hexdigest() != expected_sha:
+        raise ValueError("tokenizer SHA-256 does not match the pinned official copy")
+    recipe = importlib.import_module("deepseek_recipe")
+    tokenizer = recipe.Tokenizer.from_file(str(path))
+    return recipe.DeepseekV41Encoding().with_tokenizer(tokenizer)

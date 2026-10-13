@@ -6,6 +6,7 @@ from tracefix import (
     BaseLLM,
     BenchmarkConfig,
     BenchmarkRunner,
+    ContextConfig,
     ContextManager,
     LLMConfig,
     LLMResponse,
@@ -107,7 +108,7 @@ def test_long_context_tasks_generate_contracts_and_gold_patch_passes(tmp_path) -
         assert after.success
 
 
-def test_long_context_fixture_crosses_default_32k_compaction_trigger(tmp_path) -> None:
+def test_long_context_fixture_compacts_at_effective_ratio_threshold(tmp_path) -> None:
     """完整读取一题的 24 份契约后，应自然超过生产 32k 软阈值。"""
     task = load_benchmark_tasks(LONG_TASKS_DIR, limit=1)[0]
     repo = task.prepare_source_repository(tmp_path / task.id)
@@ -139,7 +140,11 @@ def test_long_context_fixture_crosses_default_32k_compaction_trigger(tmp_path) -
                 )
             )
 
-    view = ContextManager().prepare(
+    # Keep this fixture proportional to a small model window: default policy now
+    # triggers at 80% of effective capacity, not at the legacy fixed 32k.
+    view = ContextManager(
+        ContextConfig(context_window_tokens=40_000, output_reserve_tokens=1_024)
+    ).prepare(
         history.snapshot(),
         ToolRegistry([reader]).specs(),
     )

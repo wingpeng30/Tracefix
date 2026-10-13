@@ -23,6 +23,13 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_valida
 
 from tracefix.exceptions import ToolExecutionError, ToolValidationError
 from tracefix.messages import ToolCall
+from tracefix.security import (
+    SECURITY_POLICY_VERSION,
+    UnsafeWorkspacePath,
+    minimal_subprocess_environment,
+    resolve_workspace_path,
+    validate_project_environment,
+)
 from tracefix.tools.base import BaseTool, ReservedToolName, ToolRegistry, ToolResult, ToolSpec
 from tracefix.tools.skills import SkillLimits
 
@@ -42,7 +49,6 @@ _SKIPPED_DIRECTORIES = frozenset(
     }
 )
 _SHELL_CONTROL_PATTERN = re.compile(r"[|&;<>`\r\n]")
-_SENSITIVE_ENV_MARKERS = ("API_KEY", "ACCESS_TOKEN", "PASSWORD", "SECRET", "CREDENTIAL")
 
 _AGENT_PYTEST_AUDIT_PLUGIN = """
 import json
@@ -94,13 +100,8 @@ def _decode_timeout_output(value: str | bytes | None) -> str:
 
 
 def _sanitized_subprocess_env() -> dict[str, str]:
-    """复制必要环境并移除模型密钥，避免被目标仓库的测试代码读取。"""
-    safe = dict(os.environ)
-    for name in tuple(safe):
-        normalized = name.upper()
-        if any(marker in normalized for marker in _SENSITIVE_ENV_MARKERS):
-            safe.pop(name, None)
-    return safe
+    """Keep only operating-system process essentials; project values are explicit."""
+    return minimal_subprocess_environment()
 
 
 def _is_blocked_secret_file(name: str) -> bool:
@@ -146,39 +147,34 @@ def _resolve_path(
     value: str,
     *,
     must_exist: bool | None = None,
+    protected_dirs: set[str] | None = None,
 ) -> Path:
-    """把模型提供的相对路径限制在仓库内，并阻止访问 Git 元数据。"""
-    if not value or "\x00" in value:
-        raise ToolValidationError("path cannot be empty or contain null bytes")
-    relative = Path(value)
-    if relative.is_absolute():
-        raise ToolValidationError("absolute paths are not allowed", context={"path": value})
-    if any(part.casefold() == ".git" or part == ".." for part in relative.parts):
-        raise ToolValidationError(
-            "path traversal and .git access are not allowed",
-            context={"path": value},
-        )
-    if _is_blocked_secret_file(relative.name):
-        raise ToolValidationError(
-            "secret environment files cannot be accessed",
-            context={"path": value},
-        )
-
-    # resolve(strict=False) 仍会解析已经存在的符号链接，因此可拦截链接逃逸。
-    resolved = (root / relative).resolve(strict=False)
     try:
-        resolved.relative_to(root)
-    except ValueError as exc:
+        return resolve_workspace_path(
+            root,
+            value,
+            must_exist=must_exist is True,
+            protected_dirs=protected_dirs or (),
+        )
+    except UnsafeWorkspacePath as exc:
+        candidate = Path(value.replace("\\", "/"))
+        components = {part.casefold() for part in candidate.parts}
+        internal_components = {
+            part.casefold()
+            for protected in (protected_dirs or set())
+            for part in Path(protected.replace("\\", "/")).parts
+        }
+        if _is_blocked_secret_file(candidate.name):
+            message = "secret environment files cannot be accessed"
+        elif ".git" in components:
+            message = "path traversal and .git access are not allowed"
+        elif components & internal_components:
+            message = "path is inside an internal directory"
+        else:
+            message = str(exc)
         raise ToolValidationError(
-            "path resolves outside the workspace",
-            context={"path": value},
+            message, context={"path": value, "policy_version": SECURITY_POLICY_VERSION}
         ) from exc
-
-    if must_exist is True and not resolved.exists():
-        raise ToolValidationError("path does not exist", context={"path": value})
-    if must_exist is False and resolved.exists():
-        return resolved
-    return resolved
 
 
 class _WorkspaceTool(BaseTool):
@@ -186,11 +182,18 @@ class _WorkspaceTool(BaseTool):
 
     _SPEC: ClassVar[ToolSpec]
 
-    def __init__(self, workspace: Path, *, max_output_chars: int = 20_000) -> None:
+    def __init__(
+        self,
+        workspace: Path,
+        *,
+        max_output_chars: int = 20_000,
+        protected_dirs: set[str] | None = None,
+    ) -> None:
         if max_output_chars < 1:
             raise ValueError("max_output_chars must be positive")
         self.workspace = workspace
         self.max_output_chars = max_output_chars
+        self.protected_dirs = protected_dirs if protected_dirs is not None else set()
 
     @property
     def spec(self) -> ToolSpec:
@@ -237,7 +240,9 @@ class SearchCodeTool(_WorkspaceTool):
         started = time.monotonic()
         args = self._validate_call(call, _SearchCodeArgs)
         assert isinstance(args, _SearchCodeArgs)
-        base = _resolve_path(self.workspace, args.path, must_exist=True)
+        base = _resolve_path(
+            self.workspace, args.path, must_exist=True, protected_dirs=self.protected_dirs
+        )
         if not base.is_dir() and not base.is_file():
             raise ToolValidationError("search path must be a file or directory")
 
@@ -258,15 +263,20 @@ class SearchCodeTool(_WorkspaceTool):
         needle = args.query if args.case_sensitive else args.query.casefold()
 
         for path in candidates:
-            if not path.is_file():
+            try:
+                lexical = path.relative_to(self.workspace)
+                relative_name = lexical.as_posix()
+                path = _resolve_path(
+                    self.workspace,
+                    relative_name,
+                    must_exist=True,
+                    protected_dirs=self.protected_dirs,
+                )
+            except (ValueError, ToolValidationError):
                 continue
             relative = path.relative_to(self.workspace)
-            if any(part in _SKIPPED_DIRECTORIES for part in relative.parts):
+            if any(part in _SKIPPED_DIRECTORIES for part in relative.parts) or not path.is_file():
                 continue
-            if _is_blocked_secret_file(relative.name):
-                continue
-            # glob 可能命中符号链接文件，读取前再次解析以阻止链接逃逸。
-            path = _resolve_path(self.workspace, relative.as_posix(), must_exist=True)
             try:
                 if path.stat().st_size > 1_000_000:
                     continue
@@ -357,7 +367,9 @@ class ReadFileTool(_WorkspaceTool):
         started = time.monotonic()
         args = self._validate_call(call, _ReadFileArgs)
         assert isinstance(args, _ReadFileArgs)
-        path = _resolve_path(self.workspace, args.path, must_exist=True)
+        path = _resolve_path(
+            self.workspace, args.path, must_exist=True, protected_dirs=self.protected_dirs
+        )
         if not path.is_file():
             raise ToolValidationError("read_file path must be a file")
         try:
@@ -424,7 +436,7 @@ class ApplyPatchTool(_WorkspaceTool):
     def __init__(
         self, workspace: Path, *, protected_dirs: set[str] | None = None, **kwargs: Any
     ) -> None:
-        super().__init__(workspace, **kwargs)
+        super().__init__(workspace, protected_dirs=protected_dirs, **kwargs)
         self.protected_dirs = protected_dirs if protected_dirs is not None else set()
 
     def execute(self, call: ToolCall) -> ToolResult:
@@ -506,7 +518,9 @@ class ApplyPatchTool(_WorkspaceTool):
         """Compare actual file identity and scoped Git state, not diff declarations."""
         files: dict[str, tuple | None] = {}
         for name in names:
-            path = _resolve_path(self.workspace, name)
+            path = _resolve_path(
+                self.workspace, name, protected_dirs=self.protected_dirs
+            )
             if path.is_file():
                 digest = hashlib.sha256(path.read_bytes()).hexdigest()
                 files[name] = ("file", path.stat().st_mode, digest)
@@ -565,7 +579,12 @@ class ApplyPatchTool(_WorkspaceTool):
                     context={"directive": directive},
                 )
             relative_name = directive.removeprefix("*** Update File: ").strip()
-            path = _resolve_path(self.workspace, relative_name, must_exist=True)
+            path = _resolve_path(
+                self.workspace,
+                relative_name,
+                must_exist=True,
+                protected_dirs=self.protected_dirs,
+            )
             if not path.is_file():
                 raise ToolValidationError(
                     "Update File target must be a regular file",
@@ -708,7 +727,9 @@ class ApplyPatchTool(_WorkspaceTool):
                 if token == "/dev/null":
                     continue
                 normalized = token[2:] if token.startswith(("a/", "b/")) else token
-                _resolve_path(self.workspace, normalized)
+                _resolve_path(
+                    self.workspace, normalized, protected_dirs=self.protected_dirs
+                )
                 if Path(normalized).parts and Path(normalized).parts[0] in self.protected_dirs:
                     raise ToolValidationError(
                         "patch targets a registered TraceFix internal directory"
@@ -786,7 +807,9 @@ class RunTestsTool(_WorkspaceTool):
         evidence_dir: Path | None = None,
         on_process_started: Callable[[], None] | None = None,
     ) -> None:
-        super().__init__(workspace, max_output_chars=max_output_chars)
+        super().__init__(
+            workspace, max_output_chars=max_output_chars, protected_dirs=protected_dirs
+        )
         if default_timeout_seconds <= 0:
             raise ValueError("default_timeout_seconds must be positive")
         self.default_timeout_seconds = default_timeout_seconds
@@ -802,20 +825,13 @@ class RunTestsTool(_WorkspaceTool):
         if any(not entry.is_dir() for entry in self.pythonpath_entries):
             raise ValueError("test PYTHONPATH entries must be existing directories")
         self.pytest_config = pytest_config
-        self.environment_variables = dict(environment_variables or {})
+        self.environment_variables = validate_project_environment(environment_variables or {})
         self.protected_dirs = protected_dirs if protected_dirs is not None else set()
         self.evidence_dir = evidence_dir or Path(tempfile.mkdtemp(prefix="tracefix-test-evidence-"))
         evidence_root = self.evidence_dir.resolve()
         if evidence_root == self.workspace or self.workspace in evidence_root.parents:
             raise ToolValidationError("test evidence directory must be outside the checkout")
         self.on_process_started = on_process_started
-        if any(
-            not name.isidentifier()
-            or name.upper().startswith("PYTEST_")
-            or any(marker in name.upper() for marker in ("API_KEY", "TOKEN", "PASSWORD", "SECRET"))
-            for name in self.environment_variables
-        ):
-            raise ValueError("test environment overrides cannot set pytest controls or credentials")
 
     def execute(self, call: ToolCall) -> ToolResult:
         """执行 pytest，并把失败和超时作为模型可以继续处理的结果返回。"""
@@ -852,6 +868,8 @@ class RunTestsTool(_WorkspaceTool):
             # 的 .git/info/exclude 隐藏副产物，不改变受测源码或共享 .gitignore。
             environment["TMP"] = str(test_tmp)
             environment["TEMP"] = str(test_tmp)
+            environment["TMPDIR"] = str(test_tmp)
+            environment["HOME"] = str(test_tmp)
             config_path = self._pytest_config_path(self.evidence_dir)
             audit_id = uuid4().hex
             audit_path = self.evidence_dir / f"agent-audit-{audit_id}.json"
@@ -871,6 +889,7 @@ class RunTestsTool(_WorkspaceTool):
                     "tracefix_agent_audit",
                     "-p",
                     "no:cacheprovider",
+                    "--basetemp=.tracefix-test-tmp",
                     f"--junitxml={junit_path}",
                 ]
             )
@@ -1029,9 +1048,21 @@ class RunTestsTool(_WorkspaceTool):
         """Reject invalid calls and checkout configuration before consuming test quota."""
         args = self._validate_call(call, _RunTestsArgs)
         assert isinstance(args, _RunTestsArgs)
-        command = self._parse_command(args.command, self.python_executable)
+        command, targets = self._parse_command_details(args.command, self.python_executable)
+        for target in targets:
+            self._validate_target_path(target)
         self._validate_pytest_config()
         return command, args.timeout_seconds or self.default_timeout_seconds
+
+    def _validate_target_path(self, target: str) -> None:
+        path_text = target.split("::", 1)[0]
+        try:
+            resolve_workspace_path(self.workspace, path_text)
+        except UnsafeWorkspacePath as exc:
+            raise ToolValidationError(
+                "pytest targets must stay inside the workspace",
+                context={"target": target, "reason": str(exc)},
+            ) from exc
 
     def _product_diff_sha(self) -> str:
         """Bind public test evidence to the product diff before and after pytest."""
@@ -1064,8 +1095,10 @@ class RunTestsTool(_WorkspaceTool):
                     raise ToolValidationError("pytest configuration escapes the checkout root")
 
     @staticmethod
-    def _parse_command(command: str, python_executable: str | None = None) -> list[str]:
-        """只接受 pytest 形态，并明确拒绝 Shell 控制语法。"""
+    def _parse_command_details(
+        command: str, python_executable: str | None = None
+    ) -> tuple[list[str], list[str]]:
+        """Parse a fixed pytest option allowlist and return argv plus file targets."""
         if not command.strip() or _SHELL_CONTROL_PATTERN.search(command):
             raise ToolValidationError("test command contains disallowed shell syntax")
         try:
@@ -1089,45 +1122,99 @@ class RunTestsTool(_WorkspaceTool):
                 "only pytest or python -m pytest commands are allowed",
                 context={"command": command},
             )
-        controlled_options = {
-            "-c",
-            "--confcutdir",
-            "--rootdir",
-            "-p",
-            "-o",
-            "--override-ini",
+        remaining = parts[3:] if module_pytest else parts[1:]
+        accepted_flags = {
+            "-q", "-qq", "--quiet", "-v", "-vv", "-vvv", "--verbose", "-x", "--exitfirst", "-s",
+            "-l", "--showlocals", "--full-trace", "--no-header", "--no-summary",
+            "--disable-warnings", "--strict-markers", "--strict-config",
+            "--continue-on-collection-errors", "--collect-only", "--co", "--version",
+            "-V", "--help", "-h", "-ra", "-rA", "-rN", "--trace-config",
         }
-        remaining = parts[1:]
+        value_options = {"-k", "-m", "--deselect", "--tb", "--color", "--capture", "--maxfail"}
+        safe_values = {
+            "--tb": {"auto", "long", "short", "line", "native", "no"},
+            "--color": {"yes", "no", "auto"},
+            "--capture": {"fd", "sys", "tee-sys", "no"},
+        }
+        parsed: list[str] = []
+        targets: list[str] = []
         index = 0
         while index < len(remaining):
             item = remaining[index]
-            # 允许仓库配方显式关闭唯一会写缓存的内置插件；其它插件开关均拒绝。
-            if item == "-p" and remaining[index : index + 2] == ["-p", "no:cacheprovider"]:
+            if item == "-p":
+                if remaining[index : index + 2] != ["-p", "no:cacheprovider"]:
+                    raise ToolValidationError(
+                        "pytest configuration and evidence options are managed by TraceFix"
+                    )
+                parsed.extend(remaining[index : index + 2])
                 index += 2
                 continue
-            if (
-                item in controlled_options
-                or item.startswith(
-                    (
-                        "--confcutdir=",
-                        "--rootdir=",
-                        "--override-ini=",
-                        "--junitxml=",
-                    )
-                )
-                or item.startswith("--junitxml")
-            ):
+            if item == "--basetemp":
+                if remaining[index : index + 2] != ["--basetemp", ".tracefix-test-tmp"]:
+                    raise ToolValidationError("only the TraceFix-owned pytest basetemp is allowed")
+                parsed.extend(remaining[index : index + 2])
+                index += 2
+                continue
+            if item.startswith("--basetemp="):
+                if item != "--basetemp=.tracefix-test-tmp":
+                    raise ToolValidationError("only the TraceFix-owned pytest basetemp is allowed")
+                parsed.append(item)
+                index += 1
+                continue
+            if item in value_options:
+                if index + 1 >= len(remaining) or remaining[index + 1].startswith("-"):
+                    raise ToolValidationError(f"pytest option {item} requires a safe value")
+                value = remaining[index + 1]
+                if item in safe_values and value not in safe_values[item]:
+                    raise ToolValidationError(f"unsupported value for pytest option {item}")
+                if item == "--maxfail" and (not value.isdecimal() or not 1 <= int(value) <= 100):
+                    raise ToolValidationError("--maxfail must be between 1 and 100")
+                parsed.extend((item, value))
+                index += 2
+                continue
+            if item in accepted_flags:
+                parsed.append(item)
+                index += 1
+                continue
+            if item.startswith("--"):
+                option, separator, value = item.partition("=")
+                if option in {"--deselect"} and separator and value and not value.startswith("-"):
+                    parsed.append(item)
+                    index += 1
+                    continue
+                if option in {"--maxfail", "--tb", "--color", "--capture"} and separator:
+                    if option == "--maxfail":
+                        if not value.isdecimal() or not 1 <= int(value) <= 100:
+                            raise ToolValidationError("--maxfail must be between 1 and 100")
+                    elif value not in safe_values[option]:
+                        raise ToolValidationError(f"unsupported value for pytest option {option}")
+                    parsed.append(item)
+                    index += 1
+                    continue
                 raise ToolValidationError(
-                    "pytest configuration and evidence options are managed by TraceFix"
+                    "pytest configuration and evidence options are managed by TraceFix",
+                    context={"option": item},
                 )
+            if item.startswith("-"):
+                raise ToolValidationError(
+                    "pytest configuration and evidence options are managed by TraceFix",
+                    context={"option": item},
+                )
+            targets.append(item)
+            parsed.append(item)
             index += 1
         # 裸 pytest 入口不会在所有平台都把 cwd 加入 sys.path；统一到当前解释器。
         selected_python = python_executable or sys.executable
         if direct_pytest:
-            return [selected_python, "-m", "pytest", *parts[1:]]
+            return [selected_python, "-m", "pytest", *parsed], targets
         # 即使模型写了 python/python3/py，也统一替换为任务配置的解释器，确保
         # 同一实验组不会因 PATH 差异悄悄切换测试环境。
-        return [selected_python, *parts[1:]]
+        return [selected_python, "-m", "pytest", *parsed], targets
+
+    @staticmethod
+    def _parse_command(command: str, python_executable: str | None = None) -> list[str]:
+        """Compatibility entry point retained for regression and replay callers."""
+        return RunTestsTool._parse_command_details(command, python_executable)[0]
 
     def _pytest_config_path(self, temporary: Path) -> Path:
         """Resolve an explicit checkout config, or make a private empty config."""
@@ -1284,50 +1371,55 @@ class GetGitDiffTool(_WorkspaceTool):
         assert isinstance(args, _GetGitDiffArgs)
 
         excludes = [f":(exclude){name}/" for name in sorted(self.protected_dirs)]
-        tracked = self._run_git(
-            [
-                "diff",
-                "--no-ext-diff",
-                f"--unified={args.context_lines}",
-                "HEAD",
-                "--",
-                ".",
-                *excludes,
-            ]
+        names = self._run_git(
+            ["diff", "--name-only", "-z", "HEAD", "--", ".", *excludes]
         )
-        if tracked.returncode != 0:
-            return self._git_failure(call, tracked, started)
-
-        names = self._run_git(["diff", "--name-only", "HEAD", "--", ".", *excludes])
         untracked = self._run_git(["ls-files", "--others", "--exclude-standard", "-z"])
         if names.returncode != 0 or untracked.returncode != 0:
             return self._git_failure(call, names if names.returncode else untracked, started)
 
-        changed_files = [line for line in names.stdout.splitlines() if line]
-        untracked_files = sorted(
-            path
-            for path in untracked.stdout.split("\0")
-            if path and Path(path).parts[0] not in self.protected_dirs
-        )
-        patches = [tracked.stdout]
-        for relative in untracked_files:
-            _resolve_path(self.workspace, relative, must_exist=True)
-            generated = self._run_git(
-                [
-                    "diff",
-                    "--no-index",
-                    "--no-ext-diff",
-                    f"--unified={args.context_lines}",
-                    "--",
-                    os.devnull,
+        tracked_files = [path for path in names.stdout.split("\0") if path]
+        untracked_files = [path for path in untracked.stdout.split("\0") if path]
+        candidates = sorted(set(tracked_files + untracked_files))
+        safe_files: list[tuple[str, bool]] = []
+        for relative in candidates:
+            is_untracked = relative in untracked_files
+            try:
+                _resolve_path(
+                    self.workspace,
                     relative,
-                ]
-            )
-            # git diff --no-index 用退出码 1 表示“确实存在差异”。
-            if generated.returncode not in {0, 1}:
-                return self._git_failure(call, generated, started)
-            patches.append(generated.stdout)
-            changed_files.append(relative)
+                    must_exist=is_untracked,
+                    protected_dirs=self.protected_dirs,
+                )
+            except ToolValidationError:
+                continue
+            safe_files.append((relative, is_untracked))
+
+        patches: list[str] = []
+        changed_files: list[str] = []
+        for relative, is_untracked in safe_files:
+            if is_untracked:
+                generated = self._run_git(
+                    [
+                        "diff", "--no-index", "--no-ext-diff",
+                        f"--unified={args.context_lines}", "--", os.devnull, relative,
+                    ]
+                )
+                # git diff --no-index 用退出码 1 表示“确实存在差异”。
+                if generated.returncode not in {0, 1}:
+                    return self._git_failure(call, generated, started)
+            else:
+                generated = self._run_git(
+                    [
+                        "diff", "--no-ext-diff", f"--unified={args.context_lines}",
+                        "HEAD", "--", f":(literal){relative}",
+                    ]
+                )
+                if generated.returncode != 0:
+                    return self._git_failure(call, generated, started)
+            if generated.stdout:
+                patches.append(generated.stdout)
+                changed_files.append(relative)
 
         full_diff = "".join(patches)
         shown_diff, truncated = _truncate_text(full_diff, self.max_output_chars)
@@ -1400,8 +1492,8 @@ def create_default_tool_registry(
     root = _resolve_workspace(workspace)
     internal = protected_dirs if protected_dirs is not None else set()
     tools = [
-            SearchCodeTool(root, max_output_chars=max_output_chars),
-            ReadFileTool(root, max_output_chars=max_output_chars),
+            SearchCodeTool(root, max_output_chars=max_output_chars, protected_dirs=internal),
+            ReadFileTool(root, max_output_chars=max_output_chars, protected_dirs=internal),
             ApplyPatchTool(root, max_output_chars=max_output_chars, protected_dirs=internal),
             RunTestsTool(
                 root,

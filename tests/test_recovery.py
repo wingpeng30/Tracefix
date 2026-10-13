@@ -63,7 +63,7 @@ def test_resume_after_completed_tool_batch(tmp_path: Path, monkeypatch) -> None:
     first = runner.run(RunConfig(
         repo=source, task="修复分页测试", model_name="offline/replay",
         output_dir=tmp_path / "runs", env_file=None,
-        test_python_executable=Path(sys.executable),
+        test_python_executable=Path(sys.executable), execution_backend="local",
         test_target="tests/test_widget.py", source_import="widget",
     ))
     assert first.status.value == "interrupted"
@@ -125,12 +125,13 @@ def test_resume_after_completed_tool_batch(tmp_path: Path, monkeypatch) -> None:
     assert second.step_count == 6
     assert second.test_runs == 2
     assert client.calls == 6
-    assert any(
-        message.get("role") == "system"
-        and "TraceFix 已核验任务事实" in str(message.get("content"))
-        and '"valid": true' in str(message.get("content"))
+    facts = [
+        json.loads(str(message.get("content")))["fact"]
         for message in client.requests[-1]["messages"]
-    )
+        if message.get("role") == "user"
+        and "TraceFix tool evidence" in str(message.get("content"))
+    ]
+    assert any(fact["latest_test"]["valid"] is True for fact in facts)
     assert "return page + 1" in Path(second.diff_path).read_text(encoding="utf-8")
     independent = verify_patch(run_dir)
     assert independent["passed"] is True

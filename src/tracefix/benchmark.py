@@ -392,6 +392,7 @@ class BenchmarkRunner:
                     repo=source,
                     task=task.description,
                     model_name=config.model_name,
+                    execution_backend="local",
                     output_dir=run_output_dir,
                     env_file=config.env_file,
                     usd_cny_rate=config.usd_cny_rate,

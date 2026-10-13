@@ -104,8 +104,8 @@ def _number_or_default(
     cli_value: int | float | None,
     env_name: str,
     converter: type[int] | type[float],
-    default: int | float,
-) -> int | float:
+    default: int | float | None,
+) -> int | float | None:
     """合并数值参数，同时保留显式的 0 供 Pydantic 报告越界错误。"""
     if cli_value is not None:
         return cli_value
@@ -174,10 +174,21 @@ def _add_shared_options(parser: argparse.ArgumentParser) -> None:
         help="关闭工具结果裁剪和历史折叠，用于运行未压缩对照组",
     )
     parser.add_argument(
+        "--context-agent-tool",
+        dest="context_agent_tool_enabled",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="允许 Agent 调用 compact_context 主动请求压缩",
+    )
+    parser.add_argument(
         "--context-window-tokens", type=int, help="模型单次请求的估算上限；不保证供应商硬边界"
     )
     parser.add_argument("--context-trigger-tokens", type=int, help="历史折叠软阈值")
     parser.add_argument("--context-retain-ratio", type=float, help="折叠后保留近期轮次的比例")
+    parser.add_argument("--context-trigger-ratio", type=float, help="按有效输入容量触发折叠的比例")
+    parser.add_argument("--context-target-ratio", type=float, help="折叠后的有效输入目标比例")
+    parser.add_argument("--context-output-reserve-tokens", type=int,
+                        help="上下文窗口中为模型输出预留的 Token")
     parser.add_argument(
         "--record-request-views",
         action="store_true",
@@ -229,9 +240,12 @@ def build_parser() -> argparse.ArgumentParser:
     continue_parser = subparsers.add_parser("continue", help="向连续会话追加一轮消息")
     continue_parser.add_argument("--run", type=Path, required=True)
     continue_parser.add_argument("--message", required=True)
+    context_parser = subparsers.add_parser("context", help="检查或主动压缩已保存的上下文")
+    context_parser.add_argument("operation", choices=("inspect", "compact"))
+    context_parser.add_argument("--run", type=Path, required=True)
 
     run_parser = subparsers.add_parser("run", help="运行一个仓库修复任务")
-    run_parser.add_argument("--config", type=Path, help="普通本地运行的 TOML 配置")
+    run_parser.add_argument("--config", type=Path, help="普通 Docker 运行的 TOML 配置")
     run_parser.add_argument("--repo", type=Path, help="干净的本地 Git 仓库")
     run_parser.add_argument("--test-target", help="pytest 相对测试路径或 node ID")
     run_parser.add_argument(
@@ -794,13 +808,28 @@ def _resolve_shared(args: argparse.Namespace, *, real_issue_budget: bool = False
                     args.context_trigger_tokens,
                     "TRACEFIX_CONTEXT_TRIGGER_TOKENS",
                     int,
-                    32_000,
+                    None,
                 ),
                 retain_ratio=_number_or_default(
                     args.context_retain_ratio,
                     "TRACEFIX_CONTEXT_RETAIN_RATIO",
                     float,
-                    0.375,
+                    None,
+                ),
+                compaction_trigger_ratio=_number_or_default(
+                    args.context_trigger_ratio, "TRACEFIX_CONTEXT_TRIGGER_RATIO", float, 0.8,
+                ),
+                compaction_target_ratio=_number_or_default(
+                    args.context_target_ratio, "TRACEFIX_CONTEXT_TARGET_RATIO", float, 0.6,
+                ),
+                output_reserve_tokens=_number_or_default(
+                    args.context_output_reserve_tokens,
+                    "TRACEFIX_CONTEXT_OUTPUT_RESERVE_TOKENS", int, 4_096,
+                ),
+                agent_tool_enabled=(
+                    args.context_agent_tool_enabled
+                    if args.context_agent_tool_enabled is not None
+                    else _env_bool("TRACEFIX_CONTEXT_AGENT_TOOL_ENABLED", False)
                 ),
             ),
             repo_map=RepoMapConfig(
@@ -844,10 +873,17 @@ def _print_run_result(result: Any) -> None:
     context_metrics = result.context_metrics
     print(
         "上下文: "
-        f"折叠 {context_metrics.compaction_count} 次 / "
+        f"压缩代次 {context_metrics.compaction_count} 次 / "
+        f"投影复用 {context_metrics.projection_reuses} 次 / "
+        f"无操作 {context_metrics.compaction_no_ops} 次 / "
         f"裁剪工具结果 {context_metrics.tool_results_pruned} 次 / "
+        f"唯一裁剪结果 {context_metrics.unique_pruned_results} 条 / "
         f"估算节省 {context_metrics.estimated_tokens_saved} Token"
     )
+    if context_metrics.count_method_counts:
+        print(f"上下文计数方式: {context_metrics.count_method_counts}")
+    if context_metrics.tokenizer_identity:
+        print(f"上下文 tokenizer 身份: {context_metrics.tokenizer_identity}")
     presentation = getattr(result, "presentation_metrics", None)
     if presentation is not None:
         print(
@@ -916,7 +952,9 @@ def _ordinary_settings(args: argparse.Namespace) -> dict[str, Any]:
             "execution_backend", "docker_profile", "docker_image_id",
             "max_steps", "max_input_tokens", "max_output_tokens", "wall_time_seconds",
             "max_test_runs", "context_window_tokens", "context_trigger_tokens",
-            "context_retain_ratio", "record_request_views", "no_context_compaction",
+            "context_retain_ratio", "context_trigger_ratio", "context_target_ratio",
+            "context_output_reserve_tokens", "context_agent_tool_enabled",
+            "record_request_views", "no_context_compaction",
             "skills", "skills_max_active", "skills_max_bytes",
             "skills_max_reference_bytes", "skills_max_total_bytes",
             "llm_timeout_seconds", "llm_max_retries", "per_request_output_tokens",
@@ -1023,6 +1061,9 @@ def _chat_loop(runner: TraceFixRunner, run_dir: Path) -> int:
             return 0
         if message.strip() in {":exit", ":quit"}:
             return 0
+        if message.strip() == "/compact":
+            _print_json(runner.compact_context(run_dir))
+            continue
         if not message.strip():
             continue
         result = (runner.resume(run_dir) if message.strip() == ":resume"
@@ -1072,6 +1113,12 @@ def main(argv: list[str] | None = None) -> int:
             result = TraceFixRunner().continue_turn(args.run, args.message)
             _print_run_result(result)
             return 0 if result.status is AgentStatus.COMPLETED else 2
+        if args.command == "context":
+            runner = TraceFixRunner()
+            outcome = (runner.inspect_context(args.run) if args.operation == "inspect"
+                       else runner.compact_context(args.run))
+            _print_json(outcome)
+            return 0
         if args.command == "chat" and args.run is not None:
             return _chat_loop(TraceFixRunner(), args.run)
         if args.command == "resume":
@@ -1469,6 +1516,7 @@ def main(argv: list[str] | None = None) -> int:
                 env_name = {
                     "skills": "TRACEFIX_SKILLS_ENABLED",
                     "no_context_compaction": "TRACEFIX_CONTEXT_ENABLED",
+                    "context_agent_tool_enabled": "TRACEFIX_CONTEXT_AGENT_TOOL_ENABLED",
                 }.get(field, "TRACEFIX_" + field.upper())
                 if getattr(args, field) is None and os.getenv(env_name) is None:
                     setattr(args, field, value)
@@ -1501,8 +1549,11 @@ def main(argv: list[str] | None = None) -> int:
             )
             shared.update(
                 {
-                    "execution_backend": settings["execution_backend"] or "local",
-                    "docker_profile": settings["docker_profile"] or "frozen",
+                    "execution_backend": settings["execution_backend"] or "docker",
+                    "docker_profile": settings["docker_profile"] or (
+                        "ordinary" if (settings["execution_backend"] or "docker") == "docker"
+                        else "frozen"
+                    ),
                     "docker_image_id": settings["docker_image_id"],
                     "docker_recovery_enabled": settings["docker_recovery_enabled"] or False,
                     "memory_enabled": settings["memory_enabled"] or False,
@@ -1511,8 +1562,8 @@ def main(argv: list[str] | None = None) -> int:
                     or settings["conversation_enabled"] or False,
                     "docker_task_id": args.docker_task_id,
                     "docker_input_root": args.docker_input_root
-                    if settings["execution_backend"] == "docker"
-                    and settings["docker_profile"] != "ordinary"
+                    if (settings["execution_backend"] or "docker") == "docker"
+                    and (settings["docker_profile"] or "ordinary") != "ordinary"
                     else None,
                 }
             )

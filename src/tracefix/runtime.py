@@ -27,7 +27,7 @@ from tracefix.agent import (
     ToolPresentationMetrics,
 )
 from tracefix.checkpoint import CheckpointError, CheckpointStore, ProcessLock
-from tracefix.context import ContextMetrics
+from tracefix.context import ContextManager, ContextMetrics, ContextSessionState
 from tracefix.docker_backend import DockerToolBackend
 from tracefix.exceptions import (
     RunConfigurationError,
@@ -46,6 +46,14 @@ from tracefix.provenance import (
 )
 from tracefix.real_recipes import EnvironmentRecipe
 from tracefix.repository import RepoMap, RepositoryIndexer
+from tracefix.security import (
+    SECURITY_POLICY_VERSION,
+    UnsafeWorkspacePath,
+    minimal_subprocess_environment,
+    pytest_target_path,
+    resolve_workspace_path,
+    validate_project_environment,
+)
 from tracefix.tools import GetGitDiffTool, create_default_tool_registry
 from tracefix.tools.builtin import RunTestsTool
 from tracefix.tracing import JSONLTraceSink, TraceEvent, TraceEventType
@@ -133,12 +141,22 @@ class RunConfig(BaseModel):
     mcp_serena_image_id: str | None = None
     environment_recipe: EnvironmentRecipe | None = None
     test_environment_variables: dict[str, str] = Field(default_factory=dict)
-    execution_backend: Literal["local", "docker"] = "local"
+    execution_backend: Literal["local", "docker"] = "docker"
     docker_task_id: str | None = None
     docker_input_root: Path | None = None
-    docker_profile: Literal["frozen", "synthetic", "ordinary"] = "frozen"
+    docker_profile: Literal["frozen", "synthetic", "ordinary"] = "ordinary"
     docker_image_id: str | None = None
     agent_config: AgentConfig = Field(default_factory=AgentConfig)
+
+    @model_validator(mode="before")
+    @classmethod
+    def default_profile_for_backend(cls, values: Any) -> Any:
+        if isinstance(values, dict):
+            updated = dict(values)
+            if updated.get("execution_backend") == "local" and "docker_profile" not in updated:
+                updated["docker_profile"] = "frozen"
+            return updated
+        return values
 
     @model_validator(mode="after")
     def normalize_text(self) -> RunConfig:
@@ -155,15 +173,10 @@ class RunConfig(BaseModel):
         ):
             raise ValueError("source_import must be a dotted Python module name")
         if self.test_target is not None:
-            target_path = Path(self.test_target.split("::", 1)[0])
-            if (
-                not str(target_path).strip()
-                or target_path.is_absolute()
-                or ".." in target_path.parts
-                or "\n" in self.test_target
-                or "\r" in self.test_target
-            ):
-                raise ValueError("test_target must be a relative pytest path or node ID")
+            try:
+                pytest_target_path(self.test_target)
+            except ValueError as exc:
+                raise ValueError(f"test_target is invalid: {exc}") from exc
         if len(set(self.regression_targets)) != len(self.regression_targets):
             raise ValueError("regression_targets must not contain duplicates")
         if self.test_target in self.regression_targets:
@@ -175,22 +188,17 @@ class RunConfig(BaseModel):
                 "regression_targets require a local backend, test target, and source import"
             )
         for target in self.regression_targets:
-            target_path = Path(target.split("::", 1)[0])
-            if (
-                not target_path.parts or target_path.is_absolute()
-                or ".." in target_path.parts or "\n" in target or "\r" in target
-                or target.startswith("-") or "\x00" in target
-            ):
-                raise ValueError("regression target must be a relative pytest path or node ID")
+            try:
+                pytest_target_path(target)
+            except ValueError as exc:
+                raise ValueError(
+                    f"regression_targets must contain a relative pytest path or node ID: {exc}"
+                ) from exc
         if self.execution_backend == "docker" and self.docker_profile != "ordinary" and (
             not self.docker_task_id or not self.docker_input_root
         ):
             raise ValueError("Docker execution requires a task ID and input root")
         if self.execution_backend == "docker" and self.docker_profile == "ordinary":
-            if not self.docker_image_id or not self.test_target or not self.source_import:
-                raise ValueError(
-                    "ordinary Docker requires an immutable image ID, test target, and source import"
-                )
             if self.docker_task_id not in (None, "tracefix-ordinary"):
                 raise ValueError("ordinary Docker does not accept a frozen task ID")
             if self.docker_input_root is not None:
@@ -217,7 +225,22 @@ class RunConfig(BaseModel):
             raise ValueError("synthetic Docker execution requires a frozen image ID")
         if self.docker_profile == "frozen" and self.docker_image_id is not None:
             raise ValueError("frozen pilot image identities cannot be overridden")
+        validate_project_environment(self.test_environment_variables)
+        if self.environment_recipe is not None:
+            validate_project_environment(self.environment_recipe.environment_variables)
         return self
+
+
+def _saved_run_config(value: Any) -> RunConfig:
+    """Keep manifests written before Docker became the new-run default local."""
+    if not isinstance(value, dict):
+        raise ValueError("saved run configuration must be an object")
+    saved = dict(value)
+    if "execution_backend" not in saved:
+        saved["execution_backend"] = "local"
+    if saved.get("execution_backend") == "local" and "docker_profile" not in saved:
+        saved["docker_profile"] = "frozen"
+    return RunConfig.model_validate(saved)
 
 
 class RunResult(BaseModel):
@@ -271,6 +294,8 @@ class RunResult(BaseModel):
     repo_map_path: str | None = None
     provenance: RunProvenance
     workspace_preparation: dict[str, JsonValue] = Field(default_factory=dict)
+    security_policy_version: str = SECURITY_POLICY_VERSION
+    execution_backend: Literal["local", "docker"] = "local"
     error: dict[str, JsonValue] | None = None
 
     @model_validator(mode="after")
@@ -412,7 +437,7 @@ class TraceFixRunner:
             return {"resumable": False, "reasons": ["session manifest is missing"]}
         try:
             manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-            config = RunConfig.model_validate(manifest["config"])
+            config = _saved_run_config(manifest["config"])
             if config.execution_backend == "docker":
                 from tracefix.docker_recovery import inspect_session
 
@@ -592,6 +617,8 @@ class TraceFixRunner:
                         if event.get("event_type") not in {
                             TraceEventType.AGENT_STATE_CHANGED.value,
                             TraceEventType.TASK_FINISHED.value,
+                            TraceEventType.CONTEXT_PREPARED.value,
+                            TraceEventType.CONTEXT_COMPACTED.value,
                         }:
                             reasons.append("uncommitted model or tool outcome after checkpoint")
                             break
@@ -675,6 +702,210 @@ class TraceFixRunner:
     def resume(self, run_dir: Path) -> RunResult:
         return self._continue_existing(run_dir)
 
+    @classmethod
+    def inspect_context(cls, run_dir: Path) -> dict[str, Any]:
+        """Read a saved context projection without constructing a model or container."""
+        root = run_dir.expanduser().resolve()
+        manifest = cls._read_context_manifest(root)
+        store = CheckpointStore(root, manifest["identity"])
+        inspected = store.inspect(current_identity=manifest["identity"])
+        if not inspected.resumable:
+            raise CheckpointError("context checkpoint is not readable", context={
+                "reasons": list(inspected.reasons),
+            })
+        snapshot = store.load(current_identity=manifest["identity"])
+        agent_payload = snapshot.payload.get("agent")
+        if not isinstance(agent_payload, dict):
+            raise CheckpointError("checkpoint agent payload is missing")
+        memory = agent_payload.get("memory")
+        if not isinstance(memory, dict) or "_context_session_state" not in memory:
+            raise CheckpointError("checkpoint has no saved context session state")
+        state = ContextSessionState.model_validate(memory["_context_session_state"])
+        config = _saved_run_config(manifest["config"])
+        tools = state.tool_specs or ()
+        projection = state.projection or tuple(
+            Message.model_validate(item) for item in agent_payload.get("history", [])
+        )
+        manager = ContextManager(config.agent_config.context)
+        counter = cls._saved_context_counter(config.model_name)
+        count = counter(projection, tools) if counter is not None else None
+        count_method = "tracefix-json-estimate"
+        tokenizer_identity = state.tokenizer_identity
+        tokens = None
+        if count is not None and getattr(count, "tokens", None) is not None:
+            status = getattr(count, "status", "unavailable")
+            current_identity = getattr(count, "identity", None)
+            if status in {"estimate", "verified_upper_bound", "verified_exact"}:
+                if (state.tokenizer_identity is not None
+                        and current_identity != state.tokenizer_identity):
+                    raise CheckpointError(
+                        "context inspection tokenizer identity differs from checkpoint",
+                        context={"saved": state.tokenizer_identity,
+                                 "current": current_identity},
+                    )
+                tokens = count.tokens
+                count_method = count.method
+                tokenizer_identity = current_identity
+            elif (state.tokenizer_identity is not None
+                    and current_identity in {
+                        "ValueError", "OSError", "FileNotFoundError", "ImportError",
+                        "ModuleNotFoundError", "AttributeError", "RuntimeError",
+                        "official tokenizer not configured",
+                    }):
+                raise CheckpointError(
+                    "context inspection could not verify the pinned tokenizer identity",
+                    context={"saved": state.tokenizer_identity,
+                             "current": current_identity},
+                )
+        if tokens is None:
+            tokens = manager.estimate_tokens(projection, tools)
+            if counter is not None:
+                count_method = "tracefix-json-estimate-fallback"
+        reserve = config.agent_config.context.output_reserve_for_request(
+            config.per_request_output_tokens
+        )
+        context_config = config.agent_config.context
+        return {
+            "run": str(root), "checkpoint_sequence": snapshot.sequence,
+            "projection_epoch": state.epoch, "history_watermark": state.history_watermark,
+            "projection_messages": len(projection), "tool_schema_count": len(tools),
+            "estimated_tokens": tokens, "count_method": count_method,
+            "tokenizer_identity": tokenizer_identity,
+            "input_capacity": context_config.available_input_tokens(reserve),
+            "trigger_tokens": context_config.trigger_tokens(reserve),
+            "target_tokens": context_config.target_tokens(reserve),
+            "projection_sha256": ContextManager._digest(projection),
+            "history_sha256": state.history_sha256,
+        }
+
+    def compact_context(self, run_dir: Path) -> dict[str, Any]:
+        """Commit deterministic compaction while the session is safely paused."""
+        root = run_dir.expanduser().resolve()
+        with ProcessLock(root):
+            qualification = self.inspect(root)
+            if not (qualification.get("resumable") or qualification.get("continuable")):
+                raise CheckpointError("context compaction requires a safe paused session", context={
+                    "reasons": qualification.get("reasons", []),
+                    "continue_reasons": qualification.get("continue_reasons", []),
+                })
+            manifest = self._read_context_manifest(root)
+            config = _saved_run_config(manifest["config"])
+            store = CheckpointStore(root, manifest["identity"])
+            snapshot = store.load(current_identity=manifest["identity"])
+            payload = json.loads(json.dumps(snapshot.payload, ensure_ascii=False))
+            agent_payload = payload.get("agent")
+            if not isinstance(agent_payload, dict):
+                raise CheckpointError("checkpoint agent payload is missing")
+            history = MessageHistory(
+                Message.model_validate(item) for item in agent_payload.get("history", [])
+            )
+            if history.pending_tool_call_ids:
+                raise CheckpointError("context compaction is blocked by pending tool calls")
+            memory = agent_payload.get("memory")
+            if not isinstance(memory, dict) or "_context_session_state" not in memory:
+                raise CheckpointError("checkpoint has no saved context session state")
+            context_state = ContextSessionState.model_validate(memory["_context_session_state"])
+            if not context_state.tool_specs:
+                raise CheckpointError("tool schemas have not yet been captured by a model request")
+            manager = ContextManager(config.agent_config.context)
+            reserve = config.agent_config.context.output_reserve_for_request(
+                config.per_request_output_tokens
+            )
+            view = manager.prepare(
+                history.snapshot(), context_state.tool_specs, state=context_state, force=True,
+                output_reserve_tokens=reserve,
+                token_counter=self._saved_context_counter(config.model_name),
+            )
+            memory["_context_session_state"] = context_state.model_dump(mode="json")
+            metrics = ContextMetrics.model_validate(
+                agent_payload["state"].get("context_metrics", {})
+            )
+            metrics.add_view(view)
+            agent_payload["state"]["context_metrics"] = metrics.model_dump(mode="json")
+            event_payload = {
+                "estimated_tokens_before": view.estimated_tokens_before,
+                "estimated_tokens_after": view.estimated_tokens_after,
+                "original_message_count": view.original_message_count,
+                "request_message_count": view.request_message_count,
+                "tool_results_pruned": view.tool_results_pruned,
+                "messages_compacted": view.messages_compacted,
+                "batches_compacted": view.batches_compacted,
+                "compacted": view.compacted,
+                "projection_reused": view.projection_reused,
+                "compaction_no_op": view.compaction_no_op,
+                "count_method": view.count_method,
+                "projection_epoch": context_state.epoch,
+                "compaction_target_tokens": view.compaction_target_tokens,
+                "compaction_target_met": view.compaction_target_met,
+                "compaction_target_reason": view.compaction_target_reason,
+            }
+            task_id = agent_payload.get("task_id")
+            step = int(agent_payload["state"].get("step_count", 0))
+            events = [TraceEvent(
+                event_type=TraceEventType.CONTEXT_PREPARED, task_id=task_id, step=step,
+                payload=event_payload,
+            )]
+            if view.compacted or view.compaction_no_op:
+                events.append(TraceEvent(
+                    event_type=TraceEventType.CONTEXT_COMPACTED, task_id=task_id, step=step,
+                    payload={**event_payload, "reason": "user_requested"},
+                ))
+            trace_path = root / "trajectory.jsonl"
+            with trace_path.open("a", encoding="utf-8", newline="\n") as stream:
+                for event in events:
+                    stream.write(event.model_dump_json() + "\n")
+                stream.flush()
+                os.fsync(stream.fileno())
+            trace = trace_path.read_bytes()
+            payload["trace_size"] = len(trace)
+            payload["trace_sha256"] = hashlib.sha256(trace).hexdigest()
+            store.update_payload(payload, expected_sequence=snapshot.sequence)
+            result_path = root / "result.json"
+            if result_path.is_file():
+                result_payload = json.loads(result_path.read_text(encoding="utf-8"))
+                result_payload["context_metrics"] = metrics.model_dump(mode="json")
+                result_path.write_text(
+                    json.dumps(result_payload, ensure_ascii=False, indent=2), encoding="utf-8"
+                )
+            return self.inspect_context(root) | {
+                "compacted": view.compacted, "no_op": view.compaction_no_op,
+                "estimated_tokens_before": view.estimated_tokens_before,
+                "estimated_tokens_after": view.estimated_tokens_after,
+                "count_method": view.count_method,
+                "target_met": view.compaction_target_met,
+            }
+
+    @staticmethod
+    def _read_context_manifest(root: Path) -> dict[str, Any]:
+        manifest_path = root / "session.json"
+        if not manifest_path.is_file():
+            raise CheckpointError("session manifest is missing")
+        try:
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            _saved_run_config(manifest["config"])
+            if not isinstance(manifest.get("identity"), dict):
+                raise ValueError("run identity is missing")
+            return manifest
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            raise CheckpointError(f"invalid session manifest: {exc}") from exc
+
+    @staticmethod
+    def _saved_context_counter(model_name: str):
+        if model_name.casefold() not in {"deepseek/deepseek-flash", "deepseek-flash"}:
+            return None
+
+        def count(messages, tools):
+            from tracefix.models.input_bounds import count_deepseek_v41_request
+
+            body = {
+                "model": "deepseek-flash", "thinking": {"type": "disabled"},
+                "messages": [LiteLLMAdapter._format_message(message) for message in messages],
+                "tools": [tool.to_openai_tool() for tool in tools],
+            }
+            return count_deepseek_v41_request(body)
+
+        return count
+
     def continue_turn(self, run_dir: Path, message: str) -> RunResult:
         """Append an explicit user instruction at a committed continuous-session boundary."""
         if not message.strip():
@@ -695,7 +926,7 @@ class TraceFixRunner:
                     context={"reasons": inspection["reasons"]},
                 )
             manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-            config = RunConfig.model_validate(manifest["config"])
+            config = _saved_run_config(manifest["config"])
             if config.execution_backend != "local":
                 return self._resume_docker_locked(root, manifest, config, message=message)
             store = CheckpointStore(root, manifest["identity"])
@@ -827,8 +1058,13 @@ class TraceFixRunner:
                 except KeyboardInterrupt:
                     state = agent.state
                 finally:
-                    if mcp_manager is not None:
-                        mcp_manager.close()
+                    try:
+                        close_llm = getattr(agent.llm, "close", None)
+                        if close_llm is not None:
+                            close_llm()
+                    finally:
+                        if mcp_manager is not None:
+                            mcp_manager.close()
             patch, changed_files = self._collect_diff(workspace, protected_dirs)
             diff_path = root / "patch.diff"
             diff_path.write_text(patch, encoding="utf-8")
@@ -883,6 +1119,8 @@ class TraceFixRunner:
                 repo_map_path=str(repo_map_path) if repo_map else None,
                 provenance=provenance,
                 workspace_preparation=manifest["workspace_preparation"],
+                security_policy_version=SECURITY_POLICY_VERSION,
+                execution_backend=config.execution_backend,
             )
             result_path.write_text(result.model_dump_json(indent=2), encoding="utf-8")
             if config.conversation_enabled:
@@ -959,6 +1197,10 @@ class TraceFixRunner:
                     state = agent.resume(saved.payload["agent"], message=message)
                 except KeyboardInterrupt:
                     state = agent.state
+                finally:
+                    close_llm = getattr(agent.llm, "close", None)
+                    if close_llm is not None:
+                        close_llm()
             diff = backend.session.call("get_git_diff", {"context_lines": 3})
             if not diff.success or diff.output.get("truncated"):
                 raise WorkspaceError("could not export complete resumed Docker diff")
@@ -1013,6 +1255,72 @@ class TraceFixRunner:
                 })
                 raise
 
+    @staticmethod
+    def _preflight_execution(config: RunConfig, source: Path) -> None:
+        """Check Docker and ordinary-task inputs before credentials or model setup."""
+        if config.execution_backend != "docker":
+            return
+        if config.docker_profile == "ordinary":
+            if not config.docker_image_id:
+                raise RunConfigurationError(
+                    "ordinary Docker requires a prebuilt image ID; run docker-prepare first"
+                )
+            if not config.test_target or not config.source_import:
+                raise RunConfigurationError(
+                    "ordinary Docker requires test_target and source_import before a model run"
+                )
+            try:
+                target = pytest_target_path(config.test_target)
+                resolve_workspace_path(source, target, must_exist=True)
+            except (ValueError, UnsafeWorkspacePath) as exc:
+                raise RunConfigurationError(
+                    "ordinary Docker test_target must be an existing safe repository path",
+                    context={"test_target": config.test_target, "reason": str(exc)},
+                ) from exc
+        docker = os.environ.get("DOCKER", "docker")
+        try:
+            server = subprocess.run(
+                [docker, "version", "--format", "{{.Server.Version}}"],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=15,
+                check=False,
+            )
+        except (OSError, subprocess.SubprocessError) as exc:
+            raise RunConfigurationError(
+                "Docker is unavailable; no local fallback was attempted",
+                context={"reason": str(exc)},
+            ) from exc
+        if server.returncode != 0 or not server.stdout.strip():
+            raise RunConfigurationError(
+                "Docker daemon is unavailable; start Docker Desktop or choose local explicitly",
+                context={"stderr": server.stderr.strip()[-1_000:]},
+            )
+        if config.docker_profile in {"ordinary", "synthetic"}:
+            image_id = config.docker_image_id
+        else:
+            from tracefix.docker_backend import FROZEN_DOCKER_IMAGES
+
+            image_id = FROZEN_DOCKER_IMAGES.get(config.docker_task_id or "")
+        if not image_id:
+            raise RunConfigurationError("Docker image identity is not configured")
+        inspected = subprocess.run(
+            [docker, "image", "inspect", image_id, "--format", "{{.Id}}"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=15,
+            check=False,
+        )
+        if inspected.returncode != 0 or inspected.stdout.strip() != image_id:
+            raise RunConfigurationError(
+                "configured Docker image is unavailable locally; no pull or build was attempted",
+                context={"image_id": image_id, "stderr": inspected.stderr.strip()[-1_000:]},
+            )
+
     def run(self, config: RunConfig) -> RunResult:
         """执行任务并保证成功、预算终止或异常时都保存结构化结果。"""
         source_path = config.repo.expanduser().resolve()
@@ -1053,6 +1361,7 @@ class TraceFixRunner:
         internal_artifacts: set[str] = set()
         sink: JSONLTraceSink | None = None
         agent: MinimalAgent | None = None
+        llm: BaseLLM | None = None
         repository_map: RepoMap | None = None
         repository_index_seconds = 0.0
         llm_config = LLMConfig(
@@ -1067,6 +1376,9 @@ class TraceFixRunner:
 
         try:
             sink = JSONLTraceSink(trace_path)
+            source, source_commit = self._validate_source_repository(config.repo)
+            self._preflight_execution(config, source)
+            source_repo = str(source)
             load_environment_file(config.env_file)
             llm_config = llm_config.model_copy(
                 update={"extra_kwargs": self._provider_kwargs(config.model_name)}
@@ -1092,12 +1404,14 @@ class TraceFixRunner:
                     event_type=TraceEventType.RUN_PROVENANCE,
                     task_id=run_id,
                     step=0,
-                    payload={"provenance": provenance.model_dump(mode="json")},
+                    payload={
+                        "provenance": provenance.model_dump(mode="json"),
+                        "security_policy_version": SECURITY_POLICY_VERSION,
+                        "execution_backend": config.execution_backend,
+                    },
                 )
             )
             self._validate_credentials(config.model_name)
-            source, source_commit = self._validate_source_repository(config.repo)
-            source_repo = str(source)
             if config.memory_enabled:
                 from tracefix.memory import ExperienceStore
 
@@ -1122,7 +1436,12 @@ class TraceFixRunner:
                 )
                 docker_prepare_options = (
                     {"source_import_probe": config.source_import,
-                     "recovery_enabled": config.docker_recovery_enabled}
+                     "recovery_enabled": config.docker_recovery_enabled,
+                     "environment_variables": {
+                         **(config.environment_recipe.environment_variables
+                            if config.environment_recipe is not None else {}),
+                         **config.test_environment_variables,
+                     }}
                     if config.docker_profile == "ordinary" else {}
                 )
                 if config.memory_enabled:
@@ -1432,6 +1751,16 @@ class TraceFixRunner:
                         error = self._serialize_error(exc)
                         state.status = AgentStatus.FAILED
                         state.stop_reason = "mcp_cleanup_error"
+            if llm is not None:
+                close_llm = getattr(llm, "close", None)
+                if close_llm is not None:
+                    try:
+                        close_llm()
+                    except Exception as exc:
+                        if error is None:
+                            error = self._serialize_error(exc)
+                            state.status = AgentStatus.FAILED
+                            state.stop_reason = "llm_cleanup_error"
             if docker_backend is not None:
                 try:
                     if docker_backend.session is None:
@@ -1540,6 +1869,8 @@ class TraceFixRunner:
             repo_map_path=str(repo_map_path) if repository_map is not None else None,
             provenance=provenance,
             workspace_preparation=workspace_preparation,
+            security_policy_version=SECURITY_POLICY_VERSION,
+            execution_backend=config.execution_backend,
             error=error,
         )
         result_path.write_text(result.model_dump_json(indent=2), encoding="utf-8")
@@ -1635,19 +1966,11 @@ class TraceFixRunner:
         if original is None:
             raise RunConfigurationError("end-of-task regression validation requires test_target")
         for required in (original, *config.regression_targets):
-            name = required.split("::", 1)[0]
-            relative = Path(name)
-            candidate = (source / relative).resolve()
-            if (
-                not name or relative.is_absolute() or ".." in relative.parts
-                or required.startswith("-") or "\n" in required or "\r" in required
-                or not candidate.is_relative_to(source.resolve()) or not candidate.is_file()
-            ):
-                raise RunConfigurationError(
-                    "validation target does not exist as a safe relative path in the frozen source",
-                    context={"target": required},
-                )
             try:
+                name = pytest_target_path(required)
+                candidate = resolve_workspace_path(source, name, must_exist=True)
+                if not candidate.is_file():
+                    raise UnsafeWorkspacePath("target is not a file")
                 RunTestsTool._parse_command(f"pytest -q {shlex.quote(required)}")
             except Exception as exc:
                 raise RunConfigurationError(
@@ -1657,14 +1980,16 @@ class TraceFixRunner:
         rows: list[dict[str, Any]] = []
         evidence_root = run_dir / "validation-baseline-evidence"
         for index, target in enumerate(config.regression_targets):
-            name = target.split("::", 1)[0]
-            relative = Path(name)
-            candidate = (source / relative).resolve()
-            if not candidate.is_relative_to(source.resolve()) or not candidate.is_file():
+            name = pytest_target_path(target)
+            try:
+                candidate = resolve_workspace_path(source, name, must_exist=True)
+                if not candidate.is_file():
+                    raise UnsafeWorkspacePath("target is not a file")
+            except UnsafeWorkspacePath as exc:
                 raise RunConfigurationError(
                     "regression target does not exist in the frozen source",
-                    context={"target": target},
-                )
+                    context={"target": target, "reason": str(exc)},
+                ) from exc
             with tempfile.TemporaryDirectory(prefix="tracefix-baseline-") as temporary:
                 root = Path(temporary)
                 checkout = cls._clone_repository(source, root / "checkout")
@@ -1771,16 +2096,13 @@ class TraceFixRunner:
         if build_root.exists() or build_root.is_symlink():
             raise WorkspaceError("TraceFix build temporary path already exists")
         build_root.mkdir(parents=True)
-        environment = dict(os.environ)
-        for name in tuple(environment):
-            normalized = name.upper()
-            if any(
-                marker in normalized
-                for marker in ("API_KEY", "ACCESS_TOKEN", "PASSWORD", "SECRET", "CREDENTIAL")
-            ):
-                environment.pop(name, None)
+        environment = minimal_subprocess_environment()
+        if recipe is not None:
+            environment.update(validate_project_environment(recipe.environment_variables))
         environment["TMP"] = str(build_root)
         environment["TEMP"] = str(build_root)
+        environment["TMPDIR"] = str(build_root)
+        environment["HOME"] = str(build_root)
         environment["PIP_CACHE_DIR"] = str(build_root / "pip-cache")
         environment["PIP_NO_CACHE_DIR"] = "1"
         environment.pop("PYTEST_ADDOPTS", None)

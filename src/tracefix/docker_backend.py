@@ -28,6 +28,7 @@ from tracefix.docker_tls import write_test_tls_material
 from tracefix.exceptions import RunConfigurationError, WorkspaceError
 from tracefix.messages import ToolCall
 from tracefix.repository import RepoMap, RepoMapConfig
+from tracefix.security import SECURITY_POLICY_VERSION, validate_project_environment
 from tracefix.tools import BaseTool, SkillCatalogEntry, ToolRegistry, ToolResult, ToolSpec
 from tracefix.tools.skills import SkillLimits
 
@@ -45,6 +46,80 @@ _IMAGES: dict[str, tuple[str, str]] = {
         "/opt/python310/bin/python3.10",
     ),
 }
+FROZEN_DOCKER_IMAGES = {name: item[0] for name, item in _IMAGES.items()}
+
+
+def _make_trusted_executor_bundle(
+    package_root: Path,
+    tracefix_root: Path,
+    environment: dict[str, str],
+    *,
+    include_tls_test_support: bool,
+    skills_root: Path | None = None,
+) -> tuple[bytes, str, str | None]:
+    """Package current harness code and fixed config for root-owned extraction."""
+    archive_files: dict[str, bytes] = {}
+    for source in sorted(package_root.rglob("*")):
+        if source.is_symlink():
+            raise WorkspaceError("trusted TraceFix package contains a symbolic link")
+        if source.is_dir():
+            continue
+        relative = source.relative_to(package_root)
+        if "__pycache__" in relative.parts or source.suffix == ".pyc":
+            continue
+        if not source.is_file():
+            continue
+        archive_files[f"src/tracefix/{relative.as_posix()}"] = source.read_bytes()
+    archive_files["runtime/environment.json"] = json.dumps(
+        validate_project_environment(environment), ensure_ascii=False, sort_keys=True
+    ).encode("utf-8")
+    if skills_root is not None:
+        for source in sorted(skills_root.rglob("*")):
+            if source.is_symlink():
+                raise WorkspaceError("memory Skills snapshot contains a symbolic link")
+            if source.is_dir() or not source.is_file():
+                continue
+            relative = source.relative_to(skills_root)
+            archive_files[f"runtime/skills/{relative.as_posix()}"] = source.read_bytes()
+    tls_certificate_sha256 = None
+    if include_tls_test_support:
+        support = tracefix_root / "docker" / "requests-test-tls"
+        for name in ("service.py", "sitecustomize.py"):
+            source = support / name
+            if source.is_file():
+                if source.is_symlink():
+                    raise WorkspaceError("trusted test service contains a symbolic link")
+                archive_files[f"request-test/{name}"] = source.read_bytes()
+        with tempfile.TemporaryDirectory(prefix="tracefix-tls-") as temporary:
+            certificate = Path(temporary) / "test-ca.pem"
+            private_key = Path(temporary) / "test-key.pem"
+            write_test_tls_material(certificate, private_key)
+            certificate_bytes = certificate.read_bytes()
+            tls_certificate_sha256 = hashlib.sha256(certificate_bytes).hexdigest()
+            archive_files["request-test/test-ca.pem"] = certificate_bytes
+            archive_files["request-test/test-key.pem"] = private_key.read_bytes()
+
+    hashes = {
+        name: hashlib.sha256(data).hexdigest()
+        for name, data in sorted(archive_files.items())
+    }
+    canonical = json.dumps(hashes, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    bundle_sha256 = hashlib.sha256(canonical).hexdigest()
+    manifest = json.dumps(
+        {"security_policy_version": SECURITY_POLICY_VERSION,
+         "bundle_sha256": bundle_sha256, "files": hashes},
+        sort_keys=True, separators=(",", ":"),
+    ).encode("utf-8")
+    archive_files["runtime/executor-manifest.json"] = manifest
+    output = io.BytesIO()
+    with tarfile.open(fileobj=output, mode="w") as archive:
+        for name, data in sorted(archive_files.items()):
+            member = tarfile.TarInfo(name)
+            member.size = len(data)
+            member.mode = 0o644
+            member.mtime = 0
+            archive.addfile(member, io.BytesIO(data))
+    return output.getvalue(), bundle_sha256, tls_certificate_sha256
 _MAX_FRAME = 64 * 1024 * 1024
 
 
@@ -407,6 +482,8 @@ class DockerToolBackend:
         self.workspace_preparation: dict[str, Any] = {}
         self.source_commit: str | None = None
         self.input_manifest_sha256: str | None = None
+        self.executor_bundle_sha256: str | None = None
+        self.executor_write_probe = "not_run"
 
     def prepare(
         self,
@@ -423,12 +500,16 @@ class DockerToolBackend:
         baseline_archive: Path | None = None,
         recovery_snapshot: dict[str, Any] | None = None,
         recovery_enabled: bool = False,
+        environment_variables: dict[str, str] | None = None,
     ) -> ToolRegistry:
         self.source_commit = source_commit
         if self.profile == "ordinary":
             if not source_import_probe:
                 raise WorkspaceError("ordinary Docker requires a source import probe")
-            self.recipe = {"source_import_probe": source_import_probe}
+            self.recipe = {
+                "source_import_probe": source_import_probe,
+                "environment_variables": validate_project_environment(environment_variables or {}),
+            }
             manifest = {}
         else:
             stage = self.input_root / self.task_id
@@ -438,6 +519,9 @@ class DockerToolBackend:
             if not bundle.is_file() or not recipe_path.is_file() or not manifest_path.is_file():
                 raise WorkspaceError("frozen Docker task input is incomplete")
             self.recipe = json.loads(recipe_path.read_text(encoding="utf-8"))
+            self.recipe["environment_variables"] = validate_project_environment(
+                self.recipe.get("environment_variables", {})
+            )
             manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
             self.input_manifest_sha256 = hashlib.sha256(manifest_path.read_bytes()).hexdigest()
             if (
@@ -514,7 +598,7 @@ class DockerToolBackend:
                         "--tmpfs", "/tmp:rw,nosuid,size=512m,uid=10001,gid=10001",
                         "--tmpfs", "/input:rw,nosuid,size=256m,uid=10001,gid=10001",
                         "--tmpfs", "/work:rw,nosuid,size=1g,uid=10001,gid=10001",
-                        "--tmpfs", "/opt/tracefix:rw,nosuid,size=128m,uid=10001,gid=10001",
+                        "--tmpfs", "/opt/tracefix:rw,nosuid,size=128m,uid=0,gid=0,mode=0755",
                     ] if self.profile == "ordinary" else []
                 ),
                 "--env",
@@ -592,6 +676,12 @@ class DockerToolBackend:
             or host_config.get("NanoCpus") != 1_000_000_000
         ):
             raise WorkspaceError("ordinary Docker resource or user contract changed")
+        if self.profile == "ordinary":
+            tmpfs = host_config.get("Tmpfs") if isinstance(host_config, dict) else None
+            opt_mount = tmpfs.get("/opt/tracefix", "") if isinstance(tmpfs, dict) else ""
+            normalized_opt_mount = opt_mount.replace("mode=0755", "mode=755")
+            if not all(token in normalized_opt_mount for token in ("uid=0", "gid=0", "mode=755")):
+                raise WorkspaceError("ordinary Docker executor directory is not root-owned")
         self._write_run_state("container_created")
         _run([self.docker, "start", self.container_name])
         container_interpreter: dict[str, str] | None = None
@@ -612,64 +702,48 @@ class DockerToolBackend:
                 "/input",
                 "/work",
                 "/work/agent",
-                "/opt/tracefix",
                 "/work/evidence",
             ]
         )
         self._copy_file_into(source, "/input/source.tar")
-        _run([self.docker, "exec", self.container_name, "mkdir", "-p", "/opt/tracefix/src"])
         package_root = Path(__file__).resolve().parent
         if self.profile == "ordinary":
-            buffer = io.BytesIO()
-            with tarfile.open(fileobj=buffer, mode="w") as package_archive:
-                package_archive.add(package_root, arcname="tracefix")
-            _run(
-                [self.docker, "exec", "-i", self.container_name, "tar", "-xf", "-",
-                 "-C", "/opt/tracefix/src"],
-                input_data=buffer.getvalue(), timeout=120,
+            environment = validate_project_environment(
+                self.recipe.get("environment_variables", {})
             )
+            bundle, self.executor_bundle_sha256, tls_certificate_sha256 = (
+                _make_trusted_executor_bundle(
+                    package_root,
+                    tracefix_root,
+                    environment,
+                    include_tls_test_support=bool(self.recipe.get("test_pythonpath_entries")),
+                    skills_root=skills_root,
+                )
+            )
+            self._install_trusted_executor(bundle, self.executor_bundle_sha256)
         else:
+            _run([self.docker, "exec", self.container_name, "mkdir", "-p", "/opt/tracefix/src"])
             _run(
                 [self.docker, "cp", str(package_root),
                  f"{self.container_name}:/opt/tracefix/src/tracefix"]
             )
-        tls_certificate_sha256 = None
-        if self.recipe.get("test_pythonpath_entries"):
-            _run(
-                [
-                    self.docker,
-                    "exec",
-                    self.container_name,
-                    "mkdir",
-                    "-p",
-                    "/opt/tracefix/request-test",
-                ]
-            )
-            for name in ("service.py", "sitecustomize.py"):
-                source_path = tracefix_root / "docker" / "requests-test-tls" / name
-                if source_path.is_file():
-                    _run(
-                        [
-                            self.docker,
-                            "cp",
-                            str(source_path),
-                            f"{self.container_name}:/opt/tracefix/request-test/{name}",
-                        ]
-                    )
-            with tempfile.TemporaryDirectory(prefix="tracefix-tls-") as tls_directory:
-                certificate = Path(tls_directory) / "test-ca.pem"
-                private_key = Path(tls_directory) / "test-key.pem"
-                write_test_tls_material(certificate, private_key)
-                tls_certificate_sha256 = hashlib.sha256(certificate.read_bytes()).hexdigest()
-                for path in (certificate, private_key):
-                    _run(
-                        [
-                            self.docker,
-                            "cp",
-                            str(path),
-                            f"{self.container_name}:/opt/tracefix/request-test/{path.name}",
-                        ]
-                    )
+            tls_certificate_sha256 = None
+            if self.recipe.get("test_pythonpath_entries"):
+                _run([self.docker, "exec", self.container_name, "mkdir", "-p",
+                      "/opt/tracefix/request-test"])
+                for name in ("service.py", "sitecustomize.py"):
+                    source_path = tracefix_root / "docker" / "requests-test-tls" / name
+                    if source_path.is_file():
+                        _run([self.docker, "cp", str(source_path),
+                              f"{self.container_name}:/opt/tracefix/request-test/{name}"])
+                with tempfile.TemporaryDirectory(prefix="tracefix-tls-") as tls_directory:
+                    certificate = Path(tls_directory) / "test-ca.pem"
+                    private_key = Path(tls_directory) / "test-key.pem"
+                    write_test_tls_material(certificate, private_key)
+                    tls_certificate_sha256 = hashlib.sha256(certificate.read_bytes()).hexdigest()
+                    for path in (certificate, private_key):
+                        _run([self.docker, "cp", str(path),
+                              f"{self.container_name}:/opt/tracefix/request-test/{path.name}"])
         sentinel = self.run_dir / "agent-only-sentinel.txt"
         sentinel.write_text(self.run_id, encoding="utf-8")
         _run(
@@ -891,32 +965,34 @@ class DockerToolBackend:
                     "source import probe did not resolve inside Agent checkout", context=probe_data
                 )
         environment = self.recipe.get("environment_variables", {})
-        env_file = self.run_dir / "container-environment.json"
-        env_file.write_text(json.dumps(environment, ensure_ascii=False), encoding="utf-8")
-        self._copy_file_into(env_file, "/input/environment.json")
+        environment_path = "/opt/tracefix/runtime/environment.json"
+        if self.profile != "ordinary":
+            env_file = self.run_dir / "container-environment.json"
+            env_file.write_text(json.dumps(environment, ensure_ascii=False), encoding="utf-8")
+            self._copy_file_into(env_file, "/input/environment.json")
+            environment_path = "/input/environment.json"
         if recovery_snapshot is not None:
             self.restore_snapshot(recovery_snapshot)
         if skills_root is not None:
             if self.profile != "ordinary" or not skills_enabled:
                 raise WorkspaceError("experience Skills require ordinary Docker with Skills")
-            approved = skills_root.resolve(strict=True)
-            if any(path.is_symlink() for path in approved.rglob("*")):
-                raise WorkspaceError("Docker Skills snapshot contains a symbolic link")
-            buffer = io.BytesIO()
-            with tarfile.open(fileobj=buffer, mode="w") as catalog_archive:
-                catalog_archive.add(approved, arcname="skills")
-            _run([self.docker, "exec", "-i", self.container_name, "tar", "-xf", "-",
-                  "-C", "/input"], input_data=buffer.getvalue(), timeout=120)
-            _run([self.docker, "exec", self.container_name, "chmod", "-R", "a-w",
-                  "/input/skills"])
-        command = [
-            self.docker,
-            "exec",
-            "-i",
-            self.container_name,
-            "env",
-            "PYTHONPATH=/opt/tracefix/src:/work/agent/src:/work/agent",
+            # Ordinary Skills were included in the root-owned trusted-executor bundle.
+        command = [self.docker, "exec", "-i", self.container_name, "env"]
+        if self.profile == "ordinary":
+            command.extend([
+                "-i",
+                "PATH=/usr/local/bin:/usr/bin:/bin",
+                "HOME=/tmp",
+                "PYTHONDONTWRITEBYTECODE=1",
+                "PYTHONPATH=/opt/tracefix/src",
+            ])
+            python_flags = ["-P", "-s"]
+        else:
+            command.append("PYTHONPATH=/opt/tracefix/src")
+            python_flags = []
+        command.extend([
             self.python,
+            *python_flags,
             "-m",
             "tracefix.agent_bridge",
             "--workspace",
@@ -930,8 +1006,8 @@ class DockerToolBackend:
             "--run-id",
             self.run_id,
             "--environment-json",
-            "/input/environment.json",
-        ]
+            environment_path,
+        ])
         if self.recipe.get("pytest_config"):
             command.extend(["--pytest-config", self.recipe["pytest_config"]])
         for path in self.recipe.get("test_pythonpath_entries", []):
@@ -954,7 +1030,7 @@ class DockerToolBackend:
                 ]
             )
             if skills_root is not None:
-                command.extend(["--skills-root", "/input/skills"])
+                command.extend(["--skills-root", "/opt/tracefix/runtime/skills"])
         self.session = _BridgeSession(
             command, self.timeout_seconds + 60, self.run_dir / "tool-events.jsonl",
             skills_enabled=skills_enabled,
@@ -977,6 +1053,9 @@ class DockerToolBackend:
             "success": True,
             "backend": "docker",
             "profile": self.profile,
+            "security_policy_version": SECURITY_POLICY_VERSION,
+            "trusted_executor_sha256": self.executor_bundle_sha256,
+            "executor_write_probe": self.executor_write_probe,
             "image_id": actual_id,
             "container_id": self.container_id,
             "container_network_mode": network_mode,
@@ -1127,6 +1206,8 @@ class DockerToolBackend:
             if (self.input_root / self.task_id / "recipes" / f"{self.task_id}.json").is_file()
             else None,
             "input_manifest_sha256": self.input_manifest_sha256,
+            "trusted_executor_sha256": self.executor_bundle_sha256,
+            "executor_write_probe": self.executor_write_probe,
         }
         path = self.run_dir / "docker-run-state.json"
         temporary = path.with_suffix(".tmp")
@@ -1170,6 +1251,94 @@ class DockerToolBackend:
             )
         else:
             _run([self.docker, "cp", str(source), f"{self.container_name}:{destination}"])
+
+    def _install_trusted_executor(self, bundle: bytes, expected_sha256: str) -> None:
+        """Install the trusted bridge as root before any task code is executed."""
+        root = [self.docker, "exec", "--user", "0:0", self.container_name]
+        _run([*root, "mkdir", "-p", "/opt/tracefix/src", "/opt/tracefix/runtime",
+              "/opt/tracefix/request-test"])
+        _run(
+            [*root[:-1], "-i", self.container_name, "tar", "-xf", "-",
+             "--no-same-owner", "-C", "/opt/tracefix"],
+            input_data=bundle,
+            timeout=120,
+        )
+        _run([*root, "find", "/opt/tracefix", "-type", "f", "-exec", "chmod",
+              "0444", "{}", "+"])
+        _run([*root, "find", "/opt/tracefix", "-type", "d", "-exec", "chmod",
+              "0555", "{}", "+"])
+        verify = (
+            "import hashlib,json,pathlib,stat,sys; "
+            "root=pathlib.Path('/opt/tracefix'); "
+            "manifest=json.loads((root/'runtime/executor-manifest.json').read_text()); "
+            "files=manifest['files']; "
+            "packed=json.dumps(files,sort_keys=True,separators=(',',':')).encode(); "
+            "expected=sys.argv[1]; "
+            "hashlib.sha256(packed).hexdigest()==expected and "
+            "manifest.get('bundle_sha256')==expected or sys.exit(10); "
+            "[(lambda p,d: (p.relative_to(root), "
+            "hashlib.sha256(p.read_bytes()).hexdigest()==d or sys.exit(11)))"
+            "((root/name).resolve(strict=True), digest) "
+            "for name,digest in files.items()]; "
+            "[(lambda p,s: (s.st_uid==0 and "
+            "stat.S_IMODE(s.st_mode)==(0o555 if p.is_dir() else 0o444)) or sys.exit(12))"
+            "(p,p.lstat()) for p in (root,*root.rglob('*'))]; "
+            "print(expected)"
+        )
+        checked = _run(
+            [
+                self.docker,
+                "exec",
+                self.container_name,
+                "env",
+                "-i",
+                "PATH=/usr/local/bin:/usr/bin:/bin",
+                "HOME=/tmp",
+                self.python,
+                "-P",
+                "-s",
+                "-S",
+                "-c",
+                verify,
+                expected_sha256,
+            ]
+        )
+        if checked.stdout.decode("utf-8", "replace").strip() != expected_sha256:
+            raise WorkspaceError("trusted executor identity verification failed")
+        write_probe = (
+            "import pathlib\n"
+            "p = pathlib.Path('/opt/tracefix/.write-probe')\n"
+            "try:\n"
+            "    p.write_text('probe')\n"
+            "except OSError:\n"
+            "    print('blocked')\n"
+            "else:\n"
+            "    p.unlink(missing_ok=True)\n"
+            "    raise SystemExit(12)\n"
+        )
+        probe = _run(
+            [
+                self.docker,
+                "exec",
+                "--user",
+                "10001:10001",
+                self.container_name,
+                "env",
+                "-i",
+                "PATH=/usr/local/bin:/usr/bin:/bin",
+                "HOME=/tmp",
+                self.python,
+                "-P",
+                "-s",
+                "-S",
+                "-c",
+                write_probe,
+            ]
+        )
+        if probe.stdout.decode("utf-8", "replace").strip() != "blocked":
+            raise WorkspaceError("task UID can modify the trusted executor directory")
+        self.executor_write_probe = "blocked"
+        self.executor_bundle_sha256 = expected_sha256
 
     def _check_storage(self) -> None:
         if os.name == "nt":

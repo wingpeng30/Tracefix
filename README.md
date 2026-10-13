@@ -1,5 +1,10 @@
 # TraceFix
 
+新会话与项目进度先看[当前状态](docs/current-status.md)，这是固定交接入口。最新同题30题A/B/上下文修复后C
+主成功为11/30、11/30、19/30，详见[ABC报告](docs/experiments/2026-10-11-abc-full30-comparison.md)。
+该实验之后工作区已实现统一LLM网关及长驻tokenizer worker，定向离线验证通过；实际提速和完整发布门槛仍待验证。
+旧实验、日期化交接和旧wheel不代表当前源码全部状态。
+
 普通 Python 仓库的任务检查与恢复说明见 [docs/recovery.md](docs/recovery.md)。
 
 想在自己的受信任 Python/pytest 仓库运行？先看[普通仓库安装与使用指南](docs/ordinary-repository.md)：配置、零调用预检、隔离运行、HTML 报告和补丁导出均有可复制命令。[系统审查](docs/reviews/2026-09-28-system-review.md)列出首批能力边界。本地运行现提供确定边界的 `inspect`／`resume` 和独立公开测试复跑；[可选 Serena MCP 指南](docs/mcp-serena.md)说明隔离的只读符号查询。[普通仓库 Docker 指南](docs/ordinary-docker.md)提供预构建镜像与独立容器验证路径，其实测范围以最新 CI 证据为准；2026-09-29 已完成八次限定真实模型验收；最新结束前回归门仍以离线回放验证。范围见[证据索引](docs/evidence.md)。
@@ -255,21 +260,37 @@ tracefix run --repo D:\repos\example --task-file issue.md --skills `
 ## 上下文压缩
 
 TraceFix 保留两份不同用途的数据：`MessageHistory` 和 JSONL 轨迹保存全部原始消息，供审计
-与复现；`ContextManager` 只为下一次模型调用生成临时视图。默认单次请求估算达到 32k
-Token 时折叠较早的完整工具轮次，并保留约 37.5% 的近期上下文。单条工具结果超过 8,192
-字符时保留前 4,096 和后 1,024 字符。
+与复现；`ContextManager` 为下一次模型调用生成可恢复的稳定投影。普通消息、工具结果、任务事实和
+用户新一轮要求按原顺序追加；动态 system 消息不会因角色被移到请求开头。压缩只在达到边界时
+一次提交新投影，之后复用同一摘要并继续追加。用户指令和仍有效的验证证据受保护，完整历史不被改写。
 
-32k 是成本控制软阈值，不是 DeepSeek 的上下文极限。可使用以下参数调整或关闭：
+默认在**有效输入容量的 80%** 触发压缩，目标降至 **60%**。有效输入容量按模型窗口减去输出预留和
+1% 安全余量计算；预留至少覆盖单次输出上限。明确设置的 `--context-trigger-tokens` 会覆盖比例阈值，
+但不会突破有效输入容量。单条工具结果超过 8,192 字符时，仍会保留前 4,096 和后 1,024 字符。
+
+DeepSeek Flash 请求优先使用经身份校验的官方 V4.1 tokenizer 模板计数；这是压缩用估算，不是供应商
+硬上界。tokenizer 身份会随会话检查点固定；计数不可用时会明确记录本地估算回退。费用和累计预算仍
+以供应商 usage 为准，最终请求视图超出有效输入容量时会在发送前拒绝。
+
+可使用以下参数调整：
 
 ```text
 --no-context-compaction       关闭裁剪和折叠，用于未压缩对照组
+--context-trigger-ratio       触发比例，默认 0.8
+--context-target-ratio        压缩目标比例，默认 0.6
 --no-token-optimization       关闭工具结果精简、缓存和行动引导，用于 Token 效率对照组
 --context-window-tokens       模型单次请求硬窗口，默认 1000000
---context-trigger-tokens      历史折叠软阈值，默认 32000
---context-retain-ratio        折叠后近期历史保留比例，默认 0.375
+--context-trigger-tokens      覆盖比例的绝对软阈值，默认未设置
+--context-output-reserve-tokens 额外输出预留，默认 4096
+--context-agent-tool          向 Agent 暴露主动压缩工具（默认关闭）
 ```
 
-本地 Token 估算只决定是否触发压缩；计费、累计 Token 和预算判断仍以供应商 usage 为准。
+交互聊天可输入 `/compact` 在安全暂停时压缩；也可运行 `tracefix context inspect --run <目录>` 查看投影、
+阈值和 tokenizer 身份，或运行 `tracefix context compact --run <目录>` 主动压缩。Python API 提供
+`TraceFixRunner.inspect_context()` 与 `TraceFixRunner.compact_context()`。主动 Agent 工具默认关闭，
+需要显式启用以保持已有对照组的工具 schema 一致。
+
+完整行为、恢复边界和计数口径见 [`docs/context-management.md`](docs/context-management.md)。
 
 在两道受控长上下文任务上，关闭压缩与 32k 压缩均解决 2/2；实验组实际输入 Token 从
 370,387 降至 185,587（-49.89%），费用从约 ¥0.2525 降至 ¥0.2280（-9.67%）。其中一题
@@ -442,13 +463,13 @@ print(result.cost_usd, result.cost_cny_estimate)
 
 ## 安全边界
 
-- 文件路径被限制在隔离工作区内，并拒绝绝对路径、`..`、`.git`、真实 `.env` 和符号链接
-  逃逸。
+- 普通任务默认使用预先准备的 ordinary Docker 镜像；每任务新容器、禁网、无宿主挂载、非 root、只读根文件系统并限制资源。缺少 Docker 或镜像时明确停止，不自动回退到本地。
+- 文件工具同时检查输入路径和解析后的真实目标，拒绝越界、Git 元数据、真实 dotenv、常见凭据目录和内部保护路径；Search、Repo Map、Diff 与 MCP 快照也过滤受保护文件。
 - `apply_patch` 支持 Git unified diff 和 `*** Begin Patch` 更新块；会重算错误的 hunk 行数，
   但仍要求上下文匹配，并先执行 `git apply --check`，通过后才真正修改文件。
-- `run_tests` 使用 `shell=False`，只允许 `pytest` 或 `python -m pytest`。
-- 本地后端在本机执行 pytest，适用于受信任仓库；普通仓库的 Docker 后端见
-  [执行契约](docs/ordinary-docker.md)，目前由 Linux CI 验证，Windows Docker Desktop 未实测。
+- `run_tests` 使用 `shell=False` 和 pytest 参数白名单；测试、构建和导入探针不继承宿主凭据或任意环境变量。
+- 显式本地后端会以当前用户权限执行仓库代码，仅适用于受信任仓库。具体边界和已知限制见[基础安全规范](docs/security.md)与[普通仓库 Docker 指南](docs/ordinary-docker.md)。
+- 提示注入未被完全解决；测试通过也不代表补丁没有危险行为。
 
 ## 测试
 

@@ -147,6 +147,53 @@ class CheckpointStore:
             pending_calls=tuple(normalized_pending),
         )
 
+    def update_payload(
+        self, payload: dict[str, Any], *, expected_sequence: int
+    ) -> CheckpointSnapshot:
+        """Atomically update context metadata within the current committed tool batch."""
+        current = self.inspect(current_identity=self.identity)
+        if not current.resumable or current.sequence != expected_sequence:
+            raise CheckpointError(
+                "checkpoint changed or is invalid before metadata update",
+                context={"expected_sequence": expected_sequence, "reasons": current.reasons},
+            )
+        normalized_payload = json.loads(_canonical_json(payload))
+        envelope = {
+            "schema_version": CHECKPOINT_SCHEMA_VERSION,
+            "sequence": expected_sequence,
+            "identity": self.identity,
+            "payload": normalized_payload,
+            "payload_sha256": _sha256(_canonical_json(normalized_payload)),
+            "pending_calls": [],
+        }
+        serialized = _canonical_json(envelope) + b"\n"
+        temporary_path: Path | None = None
+        try:
+            descriptor, temporary_name = tempfile.mkstemp(
+                prefix=".checkpoint-", suffix=".tmp", dir=self.run_dir
+            )
+            temporary_path = Path(temporary_name)
+            with os.fdopen(descriptor, "wb") as stream:
+                stream.write(serialized)
+                stream.flush()
+                os.fsync(stream.fileno())
+            os.replace(temporary_path, self.path)
+            temporary_path = None
+            self._fsync_directory()
+        except OSError as exc:
+            raise CheckpointError(
+                f"cannot atomically update checkpoint metadata: {exc}",
+                context={"path": str(self.path)},
+            ) from exc
+        finally:
+            if temporary_path is not None:
+                temporary_path.unlink(missing_ok=True)
+        return CheckpointSnapshot(
+            schema_version=CHECKPOINT_SCHEMA_VERSION, sequence=expected_sequence,
+            identity=self.identity.copy(), payload=normalized_payload,
+            payload_sha256=envelope["payload_sha256"], pending_calls=(),
+        )
+
     def inspect(
         self,
         *,

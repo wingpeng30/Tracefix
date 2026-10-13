@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any
 
 from tracefix.messages import ToolCall
+from tracefix.security import UnsafeWorkspacePath, resolve_workspace_path
 from tracefix.tools.base import BaseTool, ToolResult, ToolSpec
 
 _METHODS = {
@@ -104,11 +105,13 @@ class SerenaMCP:
         for name in names:
             relative = Path(name)
             if relative.is_absolute() or ".." in relative.parts:
-                raise ValueError("Serena MCP source path escaped checkout")
+                continue
             source = self.workspace / relative
-            if source.is_symlink():
-                raise ValueError(f"Serena MCP refuses symlink: {name}")
-            if not source.is_file():
+            try:
+                resolve_workspace_path(self.workspace, name, must_exist=True)
+            except UnsafeWorkspacePath:
+                continue
+            if source.is_symlink() or not source.is_file():
                 continue
             data = source.read_bytes()
             total_bytes += len(data)

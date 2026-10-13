@@ -2,7 +2,7 @@
 
 同机原 checkout 的任务检查和安全恢复见 [`recovery.md`](recovery.md)。
 
-此路径支持**受信任、干净的 Git 仓库**，使用本地 Python 3.11/3.12、pytest 和调用者预先安装的项目依赖。TraceFix 克隆源提交，在独立 checkout 修改及测试；本地工具和 pytest 会执行项目代码，本地后端不是安全沙箱。含编译步骤、特殊构建流程、必须自动加载的 pytest 插件或外部服务的仓库，需要自行验证环境配方。普通仓库容器路径另见 [`ordinary-docker.md`](ordinary-docker.md)；本机 Windows Docker Desktop 尚未通过验证。
+普通新任务默认使用 [`ordinary-docker.md`](ordinary-docker.md) 的 Docker `ordinary` 后端。先人工准备含项目依赖的镜像，并在配置中提供镜像 ID、`test_target` 和 `source_import`；运行不会自动构建、下载或回退。若明确选择本地后端，TraceFix 会在当前用户权限下执行项目测试代码，因此只适用于**受信任、干净的 Git 仓库**；本地环境使用 Python 3.11/3.12、pytest 和预装项目依赖。含编译步骤、特殊构建流程、必须自动加载的 pytest 插件或外部服务的仓库，需要自行验证环境配方。安全边界见 [`security.md`](security.md)。
 
 ## 安装和配置
 
@@ -25,15 +25,19 @@ py -3.12 -m venv .venv
 [run]
 repo = "../my-python-project"
 task = "修复 tests/test_widget.py 中的分页错误"
-test_python = "../my-python-project/.venv/Scripts/python.exe"
 test_target = "tests/test_widget.py"
 source_import = "my_package"
 output_dir = "./runs"
 model = "deepseek/deepseek-flash"
 env_file = "./.env"
+execution_backend = "docker"
+docker_profile = "ordinary"
+docker_image_id = "sha256:填写预先准备的 ordinary 镜像 ID"
 ```
 
-`repo` 必须是 Git 根目录且工作树干净。**输出目录必须位于源仓库之外**；如果在目标仓库内启动命令，请显式设置仓库外的 `--output-dir`。`source_import` 是安装后应从 TraceFix 新 checkout 导入的模块名；探针在构造模型客户端之前执行。`test_target` 是该 checkout 中已有的相对测试文件或 pytest node ID。目标虚拟环境如安装了旧版项目，必须先排除路径冲突；探针会拒绝导入来源落在 checkout 外的结果。配置示例使用 DeepSeek [官方模型名 `deepseek-flash`](https://api-docs.deepseek.com/quick_start/pricing/)；本版本已有小批真实模型闭环证据，范围与限制见 [`experiments/2026-09-29-live-model-acceptance.md`](experiments/2026-09-29-live-model-acceptance.md)。运行 `doctor` 不会发送供应商请求。
+`repo` 必须是 Git 根目录且工作树干净。**输出目录必须位于源仓库之外**；如果在目标仓库内启动命令，请显式设置仓库外的 `--output-dir`。`source_import` 是应从容器 checkout 导入的模块名；探针在构造模型客户端之前执行。`test_target` 是 checkout 中已有的相对测试文件或 pytest node ID。Docker 配置还需要本地已存在的镜像 ID；先按 [Docker 指南](ordinary-docker.md)准备镜像。`test_python` 仅供显式本地模式使用，Docker 使用预备镜像的 Python。不要把 API Key 写入 TOML；模型凭据通过宿主进程或外部 `.env` 配置，不会传入测试容器。配置示例使用 DeepSeek [官方模型名 `deepseek-flash`](https://api-docs.deepseek.com/quick_start/pricing/)；本版本已有小批真实模型闭环证据，范围与限制见 [`experiments/2026-09-29-live-model-acceptance.md`](experiments/2026-09-29-live-model-acceptance.md)。运行 `doctor` 不会发送供应商请求。
+
+若需要在可信仓库显式使用本地执行，将 `execution_backend = "local"` 加入配置，并设置 `test_python = "../my-python-project/.venv/Scripts/python.exe"`；此时 pytest 以当前用户权限运行。只支持本地的功能（如 `regression_targets`、本机技能和 MCP）仍需显式选本地；与 Docker 的不兼容组合会直接报错。
 
 可为结束前验收声明额外已有测试目标：
 
@@ -43,7 +47,7 @@ regression_targets = ["tests/test_pagination_edges.py", "tests/test_public_api.p
 
 也可重复传入 `--regression-target`；CLI 提供列表时整体覆盖 TOML 列表。启用后，TraceFix 在构造模型客户端之前，于独立源码 checkout 为每个追加目标记录基线。断言失败作为“原有失败”留档；超时、收集失败、导入错误或证据不全会阻止模型启动。模型提出完成后，harness 运行原目标和所有追加目标；失败证据会返回下一轮请求。同一源码状态最多自动验收一次，代码变化后才能再次验收。所有目标都是任务契约的一部分，Agent 不得通过修改或删除目标测试绕过失败。
 
-基线与结束前每个 pytest 进程都计入 `max_test_runs` 和活动时间。启动至少需要 `2 × 追加目标数 + 1` 次测试预算（每个追加目标一次基线，原目标与所有追加目标各一次结束验收）；剩余次数供 Agent 调查、修复和测试。超出预算会中断任务，不能显示验收通过。首版只支持普通本地后端，验收结论只覆盖明列目标。
+基线与结束前每个 pytest 进程都计入 `max_test_runs` 和活动时间。启动至少需要 `2 × 追加目标数 + 1` 次测试预算（每个追加目标一次基线，原目标与所有追加目标各一次结束验收）；剩余次数供 Agent 调查、修复和测试。超出预算会中断任务，不能显示验收通过。该回归目标能力只支持显式本地后端，验收结论只覆盖明列目标。
 
 本地受审核的技能目录可在仓库外设置为 `[run].skills_dir = "./approved-skills"`，并通过 `tracefix run --skills` 显式启用。TraceFix 不会自动信任目标仓库里的技能；恢复时逐份复核已加载正文和参考文本的身份与累计字节数。
 

@@ -2,9 +2,14 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
+import queue
 import subprocess
+import threading
+import time
 from pathlib import Path
+from typing import Any
 
 from tracefix.models.input_bounds import InputBound
 
@@ -78,10 +83,193 @@ def protocol_profile(protocol: dict) -> dict:
 
 
 class OfficialCounter:
-    """Invoke a frozen native or WSL worker; never substitute a tokenizer."""
+    """Reuse one identity-pinned worker per run; never substitute a tokenizer."""
 
-    def __init__(self, runtime: dict):
+    def __init__(self, runtime: dict, *, timeout_seconds: float = 120.0):
         self.runtime = runtime
+        self._timeout_seconds = timeout_seconds
+        # Keep construction lazy for offline callers that replace ``invoke``
+        # (for example calibration tests); real invocation still requires a
+        # command and will raise the normal KeyError at that boundary.
+        command = runtime.get("command", [])
+        self._persistent = runtime.get("mode") == "jsonl-v1" or (
+            "-m" in command
+            and command[command.index("-m") + 1:command.index("-m") + 2]
+            == ["tracefix.comparison_counter"]
+        )
+        self._process: subprocess.Popen | None = None
+        self._stdout: queue.Queue[tuple[str, Any]] = queue.Queue()
+        self._stderr_tail = bytearray()
+        self._stderr_lock = threading.Lock()
+        self._request_id = 0
+        self._identity_digest: str | None = None
+        self._closed = False
+        self._failed = False
+        self._lock = threading.Lock()
+
+    @staticmethod
+    def _read_stdout(stream, target: queue.Queue) -> None:
+        try:
+            while True:
+                line = stream.readline(8 * 1024 * 1024 + 1)
+                if not line:
+                    target.put(("eof", None))
+                    return
+                if len(line) > 8 * 1024 * 1024 or not line.endswith(b"\n"):
+                    target.put(("error", "worker frame exceeds limit or is incomplete"))
+                    return
+                target.put(("line", line))
+        except Exception as exc:
+            target.put(("error", f"stdout reader failed: {type(exc).__name__}"))
+
+    def _read_stderr(self, stream) -> None:
+        try:
+            while True:
+                chunk = stream.read(4096)
+                if not chunk:
+                    return
+                with self._stderr_lock:
+                    self._stderr_tail.extend(chunk)
+                    if len(self._stderr_tail) > 64 * 1024:
+                        del self._stderr_tail[:-64 * 1024]
+        except Exception:
+            return
+
+    def _start(self, timeout: float) -> None:
+        if self._closed or self._failed:
+            raise ValueError("official counter worker is closed or failed")
+        if self._process is not None:
+            return
+        command = list(self.runtime["command"])
+        if command and command[-1] != "--serve":
+            command.append("--serve")
+        process = subprocess.Popen(
+            command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            bufsize=0,
+        )
+        self._process = process
+        threading.Thread(
+            target=self._read_stdout, args=(process.stdout, self._stdout), daemon=True
+        ).start()
+        threading.Thread(target=self._read_stderr, args=(process.stderr,), daemon=True).start()
+        frame = self._read_frame(timeout)
+        if frame.get("protocol") != 1 or frame.get("ready") is not True:
+            raise ValueError("official counter sent an invalid startup frame")
+        identity = frame.get("identity")
+        identity_digest = frame.get("identity_sha256")
+        actual_digest = hashlib.sha256(
+            json.dumps(identity, sort_keys=True, ensure_ascii=False, separators=(",", ":")).encode(
+                "utf-8"
+            )
+        ).hexdigest()
+        if not isinstance(identity, dict) or identity_digest != actual_digest:
+            raise ValueError("official counter startup identity is invalid")
+        expected = self.runtime.get("identity")
+        if expected is not None and identity != expected:
+            raise ValueError("official counter runtime identity changed")
+        self._identity_digest = actual_digest
+
+    def _read_frame(self, timeout: float) -> dict:
+        try:
+            kind, value = self._stdout.get(timeout=timeout)
+        except queue.Empty as exc:
+            raise TimeoutError("official counter worker timed out") from exc
+        if kind != "line":
+            raise ValueError(f"official counter worker {kind}: {value or self._stderr_text()}")
+        try:
+            frame = json.loads(value.decode("utf-8"))
+        except (UnicodeError, json.JSONDecodeError) as exc:
+            raise ValueError("official counter worker returned invalid JSON") from exc
+        if not isinstance(frame, dict):
+            raise ValueError("official counter worker frame must be an object")
+        return frame
+
+    def _stderr_text(self) -> str:
+        with self._stderr_lock:
+            return self._stderr_tail.decode("utf-8", errors="replace")[-2000:]
+
+    def _persistent_invoke(self, bodies: list[dict] | None, timeout: float) -> dict:
+        with self._lock:
+            try:
+                deadline = time.monotonic() + timeout
+                self._start(max(0.001, deadline - time.monotonic()))
+                assert self._process is not None and self._process.stdin is not None
+                self._request_id += 1
+                request_id = self._request_id
+                payload = json.dumps(
+                    {"protocol": 1, "id": request_id, "bodies": bodies or []},
+                    ensure_ascii=False, separators=(",", ":"),
+                )
+                write_result: queue.Queue[tuple[str, Any]] = queue.Queue(maxsize=1)
+                threading.Thread(
+                    target=self._write_frame,
+                    args=(self._process.stdin, (payload + "\n").encode("utf-8"), write_result),
+                    daemon=True,
+                ).start()
+                try:
+                    write_kind, write_error = write_result.get(
+                        timeout=max(0.001, deadline - time.monotonic())
+                    )
+                except queue.Empty as exc:
+                    raise TimeoutError("official counter worker timed out while writing") from exc
+                if write_kind != "ok":
+                    raise ValueError(f"official counter worker write failed: {write_error}")
+                frame = self._read_frame(max(0.001, deadline - time.monotonic()))
+                if frame.get("protocol") != 1 or frame.get("id") != request_id:
+                    raise ValueError("official counter response ID or protocol changed")
+                if frame.get("identity_sha256") != self._identity_digest:
+                    raise ValueError("official counter identity changed during request")
+                if frame.get("ok") is not True:
+                    raise ValueError("official counter rejected request")
+                counts = frame.get("counts")
+                if not isinstance(counts, list) or len(counts) != len(bodies or []):
+                    raise ValueError("official counter returned the wrong result count")
+                return {"identity": self.runtime.get("identity"), "counts": counts}
+            except Exception:
+                self._failed = True
+                self._stop_process(grace_seconds=0.2)
+                raise
+
+    @staticmethod
+    def _write_frame(stream, payload: bytes, result: queue.Queue) -> None:
+        try:
+            stream.write(payload)
+            stream.flush()
+            result.put(("ok", None))
+        except Exception as exc:
+            result.put(("error", type(exc).__name__))
+
+    def _stop_process(self, *, grace_seconds: float) -> None:
+        process, self._process = self._process, None
+        if process is None:
+            return
+        try:
+            if process.stdin is not None:
+                process.stdin.close()
+            process.wait(timeout=grace_seconds)
+        except Exception:
+            try:
+                process.terminate()
+                process.wait(timeout=1)
+            except Exception:
+                process.kill()
+                try:
+                    process.wait(timeout=1)
+                except Exception:
+                    pass
+        for stream in (process.stdout, process.stderr):
+            if stream is not None:
+                try:
+                    stream.close()
+                except OSError:
+                    pass
+
+    def close(self) -> None:
+        with self._lock:
+            if self._closed:
+                return
+            self._closed = True
+            self._stop_process(grace_seconds=2)
 
     def invoke(self, bodies: list[dict] | None = None) -> dict:
         result = subprocess.run(
@@ -98,13 +286,27 @@ class OfficialCounter:
         return parsed
 
     def count(self, kwargs: dict) -> InputBound:
-        body = {
-            "model": kwargs["model"].split("/")[-1],
-            "messages": kwargs["messages"],
-            "tools": kwargs.get("tools", []),
-            "thinking": kwargs.get("extra_body", {}).get("thinking"),
-        }
-        return InputBound(**self.invoke([body])["counts"][0])
+        return self.count_many([kwargs])[0]
+
+    def count_many(self, requests: list[dict]) -> list[InputBound]:
+        """Count a batch under the existing single/batch deadlines."""
+        if not requests:
+            return []
+        bodies = [
+            {
+                "model": kwargs["model"].split("/")[-1],
+                "messages": kwargs["messages"],
+                "tools": kwargs.get("tools", []),
+                "thinking": kwargs.get("extra_body", {}).get("thinking"),
+            }
+            for kwargs in requests
+        ]
+        if self._persistent:
+            timeout = self._timeout_seconds if len(bodies) == 1 else 1800.0
+            counts = self._persistent_invoke(bodies, timeout)["counts"]
+        else:
+            counts = self.invoke(bodies)["counts"]
+        return [InputBound(**item) for item in counts]
 
 
 def calibrate_previous(previous: Path, runtime: dict) -> dict:

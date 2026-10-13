@@ -207,6 +207,7 @@ def run_regression_feedback(output: Path) -> dict:
                 repo=settings["repo"],
                 task=settings["task"],
                 model_name=settings["model_name"],
+                execution_backend="local",
                 output_dir=settings["output_dir"],
                 env_file=None,
                 test_python_executable=Path(sys.executable),

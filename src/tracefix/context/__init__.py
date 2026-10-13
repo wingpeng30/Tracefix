@@ -4,7 +4,10 @@ from tracefix.context.manager import (
     ContextConfig,
     ContextManager,
     ContextMetrics,
+    ContextSessionState,
     ContextView,
 )
 
-__all__ = ["ContextConfig", "ContextManager", "ContextMetrics", "ContextView"]
+__all__ = [
+    "ContextConfig", "ContextManager", "ContextMetrics", "ContextSessionState", "ContextView",
+]

@@ -210,8 +210,16 @@ def render_report(run: Path, output: Path | None = None) -> Path:
     )
     context = result.get("context_metrics") or {}
     context_saved = context.get("estimated_tokens_saved") if isinstance(context, dict) else None
+    context_detail = (
+        f"压缩代次 {context.get('compaction_count', 0)} / "
+        f"投影复用 {context.get('projection_reuses', 0)} / "
+        f"无操作 {context.get('compaction_no_ops', 0)} / "
+        f"唯一裁剪结果 {context.get('unique_pruned_results', 0)} / "
+        f"tokenizer {context.get('tokenizer_identity') or 'fallback'}"
+        if isinstance(context, dict) and not offline else ""
+    )
     context_text = (
-        f"估算节省 {context_saved} Token"
+        f"{context_detail}；估算节省 {context_saved} Token"
         if isinstance(context_saved, int) and not offline
         else "脚本模型不提供可信 Token 估算"
         if offline

@@ -32,6 +32,7 @@ from tracefix.runtime import (
     RunResult,
     TraceFixRunner,
 )
+from tracefix.security import minimal_subprocess_environment, validate_project_environment
 from tracefix.tools import RunTestsTool, ToolResult
 
 P2_SCORING_CONTRACT_VERSION = "p2-scoring-v1"
@@ -692,9 +693,13 @@ def _run_qualified_pytest(
         else task.fail_to_pass
     )
     command = _pytest_command(test_python, checkout, expected, evidence_root, recipe)
-    environment = _validation_environment(checkout, _task_pythonpath_entries(task, recipe))
+    environment = _validation_environment(
+        checkout,
+        _task_pythonpath_entries(task, recipe),
+        recipe.environment_variables if recipe else None,
+    )
     if environment_variables:
-        environment.update(environment_variables)
+        environment.update(validate_project_environment(environment_variables))
     if recipe and recipe.source_import_probe:
         environment["TRACEFIX_SOURCE_IMPORT_PROBE"] = recipe.source_import_probe
     _write_audit_plugin(checkout)
@@ -827,9 +832,13 @@ def _pytest_command(
     )
 
 
-def _validation_environment(checkout: Path, pythonpath_entries: tuple[Path, ...]) -> dict[str, str]:
+def _validation_environment(
+    checkout: Path,
+    pythonpath_entries: tuple[Path, ...],
+    project_variables: dict[str, str] | None = None,
+) -> dict[str, str]:
     """隔离父项目插件和临时目录，同时让当前副本源码优先被导入。"""
-    environment = _isolated_build_environment(checkout)
+    environment = _isolated_build_environment(checkout, project_variables)
     roots = [str(path) for path in pythonpath_entries]
     if (checkout / "src").is_dir():
         roots.append(str(checkout / "src"))
@@ -929,10 +938,11 @@ def _probe_source_import(
     """
     if recipe is None or not recipe.source_import_probe:
         return None, None
-    environment = dict(os.environ)
+    environment = minimal_subprocess_environment()
     entries = [str(checkout), str(checkout / "src")]
-    previous = environment.get("PYTHONPATH")
-    environment["PYTHONPATH"] = os.pathsep.join([*entries, *([previous] if previous else [])])
+    environment.update(validate_project_environment(recipe.environment_variables))
+    environment["PYTHONPATH"] = os.pathsep.join(entries)
+    environment["PYTHONDONTWRITEBYTECODE"] = "1"
     code = (
         "import importlib; module = importlib.import_module(" + repr(recipe.source_import_probe)
         + "); print(getattr(module, '__file__', ''))"
@@ -970,7 +980,7 @@ def _run_recipe_build(
     """执行配方构建步骤，并为每一步保存命令和完整输出。"""
     if recipe is None:
         return ()
-    environment = _isolated_build_environment(checkout)
+    environment = _isolated_build_environment(checkout, recipe.environment_variables)
     steps: list[ProcessEvidence] = []
     for template in recipe.build_commands:
         command = tuple(str(test_python) if item == "{python}" else item for item in template)
@@ -1107,23 +1117,25 @@ def _node_ids_from_collect_output(output: str) -> tuple[str, ...]:
     )
 
 
-def _isolated_build_environment(checkout: Path) -> dict[str, str]:
+def _isolated_build_environment(
+    checkout: Path, project_variables: dict[str, str] | None = None
+) -> dict[str, str]:
     """将构建临时文件限制在副本内，避免系统 Temp 的权限与空间干扰。"""
     temporary = checkout / ".tracefix-build-tmp"
     temporary.mkdir(parents=True, exist_ok=True)
-    environment = dict(os.environ)
+    environment = minimal_subprocess_environment()
+    environment.update(validate_project_environment(project_variables or {}))
     environment.update(
         {
             "TEMP": str(temporary),
             "TMP": str(temporary),
             "PIP_CACHE_DIR": str(temporary / "pip-cache"),
             "PIP_NO_CACHE_DIR": "1",
+            "TMPDIR": str(temporary),
+            "HOME": str(temporary),
+            "PYTHONDONTWRITEBYTECODE": "1",
         }
     )
-    # 构建步骤不需要模型密钥，避免上游构建脚本或子进程读取运行凭证。
-    for name in tuple(environment):
-        if name.upper() in {"DEEPSEEK_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY"}:
-            environment.pop(name, None)
     return environment
 
 
@@ -1476,6 +1488,7 @@ class RealPrescreenRunner:
                 repo=source,
                 task=task.problem_statement,
                 model_name=config.model_name,
+                execution_backend="local",
                 output_dir=artifacts,
                 env_file=config.env_file,
                 usd_cny_rate=config.usd_cny_rate,

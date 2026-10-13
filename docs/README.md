@@ -1,12 +1,19 @@
 # TraceFix 文档索引
 
+新会话首先读取[当前状态](current-status.md)。这是固定入口，区分当前工作区、已完成实验和历史计划；
+不能按旧交接的文件名或文末“下一步”决定今天的进度。
+
 本目录保存代码演进、实验解释和后续任务记录。README 首页只保留当前使用方法与主要结果，
 完整的历史和证据从这里进入。
 
 ## 新任务交接入口
 
-- [`handoffs/2026-09-17-v084.md`](handoffs/2026-09-17-v084.md)：当前版本、优先级任务、
-  必读代码、原始证据位置和可复制启动提示。最新状态见文末第 26 节：V0.8.14 60 项开发集输出呈现比较已完成，T 未满足预注册采纳条件，留出集未运行。
+- [`current-status.md`](current-status.md)：当前代码身份、最新结果、验证边界与下一任务起点。
+- [`security.md`](security.md)：普通任务、文件工具、子进程、Docker 和提示注入的基础安全约定。
+- [`roadmap.md`](roadmap.md)与[`development-history.md`](development-history.md)：近期工作和具体证据。
+- [`experiments/2026-10-11-abc-full30-comparison.md`](experiments/2026-10-11-abc-full30-comparison.md)：最新A/B/修复后C同题30题横向比较。
+- [`handoffs/2026-09-29-agent-harness.md`](handoffs/2026-09-29-agent-harness.md)：历史交接日志，先按顶部当前入口阅读。
+- [`handoffs/2026-09-17-v084.md`](handoffs/2026-09-17-v084.md)：早期版本归档；文末第26节是历史状态，不能当作今天的进度。
 
 ## 项目历程
 

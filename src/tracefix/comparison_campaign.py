@@ -88,13 +88,16 @@ def config_for(
         from tracefix.models.input_bounds import DEEPSEEK_FLASH_CONTEXT
 
         agent_config.context.context_window_tokens = DEEPSEEK_FLASH_CONTEXT
-        agent_config.context.compaction_trigger_tokens = DEEPSEEK_FLASH_CONTEXT - 8192
+        agent_config.context.compaction_trigger_tokens = None
+        agent_config.context.compaction_trigger_ratio = 0.8
+        agent_config.context.compaction_target_ratio = 0.6
     return RunConfig(
         repo=Path(spec["source"]),
         task=task,
         output_dir=output,
         env_file=env_file,
         model_name="deepseek/deepseek-flash",
+        execution_backend="local",
         llm_max_retries=0,
         llm_timeout_seconds=limits["timeout_seconds"],
         per_request_output_tokens=selected["per_request_output_tokens"],
@@ -818,6 +821,16 @@ def execute_trial(root: Path, protocol: dict, row: dict, env_file: Path | None) 
         record.update(
             status="failed", reason=f"{type(exc).__name__}: {exc}", infrastructure_failure=True
         )
+    finally:
+        if adapter is not None:
+            try:
+                adapter.close()
+            except Exception as exc:
+                record.update(
+                    status="failed",
+                    infrastructure_failure=True,
+                    reason=f"counter cleanup: {type(exc).__name__}: {exc}",
+                )
     # Preserve candidate patches even when a simple loop reaches its limit.
     if not patch.exists() and (directory / "workspace").exists():
         try:

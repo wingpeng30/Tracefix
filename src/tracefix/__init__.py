@@ -21,7 +21,13 @@ from tracefix.benchmark import (
     BenchmarkTaskResult,
     load_benchmark_tasks,
 )
-from tracefix.context import ContextConfig, ContextManager, ContextMetrics, ContextView
+from tracefix.context import (
+    ContextConfig,
+    ContextManager,
+    ContextMetrics,
+    ContextSessionState,
+    ContextView,
+)
 from tracefix.exceptions import (
     AgentCompleted,
     AgentError,
@@ -182,6 +188,7 @@ __all__ = [
     "ContextError",
     "ContextManager",
     "ContextMetrics",
+    "ContextSessionState",
     "ContextView",
     "GetGitDiffTool",
     "LLMAuthenticationError",

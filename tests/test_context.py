@@ -10,6 +10,7 @@ from tracefix import (
     ContextBudgetExceeded,
     ContextConfig,
     ContextManager,
+    ContextSessionState,
     LLMConfig,
     LLMResponse,
     Message,
@@ -52,7 +53,9 @@ def _history(*pairs: tuple[Message, Message]) -> tuple[Message, ...]:
 def test_default_config_and_unchanged_small_view() -> None:
     config = ContextConfig()
     assert config.context_window_tokens == 1_000_000
-    assert config.compaction_trigger_tokens == 32_000
+    assert config.compaction_trigger_tokens is None
+    assert config.trigger_tokens() == 788_723
+    assert config.target_tokens() == 591_542
     messages = _history(_tool_pair(1))
     view = ContextManager(config).prepare(messages)
     assert view.compacted is False
@@ -384,3 +387,226 @@ def test_request_view_is_disabled_by_default() -> None:
     assert not any(
         event.event_type is TraceEventType.MODEL_REQUEST_VIEW for event in sink.events
     )
+
+
+def test_ratio_threshold_uses_output_reserve_and_triggers_at_eighty_percent() -> None:
+    messages = _history()
+    state = ContextSessionState()
+    config = ContextConfig(context_window_tokens=1_000, output_reserve_tokens=100)
+    manager = ContextManager(config)
+    trigger = config.trigger_tokens(output_reserve_tokens=100)
+    below = manager.prepare(
+        messages, state=state, output_reserve_tokens=100,
+        token_counter=lambda _messages, _tools: trigger - 1,
+    )
+    assert below.compacted is False
+    at_boundary = ContextManager(config).prepare(
+        messages, state=state, output_reserve_tokens=100,
+        token_counter=lambda _messages, _tools: trigger,
+    )
+    assert at_boundary.compaction_no_op is True
+    assert at_boundary.compaction_target_tokens == config.target_tokens(100)
+    assert at_boundary.count_method == "official-tokenizer-estimate"
+    changed_reserve = ContextManager(config).prepare(
+        messages, state=ContextSessionState(), output_reserve_tokens=200,
+        token_counter=lambda _messages, _tools: config.trigger_tokens(200),
+    )
+    assert changed_reserve.compaction_no_op is True
+    assert config.output_reserve_for_request(200) == 200
+    assert config.available_input_tokens(200) == 790
+
+
+def test_minimum_safe_user_content_is_rejected_on_every_compaction_fallback() -> None:
+    messages = (
+        Message(role=MessageRole.SYSTEM, content="system"),
+        Message(role=MessageRole.USER, content="must remain " * 100),
+    )
+    manager = ContextManager(ContextConfig(
+        context_window_tokens=500, output_reserve_tokens=50, safety_margin_ratio=0.01,
+    ))
+    capacity = manager.config.available_input_tokens(50)
+    with pytest.raises(ContextBudgetExceeded, match="minimum safe request"):
+        manager.prepare(
+            messages, output_reserve_tokens=50,
+            token_counter=lambda _messages, _tools: capacity + 1,
+        )
+
+
+def test_projection_reuses_prefix_and_appends_dynamic_system_messages_in_order() -> None:
+    history = _history(_tool_pair(1, "first"))
+    state = ContextSessionState()
+    manager = ContextManager(ContextConfig(compaction_trigger_tokens=100_000))
+    schemas = (ToolSpec(name="read_file", description="read"),)
+    first = manager.prepare(history, schemas, state=state)
+    skill = Message(role=MessageRole.USER, content="activated skill", metadata={
+        "kind": "skill_instructions", "trust_level": "untrusted_instruction_data",
+    })
+    second = manager.prepare((*history, skill), schemas, state=state)
+    assert second.projection_reused is True
+    assert second.messages[:len(first.messages)] == first.messages
+    assert second.messages[-1] == skill
+    assert second.messages[0].content == "system"
+
+
+def test_context_state_rejects_changed_history_and_tool_schema() -> None:
+    history = _history(_tool_pair(1))
+    schemas = (ToolSpec(name="read_file", description="read"),)
+    manager = ContextManager(ContextConfig(compaction_trigger_tokens=100_000))
+    state = ContextSessionState()
+    manager.prepare(history, schemas, state=state)
+    changed_history = (*history[:-1], history[-1].model_copy(update={"content": "changed"}))
+    with pytest.raises(ContextBudgetExceeded, match="history changed"):
+        manager.prepare(changed_history, schemas, state=state)
+    with pytest.raises(ContextBudgetExceeded, match="tool schemas changed"):
+        manager.prepare(history, (ToolSpec(name="read_file", description="changed"),), state=state)
+
+
+def test_three_user_corrections_and_dynamic_skill_survive_compaction_in_order() -> None:
+    first = "初始要求：修复解析器。"
+    corrections = (
+        "第一轮纠正：兼容空输入。",
+        "中段关键要求：保留原有错误类型。",
+        "第三轮纠正：不要改变公开 API。",
+    )
+    messages = [Message(role=MessageRole.SYSTEM, content="stable system")]
+    messages.append(Message(role=MessageRole.USER, content=first))
+    for number, correction in enumerate(corrections, start=1):
+        messages.extend(_tool_pair(number, f"evidence {number} " * 120))
+        if number == 2:
+            messages.append(Message(
+                role=MessageRole.USER, content="skill instructions",
+                metadata={"kind": "skill_instructions", "version": "1",
+                          "trust_level": "untrusted_instruction_data"},
+            ))
+        messages.append(Message(role=MessageRole.USER, content=correction,
+                                metadata={"turn": number + 1}))
+    manager = ContextManager(ContextConfig(
+        compaction_trigger_tokens=300, context_window_tokens=100_000,
+        retain_ratio=0.1, tool_result_threshold_chars=10_000,
+    ))
+    view = manager.prepare(tuple(messages))
+    visible_users = [m.content for m in view.messages if m.role is MessageRole.USER
+                     and m.metadata.get("kind") not in {"context_summary", "skill_instructions"}]
+    assert visible_users == [first, *corrections]
+    assert [m.role for m in view.messages if m.content == "skill instructions"] == [
+        MessageRole.USER,
+    ]
+    ordered = (first, corrections[0], "skill instructions", corrections[1], corrections[2])
+    positions = [next(i for i, message in enumerate(view.messages)
+                      if message.content == target) for target in ordered]
+    assert positions == sorted(positions)
+
+
+def test_compaction_commits_once_then_reuses_until_the_next_threshold() -> None:
+    history = _history(*(
+        _tool_pair(number, f"result {number} " + "x" * 1_500)
+        for number in range(1, 21)
+    ))
+    state = ContextSessionState()
+    config = ContextConfig(
+        context_window_tokens=100_000, compaction_trigger_tokens=20_000,
+        retain_ratio=0.2, tool_result_threshold_chars=10_000,
+    )
+    manager = ContextManager(config)
+    first = manager.prepare(history, state=state, force=True)
+    assert first.compacted is True
+    assert state.epoch == 1
+    appended = (*history, Message(role=MessageRole.ASSISTANT, content="继续处理"))
+    reused = manager.prepare(appended, state=state)
+    assert reused.projection_reused is True
+    assert reused.compacted is False
+    assert reused.messages[:len(first.messages)] == first.messages
+    pressured = (*appended, Message(role=MessageRole.ASSISTANT, content="z" * 100_000))
+    second_epoch = manager.prepare(pressured, state=state)
+    assert second_epoch.compacted is True
+    assert state.epoch == 2
+
+
+def test_tokenizer_counter_method_and_partial_tool_visibility_are_explicit() -> None:
+    messages = _history(_tool_pair(1, "content"))
+
+    class Estimate:
+        tokens = 7
+        method = "deepseek-recipe-v41"
+
+    view = ContextManager(ContextConfig(compaction_trigger_tokens=100_000)).prepare(
+        messages, token_counter=lambda _messages, _tools: Estimate(),
+    )
+    assert view.estimated_tokens_after == 7
+    assert view.count_method == "deepseek-recipe-v41"
+    pruned = ContextManager(ContextConfig(
+        compaction_trigger_tokens=100_000, tool_result_threshold_chars=512,
+        tool_result_head_chars=180, tool_result_tail_chars=80,
+    )).prepare(_history(_tool_pair(2, "x" * 800)))
+    tool_result = next(message for message in pruned.messages if message.role is MessageRole.TOOL)
+    assert tool_result.metadata["context_pruned"] is True
+    assert tool_result.tool_call_id in pruned.pruned_tool_call_ids
+
+
+def test_full_request_counter_cache_is_reused_only_for_the_same_request() -> None:
+    history = _history(_tool_pair(1, "content"))
+    manager = ContextManager(ContextConfig(compaction_trigger_tokens=100_000))
+    state = ContextSessionState()
+    calls = []
+
+    def count(messages, tools):
+        calls.append(ContextManager._digest_wire(messages, tools))
+        return 17
+
+    manager.prepare(history, state=state, token_counter=count)
+    manager.prepare(history, state=state, token_counter=count)
+    assert len(calls) == 1
+    changed = (*history, Message(role=MessageRole.USER, content="new request"))
+    manager.prepare(changed, state=state, token_counter=count)
+    assert len(calls) == 2
+
+
+def test_tokenizer_identity_is_pinned_and_restored_with_context_state() -> None:
+    history = _history(_tool_pair(1, "content"))
+
+    def count(identity):
+        return lambda _messages, _tools: type("Bound", (), {
+            "tokens": 17,
+            "status": "estimate",
+            "method": "deepseek-recipe-v41",
+            "identity": identity,
+        })()
+
+    state = ContextSessionState()
+    config = ContextConfig(compaction_trigger_tokens=100_000)
+    ContextManager(config).prepare(history, state=state, token_counter=count("sha-a"))
+    assert state.tokenizer_identity == "sha-a"
+
+    restored = ContextSessionState.model_validate(state.model_dump(mode="json"))
+    ContextManager(config).prepare(history, state=restored, token_counter=count("sha-a"))
+    with pytest.raises(ContextBudgetExceeded, match="tokenizer identity changed"):
+        ContextManager(config).prepare(history, state=restored, token_counter=count("sha-b"))
+
+
+def test_damaged_pinned_tokenizer_is_blocked_but_unavailable_estimates_fall_back() -> None:
+    history = _history(_tool_pair(1, "content"))
+    config = ContextConfig(compaction_trigger_tokens=100_000)
+    state = ContextSessionState(tokenizer_identity="sha-a")
+
+    class Unavailable:
+        tokens = None
+        status = "unavailable"
+        method = "deepseek-recipe-v41"
+        identity = "ValueError"
+
+    with pytest.raises(ContextBudgetExceeded, match="identity could not be verified"):
+        ContextManager(config).prepare(
+            history, state=state, token_counter=lambda _messages, _tools: Unavailable(),
+        )
+
+    fallback = ContextManager(config).prepare(
+        history,
+        state=ContextSessionState(),
+        token_counter=lambda _messages, _tools: type("Unavailable", (), {
+            "tokens": None,
+            "status": "unavailable",
+            "method": "deepseek-recipe-v41",
+            "identity": "unsupported request settings",
+        })(),
+    )
+    assert fallback.count_method == "tracefix-json-estimate-fallback"

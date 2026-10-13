@@ -70,7 +70,8 @@ class LiveBudgetAdapter(LiteLLMAdapter):
         spent = sum(item["peak_cost_cny"] for item in data["requests"])
         if spent + request_max_cny > self.limit_cny:
             raise LLMProviderError("live experiment CNY budget would be exceeded")
-        kwargs = self.request_kwargs(messages, tools)
+        prepared = self.prepare_request(messages, tools)
+        kwargs = prepared.kwargs()
         request_hash = hashlib.sha256(json.dumps(
             kwargs, sort_keys=True, ensure_ascii=False, separators=(",", ":")
         ).encode("utf-8")).hexdigest()
@@ -81,7 +82,7 @@ class LiveBudgetAdapter(LiteLLMAdapter):
         data["requests"].append(entry)
         self._write(data)
         try:
-            response = super().complete(messages, tools)
+            response = self.complete_prepared(prepared)
             entry.update({
                 "status": "completed", "response_model": response.model_name,
                 "usage": response.usage.model_dump(mode="json"),

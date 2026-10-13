@@ -31,7 +31,7 @@ def test_run_reads_toml_and_passes_ordinary_fields(tmp_path, monkeypatch, capsys
     config.write_text(
         '[run]\nrepo = "source"\ntask = "fix"\nmodel = "offline/replay"\n'
         'test_target = "tests/test_sample.py"\nsource_import = "sample"\n'
-        'output_dir = "saved"\n',
+        'output_dir = "saved"\ncontext_agent_tool_enabled = true\n',
         encoding="utf-8",
     )
     seen = []
@@ -47,6 +47,7 @@ def test_run_reads_toml_and_passes_ordinary_fields(tmp_path, monkeypatch, capsys
     assert seen[0].test_target == "tests/test_sample.py"
     assert seen[0].source_import == "sample"
     assert seen[0].output_dir == tmp_path / "saved"
+    assert seen[0].agent_config.context.agent_tool_enabled is True
     assert "报告命令" in capsys.readouterr().out
 
 
@@ -342,6 +343,7 @@ def test_cli_context_options_override_environment(tmp_path, monkeypatch) -> None
 
     monkeypatch.setattr("tracefix.cli.TraceFixRunner", FakeRunner)
     monkeypatch.setenv("TRACEFIX_CONTEXT_TRIGGER_TOKENS", "64000")
+    monkeypatch.setenv("TRACEFIX_CONTEXT_AGENT_TOOL_ENABLED", "false")
     code = main(
         [
             "run",
@@ -356,6 +358,13 @@ def test_cli_context_options_override_environment(tmp_path, monkeypatch) -> None
             "3000",
             "--context-retain-ratio",
             "0.4",
+            "--context-trigger-ratio",
+            "0.7",
+            "--context-target-ratio",
+            "0.5",
+            "--context-output-reserve-tokens",
+            "2048",
+            "--context-agent-tool",
             "--record-request-views",
             "--max-exploration-steps",
             "3",
@@ -375,11 +384,33 @@ def test_cli_context_options_override_environment(tmp_path, monkeypatch) -> None
     assert context.context_window_tokens == 1_000_000
     assert context.compaction_trigger_tokens == 3_000
     assert context.retain_ratio == 0.4
+    assert context.compaction_trigger_ratio == 0.7
+    assert context.compaction_target_ratio == 0.5
+    assert context.output_reserve_tokens == 2_048
+    assert context.agent_tool_enabled is True
     assert captured[0].agent_config.record_request_views is True
     assert captured[0].agent_config.max_exploration_steps == 3
     assert captured[0].agent_config.max_search_calls == 2
     assert captured[0].agent_config.max_file_reads_before_patch == 6
     assert captured[0].agent_config.repo_map_reads_before_patch == 1
+
+
+def test_context_cli_inspect_and_compact_dispatch_without_model(tmp_path, monkeypatch) -> None:
+    operations = []
+
+    class ContextRunner:
+        def inspect_context(self, run):
+            operations.append(("inspect", run))
+            return {"epoch": 1}
+
+        def compact_context(self, run):
+            operations.append(("compact", run))
+            return {"epoch": 2}
+
+    monkeypatch.setattr("tracefix.cli.TraceFixRunner", ContextRunner)
+    assert main(["context", "inspect", "--run", str(tmp_path)]) == 0
+    assert main(["context", "compact", "--run", str(tmp_path)]) == 0
+    assert [operation for operation, _run in operations] == ["inspect", "compact"]
 
 
 def test_cli_token_optimization_switch_overrides_environment(tmp_path, monkeypatch) -> None:
