@@ -193,6 +193,12 @@ def _child(phase: str, output: Path, repo: Path, image_id: str, run_root: Path |
     else:
         if run_root is None:
             raise ValueError("resume phase requires a run checkpoint")
+        inspection = runner.inspect(run_root)
+        if not inspection.get("resumable"):
+            raise RuntimeError(
+                "artifact recovery checkpoint is not resumable: "
+                + json.dumps(inspection.get("reasons", []), ensure_ascii=False)
+            )
         result = runner.resume(run_root)
     return {
         "phase": phase,
