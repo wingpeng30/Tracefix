@@ -82,9 +82,28 @@ def test_tracked_cache_named_products_survive_while_generated_files_are_excluded
     assert "product/__pycache__/owned.py" in paths
     assert "product/__pycache__/temporary.pyc" not in paths
     target = tmp_path / "restored-cache"
+    (target / "product/__pycache__").mkdir(parents=True)
+    (target / "product/__pycache__/stale.pyc").write_bytes(b"old cache")
+    (target / ".pytest_cache").mkdir()
+    (target / ".pytest_cache/stale").write_text("old cache", encoding="utf-8")
     restore_workspace(target, archive, metadata)
     assert (target / "product/__pycache__/owned.py").read_bytes() == b"user-owned product"
+    assert not (target / "product/__pycache__/stale.pyc").exists()
+    assert not (target / ".pytest_cache").exists()
     assert not (target / "product/__pycache__/temporary.pyc").exists()
+
+
+def test_snapshot_rejects_unsupported_product_file_kind(saved, monkeypatch):
+    import tracefix.workspace_snapshot as snapshot
+
+    source, _, _ = saved
+    product = source / "keep.py"
+    monkeypatch.setattr(snapshot, "_paths", lambda *_args, **_kwargs: [product])
+    # Windows has no portable FIFO fixture, so exercise the file-type guard
+    # by classifying this existing path as non-regular during archive export.
+    monkeypatch.setattr(snapshot.stat, "S_ISREG", lambda _mode: False)
+    with pytest.raises(CheckpointError, match="unsupported product file type"):
+        export_workspace(source, io.BytesIO())
 
 
 def test_snapshot_rejects_file_replacement_after_path_inspection(saved, monkeypatch):
@@ -384,6 +403,13 @@ def test_streaming_restore_in_disposable_workspace_and_final_digest(saved, tmp_p
     changed["archive_sha256"] = "0" * 64
     with pytest.raises(CheckpointError, match="identity"):
         restore_stream(tmp_path / "disposable-invalid", io.BytesIO(archive.read_bytes()), changed)
+
+
+def test_streaming_restore_hashes_trailing_stream_bytes(saved, tmp_path):
+    _, archive, metadata = saved
+    stream = io.BytesIO(archive.read_bytes() + b"unexpected trailing bytes")
+    with pytest.raises(CheckpointError, match="identity"):
+        restore_stream(tmp_path / "disposable-with-tail", stream, metadata)
 
 
 @pytest.mark.parametrize("fault,reason", [

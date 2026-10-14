@@ -156,6 +156,7 @@ def test_unknown_response_records_elapsed_time_without_settlement(tmp_path, monk
     import time
     from types import SimpleNamespace
 
+    import tracefix.comparison as comparison
     from tracefix.exceptions import LLMProviderError, LLMResponseFormatError, LLMTimeoutError
 
     error_type = {
@@ -167,6 +168,13 @@ def test_unknown_response_records_elapsed_time_without_settlement(tmp_path, monk
         OfficialCounter,
         "count",
         lambda *_: InputBound(100, "estimate", "fixture", "identity", "sha"),
+    )
+    # The ledger assertion is about recording elapsed time, not Windows timer
+    # resolution. Keep the simulated provider delay real while fixing only the
+    # clock read by ComparisonBudget.
+    ticks = iter(range(100))
+    monkeypatch.setattr(
+        comparison, "time", SimpleNamespace(monotonic=lambda: 10.0 + next(ticks) * 0.03)
     )
 
     class Unknown(FixtureClient):

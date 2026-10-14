@@ -35,8 +35,19 @@ line+branch 为18959/21064 = 90.00664641093809%，`summary.json` 接受。Ruff�
 本地 editable 回放证据位于 `runs/g0-editable-smoke/`，wheel 文件为
 `runs/g0-wheel/tracefix_agent-0.8.4-py3-none-any.whl`（SHA-256
 `dd0d0a0b31f620c33617e40f7f38dfbf71442c1b5900e59534920313699dc951`），独立安装与零调用 smoke 结果在
-`runs/g0-wheel-smoke/`。合成回放均记录 provider request/network attempts 为0。G0 本地门通过；3.11 与真实
-基础 Docker、ordinary Docker、Serena MCP 尚需推送后的候选 CI 原始结果，因此当前仍留在 G0。
+`runs/g0-wheel-smoke/`。这些本机 smoke 在当时记录 provider request/network attempts 为0；随后 f79 的
+CI #140 暴露了 wheel recovery 演练 backend 配置缺失和覆盖率门未达标，具体失败及修复见下节。本机
+结果属于较早测试清单，不能覆盖候选提交的远端门；阶段仍留在 G0。
+
+## 2026-10-14 Harness Foundations G0 首次 CI 与基线修复
+
+候选分支首次提交 `f79a5c876f5eea22782b44b823b3c0bd64fde951` 已推送；GitHub Actions run #140（`38558772365`）在 Windows 双 Python 和 Linux Docker 上执行。CI 的基础 Docker、ordinary Docker、Serena MCP 分别成功，产物 ID 为 `11890942229`、`11891741687`、`11891811177`，digest 分别为 `sha256:a4b27a5c6730f577ad8f0ab2020efcf292114db578684d933e1d610ebcce3953`、`sha256:6ba1ce84232f11aea9038092cc74307a8ef4610f158c84a638cb500df1f62478`、`sha256:66a2ad822f35f5b44c0aace449839f28a9f3c10aba702f99da490f9dbd067aec`。
+
+完整工程 job 均失败，故 f79 不是 G0 通过身份。Python 3.11.9/Windows 2025 artifact `11892155881`（digest `sha256:364329405a69210e1011f643d6c68f7e2c762e1e386cac8de6dfffd2789b8754`）记录 1361 个测试中的2个失败、0 error/skip，combined line+branch 为 `18956/21064 = 89.99240410178504%`；Python 3.12.10 artifact `11892171638`（digest `sha256:d2d910eaf715e861d989fda53c9a51863a6bcfc05c6fb31cbbeeef829122043f`）记录 1360 个测试中的1个失败、0 error/skip，coverage `18954/21064 = 89.98290922901633%`。两版的 wheel recovery smoke 又都失败于 `examples/replay_resume.py`：RunConfig 遗漏 backend 字段，继承普通 Docker 默认值，导致本地合成恢复演练报告 session manifest missing。完整原始日志和 JUnit/coverage 位于各 artifact；本机解包副本在候选 worktree 忽略目录 `runs/ci-140-py311-artifact/unpacked/tracefix-engineering/` 与 `runs/ci-140-py312-artifact/unpacked/tracefix-engineering/`。
+
+失败归因均为可复现的基线/夹具问题：Py311 的 interrupt elapsed assertion 依赖 Windows 实际计时粒度；`test_runtime_registry_keeps_skills_opt_in` 将空目录传给要求 Git 工作区的 runtime registry。已在候选工作树修复计时测试为局部稳定单调时钟，给 skills fixture 创建并提交测试仓库，并让 resume smoke 显式选 `execution_backend="local"`。为恢复被新增测试拉低的 coverage 余量，还补充快照 exporter 的特殊文件拒绝契约、恢复前清除既有 nested/top-level cache 的断言，以及 `restore_stream` 对 tar 尾随字节的哈希拒绝契约；没有生产功能改动、没有改低90%门槛。
+
+修复后 Python 3.12.5 定向集合（计时参数化、skills registry 与 `tests/test_workspace_snapshot.py`）为64 passed、0 skip、0 failed（10.16秒）；修改文件 Ruff 和 diff-check 返回0。修复后的 `examples/replay_resume.py` 本地离线回放也通过，首次状态 interrupted、恢复后 completed/verified、源仓库保持 clean，使用本地合成客户端6次请求，无供应商调用。当前候选 HEAD 仍为 f79，上述修复/文档变更尚未提交。双 Python 全量工程/coverage/editable/wheel，以及同一修复提交上的三个容器 job 均待重验；G0 仍进行中，尚未开始 G1。
 
 ## 2026-10-14 harness 能力比较与改进建议
 

@@ -10,22 +10,11 @@ TaskState、统一能力策略与 Docker/Serena 组合。完整设计、逐步�
 [阶段实施记录](tasks/2026-10-14-harness-foundations-implementation.md)。执行顺序为 G0→G1→G2→G3→G4，
 每阶段未通过其契约和工程门前不进入下一阶段；不新增供应商付费调用，不合并、不发布。
 
-候选分支起点为 `bc8b224d0419c5acab4a0a4d2abfb92e0ff4c67e` 加经核对的24个已跟踪修改及两份
-维护报告；没有复制凭据、原始 runs 或临时实验夹具。导入清单及 patch 哈希保存在本机忽略目录
-`runs/harness-foundations-setup-20261014`。Python 3.12.5 显式导入候选 `src/tracefix`，本阶段
-快照源路径与流限额测试也显式指向候选源码。尚未修改运行功能。
+候选分支起点为 `bc8b224d0419c5acab4a0a4d2abfb92e0ff4c67e` 加经核对的24个已跟踪修改及两份维护报告；没有复制凭据、原始 runs 或临时实验夹具。导入清单及 patch 哈希保存在本机忽略目录 `runs/harness-foundations-setup-20261014`。基线提交 `f79a5c876f5eea22782b44b823b3c0bd64fde951` 已推送并触发 CI #140（run `38558772365`）。基础 Docker、ordinary Docker 和 Serena MCP jobs 成功；两套 Windows quality jobs 失败，不能进入 G1。3.11 原始工程结果为 2 个测试失败、1361 个用例，combined line+branch `18956/21064 = 89.99240410178504%`；3.12 为 1 个测试失败、1360 个用例，`18954/21064 = 89.98290922901633%`。wheel recovery smoke 两版本均发现示例没有显式选择 local backend。精确日志和产物见[本次 G0 记录](development-history.md#2026-10-14-harness-foundations-g0-首次-ci-与基线修复)。
 
-G0 定向回归 255 passed、0 skipped（Python 3.12.5，444.60秒）。完整工程复验
-`runs/g0-engineering-python312-gate2/summary.json` 绑定 HEAD `bc8b224d0419c5acab4a0a4d2abfb92e0ff4c67e`：
-1360 passed、1 skipped、0 failed/error，耗时 1619.22 秒；Coverage.py 精确 combined line+branch 为
-18959/21064 = 90.00664641093809%。Ruff、compileall、diff-check 均返回0。唯一 skip 是 Windows 创建
-symlink 的 WinError 1314，有明确平台原因；未降低覆盖率门槛。候选 worktree 外的 Python 3.12.5 editable
-smoke 和 wheel 独立构建/安装 smoke 均通过，帮助命令及合成回放的供应商请求、网络尝试为0。
+当前工作树在 f79 上修正 Windows 计时测试的可控时钟、skills opt-in 测试的 Git fixture，以及 `replay_resume` 的显式 local backend；并补充特殊文件拒绝、嵌套缓存清理和 streamed archive 尾部完整性契约。Python 3.12.5 相关测试 64 passed、Ruff 与 diff-check 通过。修复尚未提交；完整双 Python、coverage、editable/wheel 和绑定修复提交的 Docker/MCP CI 必需门待重跑。此前 HEAD `bc8b224` 的 1360 passed 全量结果属于前一测试清单，不能代替修复后候选提交的阶段门。G1—G4 均未开始。
 
-本机没有 Python 3.11，Docker daemon 未连接；Windows 沙盒会拦截 `Path.resolve(strict=True)`，因此这些
-本地工程检查使用了已授权的提权进程并把临时目录放在候选 worktree 的 `runs/` 下。G0 的本地代码门已过，
-仍需提交并推送候选代码，再取得双 Python、基础 Docker、ordinary Docker 与 Serena MCP 对应候选提交的
-GitHub CI 原始证据。CI 阶段门未完成前不进入 G1，G1—G4 均未开始。
+本机没有 Python 3.11，Docker daemon 未连接；Windows 沙盒会拦截 `Path.resolve(strict=True)`，因此本地工程检查使用已授权的提权进程并把临时目录放在候选 worktree 的 `runs/` 下。CI #140 的容器证据绑定 f79；修复提交必须重新通过全部必需 job 才能退出 G0。
 
 ## 最新 harness 比较与候选改进
 
@@ -35,12 +24,11 @@ GitHub CI 原始证据。CI 阶段门未完成前不进入 G1，G1—G4 均未�
 可取消作业及 Docker 功能组合，之后评估有界子代理。现有记忆、沙盒、上下文、网关和恢复均作为
 已有基础，不重复规划；这些建议尚未实现，也没有新增模型收益证据或付费授权。
 
-审阅 HEAD 为 `bc8b224d0419c5acab4a0a4d2abfb92e0ff4c67e`，另有未提交源码/测试修复。
-静态核对发现当前已包含 CI139 部分归因项的修复，不能把历史失败清单直接等同当前尚未修复；
-本轮未验证这些修复或重跑工程链。当前配置支持 Docker recovery 下的记忆/连续对话，
+审阅比较报告时的候选 HEAD 为 f79；随后 G0 follow-up 已在候选工作树修改基线测试和示例 smoke，
+没有改运行功能。CI139 部分归因项的现状需按当次代码核对，不能把历史失败清单直接等同当前未修复项。
+当前配置支持 Docker recovery 下的记忆/连续对话，
 自定义 Skills、Serena MCP 和结束前回归目标仍有后端组合限制。此事实优先于旧说明中的一概 local-only。
-本次只新增报告及同步文档，不更改运行实现；源码身份、来源收据与文档检查保存在
-`runs/harness-review-20261014`。继续按用户当次任务执行，不自动启动候选功能或历史付费实验。
+原比较报告只新增分析文档；其结论不作为本轮 G0 的验收依据。继续按用户当次任务执行，不自动启动历史付费实验。
 
 ## 当前代码身份
 

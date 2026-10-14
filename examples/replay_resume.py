@@ -57,6 +57,7 @@ def main() -> int:
         first = runner.run(RunConfig(
             repo=source, task="修复分页测试", model_name="offline/replay",
             output_dir=output / "runs", env_file=None,
+            execution_backend="local",
             test_python_executable=Path(sys.executable),
             test_target="tests/test_widget.py", source_import="widget",
         ))

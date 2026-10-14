@@ -40,11 +40,13 @@
 ### G0 退出清单
 
 - [x] 基线来源清单与哈希完整；未导入实验原始目录和凭据。
-- [x] 相关定向回归255项通过；识别的全量门缺口是覆盖率89.921192556%，增加快照边界用例且保留90%门槛。
-- [x] Python 3.12.5 完整 pytest：1360 passed、1 skipped（Windows symlink WinError 1314）、0 failed/error；精确 combined line+branch 为18959/21064 = 90.00664641093809%。Python 3.11以候选 CI为准。
-- [x] Ruff、compileall、diff、仓外 editable 与独立 wheel smoke 通过；零供应商请求和零网络尝试。
-- [ ] 远端基础 Docker、ordinary Docker、Serena MCP 必需 jobs 全部有绑定候选提交的原始证据。
-- [ ] 提交、推送、CI 运行 ID、原始产物位置及任何限制已记入项目状态和开发历程。
+- [x] 来源清单、导入 patch 哈希、隔离候选工作树和 CI 触发范围已核验；起始提交为 `f79a5c876f5eea22782b44b823b3c0bd64fde951`。
+- [x] 基线 CI #140 三个容器 job 通过，原始产物与 digest 已记录；该结果只绑定 f79。
+- [x] 对 f79 失败完成归因并修复：Windows elapsed-time 测试的时钟分辨率、skills opt-in Git fixture、local resume 演练的 backend 默认值；添加特殊类型、缓存清理和流尾哈希契约。Python 3.12.5 定向 64 passed，Ruff/diff-check 通过。
+- [ ] 修复后的候选提交完成 Python 3.11/3.12 全量 pytest 与 Coverage.py 精确 line+branch 不低于90%；首次 f79 结果为 3.11 `18956/21064 = 89.99240410178504%`、3.12 `18954/21064 = 89.98290922901633%`，不可沿用此前不同测试清单的本机覆盖率结果。
+- [ ] 修复后的候选提交完成原范围 Ruff、compileall、diff、editable 和独立 wheel/recovery smoke；两版本首次 CI wheel smoke 均因 `replay_resume` 未设 `execution_backend="local"` 失败。
+- [ ] 基础 Docker、ordinary Docker、Serena MCP 必需 jobs 在修复提交绑定的 CI 全部通过；不借用 f79 容器结果代替新提交结果。
+- [ ] 提交、推送、CI 运行 ID、原始产物位置及限制同步写入当前状态与开发历程。
 
 ## G1：有类型、可失效的知识记忆
 

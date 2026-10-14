@@ -4,6 +4,7 @@ from tomllib import loads
 
 import pytest
 
+from examples.replay_ordinary import _git
 from tracefix import (
     AgentConfig,
     BaseLLM,
@@ -187,6 +188,11 @@ def test_default_agent_has_no_skill_catalog_or_tool_description():
 def test_runtime_registry_keeps_skills_opt_in(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir()
+    (workspace / "tracked.py").write_text("value = 1\n", encoding="utf-8")
+    _git(workspace, "init")
+    _git(workspace, "add", ".")
+    _git(workspace, "-c", "user.name=Test", "-c", "user.email=test@example.invalid",
+         "commit", "-m", "fixture")
     evidence = tmp_path / "test-evidence"
     assert "load_skill" not in create_default_tool_registry(
         workspace, evidence_dir=evidence
