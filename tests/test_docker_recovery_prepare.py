@@ -11,7 +11,13 @@ from tracefix.exceptions import WorkspaceError
 from tracefix.tools.base import ToolResult, ToolSpec
 
 
-@pytest.mark.parametrize("mode", ["off", "on", "restore", "tool", "interpreter", "bridge"])
+@pytest.mark.parametrize(
+    "mode",
+    [
+        "off", "on", "restore", "tool", "interpreter", "bridge",
+        "missing_image", "root_owner", "executor_identity", "writable_executor",
+    ],
+)
 def test_prepare_binds_recovery_identity_and_only_opted_in_cache_policy(
     tmp_path, monkeypatch, mode,
 ):
@@ -37,20 +43,35 @@ def test_prepare_binds_recovery_identity_and_only_opted_in_cache_policy(
         commands.append((command, kwargs))
         value = b""
         if command[1:3] == ["image", "inspect"]:
-            value = image.encode()
+            value = ("sha256:" + "b" * 64 if mode == "missing_image" else image).encode()
         elif command[1] == "inspect":
             formats = {
                 "{{.Id}}": "owned-container",
                 "{{json .HostConfig.NetworkMode}}": '"none"', "{{json .Mounts}}": "[]",
                 "{{.Config.User}}": "10001:10001",
-                "{{json .HostConfig}}": json.dumps({"ReadonlyRootfs": True, "PidsLimit": 256,
-                    "Memory": 2 * 1024**3, "NanoCpus": 1_000_000_000}),
+                    "{{json .HostConfig}}": json.dumps({
+                        "ReadonlyRootfs": True, "PidsLimit": 256,
+                        "Memory": 2 * 1024**3, "NanoCpus": 1_000_000_000,
+                        "Tmpfs": {"/opt/tracefix": (
+                            "rw,uid=10001,gid=10001,mode=755"
+                            if mode == "root_owner" else "rw,uid=0,gid=0,mode=755"
+                        )},
+                    }),
             }
             value = formats.get(command[command.index("--format") + 1], "run").encode()
-        elif "-c" in command and "platform.python_version" in command[-1]:
-            value = json.dumps(interpreter).encode()
-        elif "-c" in command and "importlib.import_module" in command[-1]:
-            value = b'"/work/agent/widget.py"'
+        elif "-c" in command:
+            script = command[command.index("-c") + 1]
+            if "platform.python_version" in script:
+                value = json.dumps(interpreter).encode()
+            elif "importlib.import_module" in script:
+                value = b'"/work/agent/widget.py"'
+            elif "manifest=json.loads" in script:
+                    value = (
+                        b"identity-mismatch" if mode == "executor_identity"
+                        else command[-1].encode()
+                    )
+            elif "p.write_text('probe')" in script:
+                    value = b"writable" if mode == "writable_executor" else b"blocked"
         return SimpleNamespace(stdout=value, returncode=0, stderr=b"")
 
     class Bridge:
@@ -84,6 +105,24 @@ def test_prepare_binds_recovery_identity_and_only_opted_in_cache_policy(
             recovery_enabled=mode != "off", recovery_snapshot=snapshot if recovering else None)
 
     try:
+        expected_failures = {
+            "missing_image": "image identity mismatch",
+            "root_owner": "not root-owned",
+            "executor_identity": "identity verification failed",
+            "writable_executor": "can modify the trusted executor",
+        }
+        if mode in expected_failures:
+            with pytest.raises(WorkspaceError, match=expected_failures[mode]):
+                prepare()
+            if mode == "missing_image":
+                assert not any(command[1] == "create" for command, _ in commands)
+            elif mode == "root_owner":
+                assert not any("chmod" in command for command, _ in commands)
+            elif mode == "executor_identity":
+                assert not any("p.write_text('probe')" in str(command) for command, _ in commands)
+            elif mode == "writable_executor":
+                assert any("p.write_text('probe')" in str(command) for command, _ in commands)
+            return
         if mode in {"tool", "interpreter", "bridge"}:
             with pytest.raises(WorkspaceError, match="changed|restore exactly"):
                 prepare()
@@ -93,7 +132,20 @@ def test_prepare_binds_recovery_identity_and_only_opted_in_cache_policy(
             assert bool(restored) == recovering
         exclusions = [command for command, _ in commands if ".git/info/exclude" in command[-1]]
         assert bool(exclusions) == (mode != "off")
-        assert any("a-w" in command for command, _ in commands)
+        root_install = [
+            command for command, _ in commands
+            if "--user" in command and command[command.index("--user") + 1] == "0:0"
+            and "chmod" in command
+        ]
+        assert any("0444" in command for command in root_install)
+        assert any("0555" in command for command in root_install)
+        write_probes = [
+            command for command, _ in commands
+            if any("p.write_text('probe')" in value for value in command)
+        ]
+        assert len(write_probes) == 1
+        assert write_probes[0][write_probes[0].index("--user") + 1] == "10001:10001"
+        assert backend.executor_write_probe == "blocked"
         assert ("-recovery-" in backend.container_name) == recovering
     finally:
         backend.close(remove=True)

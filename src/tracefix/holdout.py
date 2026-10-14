@@ -393,7 +393,13 @@ def freeze_long_context_mechanism(
                 read_order.append(str(call.arguments["path"]))
         tools = ToolRegistry([reader]).specs()
         control = ContextManager(ContextConfig(enabled=False)).prepare(history.snapshot(), tools)
-        treatment = ContextManager(ContextConfig(enabled=True)).prepare(history.snapshot(), tools)
+        treatment_config = ContextConfig(
+            enabled=True,
+            context_window_tokens=1_000_000,
+            compaction_trigger_tokens=32_000,
+            compaction_target_ratio=0.6,
+        )
+        treatment = ContextManager(treatment_config).prepare(history.snapshot(), tools)
         manifest = json.loads((task.task_dir / "task.json").read_text(encoding="utf-8"))
         critical_facts = [
             str(series["footer_template"])
@@ -438,6 +444,11 @@ def freeze_long_context_mechanism(
                 "contract_count": len(contracts),
                 "contract_sha256": {path.name: _sha(path) for path in contracts},
                 "read_order": read_order,
+                "treatment_config": {
+                    "context_window_tokens": treatment_config.context_window_tokens,
+                    "compaction_trigger_tokens": treatment_config.trigger_tokens(),
+                    "compaction_target_tokens": treatment_config.target_tokens(),
+                },
                 "control": {
                     "estimated_tokens_before": control.estimated_tokens_before,
                     "estimated_tokens_after": control.estimated_tokens_after,

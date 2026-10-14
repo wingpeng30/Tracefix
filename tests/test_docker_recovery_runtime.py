@@ -116,8 +116,10 @@ def test_restored_runner_retains_actual_tool_history_tests_and_cumulative_usage(
     original_run = subprocess.run
 
     def run(command, **kwargs):
+        if command[:3] == ["docker", "version", "--format"]:
+            return SimpleNamespace(returncode=0, stdout="27.5.1\n", stderr="")
         if command[:3] == ["docker", "image", "inspect"]:
-            return SimpleNamespace(returncode=0, stdout=image + "\n")
+            return SimpleNamespace(returncode=0, stdout=image + "\n", stderr="")
         return original_run(command, **kwargs)
 
     monkeypatch.setattr(subprocess, "run", run)

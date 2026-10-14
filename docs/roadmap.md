@@ -3,6 +3,25 @@
 当前进度和任务起点统一见[当前状态](current-status.md)。下方按日期保存工作记录；旧条目的“下一步”
 可能已完成，不自动恢复旧实验或验收排程。
 
+## 2026-10-14 Harness Foundations 实施
+
+已将[分阶段实施计划](tasks/2026-10-14-harness-foundations-implementation.md)保存到候选分支，
+固定 G0 基线验收、G1 类型/证据/失效记忆、G2 工具产物、G3 TaskState、G4 统一能力策略与
+ordinary Docker/Serena 组合的顺序和每阶段退出门。本节状态以[固定当前入口](current-status.md)
+为准。G0 定向255项回归通过。全量第二轮 Python 3.12 检查为1360 passed、1个有明确原因的 Windows
+symlink skip、0 failed/error；精确 combined line+branch coverage 90.00664641093809%，Ruff、compileall、
+diff、仓外 editable 和独立 wheel smoke 均通过。3.11 与基础/ordinary Docker/Serena MCP 仍待绑定候选
+提交的 GitHub CI 证据；当前处于本地门已过、远端门待验收，不进入 G1。
+
+## 2026-10-14 harness 候选方向
+
+已完成[官方资料与源码比较](maintenance/2026-10-14-harness-comparison-and-improvements.md)。
+候选顺序为知识记忆的类型/失效/检索、工具原始产物取回、结构化任务状态、统一工具能力与可取消作业、
+Docker高级能力组合及扩展生命周期，最后评估有界子代理与多语言执行适配器。
+每项报告均给出当前源码缺口、参照依据、依赖和最小验收；不是新的执行排程或付费授权。
+现有共享网关、长驻worker、基础沙盒、记忆版本和检查点恢复不重复列为未实现。
+完整工程门槛和机制独立验证保持，不用已有19/30替代新功能效果。
+
 ## 2026-10-13 计数进程 UTF-8 修复
 
 一次性与长驻计数器固定子进程 UTF-8 环境，官方 worker 入口显式配置 UTF-8 标准输入/输出，

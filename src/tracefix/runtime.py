@@ -1356,6 +1356,7 @@ class TraceFixRunner:
             cost_complete=True,
         )
         error: dict[str, JsonValue] | None = None
+        cleanup_errors: list[tuple[dict[str, JsonValue], str]] = []
         changed_files: tuple[str, ...] = ()
         patch = ""
         internal_artifacts: set[str] = set()
@@ -1747,20 +1748,16 @@ class TraceFixRunner:
                 try:
                     mcp_manager.close()
                 except Exception as exc:
-                    if error is None:
-                        error = self._serialize_error(exc)
-                        state.status = AgentStatus.FAILED
-                        state.stop_reason = "mcp_cleanup_error"
+                    cleanup_errors.append((self._serialize_error(exc), "mcp_cleanup_error"))
             if llm is not None:
                 close_llm = getattr(llm, "close", None)
-                if close_llm is not None:
+                if callable(close_llm):
                     try:
                         close_llm()
                     except Exception as exc:
-                        if error is None:
-                            error = self._serialize_error(exc)
-                            state.status = AgentStatus.FAILED
-                            state.stop_reason = "llm_cleanup_error"
+                        cleanup_errors.append(
+                            (self._serialize_error(exc), "llm_cleanup_error")
+                        )
             if docker_backend is not None:
                 try:
                     if docker_backend.session is None:
@@ -1814,6 +1811,14 @@ class TraceFixRunner:
                         error = self._serialize_error(exc)
                         state.status = AgentStatus.FAILED
                         state.stop_reason = exc.code
+
+            for cleanup_error, cleanup_reason in cleanup_errors:
+                if error is None:
+                    error = dict(cleanup_error)
+                    state.status = AgentStatus.FAILED
+                    state.stop_reason = cleanup_reason
+                else:
+                    error.setdefault("cleanup_errors", []).append(cleanup_error)
 
         finished_at = state.finished_at or datetime.now(UTC)
         state.finished_at = finished_at
@@ -1902,10 +1907,18 @@ class TraceFixRunner:
                     docker_backend.set_phase("cleanup_failed")
                 except Exception:
                     pass
+                cleanup_error = self._serialize_error(exc)
+                if result.error is None:
+                    error = cleanup_error
+                    stop_reason = "container_cleanup_failed"
+                else:
+                    error = dict(result.error)
+                    error.setdefault("cleanup_errors", []).append(cleanup_error)
+                    stop_reason = result.stop_reason
                 result = result.model_copy(update={
                     "status": AgentStatus.FAILED,
-                    "stop_reason": "container_cleanup_failed",
-                    "error": self._serialize_error(exc),
+                    "stop_reason": stop_reason,
+                    "error": error,
                 })
                 result_path.write_text(result.model_dump_json(indent=2), encoding="utf-8")
         if config.conversation_enabled:

@@ -1,5 +1,106 @@
 # TraceFix 开发历程与代码说明
 
+## 2026-10-14 Harness Foundations G0 启动
+
+用户明确要求按阶段计划实施前四项 harness 能力。新建候选分支 `codex/harness-foundations`，
+起点为已核对 HEAD `bc8b224d0419c5acab4a0a4d2abfb92e0ff4c67e`。仅导入原工作区24个已跟踪改动、
+CI #139 归因报告、harness 比较报告及同步过的项目文档；未复制原始 `runs/`、未跟踪实验夹具、
+凭据或第三方 checkout。原工作区没有 reset、清理或切换分支。完整计划与 G0—G4 微观步骤见
+[实施记录](tasks/2026-10-14-harness-foundations-implementation.md)。新增候选分支触发 GitHub CI，
+未变更 job 范围、锁文件和门槛。
+
+导入前清单、24个跟踪文件和2份新增报告的 SHA-256、以及 `seed.patch` hash 保存在本机忽略目录
+`runs/harness-foundations-setup-20261014`（`source-manifest.json`；patch hash
+`cec3c01a79acb5af12ac9c2f4ccda57b7d06b4a997f09270b27888de04e62522`）。任务环境 Windows，
+Python 3.12.5 显式导入候选 `src/tracefix`；默认全局 editable 安装指向原 `D:\Tracefix`。
+本机 Docker Linux daemon 未连接，且无 Python 3.11。初次定向测试因受限 Windows 沙盒将系统
+`TEMP` 定向到不可访问位置而失败；将 temp 改到候选目录后仍有 69 项因沙盒禁止
+`Path.resolve(strict=True)` 失败，186 项通过。授权的提权路径只读诊断确认该 API 对工作区可用，
+但提权整组 pytest 超过3分钟无日志而中止，尚无可信定向结果。该结果分类为环境/证据不完整，
+不修源码、不把本地失败计入基线通过；后续先用小组测试和远端 CI 获取可归因证据。
+
+当前仅计划、基线导入、快照契约测试和 workflow 分支触发变更；尚未修改运行功能。无付费调用或新机制收益结论。
+
+G0 首轮全量工程脚本 `runs/g0-engineering-python312/summary.json` 记录 1340 tests、0 failed/error、
+1339 passed、1 skipped、27:17.81；Coverage.py 精确分子18941/分母21064，89.921192556%，低于90%。
+Ruff、compileall、diff-check 均返回0。skip 仅因 Windows symlink `WinError 1314`，JUnit/coverage 原始
+证据和哈希均保存在同目录。定向回归10个相关模块255 passed、0 skipped、444.60秒。
+
+为修正当前真实覆盖门失败，增加了快照相对路径/保留目录、流式读写的精确/超额限制、文件打开后元数据变化、
+空产品恢复、restore-stream CLI 和恢复路径二次解析拒绝用例；没有更改运行代码或降低门槛。第二轮统一工程门
+产物保存在 `runs/g0-engineering-python312-gate2/`，检查源码提交为 `bc8b224d0419c5acab4a0a4d2abfb92e0ff4c67e`、
+解释器 Python 3.12.5、Windows 11。pytest 为1360 passed、1 skipped、0 failed/error（1619.22秒）；唯一 skip
+是 `tests/test_security_boundaries.py` 因 WinError 1314 无 symlink 创建权限。Coverage.py 精确 combined
+line+branch 为18959/21064 = 90.00664641093809%，`summary.json` 接受。Ruff、compileall、diff-check 返回0。
+本地 editable 回放证据位于 `runs/g0-editable-smoke/`，wheel 文件为
+`runs/g0-wheel/tracefix_agent-0.8.4-py3-none-any.whl`（SHA-256
+`dd0d0a0b31f620c33617e40f7f38dfbf71442c1b5900e59534920313699dc951`），独立安装与零调用 smoke 结果在
+`runs/g0-wheel-smoke/`。合成回放均记录 provider request/network attempts 为0。G0 本地门通过；3.11 与真实
+基础 Docker、ordinary Docker、Serena MCP 尚需推送后的候选 CI 原始结果，因此当前仍留在 G0。
+
+## 2026-10-14 harness 能力比较与改进建议
+
+按用户要求参考 DeepSeek Harness、Codex、Claude Code 官方说明和公开代码，与当前工作区比较，
+整理[报告](maintenance/2026-10-14-harness-comparison-and-improvements.md)。
+DeepSeek 固定 `d743267388641bc76f17c45ce8b4c231aed1d32c`，Codex 固定
+`95273b84fbff40f9df7d71d50f1ca52c6489b25d`，Anthropic sandbox-runtime Linux 固定
+`c392e6cf9f8df957c66d9ab1461e2cfa99b1ab5d`，Windows 参照 v0.0.76。
+Claude CLI 核心与公开 sandbox-runtime 分开表述；产品文档不当作固定源码的全部保证。
+
+结论区分已有实现、能力组合限制和新增建议。已有证据记忆/版本回滚、Docker隔离、稳定投影、共享计数、
+长驻worker和恢复均保留。主要增量为记忆知识类型与失效、产物取回、TaskState、统一能力策略与作业协议；
+路径规则、Skills/MCP生命周期、Docker组合和子代理另列依赖与最小验收。收益是待验证假设，
+不把19/30归因于关闭的机制，也不把后续网关改动归因于之前实验。
+
+当前未提交源码已包含CI139若干归因项修复，本轮只读识别、不宣称新验收通过。
+配置亦已支持Docker recovery模式的经验记忆/连续对话，仍有custom Skills、MCP及regression_targets限制，
+避免用旧文档概括为全部local-only。没有修改源码、测试、配置或原始实验；无产品测试、供应商调用、
+依赖安装、第三方代码执行、提交或推送。使用OpenAI Docs核对官方资料，write-page检查报告写作，
+通过GitHub connector读取固定ref；本地urllib因DNS失败，未取得网络文件。
+
+任务身份：cwd `D:\Tracefix`，分支 `codex/ac-30-180s`，HEAD
+`bc8b224d0419c5acab4a0a4d2abfb92e0ff4c67e` 加既有未提交修改；
+本机默认解释器 `D:\anaconda3\python.exe`，显式src路径导入
+`D:\Tracefix\src\tracefix\__init__.py`，未用此导入代替wheel/editable验收。
+工作区80文件哈希、外部源码缓存、固定来源收据和文档验证在
+`runs/harness-review-20261014`。本轮只验证文档diff、本地链接和审阅源码哈希，
+同步固定状态、路线图与索引，并修正本文件一处既有历史报告相对链接；正式工程门槛与新付费效果另按用户后续明确任务执行。
+
+## 2026-10-13 最新 CI 原始产物完整归因
+
+按用户要求检查失败原因，下载bc8b224的CI #139 Python3.12与ordinary Docker两份产物并核对ZIP
+SHA-256和GitHub digest一致。全量结果27 failed/1272 passed，精确覆盖率88.91113653699466%，
+不是此前123项定向验证的口径。JUnit分组、静态源码归因与两项本地离线复现见
+[完整报告](maintenance/2026-10-13-ci139-diagnosis.md)。确认预算delegate的close兼容错误会覆盖停止原因；
+无prepared的兼容发送未收紧输出上限应优先修。技能内容实际存在，旧XML标签检查造成memory和Docker
+pause回放误判；default/Docker夹具、A/C用户消息识别、长上下文辅助阈值均未同步新实现。
+工程日志cp1252解码崩溃掩盖原始pytest/lint汇总；本地跟踪文件lint另确认74项历史驱动诊断。
+本轮没有修运行代码、付费调用、全量重跑或推送；状态入口已同步失败事实，原始证据保存在
+`runs/ci139-diagnosis-20261013`。结束前Python3.11完成，补取原始产物并核验哈希：
+同为27 failed/1272 passed、覆盖率88.9206712433257%，JUnit失败集合与3.12完全一致，
+工程日志解码和memory smoke亦相同。CI最终两项成功、三项失败。
+
+## 2026-10-13 GitHub CI 失败通知核查
+
+用户询问收到的 CI 失败邮件。核查 Actions API：push 会自动触发 .github/workflows/ci.yml，
+`41a5912` 的 #137（38354579122）和 `b6898c2` 的 #138（38354818810）已整体 failure；
+编码修复 `bc8b224` 的 #139（38355799150）核查时仍在运行，但 ordinary Docker job
+115158271537 已 failure，日志在 integration_replay.py 报 `integrated pause worker failed`，
+需读取该 job 的 pause.stderr 产物进一步定根因。基础 Docker 和 MCP job success。
+旧 #138 的 quality 3.12 job 115155123904：check_engineering.py/_run 读取 Ruff stdout 时
+使用 cp1252 并发生 UnicodeDecodeError；editable/wheel smoke 的 memory_replay 报
+`saved experience did not reach the model request`。两个 Windows quality job 均 failure。
+最新 #139 的 Windows quality 核查时尚未结束，不能借旧日志断言其最终测试或覆盖率结论。
+最后一次步骤快照中，#139 的 3.12 工程检查与 editable smoke 已标记 failure，job 仍 in_progress；
+3.11 尚在工程检查步骤。待对应 job 完成后才能取得完整最新日志。
+
+本地编码修复的123项定向测试通过与这些完整CI检查分开记录；未声称已通过全量工程验收。
+本次无运行代码更改、测试重跑、workflow rerun 或供应商调用，仅更新固定状态与本记录；
+文档先保留本地，不为这次解释再触发一次 push CI。执行 cwd D:\Tracefix、HEAD
+`bc8b224d0419c5acab4a0a4d2abfb92e0ff4c67e`；远端原始日志/产物保存在对应 Actions run/job：
+[旧 #138](https://github.com/wingpeng30/Tracefix/actions/runs/38354818810)、
+[修复 #139](https://github.com/wingpeng30/Tracefix/actions/runs/38355799150)。
+
 ## 2026-10-13 计数器 UTF-8 进程协议修复
 
 按用户要求修复编码、运行相关测试并上传 GitHub。`OfficialCounter` 一次性 subprocess.run 和
@@ -794,7 +895,7 @@ SWE-bench Verified 固定在 `78f471bf655a3137b2e8a75af1501690ec009ec3`，69 道
 
 当前轨迹未证明可复现实现缺陷。改进决策为不改优化实现；仅提出开发集单变量假设：单独启用工具输出呈现缩短，关闭行动引导和读取缓存，检验输入变化及诊断标记保留。配置、题目、提示、评分和预算固定，预先声明指标；20 题冻结留出集继续不触碰。
 
-验证：全量 pytest `401 passed`。Coverage.py 合并全量测试及对冻结真实轨迹执行一次离线详细诊断的覆盖数据后为综合 `90.22915340547422%`，语句 `92.5399889685604%`、分支 `82.52069917203312%`。Ruff 和 compileall 均退出 0。全量测试单独运行曾得到 `86.60%`，未达到门槛；随后真实离线诊断覆盖路径并重新跑全量后，才得到合并覆盖门槛结果。首轮临时 Git 元数据访问失败和覆盖率不足记录保留在本机，不伪称通过。详见 [`../experiments/v0.8.12-offline-detailed-ablation-diagnostic.md`](../experiments/v0.8.12-offline-detailed-ablation-diagnostic.md)。
+验证：全量 pytest `401 passed`。Coverage.py 合并全量测试及对冻结真实轨迹执行一次离线详细诊断的覆盖数据后为综合 `90.22915340547422%`，语句 `92.5399889685604%`、分支 `82.52069917203312%`。Ruff 和 compileall 均退出 0。全量测试单独运行曾得到 `86.60%`，未达到门槛；随后真实离线诊断覆盖路径并重新跑全量后，才得到合并覆盖门槛结果。首轮临时 Git 元数据访问失败和覆盖率不足记录保留在本机，不伪称通过。详见 [`../experiments/v0.8.12-offline-detailed-ablation-diagnostic.md`](experiments/v0.8.12-offline-detailed-ablation-diagnostic.md)。
 
 
 ### 2026-09-24 V0.8.13 更正诊断并冻结单变量预检

@@ -184,10 +184,16 @@ def test_default_agent_has_no_skill_catalog_or_tool_description():
     assert "load_skill" not in {spec.name for spec in tools}
 
 
-def test_runtime_registry_keeps_skills_opt_in():
-    workspace = Path(__file__).resolve().parents[1]
-    assert "load_skill" not in create_default_tool_registry(workspace).names
-    assert "load_skill" in create_default_tool_registry(workspace, skills_enabled=True).names
+def test_runtime_registry_keeps_skills_opt_in(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    evidence = tmp_path / "test-evidence"
+    assert "load_skill" not in create_default_tool_registry(
+        workspace, evidence_dir=evidence
+    ).names
+    assert "load_skill" in create_default_tool_registry(
+        workspace, evidence_dir=evidence, skills_enabled=True
+    ).names
 
 
 def test_package_metadata_keeps_extras_and_bundles_skills():

@@ -191,6 +191,11 @@ def test_freeze_long_context_replays_two_independent_mechanism_tasks(tmp_path) -
     assert result["valid"] is True
     assert len(result["tasks"]) == 2
     assert all(item["contract_count"] == 24 for item in result["tasks"])
+    assert all(
+        item["treatment_config"]["compaction_trigger_tokens"] == 32_000
+        and item["treatment_config"]["compaction_target_tokens"] == 19_200
+        for item in result["tasks"]
+    )
     assert all(item["control"]["compacted"] is False for item in result["tasks"])
     assert all(item["treatment"]["compacted"] is True for item in result["tasks"])
     assert all(item["critical_facts_retained"] is True for item in result["tasks"])

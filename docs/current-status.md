@@ -1,7 +1,46 @@
 # TraceFix 当前状态
 
-更新日期：2026-10-13（Asia/Shanghai）。这是新会话的固定状态入口；日期化交接、路线图条目与实验报告
+更新日期：2026-10-14（Asia/Shanghai）。这是新会话的固定状态入口；日期化交接、路线图条目与实验报告
 保留当时事实，不自动成为今天的任务。先读本页，再按用户当前请求读取对应源码和证据。
+
+## 2026-10-14 Harness Foundations 实施进度
+
+按用户明确授权，正在候选分支 `codex/harness-foundations` 分阶段实施知识记忆、工具产物、
+TaskState、统一能力策略与 Docker/Serena 组合。完整设计、逐步编码顺序和退出条件见
+[阶段实施记录](tasks/2026-10-14-harness-foundations-implementation.md)。执行顺序为 G0→G1→G2→G3→G4，
+每阶段未通过其契约和工程门前不进入下一阶段；不新增供应商付费调用，不合并、不发布。
+
+候选分支起点为 `bc8b224d0419c5acab4a0a4d2abfb92e0ff4c67e` 加经核对的24个已跟踪修改及两份
+维护报告；没有复制凭据、原始 runs 或临时实验夹具。导入清单及 patch 哈希保存在本机忽略目录
+`runs/harness-foundations-setup-20261014`。Python 3.12.5 显式导入候选 `src/tracefix`，本阶段
+快照源路径与流限额测试也显式指向候选源码。尚未修改运行功能。
+
+G0 定向回归 255 passed、0 skipped（Python 3.12.5，444.60秒）。完整工程复验
+`runs/g0-engineering-python312-gate2/summary.json` 绑定 HEAD `bc8b224d0419c5acab4a0a4d2abfb92e0ff4c67e`：
+1360 passed、1 skipped、0 failed/error，耗时 1619.22 秒；Coverage.py 精确 combined line+branch 为
+18959/21064 = 90.00664641093809%。Ruff、compileall、diff-check 均返回0。唯一 skip 是 Windows 创建
+symlink 的 WinError 1314，有明确平台原因；未降低覆盖率门槛。候选 worktree 外的 Python 3.12.5 editable
+smoke 和 wheel 独立构建/安装 smoke 均通过，帮助命令及合成回放的供应商请求、网络尝试为0。
+
+本机没有 Python 3.11，Docker daemon 未连接；Windows 沙盒会拦截 `Path.resolve(strict=True)`，因此这些
+本地工程检查使用了已授权的提权进程并把临时目录放在候选 worktree 的 `runs/` 下。G0 的本地代码门已过，
+仍需提交并推送候选代码，再取得双 Python、基础 Docker、ordinary Docker 与 Serena MCP 对应候选提交的
+GitHub CI 原始证据。CI 阶段门未完成前不进入 G1，G1—G4 均未开始。
+
+## 最新 harness 比较与候选改进
+
+2026-10-14 按用户要求比较官方 DeepSeek Harness、Codex、Claude Code 的说明和公开代码，
+已保存[比较与改进报告](maintenance/2026-10-14-harness-comparison-and-improvements.md)。
+建议优先增加有类型且可失效的知识记忆、可取回工具产物、结构化任务状态，再完善统一能力策略、
+可取消作业及 Docker 功能组合，之后评估有界子代理。现有记忆、沙盒、上下文、网关和恢复均作为
+已有基础，不重复规划；这些建议尚未实现，也没有新增模型收益证据或付费授权。
+
+审阅 HEAD 为 `bc8b224d0419c5acab4a0a4d2abfb92e0ff4c67e`，另有未提交源码/测试修复。
+静态核对发现当前已包含 CI139 部分归因项的修复，不能把历史失败清单直接等同当前尚未修复；
+本轮未验证这些修复或重跑工程链。当前配置支持 Docker recovery 下的记忆/连续对话，
+自定义 Skills、Serena MCP 和结束前回归目标仍有后端组合限制。此事实优先于旧说明中的一概 local-only。
+本次只新增报告及同步文档，不更改运行实现；源码身份、来源收据与文档检查保存在
+`runs/harness-review-20261014`。继续按用户当次任务执行，不自动启动候选功能或历史付费实验。
 
 ## 当前代码身份
 
@@ -33,8 +72,10 @@
    记载179项定向离线检查及Ruff/修改文件compileall/Diff通过，3项慢速完整块重入检查未运行。
    实际官方tokenizer环境在那次验证中不可用，未获得真实编码器加载/冷暖耗时或新供应商提速证据。
    不要重复规划这两项实现，也不要把它们归因到之前的19/30结果。
-3. **最新工作区的完整工程验收尚未完成。** 全量pytest、未取整覆盖率、Windows双Python版本、
-   安装包、真实Linux Docker相关恢复及精确CI按后续正式交付范围补齐；此次入口维护没有重跑这些检查。
+3. **最新工作区的完整工程验收未通过。** `bc8b224` 的CI #139已有Python3.12全量结果：
+   27 failed、1272 passed，精确覆盖率88.91113653699466%，低于90%；ordinary Docker集成回放失败。
+   Python3.11随后完成：同为27 failed/1272 passed，覆盖率88.9206712433257%，失败清单完全相同。
+   基础Docker与MCP通过，完整CI最终失败。见[CI归因](maintenance/2026-10-13-ci139-diagnosis.md)。
    用户当前任务优先，不把该清单自动变成每次分析或文档任务的前置链。
 4. **基础安全加固已实现。** 新任务默认为预备镜像的 ordinary Docker，文件路径/敏感文件过滤、pytest 选项白名单、子进程最小环境、只读执行器身份校验和低信任上下文均已落地。规范与真实验证范围见[安全规范](security.md)及[10月12日开发记录](development-history.md#2026-10-12-基础工具安全边界与普通-docker-默认值)。定向回归通过 235 项、边界模块 19 项、环境组 193 项，另有两个 P2 环境回放通过；一项 Windows symlink 用例跳过，一个范围外 P2 输出预算测试未通过。一次真实 Docker 录制响应 smoke 通过，不调用供应商。该基线不保证完全防止提示注入，也不保证测试通过的补丁无危险行为。
 
@@ -70,6 +111,12 @@ C相对B交付更多、累计Token更少、每成功缓存费用估算更低，�
 - 这些原始目录保留归属/清理标记，不能为更新入口而覆写旧结果或复制整份工作区。
 
 ## 下一任务的起点
+
+最新[CI #139](https://github.com/wingpeng30/Tracefix/actions/runs/38355799150)已取得3.12与Docker原始产物，
+根因包括过时default/Docker夹具、旧技能标签断言（内容实际进入请求）、首条USER审计误识别Repo Map、
+长上下文辅助未显式配置32k阈值、P2可选close接口不兼容与兼容发送遗漏输出上限。
+另有工程脚本cp1252解码崩溃、历史驱动74项lint及覆盖率不足。详见[完整归因](maintenance/2026-10-13-ci139-diagnosis.md)。
+本轮仅调查和本地离线复现，未修代码、未重跑远端或降低门槛；双版本原始产物均已核对。
 
 首次上传是最新工作区快照备份，不是正式发布验收。源码/测试 Ruff、Python 编译及 diff 检查通过；
 定向离线复验 75 passed、1 skipped、1 failed，失败为比较实验的进程重入测试 C 臂 agent_error/空补丁，

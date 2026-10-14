@@ -4,6 +4,8 @@ import copy
 import hashlib
 import io
 import json
+import os
+import runpy
 import tarfile
 from types import SimpleNamespace
 
@@ -12,9 +14,12 @@ import pytest
 from examples.replay_ordinary import _git
 from tracefix.checkpoint import CheckpointError
 from tracefix.workspace_snapshot import (
+    _HashReader,
+    _LimitedWriter,
     export_workspace,
     restore_stream,
     restore_workspace,
+    safe_name,
     validate_archive,
 )
 
@@ -93,6 +98,29 @@ def test_snapshot_rejects_file_replacement_after_path_inspection(saved, monkeypa
         return SimpleNamespace(st_ino=observed.st_ino + 1, st_dev=observed.st_dev)
 
     monkeypatch.setattr(snapshot.os, "fstat", replaced)
+    with pytest.raises(CheckpointError, match="changed during snapshot"):
+        export_workspace(source, io.BytesIO())
+
+
+def test_snapshot_rejects_product_metadata_change_after_open(saved, monkeypatch):
+    import tracefix.workspace_snapshot as snapshot
+
+    source, _, _ = saved
+    original_fstat = snapshot.os.fstat
+    changed = False
+
+    def mutate_after_open(descriptor):
+        nonlocal changed
+        observed = original_fstat(descriptor)
+        if not changed:
+            product = source / "keep.py"
+            current = product.stat()
+            os.utime(product, ns=(current.st_atime_ns, current.st_mtime_ns + 1_000_000_000))
+            changed = True
+            assert product.stat().st_mtime_ns != current.st_mtime_ns
+        return observed
+
+    monkeypatch.setattr(snapshot.os, "fstat", mutate_after_open)
     with pytest.raises(CheckpointError, match="changed during snapshot"):
         export_workspace(source, io.BytesIO())
 
@@ -180,6 +208,44 @@ def test_archive_corruption_and_both_size_preflights(saved):
         validate_archive(archive, metadata)
 
 
+@pytest.mark.parametrize(("name", "expected"), [
+    ("", False),
+    ("src/module.py", True),
+    ("目录/文件.py", True),
+    ("/absolute/file.py", False),
+    ("C:relative.py", False),
+    ("folder\\child.py", False),
+    ("../outside.py", False),
+    ("folder/../outside.py", False),
+    ("folder/\x01name.py", False),
+    ("folder/.GiT/config", False),
+    ("folder/.TRACEFIX-TEST-TMP/output", False),
+    ("folder//child.py", False),
+    ("folder/./child.py", False),
+])
+def test_snapshot_path_names_are_relative_normalized_and_unprotected(name, expected):
+    assert safe_name(name) is expected
+
+
+def test_streaming_readers_and_writers_accept_exact_quota_and_reject_overflow():
+    output = io.BytesIO()
+    writer = _LimitedWriter(output, 3)
+    assert writer.write(b"abc") == 3
+    assert writer.size == 3
+    assert writer.hash.hexdigest() == hashlib.sha256(b"abc").hexdigest()
+    with pytest.raises(CheckpointError, match="limit"):
+        writer.write(b"d")
+    assert output.getvalue() == b"abc"
+
+    reader = _HashReader(io.BytesIO(b"abc"), maximum=3)
+    assert reader.read(2) == b"ab"
+    assert reader.read() == b"c"
+    assert reader.size == 3
+    assert reader.hash.hexdigest() == hashlib.sha256(b"abc").hexdigest()
+    with pytest.raises(CheckpointError, match="limit"):
+        _HashReader(io.BytesIO(b"abc"), maximum=2).read()
+
+
 @pytest.mark.parametrize("target", ["../../outside", "/outside", "C:/outside", "a\\b"])
 def test_symbolic_link_archive_cannot_escape(tmp_path, target):
     path = tmp_path / "links.tar"
@@ -215,6 +281,94 @@ def test_snapshot_cli_export_and_restore(saved, tmp_path, monkeypatch):
     assert main() == 0
     assert json.loads(meta.read_text())["deleted"] == ["old.py"]
     assert (target / "keep.py").read_bytes() == b"changed\n"
+
+
+def test_empty_workspace_and_restore_stream_cli_roundtrip(saved, tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    from tracefix.workspace_snapshot import main
+
+    source, archive, metadata = saved
+    empty = tmp_path / "empty-source"
+    empty.mkdir()
+    _git(empty, "init")
+    empty_archive = io.BytesIO()
+    empty_metadata = export_workspace(empty, empty_archive)
+    empty_target = tmp_path / "empty-target"
+    restore_stream(empty_target, io.BytesIO(empty_archive.getvalue()), empty_metadata)
+    assert empty_target.is_dir()
+    assert list(empty_target.iterdir()) == []
+
+    empty_archive_path = tmp_path / "empty.tar"
+    empty_archive_path.write_bytes(empty_archive.getvalue())
+    disposable_target = tmp_path / "empty-restore-target"
+    (disposable_target / ".git").mkdir(parents=True)
+    (disposable_target / ".git" / "keep").write_text("git-owned", encoding="utf-8")
+    (disposable_target / "remove-me.py").write_text("product", encoding="utf-8")
+    restore_workspace(disposable_target, empty_archive_path, empty_metadata)
+    assert list(path.name for path in disposable_target.iterdir()) == [".git"]
+    assert (disposable_target / ".git" / "keep").read_text(encoding="utf-8") == "git-owned"
+
+    metadata_path = tmp_path / "stream-metadata.json"
+    metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
+    target = tmp_path / "stream-cli-target"
+    monkeypatch.setattr("sys.argv", ["snapshot", "restore-stream", "--workspace", str(target),
+                                     "--metadata", str(metadata_path)])
+    monkeypatch.setattr("sys.stdin", SimpleNamespace(buffer=io.BytesIO(archive.read_bytes())))
+    assert main() == 0
+    assert (target / "keep.py").read_bytes() == b"changed\n"
+
+
+@pytest.mark.parametrize("streamed", [False, True])
+def test_restore_rechecks_resolved_parent_before_writing(saved, tmp_path, monkeypatch, streamed):
+    _, archive, metadata = saved
+    target = tmp_path / "restore-boundary"
+    escaped_parent = target / "product"
+    outside = tmp_path
+    original_resolve = type(target).resolve
+
+    def redirected_parent(path, *args, **kwargs):
+        if path == escaped_parent:
+            return original_resolve(outside, strict=True)
+        return original_resolve(path, *args, **kwargs)
+
+    monkeypatch.setattr(type(target), "resolve", redirected_parent)
+    message = "restore path escaped|streamed snapshot path escaped"
+    with pytest.raises(CheckpointError, match=message):
+        if streamed:
+            restore_stream(target, io.BytesIO(archive.read_bytes()), metadata)
+        else:
+            restore_workspace(target, archive, metadata)
+    assert not (outside / "product" / "new.bin").exists()
+
+
+@pytest.mark.parametrize(("operation", "has_metadata", "message"), [
+    ("restore-stream", False, "restore-stream requires metadata"),
+    ("restore", True, "restore requires archive and metadata"),
+])
+def test_snapshot_cli_rejects_incomplete_restore_arguments(tmp_path, monkeypatch,
+                                                           operation, has_metadata, message):
+    from tracefix.workspace_snapshot import main
+
+    argv = ["snapshot", operation, "--workspace", str(tmp_path / "target")]
+    if has_metadata:
+        argv.extend(["--metadata", str(tmp_path / "metadata.json")])
+    error_output = io.StringIO()
+    monkeypatch.setattr("sys.argv", argv)
+    monkeypatch.setattr("sys.stderr", error_output)
+    with pytest.raises(SystemExit) as error:
+        main()
+    assert error.value.code == 2
+    assert message in error_output.getvalue()
+
+
+def test_snapshot_module_entrypoint_prints_help(monkeypatch, capsys):
+    monkeypatch.setattr("sys.argv", ["tracefix.workspace_snapshot", "--help"])
+    with pytest.warns(RuntimeWarning, match="found in sys.modules"):
+        with pytest.raises(SystemExit) as result:
+            runpy.run_module("tracefix.workspace_snapshot", run_name="__main__")
+    assert result.value.code == 0
+    assert "restore-stream" in capsys.readouterr().out
 
 
 def test_streaming_restore_in_disposable_workspace_and_final_digest(saved, tmp_path):

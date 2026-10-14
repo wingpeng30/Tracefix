@@ -13,12 +13,10 @@ import json
 import os
 import subprocess
 import sys
-import time
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from urllib.request import ProxyHandler, Request, build_opener
-
 
 REPO = Path(__file__).resolve().parents[1]
 FROZEN_ENGINE_SRC = Path(r"C:\Users\PengZixuan\.codex\worktrees\ac-thirty-frozen\Tracefix\src")
@@ -60,14 +58,12 @@ def read(path: Path):
 
 def canonical_sha(value) -> str:
     return hashlib.sha256(
-        json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode(
-            "utf-8"
-        )
+        json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
     ).hexdigest()
 
 
 def now() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 def load_engine():
@@ -159,7 +155,6 @@ def load_engine():
         return original_prior_spend(protocol)
 
     funding.prior_spend = prior_spend
-    from tracefix.comparison import ComparisonBudget
     from tracefix.comparison_campaign import ComparisonBudget as CampaignBudget
 
     class WalletBoundBudget(CampaignBudget):
@@ -279,10 +274,9 @@ def source_check(engine, previous: dict, parent: dict) -> tuple[list[str], dict]
 
     current_transport = transport_identity()
     old_transport = previous.get("provider_transport", {})
-    if (
-        current_transport["command"] != old_transport.get("command")
-        or current_transport["interpreter_sha256"] != old_transport.get("interpreter_sha256")
-    ):
+    if current_transport["command"] != old_transport.get("command") or current_transport[
+        "interpreter_sha256"
+    ] != old_transport.get("interpreter_sha256"):
         raise ValueError("provider worker interpreter identity changed")
     materials = {}
     for task_id in task_ids:
@@ -325,9 +319,15 @@ def source_check(engine, previous: dict, parent: dict) -> tuple[list[str], dict]
         raise ValueError("restarted controlled service identity is missing")
     service = read(service_path)
     mutable = {"pid", "started_at", "startup_nonce", "identity_url"}
-    if any(previous_service.get(key) != service.get(key) for key in previous_service if key not in mutable):
+    if any(
+        previous_service.get(key) != service.get(key)
+        for key in previous_service
+        if key not in mutable
+    ):
         raise ValueError("restarted controlled service build or environment changed")
-    if service.get("port") != previous_service.get("port") or service.get("health_url") != previous_service.get("health_url"):
+    if service.get("port") != previous_service.get("port") or service.get(
+        "health_url"
+    ) != previous_service.get("health_url"):
         raise ValueError("restarted controlled service endpoint changed")
     opener = build_opener(ProxyHandler({}))
     with opener.open(service["identity_url"], timeout=5) as response:
@@ -374,7 +374,7 @@ def prepare(root: Path) -> dict:
     previous = read(PARENT / "protocol.json")
     anchor = read(ANCHOR / "protocol.json")
     task_ids, checked = source_check(ENGINE, previous, anchor)
-    selection = read(SELECTION)
+    _ = read(SELECTION)
     anchor_protocol = read(ANCHOR / "protocol.json")
     blocks = {
         row["task_id"]: row["block"]
@@ -398,7 +398,10 @@ def prepare(root: Path) -> dict:
         "limit_cny": LIMIT_CNY,
         "authorization_id": "20261010-b-30-180s-" + uuid.uuid4().hex,
         "authorization_path": str(auth.resolve()),
-        "user_instruction": "用户明确授权：同样三十题B组各一次，独立人民币三百元账本；使用实际余额，资金不足即停止。",
+        "user_instruction": (
+            "用户明确授权：同样三十题B组各一次，独立人民币三百元账本；"
+            "使用实际余额，资金不足即停止。"
+        ),
         "created_at": now(),
     }
     write(auth, auth_record)
@@ -472,42 +475,64 @@ def prepare(root: Path) -> dict:
             for task_id, spec in previous["tasks"].items()
         },
         "qualification_reused": True,
-        "qualification_note": "Reused previously accepted qualification and environment receipts; startup only checked frozen prompts, source commits, interpreter availability and service/tokenizer identity. No offline task tests rerun.",
-        "comparison_note": "B is a later follow-up run and was not concurrent or randomized against existing C.",
+        "qualification_note": (
+            "Reused previously accepted qualification and environment receipts; "
+            "startup only checked frozen prompts, source commits, interpreter availability and "
+            "service/tokenizer identity. "
+            "No offline task tests rerun."
+        ),
+        "comparison_note": (
+            "B is a later follow-up run and was not concurrent or randomized against existing C."
+        ),
         "frozen_at": now(),
     }
     if protocol["driver_sha256"] != sha(Path(__file__).resolve()):
         raise ValueError("driver changed while freezing")
     write(root / "protocol.json", protocol)
     write(root / "protocol.sha256.json", {"sha256": canonical_sha(protocol)})
-    write(root / "startup-gate.json", {
-        "accepted": True,
-        "paid_calls_before_gate": 0,
-        "balance_snapshot": str((root / "wallet" / "00.json").resolve()),
-        "balance_cny": bal["available_cny"],
-        "provider_models_sha256": sha(root / "provider-models.json"),
-        "price_source": price["source"],
-        "task_count": len(rows),
-        "task_material_hashes": checked["task_materials"],
-        "service_rebind": {
-            "previous_identity_sha256": checked["previous_service_identity_sha256"],
-            "current_identity_sha256": checked["service_identity_sha256"],
-            "reason": "Restarted the same pinned service build and dependency set after the previous process exited.",
+    write(
+        root / "startup-gate.json",
+        {
+            "accepted": True,
+            "paid_calls_before_gate": 0,
+            "balance_snapshot": str((root / "wallet" / "00.json").resolve()),
+            "balance_cny": bal["available_cny"],
+            "provider_models_sha256": sha(root / "provider-models.json"),
+            "price_source": price["source"],
+            "task_count": len(rows),
+            "task_material_hashes": checked["task_materials"],
+            "service_rebind": {
+                "previous_identity_sha256": checked["previous_service_identity_sha256"],
+                "current_identity_sha256": checked["service_identity_sha256"],
+                "reason": (
+                    "Restarted the same pinned service build and dependency set after the previous "
+                    "process exited."
+                ),
+            },
+            "tokenizer_probe_identity": canonical_sha(checked["tokenizer_probe"].get("identity")),
+            "provider_endpoint": "https://api.deepseek.com",
+            "model_alias": "deepseek-flash",
+            "created_at": now(),
         },
-        "tokenizer_probe_identity": canonical_sha(checked["tokenizer_probe"].get("identity")),
-        "provider_endpoint": "https://api.deepseek.com",
-        "model_alias": "deepseek-flash",
-        "created_at": now(),
-    })
-    write(root / "storage-owner.json", {
-        "owner": "TraceFix 2026-10-10 B-only paid experiment",
-        "campaign": str(root.resolve()),
-        "contains": "Raw requests, responses, workspaces, patches, verification evidence and wallet snapshots.",
-        "cleanup_after_review": True,
-        "cleanup_command": f"Remove-Item -LiteralPath '{root.resolve()}' -Recurse -Force",
-        "created_at": now(),
-    })
-    write(root / "progress.json", {"started": 0, "planned": 30, "known_fee_cny": 0.0, "unknown_reserve_cny": 0.0})
+    )
+    write(
+        root / "storage-owner.json",
+        {
+            "owner": "TraceFix 2026-10-10 B-only paid experiment",
+            "campaign": str(root.resolve()),
+            "contains": (
+                "Raw requests, responses, workspaces, patches, verification evidence and wallet "
+                "snapshots."
+            ),
+            "cleanup_after_review": True,
+            "cleanup_command": f"Remove-Item -LiteralPath '{root.resolve()}' -Recurse -Force",
+            "created_at": now(),
+        },
+    )
+    write(
+        root / "progress.json",
+        {"started": 0, "planned": 30, "known_fee_cny": 0.0, "unknown_reserve_cny": 0.0},
+    )
     return protocol
 
 
@@ -516,7 +541,11 @@ def trial_funding(root: Path, prior_segment: Path | None, prior_protocol: dict) 
     if total > LIMIT_CNY or not 0 <= total:
         raise ValueError("B authorization reserve exhausted")
     if prior_segment is None:
-        f = read(root / "protocol.json")["funding"] if "funding" in read(root / "protocol.json") else None
+        _ = (
+            read(root / "protocol.json")["funding"]
+            if "funding" in read(root / "protocol.json")
+            else None
+        )
         # First-trial funding is copied from the already claimed campaign authorization.
         auth = root / "authorization.json"
         claim = read(auth.with_suffix(".claim.json"))
@@ -547,7 +576,9 @@ def finish_unknown(engine, segment: Path, row: dict, protocol: dict) -> dict:
     path = directory / "record.json"
     record = read(path)
     requests = engine["validate_requests"](segment, protocol)
-    if record.get("status") != "unknown_request" or not any(r["status"] != "completed" for r in requests):
+    if record.get("status") != "unknown_request" or not any(
+        r["status"] != "completed" for r in requests
+    ):
         raise ValueError("unknown provider state is not durable")
     if not (directory / "agent-unknown.json").exists():
         import shutil
@@ -609,10 +640,21 @@ def run(root: Path, max_trials: int = 30) -> list[dict]:
         effective_wallet = bal.get("available_cny", 0.0) - unknown
         remaining_auth = LIMIT_CNY - prior
         if not bal.get("is_available") or effective_wallet <= 0:
-            write(root / "wallet-stop.json", {"sent": False, "block": row["block"], "balance_cny": bal.get("available_cny"), "unknown_reserve_cny": unknown})
+            write(
+                root / "wallet-stop.json",
+                {
+                    "sent": False,
+                    "block": row["block"],
+                    "balance_cny": bal.get("available_cny"),
+                    "unknown_reserve_cny": unknown,
+                },
+            )
             break
         if remaining_auth <= 0:
-            write(root / "budget-stop.json", {"sent": False, "block": row["block"], "liability_cny": prior})
+            write(
+                root / "budget-stop.json",
+                {"sent": False, "block": row["block"], "liability_cny": prior},
+            )
             break
         wallet_cap = min(TASK_LIMIT_CNY, effective_wallet, remaining_auth)
         if wallet_cap <= 0:
@@ -628,12 +670,15 @@ def run(root: Path, max_trials: int = 30) -> list[dict]:
         segment.mkdir(parents=True, exist_ok=True)
         write(segment / "protocol.json", local_protocol)
         write(segment / "protocol.sha256.json", {"sha256": canonical_sha(local_protocol)})
-        write(segment / "requests.json", {
-            "schema_version": 1,
-            "protocol_sha256": canonical_sha(local_protocol),
-            "limit_cny": LIMIT_CNY,
-            "requests": [],
-        })
+        write(
+            segment / "requests.json",
+            {
+                "schema_version": 1,
+                "protocol_sha256": canonical_sha(local_protocol),
+                "limit_cny": LIMIT_CNY,
+                "requests": [],
+            },
+        )
         try:
             result = ENGINE["execute_trial"](segment, local_protocol, row, ENV_FILE)
         except ValueError as exc:
@@ -641,7 +686,9 @@ def run(root: Path, max_trials: int = 30) -> list[dict]:
                 raise
             result = finish_unknown(ENGINE, segment, row, local_protocol)
         requests = ENGINE["validate_requests"](segment, local_protocol)
-        if any(r.get("official_count_delta") != 0 for r in requests if r.get("status") == "completed"):
+        if any(
+            r.get("official_count_delta") != 0 for r in requests if r.get("status") == "completed"
+        ):
             write(segment / "halt.json", {"reason": "tokenizer usage discrepancy"})
             raise ValueError("tokenizer count differs from supplier usage; paid execution halted")
         ledger = read(segment / "requests.json")
@@ -652,28 +699,47 @@ def run(root: Path, max_trials: int = 30) -> list[dict]:
             raise ValueError("provider/usage anomaly; campaign halted")
         ENGINE["validate_record"](result, record_path.parent, row)
         if result.get("infrastructure_failure") and not result.get("terminal_provider_unknown"):
-            write(segment / "halt.json", {"reason": "independent verification infrastructure failure"})
+            write(
+                segment / "halt.json", {"reason": "independent verification infrastructure failure"}
+            )
             raise ValueError("verification infrastructure failure; campaign halted")
         known, unknown, liability = funding_liability(root)
-        write(segment / "settlement.json", {
-            "task_id": row["task_id"],
-            "known_peak_cny": known,
-            "unknown_reserved_cny": unknown,
-            "total_conservative_liability_cny": liability,
-            "authorization_cny": LIMIT_CNY,
-            "account_balance_after": bal.get("available_cny"),
-            "settled_at": now(),
-        })
+        write(
+            segment / "settlement.json",
+            {
+                "task_id": row["task_id"],
+                "known_peak_cny": known,
+                "unknown_reserved_cny": unknown,
+                "total_conservative_liability_cny": liability,
+                "authorization_cny": LIMIT_CNY,
+                "account_balance_after": bal.get("available_cny"),
+                "settled_at": now(),
+            },
+        )
         results.append(result)
         previous_segment = segment
         update_progress(root, protocol)
-        print(json.dumps({
-            "completed": len(results), "planned": 30, "task": row["task_id"],
-            "status": result.get("status"), "passed": result.get("passed"),
-            "successes": sum(1 for item in results if item.get("passed") and item.get("status") == "completed"),
-            "known_peak_cny": round(known, 6), "unknown_reserved_cny": round(unknown, 6),
-            "wallet_cny_snapshot": bal.get("available_cny"),
-        }, ensure_ascii=False), flush=True)
+        print(
+            json.dumps(
+                {
+                    "completed": len(results),
+                    "planned": 30,
+                    "task": row["task_id"],
+                    "status": result.get("status"),
+                    "passed": result.get("passed"),
+                    "successes": sum(
+                        1
+                        for item in results
+                        if item.get("passed") and item.get("status") == "completed"
+                    ),
+                    "known_peak_cny": round(known, 6),
+                    "unknown_reserved_cny": round(unknown, 6),
+                    "wallet_cny_snapshot": bal.get("available_cny"),
+                },
+                ensure_ascii=False,
+            ),
+            flush=True,
+        )
         # Unknown responses are terminal failures; the held reservation remains in
         # the liability chain and the next task gets its own independent ledger.
     return results
@@ -695,15 +761,20 @@ def update_progress(root: Path, protocol: dict) -> None:
                 elif request.get("status") != "completed":
                     unknown += float(request.get("reserved_peak_cny", 0.0))
     started = len(rows)
-    write(root / "progress.json", {
-        "started": started,
-        "planned": len(protocol["schedule"]),
-        "main_successes": sum(1 for row in rows if row.get("status") == "completed" and row.get("passed")),
-        "patch_passes": sum(1 for row in rows if row.get("verification", {}).get("passed")),
-        "known_peak_fee_cny": round(known, 6),
-        "unknown_reserved_cny": round(unknown, 6),
-        "updated_at": now(),
-    })
+    write(
+        root / "progress.json",
+        {
+            "started": started,
+            "planned": len(protocol["schedule"]),
+            "main_successes": sum(
+                1 for row in rows if row.get("status") == "completed" and row.get("passed")
+            ),
+            "patch_passes": sum(1 for row in rows if row.get("verification", {}).get("passed")),
+            "known_peak_fee_cny": round(known, 6),
+            "unknown_reserved_cny": round(unknown, 6),
+            "updated_at": now(),
+        },
+    )
 
 
 def report(root: Path) -> dict:
@@ -714,7 +785,11 @@ def report(root: Path) -> dict:
         segment = root / "segments" / row["id"]
         path = segment / "trials" / row["id"] / "record.json"
         record = read(path) if path.exists() else None
-        reqs = read(segment / "requests.json").get("requests", []) if (segment / "requests.json").exists() else []
+        reqs = (
+            read(segment / "requests.json").get("requests", [])
+            if (segment / "requests.json").exists()
+            else []
+        )
         cost = in_tok = out_tok = 0
         held = 0.0
         for request in reqs:
@@ -728,19 +803,32 @@ def report(root: Path) -> dict:
         unknown += held
         inputs += in_tok
         outputs += out_tok
-        rows.append({
-            "id": row["id"], "task_id": row["task_id"],
-            "started": record is not None,
-            "status": record.get("status") if record else "unstarted",
-            "main_success": bool(record and record.get("status") == "completed" and record.get("passed")),
-            "patch_pass": bool(record and record.get("verification", {}).get("passed")),
-            "normal_completion": bool(record and record.get("status") == "completed"),
-            "input_tokens": in_tok, "output_tokens": out_tok,
-            "peak_cost_cny": cost, "unknown_reserve_cny": held,
-            "seconds": record.get("timings", {}).get("delivery_seconds", record.get("seconds", 0)) if record else None,
-            "reason": record.get("reason") if record else "not executed",
-            "verification_reason": record.get("verification", {}).get("reason") if record else None,
-        })
+        rows.append(
+            {
+                "id": row["id"],
+                "task_id": row["task_id"],
+                "started": record is not None,
+                "status": record.get("status") if record else "unstarted",
+                "main_success": bool(
+                    record and record.get("status") == "completed" and record.get("passed")
+                ),
+                "patch_pass": bool(record and record.get("verification", {}).get("passed")),
+                "normal_completion": bool(record and record.get("status") == "completed"),
+                "input_tokens": in_tok,
+                "output_tokens": out_tok,
+                "peak_cost_cny": cost,
+                "unknown_reserve_cny": held,
+                "seconds": record.get("timings", {}).get(
+                    "delivery_seconds", record.get("seconds", 0)
+                )
+                if record
+                else None,
+                "reason": record.get("reason") if record else "not executed",
+                "verification_reason": record.get("verification", {}).get("reason")
+                if record
+                else None,
+            }
+        )
     started = sum(r["started"] for r in rows)
     successes = sum(r["main_success"] for r in rows)
     patch_passes = sum(r["patch_pass"] for r in rows)
@@ -749,19 +837,30 @@ def report(root: Path) -> dict:
     summary = {
         "profile": PROFILE,
         "protocol_sha256": canonical_sha(protocol),
-        "planned": len(rows), "started": started, "unstarted": len(rows) - started,
+        "planned": len(rows),
+        "started": started,
+        "unstarted": len(rows) - started,
         "B": {
-            "main_successes": successes, "main_success_rate": successes / started if started else None,
-            "patch_passes": patch_passes, "patch_pass_rate": patch_passes / started if started else None,
-            "normal_completions": completion, "normal_completion_rate": completion / started if started else None,
-            "input_tokens": int(inputs), "output_tokens": int(outputs),
-            "known_peak_fee_cny": round(known, 6), "unknown_reserve_cny": round(unknown, 6),
+            "main_successes": successes,
+            "main_success_rate": successes / started if started else None,
+            "patch_passes": patch_passes,
+            "patch_pass_rate": patch_passes / started if started else None,
+            "normal_completions": completion,
+            "normal_completion_rate": completion / started if started else None,
+            "input_tokens": int(inputs),
+            "output_tokens": int(outputs),
+            "known_peak_fee_cny": round(known, 6),
+            "unknown_reserve_cny": round(unknown, 6),
             "conservative_liability_cny": round(known + unknown, 6),
             "total_delivery_seconds": round(spent_time, 3),
             "seconds_per_main_success": round(spent_time / successes, 3) if successes else None,
-            "cost_per_main_success_cny": round((known + unknown) / successes, 6) if successes else None,
+            "cost_per_main_success_cny": round((known + unknown) / successes, 6)
+            if successes
+            else None,
         },
-        "comparison_note": "B is a later, separately run sample than C; not a randomized concurrent A/B/C run.",
+        "comparison_note": (
+            "B is a later, separately run sample than C; not a randomized concurrent A/B/C run."
+        ),
         "c_task_data_source": str(PARENT / "per-task.csv"),
         "c_task_data_sha256": sha(PARENT / "per-task.csv"),
         "generated_at": now(),
@@ -775,11 +874,18 @@ def report(root: Path) -> dict:
         writer = csv.DictWriter(stream, fieldnames=list(rows[0]) if rows else ["id"])
         writer.writeheader()
         writer.writerows(rows)
-    write(root / "progress.json", {
-        "started": started, "planned": len(rows), "main_successes": successes,
-        "patch_passes": patch_passes, "known_peak_fee_cny": round(known, 6),
-        "unknown_reserved_cny": round(unknown, 6), "updated_at": now(),
-    })
+    write(
+        root / "progress.json",
+        {
+            "started": started,
+            "planned": len(rows),
+            "main_successes": successes,
+            "patch_passes": patch_passes,
+            "known_peak_fee_cny": round(known, 6),
+            "unknown_reserved_cny": round(unknown, 6),
+            "updated_at": now(),
+        },
+    )
     return summary
 
 
