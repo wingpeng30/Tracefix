@@ -1,6 +1,7 @@
 """Batch identity and bridge journal checks reject ambiguous recovery artifacts."""
 
 import hashlib
+import io
 import json
 
 import pytest
@@ -82,6 +83,48 @@ def test_valid_batch_and_known_final_read(batch, tool):
             stream.write(json.dumps({"event": event, "call_id": "final",
                                      "tool": tool}) + "\n")
     validate_batch(root, snapshot, sequence=1, image_id="pinned-image")
+
+
+def test_artifact_batch_binds_archive_run_identity_and_quota_receipt(batch):
+    from tracefix.artifacts import ArtifactStore
+
+    root, snapshot = batch
+    store = ArtifactStore(
+        root / "bridge-artifacts",
+        run_id=root.name,
+        workspace=root / "source",
+    )
+    ref = store.publish_process(
+        call_id="test-call",
+        tool_name="run_tests",
+        source_identity={"product_diff_sha256_before": "a" * 64},
+        stdout=b"saved middle output",
+        stderr=b"",
+        complete=True,
+    )
+    store.read(ref.artifact_id, limit=6)
+    archive_path = root / snapshot["artifact_archive"] if "artifact_archive" in snapshot else (
+        root / "docker-checkpoints" / f"{snapshot['batch_id']}.artifacts.tar"
+    )
+    buffer = io.BytesIO()
+    receipt = store.export_archive(buffer)
+    archive_path.write_bytes(buffer.getvalue())
+    snapshot.update({
+        "artifacts_enabled": True,
+        "run_id": root.name,
+        "artifact_archive": f"docker-checkpoints/{snapshot['batch_id']}.artifacts.tar",
+        "artifact_archive_bytes": archive_path.stat().st_size,
+        "artifact_archive_sha256": hashlib.sha256(archive_path.read_bytes()).hexdigest(),
+        "artifact_receipt": receipt,
+    })
+    sidecar = root / "docker-checkpoints" / f"{snapshot['batch_id']}.json"
+    sidecar.write_text(json.dumps(snapshot), encoding="utf-8")
+    validate_batch(root, snapshot, sequence=1, image_id="pinned-image")
+
+    snapshot["artifact_receipt"] = {**receipt, "queries": 0}
+    sidecar.write_text(json.dumps(snapshot), encoding="utf-8")
+    with pytest.raises(CheckpointError, match="receipt disagrees"):
+        validate_batch(root, snapshot, sequence=1, image_id="pinned-image")
 
 
 @pytest.mark.parametrize("tool,complete", [("apply_patch", False), ("get_git_diff", False),

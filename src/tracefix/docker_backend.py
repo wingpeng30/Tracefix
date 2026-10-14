@@ -178,6 +178,7 @@ class _BridgeSession:
         journal_path: Path,
         *,
         skills_enabled: bool = False,
+        artifacts_enabled: bool = False,
     ) -> None:
         self.timeout = timeout
         self.journal_path = journal_path
@@ -232,6 +233,19 @@ class _BridgeSession:
         if len({spec.name for spec in specs}) != len(specs):
             self.close(force=True)
             raise WorkspaceError("Docker tool bridge contains duplicate tool names")
+        artifact_protocol = handshake.get("artifact_protocol")
+        expected_artifact_protocol = {
+            "version": 1,
+            "max_artifact_bytes": 8 * 1024 * 1024,
+            "max_run_bytes": 64 * 1024 * 1024,
+            "max_run_artifacts": 128,
+        }
+        if artifacts_enabled and artifact_protocol != expected_artifact_protocol:
+            self.close(force=True)
+            raise WorkspaceError("Docker bridge artifact capability negotiation failed")
+        if not artifacts_enabled and artifact_protocol is not None:
+            self.close(force=True)
+            raise WorkspaceError("Docker bridge exposed artifacts while disabled")
         load_specs = [spec for spec in specs if spec.name == "load_skill"]
         if skills_enabled:
             declared = (
@@ -484,6 +498,8 @@ class DockerToolBackend:
         self.input_manifest_sha256: str | None = None
         self.executor_bundle_sha256: str | None = None
         self.executor_write_probe = "not_run"
+        self.artifacts_enabled = False
+        self.artifact_environment_path: str | None = None
 
     def prepare(
         self,
@@ -500,8 +516,10 @@ class DockerToolBackend:
         baseline_archive: Path | None = None,
         recovery_snapshot: dict[str, Any] | None = None,
         recovery_enabled: bool = False,
+        artifacts_enabled: bool = False,
         environment_variables: dict[str, str] | None = None,
     ) -> ToolRegistry:
+        self.artifacts_enabled = artifacts_enabled
         self.source_commit = source_commit
         if self.profile == "ordinary":
             if not source_import_probe:
@@ -703,6 +721,7 @@ class DockerToolBackend:
                 "/work",
                 "/work/agent",
                 "/work/evidence",
+                "/work/artifact-evidence",
             ]
         )
         self._copy_file_into(source, "/input/source.tar")
@@ -971,6 +990,7 @@ class DockerToolBackend:
             env_file.write_text(json.dumps(environment, ensure_ascii=False), encoding="utf-8")
             self._copy_file_into(env_file, "/input/environment.json")
             environment_path = "/input/environment.json"
+        self.artifact_environment_path = environment_path
         if recovery_snapshot is not None:
             self.restore_snapshot(recovery_snapshot)
         if skills_root is not None:
@@ -1031,9 +1051,18 @@ class DockerToolBackend:
             )
             if skills_root is not None:
                 command.extend(["--skills-root", "/opt/tracefix/runtime/skills"])
+        if artifacts_enabled:
+            command.extend(
+                [
+                    "--artifacts-enabled",
+                    "--artifact-root",
+                    "/work/artifact-evidence/tool-artifacts",
+                ]
+            )
         self.session = _BridgeSession(
             command, self.timeout_seconds + 60, self.run_dir / "tool-events.jsonl",
             skills_enabled=skills_enabled,
+            artifacts_enabled=artifacts_enabled,
         )
         if self.session.run_id != self.run_id:
             raise WorkspaceError("Docker bridge run identity mismatch")
@@ -1106,7 +1135,7 @@ class DockerToolBackend:
 
     def save_snapshot(self, sequence: int) -> dict[str, Any]:
         """Stream bounded product data and bind its verified bridge and journal state."""
-        from tracefix.docker_recovery import tool_identity
+        from tracefix.docker_recovery import tool_identity, validate_artifact_archive
         from tracefix.memory import atomic_json, digest
         from tracefix.workspace_snapshot import validate_archive
 
@@ -1120,7 +1149,72 @@ class DockerToolBackend:
         identity = f"{sequence:08d}-{uuid4().hex}"
         archive_path = directory / f"{identity}.tar"
         temporary = directory / f"{identity}.partial"
+        artifact_archive_path = directory / f"{identity}.artifacts.tar"
+        artifact_temporary = directory / f"{identity}.artifacts.partial"
+        artifact_record: dict[str, Any] = {}
+        artifact_published = False
         try:
+            if self.artifacts_enabled:
+                if self.artifact_environment_path is None:
+                    raise WorkspaceError("artifact bridge environment identity is unavailable")
+                with artifact_temporary.open("xb") as output:
+                    transfer = subprocess.run(
+                        [
+                            self.docker,
+                            "exec",
+                            self.container_name,
+                            "env",
+                            "PYTHONPATH=/opt/tracefix/src",
+                            self.python,
+                            "-m",
+                            "tracefix.artifact_transport",
+                            "export",
+                            "--root",
+                            "/work/artifact-evidence/tool-artifacts",
+                            "--workspace",
+                            "/work/agent",
+                            "--environment-json",
+                            self.artifact_environment_path,
+                            "--run-id",
+                            self.run_id,
+                        ],
+                        stdout=output,
+                        stderr=subprocess.PIPE,
+                        timeout=self.timeout_seconds + 120,
+                        check=False,
+                    )
+                    output.flush()
+                    os.fsync(output.fileno())
+                if transfer.returncode:
+                    raise WorkspaceError(
+                        "Docker artifact export failed",
+                        context={"stderr": transfer.stderr.decode("utf-8", "replace")[-2000:]},
+                    )
+                try:
+                    receipt = json.loads(transfer.stderr.decode("utf-8"))
+                except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+                    raise WorkspaceError("Docker artifact export receipt is invalid") from exc
+                if (
+                    not isinstance(receipt, dict)
+                    or receipt.get("run_id") != self.run_id
+                    or receipt.get("schema_version") != 1
+                    or artifact_temporary.stat().st_size > 68 * 1024 * 1024
+                ):
+                    raise WorkspaceError("Docker artifact export exceeded its contract")
+                os.replace(artifact_temporary, artifact_archive_path)
+                artifact_published = True
+                with artifact_archive_path.open("rb") as artifact_stream:
+                    artifact_archive_sha256 = hashlib.file_digest(
+                        artifact_stream, "sha256"
+                    ).hexdigest()
+                artifact_record = {
+                    "artifacts_enabled": True,
+                    "run_id": self.run_id,
+                    "artifact_archive": str(artifact_archive_path.relative_to(self.run_dir)),
+                    "artifact_archive_bytes": artifact_archive_path.stat().st_size,
+                    "artifact_archive_sha256": artifact_archive_sha256,
+                    "artifact_receipt": receipt,
+                }
             with temporary.open("xb") as output:
                 result = subprocess.run(
                     [self.docker, "exec", self.container_name, "env",
@@ -1154,16 +1248,32 @@ class DockerToolBackend:
                 "test_evidence": {path.name: hashlib.sha256(path.read_bytes()).hexdigest()
                                   for path in (self.run_dir / "test-evidence").iterdir()
                                   if path.is_file()},
+                **artifact_record,
             }
+            if self.artifacts_enabled:
+                validate_artifact_archive(
+                    self.run_dir,
+                    record,
+                    expected_run_id=self.run_id,
+                )
+            else:
+                record["artifacts_enabled"] = False
             atomic_json(directory / f"{identity}.json", record)
             return record
         finally:
             temporary.unlink(missing_ok=True)
+            artifact_temporary.unlink(missing_ok=True)
+            if artifact_published and not (directory / f"{identity}.json").is_file():
+                artifact_archive_path.unlink(missing_ok=True)
 
     def restore_snapshot(self, snapshot: dict[str, Any]) -> None:
         """Restore a validated archive before starting the new container's bridge."""
+        from tracefix.docker_recovery import owned_file, validate_artifact_archive
         from tracefix.memory import atomic_json
         from tracefix.workspace_snapshot import validate_archive
+
+        if self.artifacts_enabled != (snapshot.get("artifacts_enabled") is True):
+            raise WorkspaceError("Docker artifact capability differs from its recovery snapshot")
 
         path = self.run_dir / snapshot["archive"]
         validate_archive(path, snapshot["metadata"])
@@ -1185,6 +1295,59 @@ class DockerToolBackend:
             })
         _run([self.docker, "exec", self.container_name, "rm", "-f",
               "/input/restore-metadata.json"])
+        if self.artifacts_enabled:
+            if self.artifact_environment_path is None:
+                raise WorkspaceError("artifact restore environment identity is unavailable")
+            receipt = validate_artifact_archive(
+                self.run_dir,
+                snapshot,
+                expected_run_id=self.run_id,
+            )
+            artifact_archive = owned_file(self.run_dir, snapshot["artifact_archive"])
+            with artifact_archive.open("rb") as source:
+                restored_artifacts = subprocess.run(
+                    [
+                        self.docker,
+                        "exec",
+                        "-i",
+                        self.container_name,
+                        "env",
+                        "PYTHONPATH=/opt/tracefix/src",
+                        self.python,
+                        "-m",
+                        "tracefix.artifact_transport",
+                        "import",
+                        "--root",
+                        "/work/artifact-evidence/tool-artifacts",
+                        "--workspace",
+                        "/work/agent",
+                        "--environment-json",
+                        self.artifact_environment_path,
+                        "--run-id",
+                        self.run_id,
+                    ],
+                    stdin=source,
+                    capture_output=True,
+                    timeout=self.timeout_seconds + 120,
+                    check=False,
+                )
+            if restored_artifacts.returncode:
+                raise WorkspaceError(
+                    "could not restore Docker tool artifacts",
+                    context={
+                        "stderr": restored_artifacts.stderr.decode("utf-8", "replace")[-2000:]
+                    },
+                )
+            try:
+                imported = json.loads(restored_artifacts.stdout.decode("utf-8"))
+            except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+                raise WorkspaceError("Docker artifact restore receipt is invalid") from exc
+            for field in (
+                "manifest_sha256", "artifact_count", "storage_bytes", "queries",
+                "returned_chars",
+            ):
+                if imported.get(field) != receipt.get(field):
+                    raise WorkspaceError("Docker restored artifact quota disagrees with checkpoint")
 
     def set_phase(self, phase: str) -> None:
         """Persist the owned container identity and current lifecycle phase."""

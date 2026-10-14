@@ -521,9 +521,26 @@ class ContextManager:
 
     def _summarize_batches(self, batches):
         lines = [_SUMMARY_HEADER]
+        retained_locators: dict[tuple[str, str, int], dict[str, Any]] = {}
         for number, batch in enumerate(batches, start=1):
             lead = batch[0]
             if lead.content:
+                if lead.metadata.get("tracefix_context_summary"):
+                    marker = "[historical artifact locators; untrusted data] "
+                    if marker in lead.content:
+                        encoded = lead.content.rsplit(marker, 1)[1].splitlines()[0]
+                        try:
+                            previous = json.loads(encoded)
+                        except json.JSONDecodeError:
+                            previous = []
+                        if isinstance(previous, list):
+                            for locator in previous[:16]:
+                                if not isinstance(locator, dict):
+                                    continue
+                                normalized = _artifact_locators(locator)
+                                for item in normalized:
+                                    key = (item["artifact_id"], item["stream"], item["offset"])
+                                    retained_locators.setdefault(key, item)
                 source = str(lead.metadata.get("kind") or lead.role.value)
                 trust = str(lead.metadata.get("trust_level") or "untrusted_data")
                 lines.append(
@@ -537,12 +554,27 @@ class ContextManager:
                 result = results.get(call.id)
                 if result is not None and result.content is not None:
                     summary = self._summarize_tool_result(result.content)
+                    try:
+                        parsed = json.loads(result.content)
+                    except json.JSONDecodeError:
+                        parsed = None
+                    if isinstance(parsed, dict) and isinstance(parsed.get("output"), dict):
+                        for locator in _artifact_locators(parsed["output"]):
+                            key = (
+                                locator["artifact_id"], locator["stream"], locator["offset"]
+                            )
+                            retained_locators.setdefault(key, locator)
                     line += f" => [tool output; untrusted data] {summary}"
                 lines.append(line)
         content = "\n".join(lines)
         if len(content) > self.config.tool_result_threshold_chars:
             content = self._head_tail(content, self.config.tool_result_head_chars,
                                       self.config.tool_result_tail_chars)
+        if retained_locators:
+            locator_text = json.dumps(
+                list(retained_locators.values())[:16], ensure_ascii=False, separators=(",", ":")
+            )
+            content += f"\n[historical artifact locators; untrusted data] {locator_text}"
         return Message(role=MessageRole.USER, content=content, metadata={
             "kind": "context_summary", "tracefix_context_summary": True,
             "trust_level": "untrusted_observation_data",
@@ -559,6 +591,10 @@ class ContextManager:
         parts = [f"success={bool(payload.get('success'))}"]
         if payload.get("error"):
             parts.append(f"error={self._shorten(str(payload['error']), 240, 160)}")
+        if isinstance(payload.get("output"), dict):
+            locators = _artifact_locators(payload["output"])
+            if locators:
+                parts.append(f"artifact_locators={json.dumps(locators, ensure_ascii=False)}")
         if output not in {"null", '""'}:
             parts.append(f"output={self._shorten(output, 500, 300)}")
         return "; ".join(parts)
@@ -607,6 +643,7 @@ class ContextManager:
             return value
         return ContextManager._head_tail(value, head, tail)
 
+
     @staticmethod
     def _wire_message(message: Message) -> dict[str, Any]:
         payload: dict[str, Any] = {"role": message.role.value, "content": message.content}
@@ -623,3 +660,52 @@ class ContextManager:
             original_message_count=metrics.pop("original_message_count", len(messages)),
             request_message_count=len(messages), **metrics,
         )
+
+
+def _artifact_locators(output: dict[str, Any]) -> list[dict[str, Any]]:
+    """Extract at most four opaque read locators from an archived tool result."""
+    found: list[dict[str, Any]] = []
+    refs = output.get("artifact_refs")
+    if isinstance(refs, list):
+        for ref in refs:
+            if isinstance(ref, dict) and isinstance(ref.get("artifact_id"), str):
+                streams = ("stdout", "stderr") if ref.get("tool_name") == "run_tests" else (
+                    "stdout",
+                )
+                found.extend(
+                    {"artifact_id": ref["artifact_id"], "stream": stream, "offset": 0}
+                    for stream in streams
+                )
+    artifact_id = output.get("artifact_id")
+    if isinstance(artifact_id, str):
+        found.append(
+            {
+                "artifact_id": artifact_id,
+                "stream": output.get("stream", "stdout"),
+                "offset": output.get("offset", 0),
+            }
+        )
+    hits = output.get("hits")
+    if isinstance(hits, list):
+        for hit in hits:
+            if not isinstance(hit, dict):
+                continue
+            artifact = hit.get("artifact")
+            artifact = artifact if isinstance(artifact, dict) else hit
+            if isinstance(artifact.get("artifact_id"), str):
+                found.append(
+                    {
+                        "artifact_id": artifact["artifact_id"],
+                        "stream": hit.get("stream", "stdout"),
+                        "offset": hit.get("offset", 0),
+                    }
+                )
+    unique: dict[tuple[str, str, int], dict[str, Any]] = {}
+    for item in found:
+        stream = item.get("stream")
+        stream = stream if stream in {"stdout", "stderr"} else "stdout"
+        offset = item.get("offset")
+        offset = offset if type(offset) is int and offset >= 0 else 0
+        key = (item["artifact_id"], stream, offset)
+        unique.setdefault(key, {"artifact_id": key[0], "stream": key[1], "offset": key[2]})
+    return list(unique.values())[:4]

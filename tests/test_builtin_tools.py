@@ -65,6 +65,53 @@ def test_default_registry_contains_five_tools(git_workspace: Path) -> None:
     )
 
 
+def test_artifact_enabled_registry_captures_untruncated_test_output(
+    git_workspace: Path,
+) -> None:
+    from tracefix.artifacts import ArtifactStore
+
+    store = ArtifactStore(
+        git_workspace.parent / "artifact-store",
+        run_id="g2-test-run",
+        workspace=git_workspace,
+    )
+    registry = create_default_tool_registry(
+        git_workspace,
+        max_output_chars=256,
+        test_timeout_seconds=30,
+        artifact_store=store,
+    )
+    assert registry.names == (
+        "search_code",
+        "read_file",
+        "apply_patch",
+        "run_tests",
+        "get_git_diff",
+        "read_tool_artifact",
+        "search_tool_artifact",
+    )
+    (git_workspace / "tests" / "test_sample.py").write_text(
+        "def test_large_output():\n"
+        "    print('A' * 50000 + 'G2_MIDDLE_MARKER' + 'B' * 50000)\n"
+        "    assert True\n",
+        encoding="utf-8",
+    )
+    result = registry.get("run_tests").execute(
+        ToolCall(
+            id="artifact-test-run",
+            name="run_tests",
+            arguments={"command": "pytest -q -s tests/test_sample.py"},
+        )
+    )
+    assert result.success
+    assert result.output["test_status"] == "passed"
+    assert len(result.output["stdout"]) <= 256
+    artifact = result.output["artifact_refs"][0]
+    assert store.search("G2_MIDDLE_MARKER").hits[0].artifact.artifact_id == artifact[
+        "artifact_id"
+    ]
+
+
 def test_test_evidence_is_not_a_product_patch_without_git_exclude(
     git_workspace: Path, tmp_path: Path
 ) -> None:

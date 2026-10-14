@@ -140,6 +140,49 @@ def test_bridge_handshake_rpc_prepare_errors_and_process_started(tmp_path, monke
     assert events[5]["result"]["success"] is False
 
 
+def test_artifact_enabled_bridge_exposes_negotiated_protocol(tmp_path, monkeypatch):
+    workspace = tmp_path / "workspace"
+    evidence = tmp_path / "evidence"
+    artifact_root = tmp_path / "artifact-evidence" / "tool-artifacts"
+    workspace.mkdir()
+    evidence.mkdir()
+    environment_file = tmp_path / "environment.json"
+    environment_file.write_text('{"TOKEN":"a-private-token-value"}', encoding="utf-8")
+    registry = _Registry()
+    created = {}
+
+    def create_registry(root, **kwargs):
+        created.update(kwargs)
+        return registry
+
+    monkeypatch.setattr(agent_bridge, "create_default_tool_registry", create_registry)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "agent_bridge", "--workspace", str(workspace), "--evidence", str(evidence),
+            "--python", sys.executable, "--environment-json", str(environment_file),
+            "--run-id", "run-artifact", "--artifacts-enabled", "--artifact-root",
+            str(artifact_root),
+        ],
+    )
+    monkeypatch.setattr(sys, "stdin", io.StringIO(""))
+    output = io.StringIO()
+    monkeypatch.setattr(sys, "stdout", output)
+
+    assert agent_bridge.main() == 0
+    hello = json.loads(output.getvalue().splitlines()[0])
+    assert hello["artifact_protocol"] == {
+        "version": 1,
+        "max_artifact_bytes": 8 * 1024 * 1024,
+        "max_run_bytes": 64 * 1024 * 1024,
+        "max_run_artifacts": 128,
+    }
+    assert created["artifact_store"].run_id == "run-artifact"
+    manifest = json.loads((artifact_root / "manifest.json").read_text(encoding="utf-8"))
+    assert "a-private-token-value" not in json.dumps(manifest)
+
+
 @pytest.mark.parametrize("environment", ['[]', '{"BAD":1}'])
 def test_bridge_rejects_non_string_environment_values(tmp_path, monkeypatch, environment):
     workspace = tmp_path / "workspace"

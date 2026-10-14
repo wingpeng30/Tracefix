@@ -102,7 +102,54 @@ class ToolResultPresenter:
             )
         if tool_name == "get_git_diff":
             return self._shorten_fields(value, ("diff",), self.config.max_diff_chars)
+        if tool_name == "read_tool_artifact":
+            return self._shorten_fields(value, ("content",), self.config.max_read_chars)
+        if tool_name == "search_tool_artifact":
+            return self._present_artifact_search(value)
         return self._generic(value)
+
+    def _present_artifact_search(self, value: dict[str, JsonValue]) -> dict[str, JsonValue]:
+        """Keep bounded opaque locators in the model-visible projection."""
+        result: dict[str, JsonValue] = {
+            key: value[key]
+            for key in (
+                "query",
+                "truncated",
+                "queries_remaining",
+                "characters_remaining",
+                "evidence_role",
+            )
+            if key in value
+        }
+        hits = value.get("hits")
+        if not isinstance(hits, list):
+            result["hits"] = []
+            return result
+        presented: list[JsonValue] = []
+        for hit in hits[: self.config.max_search_matches]:
+            if not isinstance(hit, dict):
+                continue
+            artifact = hit.get("artifact")
+            if not isinstance(artifact, dict) or not isinstance(artifact.get("artifact_id"), str):
+                continue
+            excerpt = hit.get("excerpt")
+            presented.append(
+                {
+                    "artifact_id": artifact["artifact_id"],
+                    "stream": hit.get("stream"),
+                    "offset": hit.get("offset"),
+                    "excerpt": _shorten(
+                        excerpt if isinstance(excerpt, str) else "",
+                        self.config.max_generic_chars,
+                    ),
+                    "integrity": artifact.get("integrity"),
+                    "complete": artifact.get("complete"),
+                }
+            )
+        result["hits"] = presented
+        if len(hits) > len(presented):
+            result["hits_omitted"] = len(hits) - len(presented)
+        return result
 
     def _generic(self, value: JsonValue) -> JsonValue:
         rendered = json.dumps(value, ensure_ascii=False, separators=(",", ":"))

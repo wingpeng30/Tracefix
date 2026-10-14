@@ -59,6 +59,8 @@ def main() -> int:
     parser.add_argument("--repo-map-task")
     parser.add_argument("--repo-map-config")
     parser.add_argument("--skills-enabled", action="store_true")
+    parser.add_argument("--artifacts-enabled", action="store_true")
+    parser.add_argument("--artifact-root", type=Path)
     parser.add_argument("--skill-limits-json")
     parser.add_argument("--skills-root", type=Path)
     args = parser.parse_args()
@@ -74,6 +76,18 @@ def main() -> int:
     # The test tool creates and registers its own protected tmp directory on
     # first execution; pre-registering it before creation breaks identity checks.
     protected = {".tracefix-build-tmp"}
+    artifact_store = None
+    if args.artifacts_enabled:
+        from tracefix.artifacts import ArtifactStore
+
+        if args.artifact_root is None:
+            raise ValueError("artifact-enabled bridges require a dedicated evidence root")
+        artifact_store = ArtifactStore(
+            args.artifact_root,
+            run_id=args.run_id,
+            workspace=args.workspace,
+            secret_values=tuple(environment.values()),
+        )
     tools = create_default_tool_registry(
         args.workspace,
         max_output_chars=10_000_000,
@@ -83,6 +97,7 @@ def main() -> int:
         pytest_config=args.pytest_config,
         test_environment_variables=environment,
         evidence_dir=args.evidence,
+        artifact_store=artifact_store,
         protected_dirs=protected,
         skills_enabled=args.skills_enabled,
         skills_root=args.skills_root,
@@ -101,9 +116,7 @@ def main() -> int:
         repo_map = indexer.make_repo_map(indexer.build(), args.repo_map_task).model_dump(
             mode="json"
         )
-    sys.stdout.write(
-        json.dumps(
-            {
+    hello = {
                 "type": "hello",
                 "protocol": 1,
                 "run_id": args.run_id,
@@ -111,9 +124,14 @@ def main() -> int:
                 "skill_catalog": [entry.model_dump(mode="json") for entry in tools.skill_catalog],
                 "repo_map": repo_map,
             }
-        )
-        + "\n"
-    )
+    if artifact_store is not None:
+        hello["artifact_protocol"] = {
+            "version": 1,
+            "max_artifact_bytes": 8 * 1024 * 1024,
+            "max_run_bytes": 64 * 1024 * 1024,
+            "max_run_artifacts": 128,
+        }
+    sys.stdout.write(json.dumps(hello) + "\n")
     sys.stdout.flush()
     for line in sys.stdin:
         call = None

@@ -109,6 +109,29 @@ def test_default_model_uses_current_deepseek_name_without_provider_call() -> Non
     assert config.model_name == "deepseek/deepseek-flash"
 
 
+def test_harness_foundations_api_default_and_docker_recovery_dependency(tmp_path) -> None:
+    local = _local_run_config(
+        repo=tmp_path,
+        task="configuration check",
+        model_name="offline/replay",
+        output_dir=tmp_path / "runs",
+        env_file=None,
+    )
+    assert local.harness_foundations_enabled is False
+    with pytest.raises(ValueError, match="require ordinary Docker recovery"):
+        RunConfig(
+            repo=tmp_path,
+            task="configuration check",
+            model_name="offline/replay",
+            output_dir=tmp_path / "runs",
+            env_file=None,
+            execution_backend="docker",
+            docker_profile="ordinary",
+            docker_image_id="sha256:" + "a" * 64,
+            harness_foundations_enabled=True,
+        )
+
+
 @pytest.mark.parametrize("module", ["absent_module", "json"])
 def test_ordinary_source_probe_rejects_wrong_import_before_model(tmp_path, module) -> None:
     repo = _make_repo(tmp_path)

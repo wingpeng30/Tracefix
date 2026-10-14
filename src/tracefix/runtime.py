@@ -26,6 +26,7 @@ from tracefix.agent import (
     MinimalAgent,
     ToolPresentationMetrics,
 )
+from tracefix.artifacts import ArtifactStore
 from tracefix.checkpoint import CheckpointError, CheckpointStore, ProcessLock
 from tracefix.context import ContextManager, ContextMetrics, ContextSessionState
 from tracefix.docker_backend import DockerToolBackend
@@ -114,6 +115,7 @@ def config_identity_sha256(
                 "memory_dir",
                 "conversation_enabled",
                 "docker_recovery_enabled",
+                "harness_foundations_enabled",
             )
             if name not in manifest_config
         )
@@ -144,6 +146,7 @@ class RunConfig(BaseModel):
     memory_dir: Path | None = None
     conversation_enabled: bool = False
     docker_recovery_enabled: bool = False
+    harness_foundations_enabled: bool = False
     mcp_serena_image_id: str | None = None
     environment_recipe: EnvironmentRecipe | None = None
     test_environment_variables: dict[str, str] = Field(default_factory=dict)
@@ -218,6 +221,12 @@ class RunConfig(BaseModel):
         ):
             raise ValueError("Docker recovery requires the ordinary Docker backend")
         if (
+            self.harness_foundations_enabled
+            and self.execution_backend == "docker"
+            and not self.docker_recovery_enabled
+        ):
+            raise ValueError("Docker harness foundations require ordinary Docker recovery")
+        if (
             self.memory_enabled
             and self.execution_backend != "local"
             and not self.docker_recovery_enabled
@@ -255,6 +264,26 @@ def _saved_run_config(value: Any) -> RunConfig:
     if saved.get("execution_backend") == "local" and "docker_profile" not in saved:
         saved["docker_profile"] = "frozen"
     return RunConfig.model_validate(saved)
+
+
+def _artifact_store_for_run(
+    config: RunConfig, run_id: str, run_dir: Path, workspace: Path
+) -> ArtifactStore | None:
+    """Create the optional run-owned artifact store without coupling it to Runner."""
+    if not config.harness_foundations_enabled:
+        return None
+    environment = (
+        dict(config.environment_recipe.environment_variables)
+        if config.environment_recipe is not None
+        else {}
+    )
+    environment.update(config.test_environment_variables)
+    return ArtifactStore(
+        run_dir / "tool-artifacts",
+        run_id=run_id,
+        workspace=workspace,
+        secret_values=tuple(environment.values()),
+    )
 
 
 class RunResult(BaseModel):
@@ -754,9 +783,22 @@ class TraceFixRunner:
                     or (workspace / ".tracefix-test-tmp").is_symlink()
                 ):
                     reasons.append("test temporary directory changed")
+                artifact_store = _artifact_store_for_run(
+                    config, root.name, root, workspace
+                )
+                if config.harness_foundations_enabled:
+                    try:
+                        artifact_store.verify_checkpoint_identity(
+                            snapshot.payload.get("artifact_store")
+                        )
+                    except (AttributeError, ValueError):
+                        reasons.append("artifact store identity changed")
+                elif "artifact_store" in snapshot.payload:
+                    reasons.append("checkpoint contains disabled artifact state")
                 registry = create_default_tool_registry(
                     workspace,
                     evidence_dir=root / "test-evidence",
+                    artifact_store=artifact_store,
                     protected_dirs=set(protected),
                     skills_enabled=config.agent_config.skills_enabled,
                     skill_limits=config.agent_config.skill_limits,
@@ -1201,9 +1243,20 @@ class TraceFixRunner:
                 if repo_map_path.is_file()
                 else None
             )
+            artifact_store = _artifact_store_for_run(config, root.name, root, workspace)
+            if config.harness_foundations_enabled:
+                try:
+                    artifact_store.verify_checkpoint_identity(
+                        snapshot.payload.get("artifact_store")
+                    )
+                except (AttributeError, ValueError) as exc:
+                    raise CheckpointError("artifact store does not match its checkpoint") from exc
+            elif "artifact_store" in snapshot.payload:
+                raise CheckpointError("checkpoint contains disabled artifact state")
             tools = create_default_tool_registry(
                 workspace,
                 evidence_dir=root / "test-evidence",
+                artifact_store=artifact_store,
                 protected_dirs=protected_dirs,
                 skills_enabled=config.agent_config.skills_enabled,
                 skill_limits=config.agent_config.skill_limits,
@@ -1300,18 +1353,17 @@ class TraceFixRunner:
                     active.verify_test_source(patch_sha)
                     trace = trace_path.read_bytes()
                     sequence += 1
-                    store.save(
-                        {
-                            "agent": active.checkpoint_payload(),
-                            "workspace_diff_sha256": patch_sha,
-                            "trace_size": len(trace),
-                            "trace_sha256": hashlib.sha256(trace).hexdigest(),
-                            "skills": skill_tool.recovery_state() if skill_tool else None,
-                            "protected_dirs": sorted(protected_dirs),
-                        },
-                        sequence=sequence,
-                    )
-
+                    payload = {
+                        "agent": active.checkpoint_payload(),
+                        "workspace_diff_sha256": patch_sha,
+                        "trace_size": len(trace),
+                        "trace_sha256": hashlib.sha256(trace).hexdigest(),
+                        "skills": skill_tool.recovery_state() if skill_tool else None,
+                        "protected_dirs": sorted(protected_dirs),
+                    }
+                    if artifact_store is not None:
+                        payload["artifact_store"] = artifact_store.checkpoint_identity()
+                    store.save(payload, sequence=sequence)
                 agent.checkpoint_callback = save_checkpoint
                 agent.persist_terminal_checkpoint = config.conversation_enabled
                 self._attach_memory(agent, config, root, workspace, protected_dirs)
@@ -1430,6 +1482,7 @@ class TraceFixRunner:
                 baseline_archive=root / "agent-base.tar",
                 recovery_snapshot=saved.payload["docker_snapshot"],
                 recovery_enabled=True,
+                artifacts_enabled=config.harness_foundations_enabled,
                 skills_enabled=config.agent_config.skills_enabled,
                 skill_limits=config.agent_config.skill_limits,
                 source_import_probe=config.source_import,
@@ -1683,6 +1736,7 @@ class TraceFixRunner:
         docker_backend: DockerToolBackend | None = None
         mcp_manager: SerenaMCP | None = None
         tools = None
+        artifact_store: ArtifactStore | None = None
         workspace_preparation: dict[str, JsonValue] = {}
         state = AgentState(
             status=AgentStatus.FAILED,
@@ -1781,6 +1835,7 @@ class TraceFixRunner:
                     {
                         "source_import_probe": config.source_import,
                         "recovery_enabled": config.docker_recovery_enabled,
+                        "artifacts_enabled": config.harness_foundations_enabled,
                         "environment_variables": {
                             **(
                                 config.environment_recipe.environment_variables
@@ -1862,9 +1917,13 @@ class TraceFixRunner:
 
             if tools is None:
                 assert workspace is not None
+                artifact_store = _artifact_store_for_run(
+                    config, run_id, run_dir, workspace
+                )
                 tools = create_default_tool_registry(
                     workspace,
                     evidence_dir=run_dir / "test-evidence",
+                    artifact_store=artifact_store,
                     protected_dirs=internal_artifacts,
                     skills_enabled=config.agent_config.skills_enabled,
                     skill_limits=config.agent_config.skill_limits,
@@ -2079,21 +2138,22 @@ class TraceFixRunner:
                     active.verify_test_source(current_sha)
                     trace_bytes = trace_path.read_bytes()
                     skill_tool = (
-                        tools.get("load_skill") if (config.agent_config.skills_enabled) else None
+                        tools.get("load_skill") if (
+                            config.agent_config.skills_enabled or config.memory_enabled
+                        ) else None
                     )
                     sequence += 1
-                    store.save(
-                        {
-                            "agent": active.checkpoint_payload(),
-                            "workspace_diff_sha256": current_sha,
-                            "trace_size": len(trace_bytes),
-                            "trace_sha256": hashlib.sha256(trace_bytes).hexdigest(),
-                            "skills": skill_tool.recovery_state() if skill_tool else None,
-                            "protected_dirs": sorted(internal_artifacts),
-                        },
-                        sequence=sequence,
-                    )
-
+                    payload = {
+                        "agent": active.checkpoint_payload(),
+                        "workspace_diff_sha256": current_sha,
+                        "trace_size": len(trace_bytes),
+                        "trace_sha256": hashlib.sha256(trace_bytes).hexdigest(),
+                        "skills": skill_tool.recovery_state() if skill_tool else None,
+                        "protected_dirs": sorted(internal_artifacts),
+                    }
+                    if artifact_store is not None:
+                        payload["artifact_store"] = artifact_store.checkpoint_identity()
+                    store.save(payload, sequence=sequence)
                 agent.checkpoint_callback = save_checkpoint
                 agent.persist_terminal_checkpoint = config.conversation_enabled
             if workspace is not None:

@@ -119,6 +119,28 @@ def test_pressure_compacts_whole_batches_into_deterministic_summary() -> None:
             assert result_ids == {call.id for call in message.tool_calls}
 
 
+def test_artifact_locators_survive_two_context_summary_generations() -> None:
+    artifact_id = "a" * 32
+    call = ToolCall(id="artifact-call", name="run_tests", arguments={})
+    assistant = Message(role=MessageRole.ASSISTANT, tool_calls=(call,))
+    result = ToolResult(
+        call_id=call.id,
+        tool_name=call.name,
+        success=True,
+        output={"artifact_refs": [{"artifact_id": artifact_id, "tool_name": "run_tests"}]},
+    )
+    tool = Message(role=MessageRole.TOOL, content=result.model_dump_json(),
+                   tool_call_id=call.id)
+    manager = ContextManager(ContextConfig())
+    first = manager._summarize_batches(((assistant, tool),))
+    second = manager._summarize_batches(((first,),))
+    assert first.content is not None and second.content is not None
+    assert first.content.count(artifact_id) >= 2
+    assert second.content.count(artifact_id) >= 2
+    assert '"stream":"stdout"' in second.content
+    assert '"stream":"stderr"' in second.content
+
+
 def test_latest_failed_test_is_kept_verbatim_and_old_tools_are_summarized() -> None:
     old_calls = tuple(
         ToolCall(id=f"old-{name}", name=name, arguments={"value": name})

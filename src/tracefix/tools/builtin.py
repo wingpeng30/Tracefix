@@ -21,8 +21,10 @@ from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
+from tracefix.artifacts import ArtifactStore
 from tracefix.exceptions import ToolExecutionError, ToolValidationError
 from tracefix.messages import ToolCall
+from tracefix.process_capture import ProcessCapture
 from tracefix.security import (
     SECURITY_POLICY_VERSION,
     UnsafeWorkspacePath,
@@ -806,6 +808,7 @@ class RunTestsTool(_WorkspaceTool):
         protected_dirs: set[str] | None = None,
         evidence_dir: Path | None = None,
         on_process_started: Callable[[], None] | None = None,
+        artifact_store: ArtifactStore | None = None,
     ) -> None:
         super().__init__(
             workspace, max_output_chars=max_output_chars, protected_dirs=protected_dirs
@@ -832,6 +835,7 @@ class RunTestsTool(_WorkspaceTool):
         if evidence_root == self.workspace or self.workspace in evidence_root.parents:
             raise ToolValidationError("test evidence directory must be outside the checkout")
         self.on_process_started = on_process_started
+        self.artifact_store = artifact_store
 
     def execute(self, call: ToolCall) -> ToolResult:
         """执行 pytest，并把失败和超时作为模型可以继续处理的结果返回。"""
@@ -894,48 +898,96 @@ class RunTestsTool(_WorkspaceTool):
                 ]
             )
             source_sha_before = self._product_diff_sha()
-            process = subprocess.Popen(
-                command,
-                cwd=self.workspace,
-                env=environment,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                shell=False,
-                start_new_session=(os.name != "nt"),
-            )
-            try:
-                if self.on_process_started is not None:
-                    self.on_process_started()
+            artifact_refs: list[dict[str, object]] = []
+            artifact_incomplete = False
+            artifact_error = None
+            if self.artifact_store is not None:
+                capture = ProcessCapture(self.artifact_store).run(
+                    command,
+                    cwd=self.workspace,
+                    env=environment,
+                    timeout=timeout,
+                    call_id=call.id,
+                    tool_name=self.spec.name,
+                    source_identity={"product_diff_sha256_before": source_sha_before},
+                    on_started=self.on_process_started,
+                )
+                stdout_text = capture.stdout
+                stderr_text = capture.stderr
+                if capture.artifact is not None:
+                    artifact_refs.append(capture.artifact.model_dump(mode="json"))
+                artifact_incomplete = capture.incomplete
+                artifact_error = capture.artifact_error
+                if capture.timed_out:
+                    stdout, stdout_truncated = _truncate_text(stdout_text, self.max_output_chars)
+                    stderr, stderr_truncated = _truncate_text(stderr_text, self.max_output_chars)
+                    return ToolResult(
+                        call_id=call.id,
+                        tool_name=self.spec.name,
+                        success=False,
+                        output={
+                            "command": command,
+                            "returncode": None,
+                            "artifact_refs": artifact_refs,
+                            "stdout": stdout,
+                            "stderr": stderr,
+                            "timed_out": True,
+                        },
+                        error=f"test command timed out after {timeout} seconds",
+                        metadata={
+                            "truncated": stdout_truncated or stderr_truncated,
+                            "process_started": True,
+                            "artifact_incomplete": artifact_incomplete,
+                            "artifact_error": artifact_error,
+                        },
+                        duration_ms=(time.monotonic() - started) * 1000,
+                    )
+                completed = subprocess.CompletedProcess(
+                    command, capture.returncode, stdout_text, stderr_text
+                )
+            else:
+                process = subprocess.Popen(
+                    command,
+                    cwd=self.workspace,
+                    env=environment,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    shell=False,
+                    start_new_session=(os.name != "nt"),
+                )
                 try:
-                    stdout_text, stderr_text = process.communicate(timeout=timeout)
-                except subprocess.TimeoutExpired:
-                    if os.name != "nt":
+                    if self.on_process_started is not None:
+                        self.on_process_started()
+                    try:
+                        stdout_text, stderr_text = process.communicate(timeout=timeout)
+                    except subprocess.TimeoutExpired:
+                        if os.name != "nt":
+                            try:
+                                os.killpg(process.pid, signal.SIGKILL)
+                            except ProcessLookupError:
+                                pass
+                        else:
+                            process.kill()
+                        process.communicate()
+                        raise
+                except BaseException:
+                    # If the bridge or its event pipe fails after Popen succeeds,
+                    # do not leave pytest running in the container without an owner.
+                    if process.poll() is None and os.name != "nt":
                         try:
                             os.killpg(process.pid, signal.SIGKILL)
                         except ProcessLookupError:
                             pass
-                    else:
+                    elif process.poll() is None:
                         process.kill()
                     process.communicate()
                     raise
-            except BaseException:
-                # If the bridge or its event pipe fails after Popen succeeds,
-                # do not leave pytest running in the container without an owner.
-                if process.poll() is None and os.name != "nt":
-                    try:
-                        os.killpg(process.pid, signal.SIGKILL)
-                    except ProcessLookupError:
-                        pass
-                elif process.poll() is None:
-                    process.kill()
-                process.communicate()
-                raise
-            completed = subprocess.CompletedProcess(
-                command, process.returncode, stdout_text, stderr_text
-            )
+                completed = subprocess.CompletedProcess(
+                    command, process.returncode, stdout_text, stderr_text
+                )
             stdout, stdout_truncated = _truncate_text(completed.stdout, self.max_output_chars)
             stderr, stderr_truncated = _truncate_text(completed.stderr, self.max_output_chars)
             audit, audit_issue = self._read_agent_audit(audit_path, audit_id, completed.returncode)
@@ -980,25 +1032,37 @@ class RunTestsTool(_WorkspaceTool):
             if test_status == "passed" and source_sha_before != source_sha_after:
                 test_status = "invalid_test_run"
             passed = test_status == "passed"
+            test_output = {
+                "command": command,
+                "returncode": completed.returncode,
+                "stdout": stdout,
+                "stderr": stderr,
+                "timed_out": False,
+                "test_status": test_status,
+                "test_counts": test_stats,
+                "audit_path": str(audit_path),
+                "junit_path": str(junit_path),
+                "audit": audit,
+                "diagnostic": audit_issue or junit_issue or phase_issue,
+                "source_sha256_before": source_sha_before,
+                "source_sha256_after": source_sha_after,
+            }
+            metadata: dict[str, object] = {
+                "truncated": stdout_truncated or stderr_truncated,
+                "process_started": True,
+            }
+            if self.artifact_store is not None:
+                # Keep the opaque locator before potentially large output fields so
+                # deterministic head/tail presentation preserves it.
+                test_output = {"artifact_refs": artifact_refs, **test_output}
+                metadata.update(
+                    {"artifact_incomplete": artifact_incomplete, "artifact_error": artifact_error}
+                )
             return ToolResult(
                 call_id=call.id,
                 tool_name=self.spec.name,
                 success=passed,
-                output={
-                    "command": command,
-                    "returncode": completed.returncode,
-                    "stdout": stdout,
-                    "stderr": stderr,
-                    "timed_out": False,
-                    "test_status": test_status,
-                    "test_counts": test_stats,
-                    "audit_path": str(audit_path),
-                    "junit_path": str(junit_path),
-                    "audit": audit,
-                    "diagnostic": audit_issue or junit_issue or phase_issue,
-                    "source_sha256_before": source_sha_before,
-                    "source_sha256_after": source_sha_after,
-                },
+                output=test_output,
                 error=(
                     None
                     if passed
@@ -1008,10 +1072,7 @@ class RunTestsTool(_WorkspaceTool):
                         else f"tests failed with exit code {completed.returncode}"
                     )
                 ),
-                metadata={
-                    "truncated": stdout_truncated or stderr_truncated,
-                    "process_started": True,
-                },
+                metadata=metadata,
                 duration_ms=(time.monotonic() - started) * 1000,
             )
         except subprocess.TimeoutExpired as exc:
@@ -1484,6 +1545,7 @@ def create_default_tool_registry(
     test_environment_variables: dict[str, str] | None = None,
     evidence_dir: Path | None = None,
     protected_dirs: set[str] | None = None,
+    artifact_store: ArtifactStore | None = None,
     skills_enabled: bool = False,
     skill_limits: SkillLimits | None = None,
     skills_root: Path | None = None,
@@ -1505,9 +1567,14 @@ def create_default_tool_registry(
                 environment_variables=test_environment_variables,
                 protected_dirs=internal,
                 evidence_dir=evidence_dir,
+                artifact_store=artifact_store,
             ),
             GetGitDiffTool(root, max_output_chars=max_output_chars, protected_dirs=internal),
         ]
+    if artifact_store is not None:
+        from tracefix.tools.artifacts import ReadToolArtifactTool, SearchToolArtifactTool
+
+        tools.extend((ReadToolArtifactTool(artifact_store), SearchToolArtifactTool(artifact_store)))
     if skills_enabled:
         from tracefix.tools.skills import SkillActivationTool
 
@@ -1515,4 +1582,18 @@ def create_default_tool_registry(
             tools.append(SkillActivationTool(root=skills_root, limits=skill_limits))
         else:
             tools.append(SkillActivationTool(limits=skill_limits))
+    if artifact_store is not None:
+        from tracefix.tools.artifacts import ArtifactRecordingTool
+
+        tools = [
+            ArtifactRecordingTool(tool, artifact_store)
+            if tool.spec.name
+            in {
+                ReservedToolName.SEARCH_CODE.value,
+                ReservedToolName.READ_FILE.value,
+                ReservedToolName.GET_GIT_DIFF.value,
+            }
+            else tool
+            for tool in tools
+        ]
     return ToolRegistry(tools)
