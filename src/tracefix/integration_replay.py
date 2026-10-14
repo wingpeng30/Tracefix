@@ -182,13 +182,14 @@ def run_integrated_replay(output: Path, image_id: str) -> dict:
         for item in paused["selected"]
     ):
         raise AssertionError("recall bundle included ineligible evidence")
+    # Six task requests plus one bounded reflection request are recorded.
     if (
         paused["status"] != "interrupted"
         or paused["step_count"] != 4
         or resumed["status"] != "completed"
-        or resumed["step_count"] != 8
-        or resumed["input_tokens"] != 800
-        or resumed["output_tokens"] != 80
+        or resumed["step_count"] != 7
+        or resumed["input_tokens"] != 700
+        or resumed["output_tokens"] != 70
         or resumed["test_runs"] != 2
         or resumed["cost_usd"] != 0
         or resumed["memory_status"].get("status") not in {"verified", "duplicate"}

@@ -83,9 +83,9 @@ def test_controller_accepts_only_complete_independent_evidence(tmp_path, monkeyp
             "history_bundle_count": 1,
             "history_bundle_sha256": "history-bundle",
             "status": "interrupted" if phase == "pause" else "completed",
-            "step_count": 4 if phase == "pause" else 8,
-            "input_tokens": 800,
-            "output_tokens": 80,
+            "step_count": 4 if phase == "pause" else 7,
+            "input_tokens": 700,
+            "output_tokens": 70,
             "test_runs": 2,
             "cost_usd": 0,
             "memory_status": {"status": "duplicate"},
@@ -100,9 +100,9 @@ def test_controller_accepts_only_complete_independent_evidence(tmp_path, monkeyp
                 "selection": ("selected", []),
                 "skills": ("skills", {"loaded": ["unexpected"]}),
                 "bundle-hash": ("bundle_sha256", "other"),
-                "steps": ("step_count", 9),
-                "input": ("input_tokens", 900),
-                "output": ("output_tokens", 90),
+                "steps": ("step_count", 8),
+                "input": ("input_tokens", 800),
+                "output": ("output_tokens", 80),
                 "tests": ("test_runs", 1),
                 "cost": ("cost_usd", 1),
                 "memory": ("memory_status", {"status": "candidate"}),
@@ -233,14 +233,14 @@ def test_worker_requires_durable_boundary_actual_recall_and_accounting(
                 )
             except KeyboardInterrupt:
                 status = "interrupted"
-            client.calls = 4 if phase == "pause" else 8
+            client.calls = 4 if phase == "pause" else 7
             client.recalled = violation != "recall"
             return SimpleNamespace(
                 result_path=str(root / "result.json"),
                 status="failed" if violation == "terminal" else status,
-                step_count=9 if violation == "accounting" else client.calls,
-                input_tokens=800,
-                output_tokens=80,
+                step_count=8 if violation == "accounting" else client.calls,
+                input_tokens=700,
+                output_tokens=70,
                 test_runs=2,
                 cost_usd=0,
                 memory_status={"status": "duplicate"},
