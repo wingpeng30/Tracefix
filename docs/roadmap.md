@@ -5,7 +5,13 @@
 
 ## 2026-10-14 Harness Foundations 实施
 
-已将[分阶段实施计划](tasks/2026-10-14-harness-foundations-implementation.md)保存到候选分支，固定 G0 基线验收、G1 类型/证据/失效记忆、G2 工具产物、G3 TaskState、G4 统一能力策略与 ordinary Docker/Serena 组合的顺序和每阶段退出门。本节状态以[固定当前入口](current-status.md)为准。G0 在 bcb6d24 / CI #142 完成。G1 在 `d059ec269e7b19571b16cc6fe823a66f6461e2da` 完成；CI #144（[run 38596011475](https://github.com/wingpeng30/Tracefix/actions/runs/38596011475)）双 Python 全量测试、90% line+branch coverage、Ruff/compile/diff、editable/wheel/recovery、公开资格、基础 Docker、ordinary Docker 和 Serena MCP 全部通过。CI #143 的 ordinary Docker 回放曾暴露累计请求/Token 预期值陈旧；按真实轨迹修正为7次/700输入/70输出后，CI #144 对 editable 与 wheel 两种入口均完成恢复回放。用户要求完成 G1 后中断；G2—G4 仍未开始。
+已将[分阶段实施计划](tasks/2026-10-14-harness-foundations-implementation.md)保存到候选分支，固定 G0→G1→G2→G3→G4 顺序和退出门。G0 在 bcb6d24 / CI #142 完成，G1 在 `d059ec269e7b19571b16cc6fe823a66f6461e2da` / CI #144 完成。用户现已要求继续 G2—G4；G2 实现及一个 CI 回归修复已在本地候选工作树，阶段门未通过，G3/G4 尚未开始。详见[固定当前状态](current-status.md)和本记录下方的 G2 进度。
+
+### 2026-10-15 G2 工具产物实施中
+
+主实现本地提交 `1d548f562dc4867cb94c3a5b7b86a0b0d6020708`，tree `bd05732ac832f62d44852b69a3e92d4c1e49ed76`；本地修复提交 `cbe7d25918ec66be4b244fb5ae7938f4c213c096`，当前 tree `932e8e0740fefe1401abe2038fa40e12e56b6128`。新增 artifact store、同步双流采集、脱敏检索视图、读取/搜索工具、有界 archive transport、Docker recovery 导入导出，以及无 Skills 的 memory+conversation checkpoint 回归。G2 相关本地测试在修复前 300 passed；修复后两项定向 runtime 回归 passed，改动文件 Ruff/compileall/diff-check 通过。完整本机 engineering 检查没有完成；筛选式 runtime 尝试受 Windows 沙盒进程/路径限制产生 setup errors，Docker 按用户要求跳过。
+
+远端候选 `ca96b2f64c157a156c0d360ec66c15f842acd0df`（[CI run 38614482340](https://github.com/wingpeng30/Tracefix/actions/runs/38614482340)）验证了基础 Docker、Serena MCP 和真实 ordinary Docker artifact recovery 回放，但 ordinary editable memory-dialogue 回放因 checkpoint 错把 memory 当成已注册 Skills 而失败。修复已在 `cbe7d25` 并增加回归，但自动审查拒绝向候选 GitHub 仓库上传完整 `runtime.py`，故远端仍在旧 SHA；不通过其他途径重试。该 run 双版本 quality job 最后查询仍在执行。G2 阶段门未通过，不进入 G3。
 
 ## 2026-10-14 harness 候选方向
 
