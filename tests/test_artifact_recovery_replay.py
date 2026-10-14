@@ -4,6 +4,9 @@ import json
 
 from examples.replay_artifact_recovery import ArtifactReplayClient
 from tracefix import ToolResult, ToolResultPresenter
+from tracefix.messages import Message, MessageRole
+from tracefix.models import LiteLLMAdapter, LLMConfig
+from tracefix.tools import ToolSpec
 
 
 def _message(name: str, output: dict, *, success: bool = True) -> dict:
@@ -27,6 +30,25 @@ def _next(messages: list[dict]) -> tuple[str | None, dict | None]:
         return None, None
     function = call[0]["function"]
     return function["name"], json.loads(function["arguments"])
+
+
+def test_replay_adapter_marks_synthetic_usage_as_known_zero_cost() -> None:
+    client = ArtifactReplayClient()
+    response = LiteLLMAdapter(
+        LLMConfig(model_name="offline/artifact-recovery"), client=client
+    ).complete(
+        [Message(role=MessageRole.USER, content="synthetic recovery replay")],
+        [ToolSpec(
+            name="noop",
+            description="fixture tool",
+            input_schema={"type": "object", "properties": {}},
+        )],
+    )
+
+    assert response.usage.input_tokens == 100
+    assert response.usage.output_tokens == 10
+    assert response.usage.cost_usd == 0
+    assert client.calls == 1
 
 
 def test_recovery_replay_uses_search_locator_and_reads_before_patch() -> None:

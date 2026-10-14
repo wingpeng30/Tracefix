@@ -39,6 +39,11 @@ class ArtifactReplayClient:
     def token_counter(self, **_kwargs) -> int:
         return 100
 
+    def completion_cost(self, *, completion_response: object) -> float:
+        """This fixture is local-only, so its recorded synthetic calls cost zero."""
+        del completion_response
+        return 0.0
+
     def completion(self, **kwargs):
         self.calls += 1
         messages = kwargs.get("messages")
