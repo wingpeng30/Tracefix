@@ -5,7 +5,7 @@
 
 ## 2026-10-14 Harness Foundations 实施
 
-已将[分阶段实施计划](tasks/2026-10-14-harness-foundations-implementation.md)保存到候选分支，固定 G0 基线验收、G1 类型/证据/失效记忆、G2 工具产物、G3 TaskState、G4 统一能力策略与 ordinary Docker/Serena 组合的顺序和每阶段退出门。本节状态以[固定当前入口](current-status.md)为准。候选基线 f79 的 CI #140 中基础 Docker、ordinary Docker、Serena MCP 通过；Python 3.11/3.12 quality 未通过，coverage 分别为 89.99240410178504% 和 89.98290922901633%，且相关回放暴露测试夹具与 local resume backend 问题。相关修复在候选工作树，64 项定向测试、Ruff、diff-check 通过，尚未提交。修复提交全门通过前停留在 G0，不进入 G1。
+已将[分阶段实施计划](tasks/2026-10-14-harness-foundations-implementation.md)保存到候选分支，固定 G0 基线验收、G1 类型/证据/失效记忆、G2 工具产物、G3 TaskState、G4 统一能力策略与 ordinary Docker/Serena 组合的顺序和每阶段退出门。本节状态以[固定当前入口](current-status.md)为准。候选基线 f79 的 CI #140 首轮暴露测试/示例夹具问题；修复提交 `14046435a206cf4f38751012db37373d3fbf50f2` 的 CI #141 双版本全量 pytest 和覆盖率、editable 及三个 Docker/MCP job 通过，但公开任务资格和 wheel smoke 均暴露 `scripts/qualify_public_task.py` 的 local backend 配置缺失。现已在候选工作树修复并加22项资格模块契约测试；修复提交尚待完整 CI。G0 未通过前不进入 G1。
 
 ## 2026-10-14 harness 候选方向
 

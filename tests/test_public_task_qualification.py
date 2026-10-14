@@ -100,6 +100,50 @@ def test_reference_client_exercises_adapter_parsing_without_provider():
             client.completion(messages=[{}], tools=[{}])
 
 
+def test_reference_replay_uses_local_backend_for_regression_targets(tmp_path, monkeypatch):
+    package = tmp_path / "task-package"
+    package.mkdir()
+    (package / "task.md").write_text("offline contract", encoding="utf-8")
+    source = tmp_path / "source"
+    source.mkdir()
+    output = tmp_path / "qualification"
+    output.mkdir()
+    received = {}
+
+    def run(_runner, config):
+        received["config"] = config
+        return SimpleNamespace(
+            status=SimpleNamespace(value="completed"),
+            validation_gate_status="passed",
+            result_path=str(output / "run" / "result.json"),
+            test_runs=3,
+        )
+
+    monkeypatch.setattr(qualification.TraceFixRunner, "run", run)
+    monkeypatch.setattr(qualification, "verify_patch", lambda _run: {
+        "passed": True,
+        "record_path": str(output / "verification.json"),
+    })
+    monkeypatch.setattr(qualification, "render_report", lambda *_args: output / "report.html")
+    monkeypatch.setattr(qualification, "export_patch", lambda *_args: output / "patch.diff")
+
+    qualification.replay(
+        source,
+        output,
+        {
+            "task_target": "tests/test_task.py",
+            "source_import": "package",
+            "regression_targets": ["tests/test_regression.py"],
+        },
+        Path(sys.executable),
+        "fixture patch",
+        package,
+    )
+
+    assert received["config"].execution_backend == "local"
+    assert received["config"].regression_targets == ("tests/test_regression.py",)
+
+
 def test_new_task_multiple_products_targets_and_invalid_contract(tmp_path):
     manifest = qualification.load_manifest(qualification.TASKS["markdown-quoted-braces-1414"])
     assert len(manifest["products"]) == 2

@@ -43,9 +43,10 @@
 - [x] 来源清单、导入 patch 哈希、隔离候选工作树和 CI 触发范围已核验；起始提交为 `f79a5c876f5eea22782b44b823b3c0bd64fde951`。
 - [x] 基线 CI #140 三个容器 job 通过，原始产物与 digest 已记录；该结果只绑定 f79。
 - [x] 对 f79 失败完成归因并修复：Windows elapsed-time 测试的时钟分辨率、skills opt-in Git fixture、local resume 演练的 backend 默认值；添加特殊类型、缓存清理和流尾哈希契约。Python 3.12.5 定向 64 passed，Ruff/diff-check 通过。
-- [ ] 修复后的候选提交完成 Python 3.11/3.12 全量 pytest 与 Coverage.py 精确 line+branch 不低于90%；首次 f79 结果为 3.11 `18956/21064 = 89.99240410178504%`、3.12 `18954/21064 = 89.98290922901633%`，不可沿用此前不同测试清单的本机覆盖率结果。
-- [ ] 修复后的候选提交完成原范围 Ruff、compileall、diff、editable 和独立 wheel/recovery smoke；两版本首次 CI wheel smoke 均因 `replay_resume` 未设 `execution_backend="local"` 失败。
-- [ ] 基础 Docker、ordinary Docker、Serena MCP 必需 jobs 在修复提交绑定的 CI 全部通过；不借用 f79 容器结果代替新提交结果。
+- [x] CI #141 在提交 `14046435a206cf4f38751012db37373d3fbf50f2` 上完成 Python 3.11/3.12 全量 pytest（两版各1363 passed、0 failed/error/skip）和 Coverage.py line+branch：3.11 `18964/21064 = 90.03038359285985%`，3.12 `18962/21064 = 90.02088872009115%`；原始 artifacts digest 见开发历程。
+- [x] 同一提交 CI #141 Ruff、compileall、diff、editable smoke，以及基础 Docker、ordinary Docker、Serena MCP 通过；容器结果均绑定提交1404643。
+- [x] CI #141 新发现公开任务资格与 wheel recovery 后的公开资格回放同因缺少 `execution_backend="local"` 失败；已补资格脚本 backend 和 RunConfig 回归测试，本机资格模块22 passed、Ruff通过。
+- [ ] 最新资格脚本修复候选提交重新通过 full engineering、coverage、editable、所有 public qualification/wheel smoke 和三个 Docker/MCP job；G0 首轮 f79 的低 coverage 结果与 CI #141 的资格失败记录都保留，不以它们替代下一候选提交证据。
 - [ ] 提交、推送、CI 运行 ID、原始产物位置及限制同步写入当前状态与开发历程。
 
 ## G1：有类型、可失效的知识记忆

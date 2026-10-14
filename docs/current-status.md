@@ -12,9 +12,9 @@ TaskState、统一能力策略与 Docker/Serena 组合。完整设计、逐步�
 
 候选分支起点为 `bc8b224d0419c5acab4a0a4d2abfb92e0ff4c67e` 加经核对的24个已跟踪修改及两份维护报告；没有复制凭据、原始 runs 或临时实验夹具。导入清单及 patch 哈希保存在本机忽略目录 `runs/harness-foundations-setup-20261014`。基线提交 `f79a5c876f5eea22782b44b823b3c0bd64fde951` 已推送并触发 CI #140（run `38558772365`）。基础 Docker、ordinary Docker 和 Serena MCP jobs 成功；两套 Windows quality jobs 失败，不能进入 G1。3.11 原始工程结果为 2 个测试失败、1361 个用例，combined line+branch `18956/21064 = 89.99240410178504%`；3.12 为 1 个测试失败、1360 个用例，`18954/21064 = 89.98290922901633%`。wheel recovery smoke 两版本均发现示例没有显式选择 local backend。精确日志和产物见[本次 G0 记录](development-history.md#2026-10-14-harness-foundations-g0-首次-ci-与基线修复)。
 
-当前工作树在 f79 上修正 Windows 计时测试的可控时钟、skills opt-in 测试的 Git fixture，以及 `replay_resume` 的显式 local backend；并补充特殊文件拒绝、嵌套缓存清理和 streamed archive 尾部完整性契约。Python 3.12.5 相关测试 64 passed、Ruff 与 diff-check 通过。修复尚未提交；完整双 Python、coverage、editable/wheel 和绑定修复提交的 Docker/MCP CI 必需门待重跑。此前 HEAD `bc8b224` 的 1360 passed 全量结果属于前一测试清单，不能代替修复后候选提交的阶段门。G1—G4 均未开始。
+修复提交 `14046435a206cf4f38751012db37373d3fbf50f2` 已推送；源清单含707个跟踪文件，tree `97c7bbf58587ceb3d3324c2bb74e1424187e054d`，清单 SHA-256 `da1868c8c71b2cd317ba724766980fb64b911f5d0112e537dea46894ccfab583`（本机忽略目录 `runs/g0-candidate-source-manifest-1404643.json`）。该提交 CI #141（run `38562776445`）双版本全量 pytest 均为1363 passed、0 failed/error/skip；Coverage.py combined line+branch：Python 3.11 `18964/21064 = 90.03038359285985%`，Python 3.12 `18962/21064 = 90.02088872009115%`；Ruff、compileall、diff 和 editable smoke 通过。基础 Docker、ordinary Docker、Serena MCP 均通过。但两个 Python job 后续的公开任务资格及 wheel smoke 都因 `scripts/qualify_public_task.py` 构造带 regression targets 的 `RunConfig` 时未指定 local backend 而失败。现已在工作树补上该字段，并新增回归契约；资格模块22 passed、Ruff 通过。该修复未提交，CI #141 仍为失败身份；必须在后续候选提交重跑全部阶段门。G1—G4 均未开始。
 
-本机没有 Python 3.11，Docker daemon 未连接；Windows 沙盒会拦截 `Path.resolve(strict=True)`，因此本地工程检查使用已授权的提权进程并把临时目录放在候选 worktree 的 `runs/` 下。CI #140 的容器证据绑定 f79；修复提交必须重新通过全部必需 job 才能退出 G0。
+本机没有 Python 3.11，Docker daemon 未连接；Windows 沙盒会拦截 `Path.resolve(strict=True)`，因此本地工程检查使用已授权的提权进程并把临时目录放在候选 worktree 的 `runs/` 下。CI #141 的代码、测试和容器门已有产物，但后续零供应商公开任务资格和 wheel 门失败；当前 G0 修复提交待全门重验后才能退出阶段。
 
 ## 最新 harness 比较与候选改进
 

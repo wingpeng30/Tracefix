@@ -375,6 +375,7 @@ def replay(
             task=(package / "task.md").read_text(encoding="utf-8"),
             output_dir=settings["output_dir"],
             env_file=None,
+            execution_backend="local",
             model_name=settings["model_name"],
             test_target=settings["test_target"],
             source_import=settings["source_import"],
