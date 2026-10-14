@@ -5,13 +5,13 @@
 
 ## 2026-10-14 Harness Foundations 实施
 
-已将[分阶段实施计划](tasks/2026-10-14-harness-foundations-implementation.md)保存到候选分支，固定 G0→G1→G2→G3→G4 顺序和退出门。G0 在 bcb6d24 / CI #142 完成，G1 在 `d059ec269e7b19571b16cc6fe823a66f6461e2da` / CI #144 完成。用户现已要求继续 G2—G4；G2 实现及一个 CI 回归修复已在本地候选工作树，阶段门未通过，G3/G4 尚未开始。详见[固定当前状态](current-status.md)和本记录下方的 G2 进度。
+已将[分阶段实施计划](tasks/2026-10-14-harness-foundations-implementation.md)保存到候选分支，固定 G0→G1→G2→G3→G4 顺序和退出门。G0 在 bcb6d24 / CI #142 完成，G1 在 `d059ec269e7b19571b16cc6fe823a66f6461e2da` / CI #144 完成。用户现已要求继续 G2—G4；当前代码在候选分支，G2 的精确双版本与 Docker/MCP 阶段门仍在验证，G3/G4 尚未开始。详见[固定当前状态](current-status.md)和本记录下方的 G2 进度。
 
 ### 2026-10-15 G2 工具产物实施中
 
-主实现本地提交 `1d548f562dc4867cb94c3a5b7b86a0b0d6020708`，tree `bd05732ac832f62d44852b69a3e92d4c1e49ed76`；本地修复提交 `cbe7d25918ec66be4b244fb5ae7938f4c213c096` 的源码 tree 为 `932e8e0740fefe1401abe2038fa40e12e56b6128`。新增 artifact store、同步双流采集、脱敏检索视图、读取/搜索工具、有界 archive transport、Docker recovery 导入导出，以及无 Skills 的 memory+conversation checkpoint 回归。G2 相关本地测试在修复前 300 passed；修复后两项定向 runtime 回归 passed，改动文件 Ruff/compileall/diff-check 通过。完整本机 engineering 检查没有完成；筛选式 runtime 尝试受 Windows 沙盒进程/路径限制产生 setup errors，Docker 按用户要求跳过。
+主实现提交 `1d548f562dc4867cb94c3a5b7b86a0b0d6020708`，tree `bd05732ac832f62d44852b69a3e92d4c1e49ed76`；修复 memory+conversation checkpoint 对 Skills 的错误依赖提交 `cbe7d25918ec66be4b244fb5ae7938f4c213c096`。恢复诊断提交 `fc5cfadb7be60c5c9537ed2f81a0d76d8a2ae86a` 暴露预检原因；fixture 费用记账修复提交 `a5824b14b7b8e2b2ecdcb740690dc85259caa219`，当前 tree 为 `0e3a4d7df129d820f1fccdf694874ee523f0f9bf`。新增 artifact store、同步双流采集、脱敏检索视图、读取/搜索工具、有界 archive transport、Docker recovery 导入导出及相应契约测试。G2 相关本地测试 300 passed；此次适配器回归模块 2 passed，Ruff、compileall、diff-check 通过。完整本机 engineering 检查未完成；筛选式 runtime 尝试受 Windows 沙盒进程/路径限制产生 setup errors，Docker 按用户要求跳过。
 
-远端候选 `ca96b2f64c157a156c0d360ec66c15f842acd0df`（[CI run 38614482340](https://github.com/wingpeng30/Tracefix/actions/runs/38614482340)）验证了基础 Docker、Serena MCP 和真实 ordinary Docker artifact recovery 回放，但 ordinary editable memory-dialogue 回放因 checkpoint 错把 memory 当成已注册 Skills 而失败。修复已在 `cbe7d25` 并增加回归，但自动审查拒绝向候选 GitHub 仓库上传完整 `runtime.py`，故远端仍在旧 SHA；不通过其他途径重试。该 run 双版本 quality job 最后查询仍在执行。G2 阶段门未通过，不进入 G3。
+CI #144 后的 G2 验收迭代中，run `38614482340` 发现 memory/Skills 检查点耦合并由 `cbe7d25` 修复；run `38616442269` 的 ordinary Docker artifact 恢复在通用 `run cannot be resumed` 处失败。run `38617519135` 增加只读预检诊断后确认离线 fixture 未报告费用，恢复门正确拒绝不完整记账；随后 `a5824b14` 明确登记合成零费用。run `38618345961` 的基础 Docker、Serena MCP 通过，ordinary Docker 恢复主体也通过，但摘要把合成响应数误标为供应商调用数，最终零调用断言失败。当前已修正指标拆分和 workflow 断言，等待精确提交 CI；G2 阶段门未通过，不进入 G3。
 
 ## 2026-10-14 harness 候选方向
 

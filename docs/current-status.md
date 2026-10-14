@@ -31,7 +31,9 @@ ordinary Docker 的 editable 与 wheel 零供应商回放都通过：暂停后�
 
 工具产物实现已在本地候选分支提交 `1d548f562dc4867cb94c3a5b7b86a0b0d6020708`；修复记忆会话检查点误查 Skills 的回归提交为 `cbe7d25918ec66be4b244fb5ae7938f4c213c096`，该修复提交的源码 tree 为 `932e8e0740fefe1401abe2038fa40e12e56b6128`。实现包含有界 `ProcessCapture`、raw/view 双产物、脱敏与分页搜索、run/session 配额、读取工具、Docker evidence 流式传输及 recovery 身份校验。G2 相关本地测试集合在修复前 300 passed；新增 memory＋conversation 且 Skills 关闭的检查点回归与配置回归 2 passed，改动文件 Ruff、compileall、diff-check 通过。
 
-远端候选仍为 `ca96b2f64c157a156c0d360ec66c15f842acd0df`（G2 主实现 tree 与本地 `1d548f5` 相同），对应 CI [run 38614482340](https://github.com/wingpeng30/Tracefix/actions/runs/38614482340)。基础 Docker、Serena MCP 与 artifact recovery 的真实 ordinary Docker 回放通过；ordinary editable 连续记忆回放失败，根因是 checkpoint 将 `memory_enabled` 错当作 Skills 已注册的条件。本地已修复并加回归，但将修复提交推到 GitHub 时，自动审查拒绝上传完整 runtime 源码，要求不得换通道重试；因此修复未进远端，不能触发或宣称新 CI 通过。该 run 的 Python 3.11/3.12 全工程 job 在最后查询时仍为 in progress，旧远端结果不构成当前 G2 阶段门。
+候选分支当前精确代码提交为 `a5824b14b7b8e2b2ecdcb740690dc85259caa219`，tree `0e3a4d7df129d820f1fccdf694874ee523f0f9bf`。用户已明确授权向 `wingpeng30/Tracefix` 的 `codex/harness-foundations` 更新候选代码；每次更新均核对 Git blob、tree、parent 和 ref 前置 SHA。CI [run 38614482340](https://github.com/wingpeng30/Tracefix/actions/runs/38614482340) 揭示 memory/Skills 检查点耦合，已由 `cbe7d25` 修复并添加回归。之后 [run 38616442269](https://github.com/wingpeng30/Tracefix/actions/runs/38616442269) 的 ordinary Docker artifact 恢复回放失败；[run 38617519135](https://github.com/wingpeng30/Tracefix/actions/runs/38617519135) 增加只读预检诊断后定位到离线 fixture 未报告费用，触发了正确的未知记账恢复拒绝。`a5824b14` 让合成本地调用显式提供零费用估算并加适配器回归，没有放宽未知真实请求保护。
+
+CI [run 38618345961](https://github.com/wingpeng30/Tracefix/actions/runs/38618345961) 的基础 Docker 与 Serena MCP 已通过；ordinary Docker 恢复主体已完成，但最终摘要断言失败，原因是回放脚本把合成模型响应数标成了供应商调用数。双 Python 全量工程 job 仍在运行，不能作为阶段门证据。当前本地已分开记录 `provider_calls=0` 与 `synthetic_model_requests`，并将 CI 断言调整为同时确认真实供应商调用为零、合成回放确实发生；该修复等待精确提交 CI。本机 Docker 按用户要求跳过；G2 未通过最终阶段门，尚不进入 G3。
 
 本机只运行 Windows Python 3.12.5 定向回归，未运行 Docker。一次筛选式 runtime 模块尝试在 Windows 沙盒的子进程/严格路径准备阶段产生 37 个 setup errors，不能当作产品测试失败或通过；完整双版本门、Coverage.py 90% 门、editable/wheel、ordinary Docker 与 Serena 仍待修复后的精确候选提交验收。当前不进入 G3。
 

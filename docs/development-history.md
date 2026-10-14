@@ -1,14 +1,15 @@
 # TraceFix 开发历程与代码说明
 
-## 2026-10-15 Harness Foundations G2 工具产物（阶段门未通过）
+## 2026-10-15 Harness Foundations G2 工具产物（阶段门进行中）
 
 用户要求从 G1 继续完成 G2—G4。本节记录当前 G2 进度；G2 阶段门未过，不进入 G3。工作树位于
 `D:\Tracefix\runs\harness-foundations-worktree`，分支 `codex/harness-foundations`，G1 验收提交为父级。
-G2 主实现本地提交 `1d548f562dc4867cb94c3a5b7b86a0b0d6020708`，tree
-`bd05732ac832f62d44852b69a3e92d4c1e49ed76`；后续本地回归修复提交
-`cbe7d25918ec66be4b244fb5ae7938f4c213c096`，tree `932e8e0740fefe1401abe2038fa40e12e56b6128`。
-本地 branch 有两个提交尚未与远端提交图对齐。远端候选 `codex/harness-foundations` 当前仍为
-`ca96b2f64c157a156c0d360ec66c15f842acd0df`，其 tree 与主实现 `1d548f5` 相同；修复提交未上传。
+G2 主实现提交 `1d548f562dc4867cb94c3a5b7b86a0b0d6020708`，tree
+`bd05732ac832f62d44852b69a3e92d4c1e49ed76`；memory+conversation 检查点回归修复为
+`cbe7d25918ec66be4b244fb5ae7938f4c213c096`。用户明确授权后，候选分支更新已按 Git 对象 API
+核对 blob/tree/parent 与 ref 前置 SHA。诊断提交 `fc5cfadb7be60c5c9537ed2f81a0d76d8a2ae86a`
+让 Docker 恢复回放报告只读预检原因；fixture 记账修复提交 `a5824b14b7b8e2b2ecdcb740690dc85259caa219`
+的 tree 为 `0e3a4d7df129d820f1fccdf694874ee523f0f9bf`，远端候选分支当前指向此精确代码提交。
 
 实现新增 run-owned `ArtifactStore`、`ProcessCapture` 二进制双流 drain、raw 与脱敏 UTF-8 view 分离、
 不可变 hash/完整性引用、8 MiB 单产物、64 MiB/run、128 项/run、4096 字符分页、每会话64次/累计128 KiB
@@ -21,16 +22,19 @@ conversation 启用、Skills 关闭时能提交 terminal checkpoint，和 API �
 compileall、git diff --check 通过。未完成本机完整工程链；一次筛选式 runtime 测试在 Windows 沙盒中因严格路径/
 子进程准备产生37个 setup errors，未以此判定产品回归。本机 Docker 按用户指示跳过。
 
-候选 CI run `38614482340` 绑定远端 `ca96b2f64c157a156c0d360ec66c15f842acd0df`。基础 Docker、Serena MCP
-成功；ordinary Docker job 的 G2 artifact recovery replay 通过，但稍后的 editable memory-dialogue replay
-失败：memory+conversation checkpoint closure 查询未注册的 `load_skill`。根因是主实现把 memory 开关和 Skills
-注册状态混为一谈。提交 `cbe7d25` 将查找重新限定于 `skills_enabled` 并增加回归测试。该 run 的 Python 3.11 与
-3.12 quality job 在最后一次状态查询仍 in progress；修复尚未经过新的双 Python/真实 Docker CI。
+CI run `38614482340` 的基础 Docker、Serena MCP 成功；ordinary Docker 暴露 memory+conversation checkpoint
+closure 查询未注册 `load_skill`，由 `cbe7d25` 修复并新增回归。其后 run `38616442269` 在 artifact recovery
+重新启动前通用失败，未能判断原因。run `38617519135` 加入 `runner.inspect()` 只读预检诊断后给出
+`session has unresolved model accounting`。检查 fixture 发现离线响应只有 token usage，没有已知成本；恢复拒绝是正确的
+fail-closed 行为。`ArtifactReplayClient.completion_cost()` 现明确返回合成零费用，并由
+`test_replay_adapter_marks_synthetic_usage_as_known_zero_cost` 验证。没有更改真实未知账单策略。
 
-上传修复提交前，GitHub 自动审查拒绝将完整 `src/tracefix/runtime.py` 上传到
-`wingpeng30/Tracefix`，说明可信内容未明确授权向此具体目的地发送该敏感源代码载荷，并要求不要改用间接方式
-绕过拒绝。故未再尝试该上传；当前修复仅在本地候选分支，无法触发精确远端验收。需要用户明确批准向该仓库候选分支
-发送本次完整运行时代码后，才能继续新的 G2 CI。没有付费调用、PR、合并或发布。
+精确代码提交 `a5824b14` 的 CI run `38618345961` 中基础 Docker 和 Serena MCP 通过；ordinary Docker 的恢复主体
+通过，但最后摘要断言失败。回放脚本把离线合成响应次数误报为供应商调用数，CI 因此拒绝“零供应商调用”摘要。当前修复
+将二者分别记录为 `provider_calls=0` 和 `synthetic_model_requests`，并在 workflow 检查两种指标，等待精确提交 CI。
+此前本机 G2 定向集合 300 passed；此次回放模块 2 passed，Ruff、compileall 与 diff-check 通过。双 Python quality job
+仍在执行，完整本机 engineering 检查和本机 Docker未运行；后者按用户要求略过。没有供应商调用、PR、合并或发布。
+G2 阶段门未通过，G3 尚未开始。
 
 ## 2026-10-15 Harness Foundations G1 有类型与来源限定记忆
 
