@@ -1,5 +1,37 @@
 # TraceFix 开发历程与代码说明
 
+## 2026-10-15 Harness Foundations G2 工具产物（阶段门未通过）
+
+用户要求从 G1 继续完成 G2—G4。本节记录当前 G2 进度；G2 阶段门未过，不进入 G3。工作树位于
+`D:\Tracefix\runs\harness-foundations-worktree`，分支 `codex/harness-foundations`，G1 验收提交为父级。
+G2 主实现本地提交 `1d548f562dc4867cb94c3a5b7b86a0b0d6020708`，tree
+`bd05732ac832f62d44852b69a3e92d4c1e49ed76`；后续本地回归修复提交
+`cbe7d25918ec66be4b244fb5ae7938f4c213c096`，tree `932e8e0740fefe1401abe2038fa40e12e56b6128`。
+本地 branch 有两个提交尚未与远端提交图对齐。远端候选 `codex/harness-foundations` 当前仍为
+`ca96b2f64c157a156c0d360ec66c15f842acd0df`，其 tree 与主实现 `1d548f5` 相同；修复提交未上传。
+
+实现新增 run-owned `ArtifactStore`、`ProcessCapture` 二进制双流 drain、raw 与脱敏 UTF-8 view 分离、
+不可变 hash/完整性引用、8 MiB 单产物、64 MiB/run、128 项/run、4096 字符分页、每会话64次/累计128 KiB
+读取、字面搜索及20条结果上限。`read_tool_artifact` 与 `search_tool_artifact` 接入工具目录；工具结果和
+二次上下文裁剪保留 locator。Docker bridge 协商产物协议，将归档置于容器 evidence 域并通过有界传输导入/导出；
+恢复校验内容和配额，再允许请求模型。另有零供应商恢复回放入口和测试。
+
+本地 G2 相关定向测试在 checkpoint bug 修复前 300 passed（121.64秒）；新增 runtime 回归验证 memory 与
+conversation 启用、Skills 关闭时能提交 terminal checkpoint，和 API 配置依赖，2 passed。改动文件 Ruff、
+compileall、git diff --check 通过。未完成本机完整工程链；一次筛选式 runtime 测试在 Windows 沙盒中因严格路径/
+子进程准备产生37个 setup errors，未以此判定产品回归。本机 Docker 按用户指示跳过。
+
+候选 CI run `38614482340` 绑定远端 `ca96b2f64c157a156c0d360ec66c15f842acd0df`。基础 Docker、Serena MCP
+成功；ordinary Docker job 的 G2 artifact recovery replay 通过，但稍后的 editable memory-dialogue replay
+失败：memory+conversation checkpoint closure 查询未注册的 `load_skill`。根因是主实现把 memory 开关和 Skills
+注册状态混为一谈。提交 `cbe7d25` 将查找重新限定于 `skills_enabled` 并增加回归测试。该 run 的 Python 3.11 与
+3.12 quality job 在最后一次状态查询仍 in progress；修复尚未经过新的双 Python/真实 Docker CI。
+
+上传修复提交前，GitHub 自动审查拒绝将完整 `src/tracefix/runtime.py` 上传到
+`wingpeng30/Tracefix`，说明可信内容未明确授权向此具体目的地发送该敏感源代码载荷，并要求不要改用间接方式
+绕过拒绝。故未再尝试该上传；当前修复仅在本地候选分支，无法触发精确远端验收。需要用户明确批准向该仓库候选分支
+发送本次完整运行时代码后，才能继续新的 G2 CI。没有付费调用、PR、合并或发布。
+
 ## 2026-10-15 Harness Foundations G1 有类型与来源限定记忆
 
 G1 在隔离 worktree `D:\Tracefix\runs\harness-foundations-worktree` 的 `codex/harness-foundations`

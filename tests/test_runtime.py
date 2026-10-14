@@ -132,6 +132,34 @@ def test_harness_foundations_api_default_and_docker_recovery_dependency(tmp_path
         )
 
 
+def test_memory_conversation_checkpoint_does_not_require_skills(tmp_path, monkeypatch) -> None:
+    """Memory and conversation are independent of the optional Skills tool."""
+    repo = _make_repo(tmp_path)
+    monkeypatch.setattr(TraceFixRunner, "_attach_memory", lambda *_args: None)
+    runner = TraceFixRunner(
+        lambda config: ScriptedLLM(config, [_response("done")])
+    )
+
+    result = runner.run(
+        _local_run_config(
+            repo=repo,
+            task="complete without runtime tools",
+            model_name="offline/scripted",
+            output_dir=tmp_path / "runs",
+            env_file=None,
+            memory_enabled=True,
+            conversation_enabled=True,
+            agent_config=AgentConfig(require_tested_completion=False),
+        )
+    )
+
+    assert result.status is AgentStatus.COMPLETED
+    checkpoint = json.loads(
+        (Path(result.result_path).parent / "checkpoint.json").read_text(encoding="utf-8")
+    )
+    assert checkpoint["payload"]["skills"] is None
+
+
 @pytest.mark.parametrize("module", ["absent_module", "json"])
 def test_ordinary_source_probe_rejects_wrong_import_before_model(tmp_path, module) -> None:
     repo = _make_repo(tmp_path)
