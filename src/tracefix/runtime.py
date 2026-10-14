@@ -2138,9 +2138,9 @@ class TraceFixRunner:
                     active.verify_test_source(current_sha)
                     trace_bytes = trace_path.read_bytes()
                     skill_tool = (
-                        tools.get("load_skill") if (
-                            config.agent_config.skills_enabled or config.memory_enabled
-                        ) else None
+                        tools.get("load_skill")
+                        if config.agent_config.skills_enabled
+                        else None
                     )
                     sequence += 1
                     payload = {
