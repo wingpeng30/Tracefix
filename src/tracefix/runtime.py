@@ -37,7 +37,7 @@ from tracefix.exceptions import (
     sanitize_payload,
 )
 from tracefix.mcp_serena import SerenaMCP
-from tracefix.messages import Message, MessageHistory, ToolCall
+from tracefix.messages import Message, MessageHistory, MessageRole, ToolCall
 from tracefix.models import BaseLLM, LiteLLMAdapter, LLMConfig
 from tracefix.provenance import (
     RunProvenance,
@@ -96,7 +96,8 @@ def default_output_root() -> Path:
 
 
 def config_identity_sha256(
-    config: RunConfig, manifest_config: dict[str, Any] | None = None,
+    config: RunConfig,
+    manifest_config: dict[str, Any] | None = None,
 ) -> str:
     """Hash effective configuration, preserving identity for manifests predating gate targets."""
     legacy_empty_targets = (
@@ -106,12 +107,17 @@ def config_identity_sha256(
     )
     exclude = {"regression_targets"} if legacy_empty_targets else set()
     if manifest_config is not None:
-        exclude.update(name for name in ("memory_enabled", "memory_dir", "conversation_enabled",
-                                        "docker_recovery_enabled")
-                       if name not in manifest_config)
-    return hashlib.sha256(
-        config.model_dump_json(exclude=exclude).encode("utf-8")
-    ).hexdigest()
+        exclude.update(
+            name
+            for name in (
+                "memory_enabled",
+                "memory_dir",
+                "conversation_enabled",
+                "docker_recovery_enabled",
+            )
+            if name not in manifest_config
+        )
+    return hashlib.sha256(config.model_dump_json(exclude=exclude).encode("utf-8")).hexdigest()
 
 
 class RunConfig(BaseModel):
@@ -194,8 +200,10 @@ class RunConfig(BaseModel):
                 raise ValueError(
                     f"regression_targets must contain a relative pytest path or node ID: {exc}"
                 ) from exc
-        if self.execution_backend == "docker" and self.docker_profile != "ordinary" and (
-            not self.docker_task_id or not self.docker_input_root
+        if (
+            self.execution_backend == "docker"
+            and self.docker_profile != "ordinary"
+            and (not self.docker_task_id or not self.docker_input_root)
         ):
             raise ValueError("Docker execution requires a task ID and input root")
         if self.execution_backend == "docker" and self.docker_profile == "ordinary":
@@ -209,11 +217,17 @@ class RunConfig(BaseModel):
             self.execution_backend != "docker" or self.docker_profile != "ordinary"
         ):
             raise ValueError("Docker recovery requires the ordinary Docker backend")
-        if (self.memory_enabled and self.execution_backend != "local"
-                and not self.docker_recovery_enabled):
+        if (
+            self.memory_enabled
+            and self.execution_backend != "local"
+            and not self.docker_recovery_enabled
+        ):
             raise ValueError("experience memory currently requires the local backend")
-        if (self.conversation_enabled and self.execution_backend != "local"
-                and not self.docker_recovery_enabled):
+        if (
+            self.conversation_enabled
+            and self.execution_backend != "local"
+            and not self.docker_recovery_enabled
+        ):
             raise ValueError("continuous dialogue currently requires the local backend")
         if self.execution_backend == "docker" and self.mcp_serena_image_id is not None:
             raise ValueError("Serena MCP is supported only with the local Agent backend")
@@ -319,16 +333,136 @@ class TraceFixRunner:
 
     @staticmethod
     def _agent_config(config: RunConfig) -> AgentConfig:
-        return config.agent_config.model_copy(deep=True, update={
-            "skills_enabled": config.agent_config.skills_enabled or config.memory_enabled,
-        })
+        return config.agent_config.model_copy(
+            deep=True,
+            update={
+                "skills_enabled": config.agent_config.skills_enabled,
+            },
+        )
 
     @staticmethod
     def _skills_root(config: RunConfig, root: Path) -> Path | None:
-        return root / "experience-skills" if config.memory_enabled else config.skills_root
+        del root
+        return config.skills_root
 
-    def _attach_memory(self, agent: MinimalAgent, config: RunConfig, root: Path,
-                       workspace: Path, protected: set[str]) -> None:
+    @staticmethod
+    def _append_user_receipt(root: Path, receipt: Any) -> dict[str, Any]:
+        """Persist a host-issued receipt without inferring trust from a USER message role."""
+        from tracefix.memory import atomic_json
+
+        path = root / "trusted-user-inputs.json"
+        entries = json.loads(path.read_text(encoding="utf-8")) if path.is_file() else []
+        if not isinstance(entries, list):
+            raise CheckpointError("trusted user input receipt ledger is invalid")
+        value = receipt.model_dump(mode="json")
+        if any(
+            not isinstance(item, dict) or item.get("issuer") != "tracefix-host-v1"
+            for item in entries
+        ):
+            raise CheckpointError("trusted user input receipt ledger is invalid")
+        if any(item.get("message_id") == value["message_id"] for item in entries):
+            raise CheckpointError("trusted user input receipt ID is duplicated")
+        atomic_json(path, [*entries, value])
+        return value
+
+    @staticmethod
+    def _verify_recovery_memory(
+        root: Path, config: RunConfig, agent_payload: dict[str, Any]
+    ) -> None:
+        """Validate pinned recall and host receipts before a recovery request can be sent."""
+        if not config.memory_enabled:
+            return
+        from tracefix.memory_domain import TrustedUserInputReceipt, validate_user_input_receipt
+
+        history = agent_payload.get("history")
+        if not isinstance(history, list):
+            raise CheckpointError("checkpoint message history is invalid")
+        ledger_path = root / "trusted-user-inputs.json"
+        if ledger_path.is_file():
+            try:
+                ledger = json.loads(ledger_path.read_text(encoding="utf-8"))
+                if not isinstance(ledger, list) or len(ledger) > 10_000:
+                    raise ValueError("invalid receipt list")
+                verified: dict[str, dict[str, Any]] = {}
+                for raw in ledger:
+                    receipt = TrustedUserInputReceipt.model_validate(raw)
+                    value = receipt.model_dump(mode="json")
+                    if receipt.message_id in verified:
+                        raise ValueError("duplicate receipt")
+                    verified[receipt.message_id] = value
+                for raw_message in history:
+                    if not isinstance(raw_message, dict):
+                        raise ValueError("invalid history entry")
+                    metadata = raw_message.get("metadata", {})
+                    receipt_data = (
+                        metadata.get("trusted_user_input_receipt")
+                        if isinstance(metadata, dict)
+                        else None
+                    )
+                    if receipt_data is None:
+                        continue
+                    receipt = TrustedUserInputReceipt.model_validate(receipt_data)
+                    content = raw_message.get("content")
+                    turn = metadata.get("turn")
+                    if (
+                        raw_message.get("role") != "user"
+                        or not isinstance(content, str)
+                        or type(turn) is not int
+                        or verified.get(receipt.message_id) != receipt.model_dump(mode="json")
+                        or not validate_user_input_receipt(
+                            receipt,
+                            message_id=str(raw_message.get("id")),
+                            turn=turn,
+                            content=content,
+                        )
+                    ):
+                        raise ValueError("receipt does not match persisted direct user input")
+            except (OSError, ValueError, TypeError) as exc:
+                raise CheckpointError("trusted user input provenance is invalid") from exc
+        else:
+            raise CheckpointError("memory recovery is missing trusted user input receipts")
+        from tracefix.memory import canonical
+        from tracefix.memory_domain import RecallBundle
+        from tracefix.memory_recall import render_recall_bundle
+
+        bundle_path = root / "memory-recall.json"
+        try:
+            if bundle_path.is_symlink() or bundle_path.stat().st_size > 64 * 1024:
+                raise ValueError("invalid pinned bundle file")
+            bundle = RecallBundle.model_validate_json(bundle_path.read_bytes())
+            if bundle.body_utf8_bytes > 8 * 1024:
+                raise ValueError("pinned bundle exceeds its body limit")
+            expected_sha = hashlib.sha256(canonical(bundle.model_dump(mode="json"))).hexdigest()
+        except (OSError, ValueError) as exc:
+            raise CheckpointError("fixed memory recall bundle is missing or invalid") from exc
+        matching = []
+        for raw_message in history:
+            metadata = raw_message.get("metadata", {}) if isinstance(raw_message, dict) else {}
+            if isinstance(metadata, dict) and metadata.get("kind") == "memory_recall_bundle":
+                matching.append(raw_message)
+        if bundle.items:
+            if len(matching) != 1:
+                raise CheckpointError("fixed memory recall is missing or duplicated in history")
+            item = matching[0]
+            metadata = item["metadata"]
+            if (
+                item.get("role") != "user"
+                or item.get("content") != render_recall_bundle(bundle)
+                or metadata.get("trust_level") != "untrusted_reference_data"
+                or metadata.get("bundle_sha256") != expected_sha
+            ):
+                raise CheckpointError("fixed memory recall differs from the committed request")
+        elif matching:
+            raise CheckpointError("empty memory recall bundle has a history message")
+
+    def _attach_memory(
+        self,
+        agent: MinimalAgent,
+        config: RunConfig,
+        root: Path,
+        workspace: Path,
+        protected: set[str],
+    ) -> None:
         if not config.memory_enabled:
             return
         from tracefix.memory import ExperienceStore, reflect_experience
@@ -339,7 +473,11 @@ class TraceFixRunner:
             patch, _ = self._collect_diff(workspace, protected)
             try:
                 active.state.memory_status = reflect_experience(
-                    active, memory, root, workspace, hashlib.sha256(patch.encode()).hexdigest(),
+                    active,
+                    memory,
+                    root,
+                    workspace,
+                    hashlib.sha256(patch.encode()).hexdigest(),
                     turn_number=active.state.turn_number if config.conversation_enabled else None,
                 )
             except (OSError, ValueError, CheckpointError) as exc:
@@ -347,8 +485,9 @@ class TraceFixRunner:
 
         agent.experience_callback = completed
 
-    def _attach_docker_memory(self, agent: MinimalAgent, config: RunConfig,
-                              root: Path, backend: DockerToolBackend) -> None:
+    def _attach_docker_memory(
+        self, agent: MinimalAgent, config: RunConfig, root: Path, backend: DockerToolBackend
+    ) -> None:
         """Reflect on verified product bytes on the host, retaining container isolation."""
         if not config.memory_enabled:
             return
@@ -362,13 +501,22 @@ class TraceFixRunner:
                 snapshot = backend.save_snapshot(1)
                 mirror = root / "memory-products"
                 mirror.mkdir(exist_ok=True)
-                restore_workspace(mirror, root / snapshot["archive"], snapshot["metadata"],
-                                  materialize_links=False)
+                restore_workspace(
+                    mirror,
+                    root / snapshot["archive"],
+                    snapshot["metadata"],
+                    materialize_links=False,
+                )
                 source_sha = hashlib.sha256(
-                    snapshot["bridge_state"]["diff"]["diff"].encode("utf-8")).hexdigest()
+                    snapshot["bridge_state"]["diff"]["diff"].encode("utf-8")
+                ).hexdigest()
                 active.verify_test_source(source_sha)
                 active.state.memory_status = reflect_experience(
-                    active, memory, root, mirror, source_sha,
+                    active,
+                    memory,
+                    root,
+                    mirror,
+                    source_sha,
                     turn_number=active.state.turn_number if config.conversation_enabled else None,
                 )
             except (OSError, ValueError, TraceFixError) as exc:
@@ -399,37 +547,55 @@ class TraceFixRunner:
             artifacts[name] = hashlib.sha256(data).hexdigest()
         inspection = cls.inspect(root, _for_continue=True, _check_round_records=False)
         status = (
-            "awaiting_user" if result.status is AgentStatus.COMPLETED
-            else "paused" if inspection.get("resumable") else result.status.value
+            "awaiting_user"
+            if result.status is AgentStatus.COMPLETED
+            else "paused"
+            if inspection.get("resumable")
+            else result.status.value
         )
-        archived = result.model_copy(update={
-            "session_status": status, "turn_records": [],
-            "result_path": str(attempt / "result.json"),
-            "diff_path": str(attempt / "patch.diff"),
-            "trace_path": str(attempt / "trajectory.jsonl"),
-        })
-        atomic_json(attempt / "validation.json", {
-            "schema_version": 1, "turn_number": result.turn_number,
-            "validation_status": result.agent_validation_status,
-            "last_test_evidence": inspection.get("last_test_evidence"),
-            "workspace_diff_sha256": inspection.get("workspace_diff_sha256"),
-        })
+        archived = result.model_copy(
+            update={
+                "session_status": status,
+                "turn_records": [],
+                "result_path": str(attempt / "result.json"),
+                "diff_path": str(attempt / "patch.diff"),
+                "trace_path": str(attempt / "trajectory.jsonl"),
+            }
+        )
+        atomic_json(
+            attempt / "validation.json",
+            {
+                "schema_version": 1,
+                "turn_number": result.turn_number,
+                "validation_status": result.agent_validation_status,
+                "last_test_evidence": inspection.get("last_test_evidence"),
+                "workspace_diff_sha256": inspection.get("workspace_diff_sha256"),
+            },
+        )
         atomic_json(attempt / "result.json", archived.model_dump(mode="json"))
         for name in ("validation.json", "result.json"):
             artifacts[name] = hashlib.sha256((attempt / name).read_bytes()).hexdigest()
-        atomic_json(turn_root / "latest.json", {
-            "schema_version": 1, "turn_number": result.turn_number,
-            "attempt": attempt.name, "artifacts": artifacts,
-        })
-        records = [json.loads(path.read_text(encoding="utf-8"))
-                   for path in sorted((root / "turns").glob("*/latest.json"))]
+        atomic_json(
+            turn_root / "latest.json",
+            {
+                "schema_version": 1,
+                "turn_number": result.turn_number,
+                "attempt": attempt.name,
+                "artifacts": artifacts,
+            },
+        )
+        records = [
+            json.loads(path.read_text(encoding="utf-8"))
+            for path in sorted((root / "turns").glob("*/latest.json"))
+        ]
         updated = result.model_copy(update={"session_status": status, "turn_records": records})
         atomic_json(root / "result.json", updated.model_dump(mode="json"))
         return updated
 
     @classmethod
-    def inspect(cls, run_dir: Path, *, _for_continue: bool = False,
-                _check_round_records: bool = True) -> dict[str, Any]:
+    def inspect(
+        cls, run_dir: Path, *, _for_continue: bool = False, _check_round_records: bool = True
+    ) -> dict[str, Any]:
         """Read a local session without constructing a model or modifying its checkout."""
         root = run_dir.expanduser().resolve()
         manifest_path = root / "session.json"
@@ -442,18 +608,25 @@ class TraceFixRunner:
                 from tracefix.docker_recovery import inspect_session
 
                 outcome = inspect_session(
-                    root, manifest, config, implementation_sha256=cls._implementation_sha256(),
+                    root,
+                    manifest,
+                    config,
+                    implementation_sha256=cls._implementation_sha256(),
                     config_sha256=config_identity_sha256(config, manifest["config"]),
                     for_continue=_for_continue,
                 )
                 if config.conversation_enabled and not _for_continue:
                     continued = cls.inspect(root, _for_continue=True)
-                    outcome.update(continuable=continued["resumable"],
-                                   continue_reasons=continued["reasons"],
-                                   turn_number=continued.get("turn_number"),
-                                   session_status="awaiting_user" if continued["resumable"]
-                                   and not outcome["resumable"] else "paused"
-                                   if continued["resumable"] else "interrupted")
+                    outcome.update(
+                        continuable=continued["resumable"],
+                        continue_reasons=continued["reasons"],
+                        turn_number=continued.get("turn_number"),
+                        session_status="awaiting_user"
+                        if continued["resumable"] and not outcome["resumable"]
+                        else "paused"
+                        if continued["resumable"]
+                        else "interrupted",
+                    )
                 return outcome
             recorded = manifest["identity"]
             actual = dict(recorded)
@@ -476,13 +649,22 @@ class TraceFixRunner:
                     turn_root = root / "turns" / f"{turn:04d}"
                     record = json.loads((turn_root / "latest.json").read_text(encoding="utf-8"))
                     attempt_name = record["attempt"]
-                    if (record.get("schema_version") != 1 or record.get("turn_number") != turn
-                            or not isinstance(attempt_name, str) or len(attempt_name) != 32
-                            or any(char not in "0123456789abcdef" for char in attempt_name)):
+                    if (
+                        record.get("schema_version") != 1
+                        or record.get("turn_number") != turn
+                        or not isinstance(attempt_name, str)
+                        or len(attempt_name) != 32
+                        or any(char not in "0123456789abcdef" for char in attempt_name)
+                    ):
                         raise CheckpointError("invalid conversation round identity")
                     attempt = turn_root / attempt_name
-                    required = {"patch.diff", "trajectory.jsonl", "session.json",
-                                "validation.json", "result.json"}
+                    required = {
+                        "patch.diff",
+                        "trajectory.jsonl",
+                        "session.json",
+                        "validation.json",
+                        "result.json",
+                    }
                     if set(record["artifacts"]) != required:
                         raise CheckpointError("incomplete conversation round artifacts")
                     for name, expected in record["artifacts"].items():
@@ -521,15 +703,19 @@ class TraceFixRunner:
                 reasons.append("original checkout is missing")
             else:
                 head = subprocess.run(
-                    ["git", "rev-parse", "HEAD"], cwd=workspace,
-                    capture_output=True, text=True, check=False,
+                    ["git", "rev-parse", "HEAD"],
+                    cwd=workspace,
+                    capture_output=True,
+                    text=True,
+                    check=False,
                 )
                 if head.returncode != 0 or head.stdout.strip() != recorded["source_commit"]:
                     reasons.append("checkout commit changed")
             repo_map_path = root / "repo-map.json"
             map_data = (
                 json.loads(repo_map_path.read_text(encoding="utf-8"))
-                if repo_map_path.is_file() else None
+                if repo_map_path.is_file()
+                else None
             )
             actual["repo_map_sha256"] = hashlib.sha256(
                 (RepoMap.model_validate(map_data).text if map_data else "").encode("utf-8")
@@ -540,11 +726,11 @@ class TraceFixRunner:
             if inspection.resumable and workspace.is_dir():
                 snapshot = store.load(current_identity=actual)
                 protected = snapshot.payload.get("protected_dirs")
-                if not isinstance(protected, list) or not all(
-                    isinstance(name, str) for name in protected
-                ) or not set(protected).issubset({
-                    ".tracefix-build-tmp", ".tracefix-test-tmp"
-                }):
+                if (
+                    not isinstance(protected, list)
+                    or not all(isinstance(name, str) for name in protected)
+                    or not set(protected).issubset({".tracefix-build-tmp", ".tracefix-test-tmp"})
+                ):
                     reasons.append("checkpoint protected directory state is invalid")
                     protected = [".tracefix-build-tmp"]
                 saved_agent = snapshot.payload.get("agent")
@@ -572,7 +758,7 @@ class TraceFixRunner:
                     workspace,
                     evidence_dir=root / "test-evidence",
                     protected_dirs=set(protected),
-                    skills_enabled=config.agent_config.skills_enabled or config.memory_enabled,
+                    skills_enabled=config.agent_config.skills_enabled,
                     skill_limits=config.agent_config.skill_limits,
                     skills_root=cls._skills_root(config, root),
                     test_timeout_seconds=min(120.0, float(config.agent_config.wall_time_seconds)),
@@ -580,13 +766,16 @@ class TraceFixRunner:
                     test_pythonpath_entries=config.test_pythonpath_entries,
                     test_environment_variables=config.test_environment_variables,
                 )
-                tool_sha = hashlib.sha256(json.dumps(
-                    [spec.model_dump(mode="json") for spec in registry.specs()],
-                    sort_keys=True, ensure_ascii=False,
-                ).encode("utf-8")).hexdigest()
+                tool_sha = hashlib.sha256(
+                    json.dumps(
+                        [spec.model_dump(mode="json") for spec in registry.specs()],
+                        sort_keys=True,
+                        ensure_ascii=False,
+                    ).encode("utf-8")
+                ).hexdigest()
                 if tool_sha != recorded["tool_sha256"]:
                     reasons.append("tool definitions changed")
-                if config.agent_config.skills_enabled or config.memory_enabled:
+                if config.agent_config.skills_enabled:
                     try:
                         registry.get("load_skill").restore_recovery_state(
                             snapshot.payload["skills"]
@@ -598,17 +787,18 @@ class TraceFixRunner:
                 ):
                     reasons.append("checkout patch changed since checkpoint")
                 fact = saved_agent["memory"].get("_last_test_evidence") if saved_agent else None
-                if isinstance(fact, dict) and fact.get("valid") is True and (
-                    fact.get("source_sha256") != snapshot.payload.get("workspace_diff_sha256")
+                if (
+                    isinstance(fact, dict)
+                    and fact.get("valid") is True
+                    and (fact.get("source_sha256") != snapshot.payload.get("workspace_diff_sha256"))
                 ):
                     reasons.append("passing test does not match checkpoint patch")
                 trace = (root / "trajectory.jsonl").read_bytes()
                 size = snapshot.payload.get("trace_size")
                 if not isinstance(size, int) or size > len(trace) or size < 0:
                     reasons.append("trajectory prefix is missing")
-                elif (
-                    hashlib.sha256(trace[:size]).hexdigest()
-                    != snapshot.payload.get("trace_sha256")
+                elif hashlib.sha256(trace[:size]).hexdigest() != snapshot.payload.get(
+                    "trace_sha256"
                 ):
                     reasons.append("trajectory prefix changed")
                 else:
@@ -626,7 +816,8 @@ class TraceFixRunner:
                             terminal_state = event.get("payload", {}).get("state", {})
                             if terminal_state.get("status") not in (
                                 {AgentStatus.INTERRUPTED.value, AgentStatus.COMPLETED.value}
-                                if _for_continue else {AgentStatus.INTERRUPTED.value}
+                                if _for_continue
+                                else {AgentStatus.INTERRUPTED.value}
                             ):
                                 reasons.append("run has a non-interrupted terminal event")
                 if (root / "result.json").is_file():
@@ -635,25 +826,36 @@ class TraceFixRunner:
                     )
                     if result.status not in (
                         {AgentStatus.INTERRUPTED, AgentStatus.COMPLETED}
-                        if _for_continue else {AgentStatus.INTERRUPTED}
+                        if _for_continue
+                        else {AgentStatus.INTERRUPTED}
                     ):
                         reasons.append("run is not interrupted")
                 if _for_continue:
                     saved_state = AgentState.model_validate(saved_agent["state"])
-                    if (_check_round_records and config.conversation_enabled
-                            and saved_state.turn_number != latest_result.turn_number):
+                    if (
+                        _check_round_records
+                        and config.conversation_enabled
+                        and saved_state.turn_number != latest_result.turn_number
+                    ):
                         reasons.append("current round result is not committed")
-                    if (not saved_state.cost_complete or not saved_state.usage_complete
-                            or saved_state.memory_status.get("status") in {
-                                "outcome_unknown", "response_received",
-                            }):
+                    if (
+                        not saved_state.cost_complete
+                        or not saved_state.usage_complete
+                        or saved_state.memory_status.get("status")
+                        in {
+                            "outcome_unknown",
+                            "response_received",
+                        }
+                    ):
                         reasons.append("session has an unresolved model outcome or accounting")
-                    if (saved_state.step_count >= config.agent_config.max_steps
-                            or saved_state.test_runs >= config.agent_config.max_test_runs
-                            or saved_state.input_tokens >= config.agent_config.max_input_tokens
-                            or saved_state.output_tokens >= config.agent_config.max_output_tokens
-                            or snapshot.payload["agent"]["active_seconds"]
-                            >= config.agent_config.wall_time_seconds):
+                    if (
+                        saved_state.step_count >= config.agent_config.max_steps
+                        or saved_state.test_runs >= config.agent_config.max_test_runs
+                        or saved_state.input_tokens >= config.agent_config.max_input_tokens
+                        or saved_state.output_tokens >= config.agent_config.max_output_tokens
+                        or snapshot.payload["agent"]["active_seconds"]
+                        >= config.agent_config.wall_time_seconds
+                    ):
                         reasons.append("cumulative session budget exhausted")
             outcome = {
                 "resumable": not reasons and inspection.resumable,
@@ -662,39 +864,49 @@ class TraceFixRunner:
                 "run": str(root),
                 "step_count": (
                     snapshot.payload["agent"]["state"]["step_count"]
-                    if inspection.resumable else None
+                    if inspection.resumable
+                    else None
                 ),
                 "task": (
-                    snapshot.payload["agent"]["state"]["task"]
-                    if inspection.resumable else None
+                    snapshot.payload["agent"]["state"]["task"] if inspection.resumable else None
                 ),
                 "phase": (
-                    snapshot.payload["agent"]["state"]["phase"]
-                    if inspection.resumable else None
+                    snapshot.payload["agent"]["state"]["phase"] if inspection.resumable else None
                 ),
                 "validation_status": (
                     snapshot.payload["agent"]["state"]["validation_status"]
-                    if inspection.resumable else None
+                    if inspection.resumable
+                    else None
                 ),
                 "last_test_evidence": (
                     snapshot.payload["agent"].get("memory", {}).get("_last_test_evidence")
-                    if inspection.resumable else None
+                    if inspection.resumable
+                    else None
                 ),
                 "workspace_diff_sha256": (
-                    snapshot.payload.get("workspace_diff_sha256")
-                    if inspection.resumable else None
+                    snapshot.payload.get("workspace_diff_sha256") if inspection.resumable else None
                 ),
             }
             if config.conversation_enabled and not _for_continue:
                 continued = cls.inspect(root, _for_continue=True)
-                outcome.update({"continuable": continued["resumable"],
-                                "continue_reasons": continued["reasons"],
-                                "session_status": "awaiting_user" if inspection.resumable
-                                and snapshot.payload["agent"]["state"]["status"] == "completed"
-                                else "paused" if continued["resumable"] else "interrupted",
-                                "turn_number": snapshot.payload["agent"]["state"].get(
-                                    "turn_number", 1,
-                                ) if inspection.resumable else None})
+                outcome.update(
+                    {
+                        "continuable": continued["resumable"],
+                        "continue_reasons": continued["reasons"],
+                        "session_status": "awaiting_user"
+                        if inspection.resumable
+                        and snapshot.payload["agent"]["state"]["status"] == "completed"
+                        else "paused"
+                        if continued["resumable"]
+                        else "interrupted",
+                        "turn_number": snapshot.payload["agent"]["state"].get(
+                            "turn_number",
+                            1,
+                        )
+                        if inspection.resumable
+                        else None,
+                    }
+                )
             return outcome
         except (OSError, ValueError, KeyError, TypeError, TraceFixError) as exc:
             return {"resumable": False, "reasons": [str(exc)], "run": str(root)}
@@ -710,9 +922,12 @@ class TraceFixRunner:
         store = CheckpointStore(root, manifest["identity"])
         inspected = store.inspect(current_identity=manifest["identity"])
         if not inspected.resumable:
-            raise CheckpointError("context checkpoint is not readable", context={
-                "reasons": list(inspected.reasons),
-            })
+            raise CheckpointError(
+                "context checkpoint is not readable",
+                context={
+                    "reasons": list(inspected.reasons),
+                },
+            )
         snapshot = store.load(current_identity=manifest["identity"])
         agent_payload = snapshot.payload.get("agent")
         if not isinstance(agent_payload, dict):
@@ -736,26 +951,30 @@ class TraceFixRunner:
             status = getattr(count, "status", "unavailable")
             current_identity = getattr(count, "identity", None)
             if status in {"estimate", "verified_upper_bound", "verified_exact"}:
-                if (state.tokenizer_identity is not None
-                        and current_identity != state.tokenizer_identity):
+                if (
+                    state.tokenizer_identity is not None
+                    and current_identity != state.tokenizer_identity
+                ):
                     raise CheckpointError(
                         "context inspection tokenizer identity differs from checkpoint",
-                        context={"saved": state.tokenizer_identity,
-                                 "current": current_identity},
+                        context={"saved": state.tokenizer_identity, "current": current_identity},
                     )
                 tokens = count.tokens
                 count_method = count.method
                 tokenizer_identity = current_identity
-            elif (state.tokenizer_identity is not None
-                    and current_identity in {
-                        "ValueError", "OSError", "FileNotFoundError", "ImportError",
-                        "ModuleNotFoundError", "AttributeError", "RuntimeError",
-                        "official tokenizer not configured",
-                    }):
+            elif state.tokenizer_identity is not None and current_identity in {
+                "ValueError",
+                "OSError",
+                "FileNotFoundError",
+                "ImportError",
+                "ModuleNotFoundError",
+                "AttributeError",
+                "RuntimeError",
+                "official tokenizer not configured",
+            }:
                 raise CheckpointError(
                     "context inspection could not verify the pinned tokenizer identity",
-                    context={"saved": state.tokenizer_identity,
-                             "current": current_identity},
+                    context={"saved": state.tokenizer_identity, "current": current_identity},
                 )
         if tokens is None:
             tokens = manager.estimate_tokens(projection, tools)
@@ -766,10 +985,14 @@ class TraceFixRunner:
         )
         context_config = config.agent_config.context
         return {
-            "run": str(root), "checkpoint_sequence": snapshot.sequence,
-            "projection_epoch": state.epoch, "history_watermark": state.history_watermark,
-            "projection_messages": len(projection), "tool_schema_count": len(tools),
-            "estimated_tokens": tokens, "count_method": count_method,
+            "run": str(root),
+            "checkpoint_sequence": snapshot.sequence,
+            "projection_epoch": state.epoch,
+            "history_watermark": state.history_watermark,
+            "projection_messages": len(projection),
+            "tool_schema_count": len(tools),
+            "estimated_tokens": tokens,
+            "count_method": count_method,
             "tokenizer_identity": tokenizer_identity,
             "input_capacity": context_config.available_input_tokens(reserve),
             "trigger_tokens": context_config.trigger_tokens(reserve),
@@ -784,10 +1007,13 @@ class TraceFixRunner:
         with ProcessLock(root):
             qualification = self.inspect(root)
             if not (qualification.get("resumable") or qualification.get("continuable")):
-                raise CheckpointError("context compaction requires a safe paused session", context={
-                    "reasons": qualification.get("reasons", []),
-                    "continue_reasons": qualification.get("continue_reasons", []),
-                })
+                raise CheckpointError(
+                    "context compaction requires a safe paused session",
+                    context={
+                        "reasons": qualification.get("reasons", []),
+                        "continue_reasons": qualification.get("continue_reasons", []),
+                    },
+                )
             manifest = self._read_context_manifest(root)
             config = _saved_run_config(manifest["config"])
             store = CheckpointStore(root, manifest["identity"])
@@ -812,7 +1038,10 @@ class TraceFixRunner:
                 config.per_request_output_tokens
             )
             view = manager.prepare(
-                history.snapshot(), context_state.tool_specs, state=context_state, force=True,
+                history.snapshot(),
+                context_state.tool_specs,
+                state=context_state,
+                force=True,
                 output_reserve_tokens=reserve,
                 token_counter=self._saved_context_counter(config.model_name),
             )
@@ -841,15 +1070,23 @@ class TraceFixRunner:
             }
             task_id = agent_payload.get("task_id")
             step = int(agent_payload["state"].get("step_count", 0))
-            events = [TraceEvent(
-                event_type=TraceEventType.CONTEXT_PREPARED, task_id=task_id, step=step,
-                payload=event_payload,
-            )]
+            events = [
+                TraceEvent(
+                    event_type=TraceEventType.CONTEXT_PREPARED,
+                    task_id=task_id,
+                    step=step,
+                    payload=event_payload,
+                )
+            ]
             if view.compacted or view.compaction_no_op:
-                events.append(TraceEvent(
-                    event_type=TraceEventType.CONTEXT_COMPACTED, task_id=task_id, step=step,
-                    payload={**event_payload, "reason": "user_requested"},
-                ))
+                events.append(
+                    TraceEvent(
+                        event_type=TraceEventType.CONTEXT_COMPACTED,
+                        task_id=task_id,
+                        step=step,
+                        payload={**event_payload, "reason": "user_requested"},
+                    )
+                )
             trace_path = root / "trajectory.jsonl"
             with trace_path.open("a", encoding="utf-8", newline="\n") as stream:
                 for event in events:
@@ -868,7 +1105,8 @@ class TraceFixRunner:
                     json.dumps(result_payload, ensure_ascii=False, indent=2), encoding="utf-8"
                 )
             return self.inspect_context(root) | {
-                "compacted": view.compacted, "no_op": view.compaction_no_op,
+                "compacted": view.compacted,
+                "no_op": view.compaction_no_op,
                 "estimated_tokens_before": view.estimated_tokens_before,
                 "estimated_tokens_after": view.estimated_tokens_after,
                 "count_method": view.count_method,
@@ -898,7 +1136,8 @@ class TraceFixRunner:
             from tracefix.models.input_bounds import count_deepseek_v41_request
 
             body = {
-                "model": "deepseek-flash", "thinking": {"type": "disabled"},
+                "model": "deepseek-flash",
+                "thinking": {"type": "disabled"},
                 "messages": [LiteLLMAdapter._format_message(message) for message in messages],
                 "tools": [tool.to_openai_tool() for tool in tools],
             }
@@ -931,29 +1170,42 @@ class TraceFixRunner:
                 return self._resume_docker_locked(root, manifest, config, message=message)
             store = CheckpointStore(root, manifest["identity"])
             snapshot = store.load()
+            self._verify_recovery_memory(root, config, snapshot.payload.get("agent", {}))
+            user_input_receipt = None
+            if message is not None:
+                from tracefix.memory_domain import issue_user_input_receipt
+
+                next_turn = int(snapshot.payload["agent"]["state"]["turn_number"]) + 1
+                user_input_receipt = self._append_user_receipt(
+                    root,
+                    issue_user_input_receipt(uuid4().hex, next_turn, message),
+                )
             workspace = root / "workspace"
             protected = snapshot.payload.get("protected_dirs")
-            if not isinstance(protected, list) or not all(
-                isinstance(name, str) for name in protected
-            ) or not set(protected).issubset({
-                ".tracefix-build-tmp", ".tracefix-test-tmp"
-            }):
+            if (
+                not isinstance(protected, list)
+                or not all(isinstance(name, str) for name in protected)
+                or not set(protected).issubset({".tracefix-build-tmp", ".tracefix-test-tmp"})
+            ):
                 raise CheckpointError("checkpoint protected directory state is invalid")
             protected_dirs = set(protected)
-            if ".tracefix-test-tmp" in protected_dirs and not (
-                workspace / ".tracefix-test-tmp"
-            ).is_dir() or (workspace / ".tracefix-test-tmp").is_symlink():
+            if (
+                ".tracefix-test-tmp" in protected_dirs
+                and not (workspace / ".tracefix-test-tmp").is_dir()
+                or (workspace / ".tracefix-test-tmp").is_symlink()
+            ):
                 raise CheckpointError("test temporary directory changed since checkpoint")
             repo_map_path = root / "repo-map.json"
             repo_map = (
                 RepoMap.model_validate_json(repo_map_path.read_text(encoding="utf-8"))
-                if repo_map_path.is_file() else None
+                if repo_map_path.is_file()
+                else None
             )
             tools = create_default_tool_registry(
                 workspace,
                 evidence_dir=root / "test-evidence",
                 protected_dirs=protected_dirs,
-                skills_enabled=config.agent_config.skills_enabled or config.memory_enabled,
+                skills_enabled=config.agent_config.skills_enabled,
                 skill_limits=config.agent_config.skill_limits,
                 skills_root=self._skills_root(config, root),
                 test_timeout_seconds=min(120.0, float(config.agent_config.wall_time_seconds)),
@@ -968,15 +1220,16 @@ class TraceFixRunner:
                 mcp_manager.preflight()
                 for tool in mcp_manager.tools():
                     tools.register(tool)
-            tool_hash = hashlib.sha256(json.dumps(
-                [spec.model_dump(mode="json") for spec in tools.specs()],
-                sort_keys=True, ensure_ascii=False,
-            ).encode("utf-8")).hexdigest()
+            tool_hash = hashlib.sha256(
+                json.dumps(
+                    [spec.model_dump(mode="json") for spec in tools.specs()],
+                    sort_keys=True,
+                    ensure_ascii=False,
+                ).encode("utf-8")
+            ).hexdigest()
             if tool_hash != manifest["identity"]["tool_sha256"]:
                 raise CheckpointError("tool definitions changed since checkpoint")
-            skill_tool = tools.get("load_skill") if (
-                config.agent_config.skills_enabled or config.memory_enabled
-            ) else None
+            skill_tool = tools.get("load_skill") if (config.agent_config.skills_enabled) else None
             if skill_tool is not None:
                 skill_tool.restore_recovery_state(snapshot.payload["skills"])
             load_environment_file(config.env_file)
@@ -996,15 +1249,21 @@ class TraceFixRunner:
                 (root / f"result-before-resume-{snapshot.sequence}.json").write_bytes(old_result)
             sequence = snapshot.sequence
             with JSONLTraceSink(trace_path, append=True) as sink:
-                sink.write(TraceEvent(
-                    event_type=(TraceEventType.SESSION_CONTINUED if message is not None
-                                else TraceEventType.SESSION_RESUMED),
-                    task_id=root.name,
-                    step=int(snapshot.payload["agent"]["state"]["step_count"]),
-                    payload={"checkpoint_sequence": sequence},
-                ))
+                sink.write(
+                    TraceEvent(
+                        event_type=(
+                            TraceEventType.SESSION_CONTINUED
+                            if message is not None
+                            else TraceEventType.SESSION_RESUMED
+                        ),
+                        task_id=root.name,
+                        step=int(snapshot.payload["agent"]["state"]["step_count"]),
+                        payload={"checkpoint_sequence": sequence},
+                    )
+                )
                 agent = MinimalAgent(
-                    self._llm_factory(llm_config), tools,
+                    self._llm_factory(llm_config),
+                    tools,
                     config=self._agent_config(config),
                     trace_sink=sink,
                     repository_map=repo_map.text if repo_map else None,
@@ -1041,20 +1300,27 @@ class TraceFixRunner:
                     active.verify_test_source(patch_sha)
                     trace = trace_path.read_bytes()
                     sequence += 1
-                    store.save({
-                        "agent": active.checkpoint_payload(),
-                        "workspace_diff_sha256": patch_sha,
-                        "trace_size": len(trace),
-                        "trace_sha256": hashlib.sha256(trace).hexdigest(),
-                        "skills": skill_tool.recovery_state() if skill_tool else None,
-                        "protected_dirs": sorted(protected_dirs),
-                    }, sequence=sequence)
+                    store.save(
+                        {
+                            "agent": active.checkpoint_payload(),
+                            "workspace_diff_sha256": patch_sha,
+                            "trace_size": len(trace),
+                            "trace_sha256": hashlib.sha256(trace).hexdigest(),
+                            "skills": skill_tool.recovery_state() if skill_tool else None,
+                            "protected_dirs": sorted(protected_dirs),
+                        },
+                        sequence=sequence,
+                    )
 
                 agent.checkpoint_callback = save_checkpoint
                 agent.persist_terminal_checkpoint = config.conversation_enabled
                 self._attach_memory(agent, config, root, workspace, protected_dirs)
                 try:
-                    state = agent.resume(snapshot.payload["agent"], message=message)
+                    state = agent.resume(
+                        snapshot.payload["agent"],
+                        message=message,
+                        user_input_receipt=user_input_receipt,
+                    )
                 except KeyboardInterrupt:
                     state = agent.state
                 finally:
@@ -1069,8 +1335,10 @@ class TraceFixRunner:
             diff_path = root / "patch.diff"
             diff_path.write_text(patch, encoding="utf-8")
             provenance = collect_run_provenance(
-                state.task if config.conversation_enabled and state.turn_number > 1
-                else config.task, llm_config,
+                state.task
+                if config.conversation_enabled and state.turn_number > 1
+                else config.task,
+                llm_config,
             )
             result = RunResult(
                 run_id=root.name,
@@ -1096,8 +1364,7 @@ class TraceFixRunner:
                 usage_complete=state.usage_complete,
                 usd_cny_rate=config.usd_cny_rate,
                 cost_cny_estimate=(
-                    round(state.cost_usd * config.usd_cny_rate, 8)
-                    if state.cost_complete else None
+                    round(state.cost_usd * config.usd_cny_rate, 8) if state.cost_complete else None
                 ),
                 started_at=state.started_at or datetime.now(UTC),
                 finished_at=state.finished_at or datetime.now(UTC),
@@ -1127,26 +1394,43 @@ class TraceFixRunner:
                 result = self._record_dialogue_result(root, result)
             return result
 
-    def _resume_docker_locked(self, root: Path, manifest: dict, config: RunConfig,
-                              *, message: str | None = None) -> RunResult:
+    def _resume_docker_locked(
+        self, root: Path, manifest: dict, config: RunConfig, *, message: str | None = None
+    ) -> RunResult:
         """Rebuild an inspected ordinary workspace while retaining cumulative Agent state."""
         store = CheckpointStore(root, manifest["identity"])
         saved = store.load()
+        self._verify_recovery_memory(root, config, saved.payload.get("agent", {}))
+        user_input_receipt = None
+        if message is not None:
+            from tracefix.memory_domain import issue_user_input_receipt
+
+            next_turn = int(saved.payload["agent"]["state"]["turn_number"]) + 1
+            user_input_receipt = self._append_user_receipt(
+                root,
+                issue_user_input_receipt(uuid4().hex, next_turn, message),
+            )
         old_result = RunResult.model_validate_json(
-            (root / "result.json").read_text(encoding="utf-8"))
+            (root / "result.json").read_text(encoding="utf-8")
+        )
         backend = DockerToolBackend(
-            task_id="tracefix-ordinary", input_root=root, run_dir=root, run_id=root.name,
-            profile="ordinary", image_id=config.docker_image_id,
+            task_id="tracefix-ordinary",
+            input_root=root,
+            run_dir=root,
+            run_id=root.name,
+            profile="ordinary",
+            image_id=config.docker_image_id,
             timeout_seconds=min(120, int(config.agent_config.wall_time_seconds)),
         )
         try:
             tools = backend.prepare(
-                manifest["identity"]["source_commit"], config.repo,
+                manifest["identity"]["source_commit"],
+                config.repo,
                 Path(__file__).resolve().parents[2],
                 baseline_archive=root / "agent-base.tar",
                 recovery_snapshot=saved.payload["docker_snapshot"],
                 recovery_enabled=True,
-                skills_enabled=config.agent_config.skills_enabled or config.memory_enabled,
+                skills_enabled=config.agent_config.skills_enabled,
                 skill_limits=config.agent_config.skill_limits,
                 source_import_probe=config.source_import,
                 skills_root=self._skills_root(config, root),
@@ -1156,20 +1440,28 @@ class TraceFixRunner:
             load_environment_file(config.env_file)
             self._validate_credentials(config.model_name)
             llm_config = LLMConfig(
-                model_name=config.model_name, temperature=0.0,
+                model_name=config.model_name,
+                temperature=0.0,
                 max_output_tokens=config.per_request_output_tokens,
-                timeout_seconds=config.llm_timeout_seconds, max_retries=config.llm_max_retries,
+                timeout_seconds=config.llm_timeout_seconds,
+                max_retries=config.llm_max_retries,
                 extra_kwargs=self._provider_kwargs(config.model_name),
             )
             map_path = root / "repo-map.json"
-            repo_map = RepoMap.model_validate_json(map_path.read_text(encoding="utf-8")) \
-                if map_path.is_file() else None
+            repo_map = (
+                RepoMap.model_validate_json(map_path.read_text(encoding="utf-8"))
+                if map_path.is_file()
+                else None
+            )
             sequence = saved.sequence
             trace_path = root / "trajectory.jsonl"
             with JSONLTraceSink(trace_path, append=True) as sink:
                 agent = MinimalAgent(
-                    self._llm_factory(llm_config), tools, config=self._agent_config(config),
-                    trace_sink=sink, repository_map=repo_map.text if repo_map else None,
+                    self._llm_factory(llm_config),
+                    tools,
+                    config=self._agent_config(config),
+                    trace_sink=sink,
+                    repository_map=repo_map.text if repo_map else None,
                     repository_candidates=repo_map.candidate_files if repo_map else (),
                 )
 
@@ -1178,15 +1470,22 @@ class TraceFixRunner:
                     next_sequence = sequence + 1
                     snapshot = backend.save_snapshot(next_sequence)
                     patch_sha = hashlib.sha256(
-                        snapshot["bridge_state"]["diff"]["diff"].encode("utf-8")).hexdigest()
+                        snapshot["bridge_state"]["diff"]["diff"].encode("utf-8")
+                    ).hexdigest()
                     active.verify_test_source(patch_sha)
                     trace = trace_path.read_bytes()
-                    store.save({"agent": active.checkpoint_payload(), "docker_snapshot": snapshot,
-                                "workspace_diff_sha256": patch_sha, "trace_size": len(trace),
-                                "trace_sha256": hashlib.sha256(trace).hexdigest(),
-                                "skills": snapshot["bridge_state"]["skills"],
-                                "protected_dirs": snapshot["bridge_state"]["protected_dirs"]},
-                               sequence=next_sequence)
+                    store.save(
+                        {
+                            "agent": active.checkpoint_payload(),
+                            "docker_snapshot": snapshot,
+                            "workspace_diff_sha256": patch_sha,
+                            "trace_size": len(trace),
+                            "trace_sha256": hashlib.sha256(trace).hexdigest(),
+                            "skills": snapshot["bridge_state"]["skills"],
+                            "protected_dirs": snapshot["bridge_state"]["protected_dirs"],
+                        },
+                        sequence=next_sequence,
+                    )
                     sequence = next_sequence
 
                 agent.checkpoint_callback = checkpoint
@@ -1194,7 +1493,11 @@ class TraceFixRunner:
                 agent.persist_resume_checkpoint = True
                 self._attach_docker_memory(agent, config, root, backend)
                 try:
-                    state = agent.resume(saved.payload["agent"], message=message)
+                    state = agent.resume(
+                        saved.payload["agent"],
+                        message=message,
+                        user_input_receipt=user_input_receipt,
+                    )
                 except KeyboardInterrupt:
                     state = agent.state
                 finally:
@@ -1208,15 +1511,37 @@ class TraceFixRunner:
             diff_path = root / "patch.diff"
             diff_path.write_text(diff.output["diff"], encoding="utf-8")
             (root / f"result-before-resume-{saved.sequence}.json").write_text(
-                old_result.model_dump_json(indent=2), encoding="utf-8")
-            updates = {name: getattr(state, name) for name in (
-                "status", "stop_reason", "final_output", "step_count", "input_tokens",
-                "output_tokens", "test_runs", "search_calls", "file_read_calls",
-                "cached_tool_calls", "cost_usd", "cost_complete", "usage_complete",
-                "started_at", "finished_at", "model_request_seconds", "tool_execution_seconds",
-                "context_preparation_seconds", "context_metrics", "presentation_metrics",
-                "memory_status", "turn_number", "validation_gate_status", "validation_gate_results",
-            )}
+                old_result.model_dump_json(indent=2), encoding="utf-8"
+            )
+            updates = {
+                name: getattr(state, name)
+                for name in (
+                    "status",
+                    "stop_reason",
+                    "final_output",
+                    "step_count",
+                    "input_tokens",
+                    "output_tokens",
+                    "test_runs",
+                    "search_calls",
+                    "file_read_calls",
+                    "cached_tool_calls",
+                    "cost_usd",
+                    "cost_complete",
+                    "usage_complete",
+                    "started_at",
+                    "finished_at",
+                    "model_request_seconds",
+                    "tool_execution_seconds",
+                    "context_preparation_seconds",
+                    "context_metrics",
+                    "presentation_metrics",
+                    "memory_status",
+                    "turn_number",
+                    "validation_gate_status",
+                    "validation_gate_results",
+                )
+            }
             updates.update(
                 agent_validation_status=state.validation_status,
                 changed_files=diff.output["changed_files"],
@@ -1225,7 +1550,8 @@ class TraceFixRunner:
                 workspace=f"docker://{backend.container_id}/work/agent",
                 duration_seconds=max(0.0, time.monotonic() - agent._started_monotonic),
                 cost_cny_estimate=round(state.cost_usd * config.usd_cny_rate, 8)
-                if state.cost_complete else None,
+                if state.cost_complete
+                else None,
             )
             result = RunResult.model_validate(old_result.model_dump() | updates)
             (root / "result.json").write_text(result.model_dump_json(indent=2), encoding="utf-8")
@@ -1236,11 +1562,16 @@ class TraceFixRunner:
         except Exception as exc:
             from tracefix.memory import atomic_json
 
-            atomic_json(root / f"recovery-failure-{saved.sequence}-{uuid4().hex}.json", {
-                "schema_version": 1, "checkpoint_sequence": saved.sequence,
-                "stage": "resume", "error": self._serialize_error(exc),
-                "container_id": backend.container_id,
-            })
+            atomic_json(
+                root / f"recovery-failure-{saved.sequence}-{uuid4().hex}.json",
+                {
+                    "schema_version": 1,
+                    "checkpoint_sequence": saved.sequence,
+                    "stage": "resume",
+                    "error": self._serialize_error(exc),
+                    "container_id": backend.container_id,
+                },
+            )
             raise
         finally:
             try:
@@ -1248,11 +1579,16 @@ class TraceFixRunner:
             except Exception as exc:
                 from tracefix.memory import atomic_json
 
-                atomic_json(root / f"recovery-failure-{saved.sequence}-{uuid4().hex}.json", {
-                    "schema_version": 1, "checkpoint_sequence": saved.sequence,
-                    "stage": "cleanup", "error": self._serialize_error(exc),
-                    "container_id": backend.container_id,
-                })
+                atomic_json(
+                    root / f"recovery-failure-{saved.sequence}-{uuid4().hex}.json",
+                    {
+                        "schema_version": 1,
+                        "checkpoint_sequence": saved.sequence,
+                        "stage": "cleanup",
+                        "error": self._serialize_error(exc),
+                        "container_id": backend.container_id,
+                    },
+                )
                 raise
 
     @staticmethod
@@ -1364,6 +1700,8 @@ class TraceFixRunner:
         agent: MinimalAgent | None = None
         llm: BaseLLM | None = None
         repository_map: RepoMap | None = None
+        memory_bundle = None
+        initial_user_receipt: dict[str, Any] | None = None
         repository_index_seconds = 0.0
         llm_config = LLMConfig(
             model_name=config.model_name,
@@ -1377,6 +1715,12 @@ class TraceFixRunner:
 
         try:
             sink = JSONLTraceSink(trace_path)
+            from tracefix.memory_domain import issue_user_input_receipt
+
+            initial_user_receipt = self._append_user_receipt(
+                run_dir,
+                issue_user_input_receipt(uuid4().hex, 1, config.task),
+            )
             source, source_commit = self._validate_source_repository(config.repo)
             self._preflight_execution(config, source)
             source_repo = str(source)
@@ -1391,7 +1735,8 @@ class TraceFixRunner:
                 update={
                     "model_parameters": model_parameters,
                     "test_environment": (
-                        None if config.docker_profile == "ordinary"
+                        None
+                        if config.docker_profile == "ordinary"
                         and config.execution_backend == "docker"
                         else inspect_test_environment(
                             config.test_python_executable or sys.executable,
@@ -1414,14 +1759,11 @@ class TraceFixRunner:
             )
             self._validate_credentials(config.model_name)
             if config.memory_enabled:
-                from tracefix.memory import ExperienceStore
+                from tracefix.memory import ExperienceStore, atomic_json
 
                 memory = ExperienceStore(config.memory_dir or output_root / "memory", source)
-                selected = memory.snapshot(config.task, run_dir / "experience-skills",
-                                           config.skills_root, config.agent_config.skill_limits)
-                from tracefix.memory import atomic_json
-
-                atomic_json(run_dir / "memory-selection.json", selected)
+                memory_bundle = memory.recall_bundle(config.task)
+                atomic_json(run_dir / "memory-recall.json", memory_bundle.model_dump(mode="json"))
             if config.execution_backend == "docker":
                 assert config.docker_profile == "ordinary" or (
                     config.docker_task_id and config.docker_input_root
@@ -1436,24 +1778,28 @@ class TraceFixRunner:
                     image_id=config.docker_image_id,
                 )
                 docker_prepare_options = (
-                    {"source_import_probe": config.source_import,
-                     "recovery_enabled": config.docker_recovery_enabled,
-                     "environment_variables": {
-                         **(config.environment_recipe.environment_variables
-                            if config.environment_recipe is not None else {}),
-                         **config.test_environment_variables,
-                     }}
-                    if config.docker_profile == "ordinary" else {}
+                    {
+                        "source_import_probe": config.source_import,
+                        "recovery_enabled": config.docker_recovery_enabled,
+                        "environment_variables": {
+                            **(
+                                config.environment_recipe.environment_variables
+                                if config.environment_recipe is not None
+                                else {}
+                            ),
+                            **config.test_environment_variables,
+                        },
+                    }
+                    if config.docker_profile == "ordinary"
+                    else {}
                 )
-                if config.memory_enabled:
-                    docker_prepare_options["skills_root"] = self._skills_root(config, run_dir)
                 tools = docker_backend.prepare(
                     source_commit,
                     source,
                     Path(__file__).resolve().parents[2],
                     repo_map_task=config.task,
                     repo_map_config=config.agent_config.repo_map,
-                    skills_enabled=config.agent_config.skills_enabled or config.memory_enabled,
+                    skills_enabled=config.agent_config.skills_enabled,
                     skill_limits=config.agent_config.skill_limits,
                     **docker_prepare_options,
                 )
@@ -1520,7 +1866,7 @@ class TraceFixRunner:
                     workspace,
                     evidence_dir=run_dir / "test-evidence",
                     protected_dirs=internal_artifacts,
-                    skills_enabled=config.agent_config.skills_enabled or config.memory_enabled,
+                    skills_enabled=config.agent_config.skills_enabled,
                     skill_limits=config.agent_config.skill_limits,
                     skills_root=self._skills_root(config, run_dir),
                     test_timeout_seconds=min(120.0, float(config.agent_config.wall_time_seconds)),
@@ -1570,6 +1916,43 @@ class TraceFixRunner:
                 repository_map=repository_map.text if repository_map else None,
                 repository_candidates=(repository_map.candidate_files if repository_map else ()),
             )
+            agent.initial_user_receipt = initial_user_receipt
+            initial_context: list[Message] = []
+            if memory_bundle is not None and memory_bundle.items:
+                from tracefix.memory_recall import render_recall_bundle
+
+                bundle_payload = memory_bundle.model_dump(mode="json")
+                bundle_sha256 = hashlib.sha256(
+                    json.dumps(
+                        bundle_payload,
+                        sort_keys=True,
+                        ensure_ascii=False,
+                        separators=(",", ":"),
+                    ).encode("utf-8")
+                ).hexdigest()
+                initial_context.append(
+                    Message(
+                        role=MessageRole.USER,
+                        content=render_recall_bundle(memory_bundle),
+                        metadata={
+                            "kind": "memory_recall_bundle",
+                            "trust_level": "untrusted_reference_data",
+                            "bundle_sha256": bundle_sha256,
+                        },
+                    )
+                )
+            if config.test_target:
+                initial_context.append(
+                    Message(
+                        role=MessageRole.SYSTEM,
+                        content=(
+                            f"公开测试验收要求：运行 pytest -q {config.test_target}，"
+                            "先确认现状，修改后重跑并检查完整 Diff。"
+                        ),
+                        metadata={"kind": "public_test_contract"},
+                    )
+                )
+            agent.initial_context_messages = tuple(initial_context)
             if config.regression_targets:
                 assert workspace is not None
                 agent.validation_targets = config.regression_targets
@@ -1608,8 +1991,10 @@ class TraceFixRunner:
                             "identity": docker_identity,
                             "workspace_preparation": workspace_preparation,
                         },
-                        ensure_ascii=False, indent=2,
-                    ), encoding="utf-8",
+                        ensure_ascii=False,
+                        indent=2,
+                    ),
+                    encoding="utf-8",
                 )
                 if config.docker_recovery_enabled:
                     assert docker_backend is not None
@@ -1621,20 +2006,21 @@ class TraceFixRunner:
                         next_sequence = docker_sequence + 1
                         snapshot = docker_backend.save_snapshot(next_sequence)
                         diff = snapshot["bridge_state"]["diff"]
-                        current_sha = hashlib.sha256(
-                            diff["diff"].encode("utf-8")
-                        ).hexdigest()
+                        current_sha = hashlib.sha256(diff["diff"].encode("utf-8")).hexdigest()
                         active.verify_test_source(current_sha)
                         trace_bytes = trace_path.read_bytes()
-                        docker_store.save({
-                            "agent": active.checkpoint_payload(),
-                            "docker_snapshot": snapshot,
-                            "workspace_diff_sha256": current_sha,
-                            "trace_size": len(trace_bytes),
-                            "trace_sha256": hashlib.sha256(trace_bytes).hexdigest(),
-                            "skills": snapshot["bridge_state"]["skills"],
-                            "protected_dirs": snapshot["bridge_state"]["protected_dirs"],
-                        }, sequence=next_sequence)
+                        docker_store.save(
+                            {
+                                "agent": active.checkpoint_payload(),
+                                "docker_snapshot": snapshot,
+                                "workspace_diff_sha256": current_sha,
+                                "trace_size": len(trace_bytes),
+                                "trace_sha256": hashlib.sha256(trace_bytes).hexdigest(),
+                                "skills": snapshot["bridge_state"]["skills"],
+                                "protected_dirs": snapshot["bridge_state"]["protected_dirs"],
+                            },
+                            sequence=next_sequence,
+                        )
                         docker_sequence = next_sequence
 
                     agent.checkpoint_callback = save_docker_checkpoint
@@ -1650,7 +2036,8 @@ class TraceFixRunner:
                     "tool_sha256": hashlib.sha256(
                         json.dumps(
                             [spec.model_dump(mode="json") for spec in tools.specs()],
-                            sort_keys=True, ensure_ascii=False,
+                            sort_keys=True,
+                            ensure_ascii=False,
                         ).encode("utf-8")
                     ).hexdigest(),
                     "repo_map_sha256": hashlib.sha256(
@@ -1670,12 +2057,16 @@ class TraceFixRunner:
                 manifest_path = run_dir / "session.json"
                 manifest_path.write_text(
                     json.dumps(
-                        {"schema_version": 2 if config.conversation_enabled else 1,
-                         "config": config.model_dump(mode="json"),
-                         "identity": checkpoint_identity,
-                         "workspace_preparation": workspace_preparation},
-                        ensure_ascii=False, indent=2,
-                    ), encoding="utf-8",
+                        {
+                            "schema_version": 2 if config.conversation_enabled else 1,
+                            "config": config.model_dump(mode="json"),
+                            "identity": checkpoint_identity,
+                            "workspace_preparation": workspace_preparation,
+                        },
+                        ensure_ascii=False,
+                        indent=2,
+                    ),
+                    encoding="utf-8",
                 )
                 store = CheckpointStore(run_dir, checkpoint_identity)
                 sequence = 0
@@ -1688,9 +2079,7 @@ class TraceFixRunner:
                     active.verify_test_source(current_sha)
                     trace_bytes = trace_path.read_bytes()
                     skill_tool = (
-                        tools.get("load_skill") if (
-                            config.agent_config.skills_enabled or config.memory_enabled
-                        ) else None
+                        tools.get("load_skill") if (config.agent_config.skills_enabled) else None
                     )
                     sequence += 1
                     store.save(
@@ -1713,22 +2102,7 @@ class TraceFixRunner:
                 self._attach_docker_memory(agent, config, run_dir, docker_backend)
             if docker_backend is not None:
                 docker_backend.set_phase("agent_running")
-            agent_task = config.task
-            if config.test_target:
-                agent_task += (
-                    f"\n\n指定公开测试：pytest -q {config.test_target}。"
-                    "请先运行，修改后重跑并检查 Diff。"
-                )
-            if config.regression_targets:
-                agent_task += (
-                    "\n\n结束前强制验收目标（不可修改或删除）：\n"
-                    + "\n".join(
-                        f"- pytest -q {target}" for target in
-                        (config.test_target, *config.regression_targets)
-                    )
-                    + "\n系统将在你提交最终答复前运行全部目标；失败时会提供结果并允许继续修复。"
-                )
-            state = agent.run(agent_task)
+            state = agent.run(config.task)
         except KeyboardInterrupt:
             state = agent.state if agent is not None else state
             state.status = AgentStatus.INTERRUPTED
@@ -1755,9 +2129,7 @@ class TraceFixRunner:
                     try:
                         close_llm()
                     except Exception as exc:
-                        cleanup_errors.append(
-                            (self._serialize_error(exc), "llm_cleanup_error")
-                        )
+                        cleanup_errors.append((self._serialize_error(exc), "llm_cleanup_error"))
             if docker_backend is not None:
                 try:
                     if docker_backend.session is None:
@@ -1898,7 +2270,8 @@ class TraceFixRunner:
                         config.docker_profile == "ordinary"
                         or (
                             state.status is AgentStatus.COMPLETED
-                            and error is None and bool(changed_files)
+                            and error is None
+                            and bool(changed_files)
                         )
                     )
                 )
@@ -1915,11 +2288,13 @@ class TraceFixRunner:
                     error = dict(result.error)
                     error.setdefault("cleanup_errors", []).append(cleanup_error)
                     stop_reason = result.stop_reason
-                result = result.model_copy(update={
-                    "status": AgentStatus.FAILED,
-                    "stop_reason": stop_reason,
-                    "error": error,
-                })
+                result = result.model_copy(
+                    update={
+                        "status": AgentStatus.FAILED,
+                        "stop_reason": stop_reason,
+                        "error": error,
+                    }
+                )
                 result_path.write_text(result.model_dump_json(indent=2), encoding="utf-8")
         if config.conversation_enabled:
             result = self._record_dialogue_result(run_dir, result)
@@ -1966,8 +2341,12 @@ class TraceFixRunner:
 
     @classmethod
     def _prepare_regression_baseline(
-        cls, config: RunConfig, source: Path, run_dir: Path,
-        sink: JSONLTraceSink, run_id: str,
+        cls,
+        config: RunConfig,
+        source: Path,
+        run_dir: Path,
+        sink: JSONLTraceSink,
+        run_id: str,
     ) -> dict[str, str]:
         """Record each declared target against an isolated, frozen source checkout."""
         from tracefix.messages import ToolCall
@@ -2017,26 +2396,37 @@ class TraceFixRunner:
                     name="run_tests",
                     arguments={"command": f"pytest -q {shlex.quote(target)}"},
                 )
-                sink.write(TraceEvent(
-                    event_type=TraceEventType.VALIDATION_BASELINE_STARTED,
-                    task_id=run_id,
-                    step=0,
-                    payload={"target": target, "call_id": call.id, "origin": "validation_baseline"},
-                ))
-                result = RunTestsTool(
-                    checkout,
-                    default_timeout_seconds=min(
-                        120.0, float(config.agent_config.wall_time_seconds)
-                    ),
-                    python_executable=config.test_python_executable,
-                    pythonpath_entries=config.test_pythonpath_entries,
-                    pytest_config=(
-                        config.environment_recipe.pytest_config
-                        if config.environment_recipe is not None else None
-                    ),
-                    environment_variables=config.test_environment_variables,
-                    evidence_dir=evidence_root / str(index),
-                ).execute(call).model_dump(mode="json")
+                sink.write(
+                    TraceEvent(
+                        event_type=TraceEventType.VALIDATION_BASELINE_STARTED,
+                        task_id=run_id,
+                        step=0,
+                        payload={
+                            "target": target,
+                            "call_id": call.id,
+                            "origin": "validation_baseline",
+                        },
+                    )
+                )
+                result = (
+                    RunTestsTool(
+                        checkout,
+                        default_timeout_seconds=min(
+                            120.0, float(config.agent_config.wall_time_seconds)
+                        ),
+                        python_executable=config.test_python_executable,
+                        pythonpath_entries=config.test_pythonpath_entries,
+                        pytest_config=(
+                            config.environment_recipe.pytest_config
+                            if config.environment_recipe is not None
+                            else None
+                        ),
+                        environment_variables=config.test_environment_variables,
+                        evidence_dir=evidence_root / str(index),
+                    )
+                    .execute(call)
+                    .model_dump(mode="json")
+                )
             output = result.get("output") if isinstance(result.get("output"), dict) else {}
             if result.get("success") is True and output.get("test_status") == "passed":
                 status = "passed"
@@ -2049,15 +2439,19 @@ class TraceFixRunner:
                 status = "failed"
             else:
                 status = "incomplete"
-            sink.write(TraceEvent(
-                event_type=TraceEventType.VALIDATION_BASELINE_COMPLETED,
-                task_id=run_id,
-                step=0,
-                payload={
-                    "target": target, "call_id": result.get("call_id"),
-                    "status": status, "origin": "validation_baseline",
-                },
-            ))
+            sink.write(
+                TraceEvent(
+                    event_type=TraceEventType.VALIDATION_BASELINE_COMPLETED,
+                    task_id=run_id,
+                    step=0,
+                    payload={
+                        "target": target,
+                        "call_id": result.get("call_id"),
+                        "status": status,
+                        "origin": "validation_baseline",
+                    },
+                )
+            )
             if status == "incomplete":
                 progress = {
                     "schema_version": 1,
@@ -2072,13 +2466,20 @@ class TraceFixRunner:
                 )
                 raise WorkspaceError(
                     "regression baseline could not be verified",
-                    context={"target": target, "test": result,
-                             "diagnostic_path": str(run_dir / "validation-baseline-progress.json")},
+                    context={
+                        "target": target,
+                        "test": result,
+                        "diagnostic_path": str(run_dir / "validation-baseline-progress.json"),
+                    },
                 )
             rows.append({"target": target, "status": status, "test": result})
             (run_dir / "validation-baseline-progress.json").write_text(
-                json.dumps({"schema_version": 1, "targets": rows, "complete": False},
-                           ensure_ascii=False, indent=2), encoding="utf-8"
+                json.dumps(
+                    {"schema_version": 1, "targets": rows, "complete": False},
+                    ensure_ascii=False,
+                    indent=2,
+                ),
+                encoding="utf-8",
             )
         payload = {
             "schema_version": 1,

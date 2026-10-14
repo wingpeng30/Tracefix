@@ -11,7 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field, JsonValue, model_validator
 
 from tracefix.agent.presentation import ToolPresentationConfig, ToolPresentationMetrics
 from tracefix.context import ContextConfig, ContextManager, ContextMetrics
-from tracefix.messages import MessageHistory
+from tracefix.messages import Message, MessageHistory
 from tracefix.models.base import BaseLLM
 from tracefix.repository import RepoMapConfig
 from tracefix.tools.base import ToolRegistry
@@ -153,6 +153,10 @@ class BaseAgent(ABC):
         self.history = MessageHistory()
         self.state = AgentState()
         self.context_manager = ContextManager(self.config.context.model_copy(deep=True))
+        # Host adapters may freeze low-trust context and issue a direct-user receipt before run.
+        # The core only consumes Message values; it does not query memory or other stores.
+        self.initial_context_messages: tuple[Message, ...] = ()
+        self.initial_user_receipt: dict[str, object] | None = None
 
     def reset(self) -> None:
         """重置单次任务状态，同时保留模型、工具和追踪器依赖。"""

@@ -45,18 +45,30 @@ class MinimalAgent(BaseAgent):
     persist_terminal_checkpoint: bool = False
 
     _RECOVERY_FIELDS = (
-        "_failed_apply_calls", "_invalid_test_signatures", "_consecutive_apply_failures",
-        "_patch_recovery_reminder_sent", "_no_effect_patch_reminder_sent",
-        "_last_patch_failure_reason", "_no_effect_patch_targets",
-        "_repeated_no_effect_patch_signature", "_fresh_read_required_for_patch",
-        "_fresh_target_reads", "_tests_passed", "_diff_nonempty",
-        "_finish_reminder_sent", "_unverified_finish_reminder_sent",
-        "_repo_map_candidate_reads", "_exploration_reminder_sent",
-        "_patch_action_reminder_sent", "_budget_guidance_sent",
+        "_failed_apply_calls",
+        "_invalid_test_signatures",
+        "_consecutive_apply_failures",
+        "_patch_recovery_reminder_sent",
+        "_no_effect_patch_reminder_sent",
+        "_last_patch_failure_reason",
+        "_no_effect_patch_targets",
+        "_repeated_no_effect_patch_signature",
+        "_fresh_read_required_for_patch",
+        "_fresh_target_reads",
+        "_tests_passed",
+        "_diff_nonempty",
+        "_finish_reminder_sent",
+        "_unverified_finish_reminder_sent",
+        "_repo_map_candidate_reads",
+        "_exploration_reminder_sent",
+        "_patch_action_reminder_sent",
+        "_budget_guidance_sent",
         "_late_targeted_retrievals",
         "_last_test_evidence",
         "_validation_gate_attempted_sha",
-        "_context_session_state", "_force_context_compaction", "_last_task_fact_digest",
+        "_context_session_state",
+        "_force_context_compaction",
+        "_last_task_fact_digest",
     )
 
     def checkpoint_payload(self) -> dict[str, Any]:
@@ -90,7 +102,13 @@ class MinimalAgent(BaseAgent):
             self.state.validation_status = "unverified"
             self._append_task_fact()
 
-    def resume(self, payload: dict[str, Any], *, message: str | None = None) -> AgentState:
+    def resume(
+        self,
+        payload: dict[str, Any],
+        *,
+        message: str | None = None,
+        user_input_receipt: dict[str, object] | None = None,
+    ) -> AgentState:
         """Continue a previously validated local checkpoint without resetting history."""
         from tracefix.messages import MessageHistory
 
@@ -112,10 +130,14 @@ class MinimalAgent(BaseAgent):
         self._visible_tool_result_ids = set()
         self._task_id = str(payload["task_id"])
         self._started_monotonic = time.monotonic() - float(payload["active_seconds"])
-        self._presenter = ToolResultPresenter(self.config.presentation.model_copy(
-            update={"enabled": self.config.presentation.enabled
-                    and self._feature_enabled(self.config.tool_result_presentation_enabled)}
-        ))
+        self._presenter = ToolResultPresenter(
+            self.config.presentation.model_copy(
+                update={
+                    "enabled": self.config.presentation.enabled
+                    and self._feature_enabled(self.config.tool_result_presentation_enabled)
+                }
+            )
+        )
         self.state.status = AgentStatus.RUNNING
         self.state.finished_at = None
         self.state.stop_reason = None
@@ -142,8 +164,15 @@ class MinimalAgent(BaseAgent):
             self.state.validation_gate_status = None
             self.state.validation_gate_results = []
             self.state.memory_status = {}
-            self._append_message(Message(role=MessageRole.USER, content=message,
-                                         metadata={"turn": self.state.turn_number}))
+            metadata: dict[str, Any] = {"turn": self.state.turn_number}
+            message_id = uuid4().hex
+            if user_input_receipt is not None:
+                self._validate_host_receipt(user_input_receipt, message, self.state.turn_number)
+                metadata["trusted_user_input_receipt"] = user_input_receipt
+                message_id = str(user_input_receipt["message_id"])
+            self._append_message(
+                Message(id=message_id, role=MessageRole.USER, content=message, metadata=metadata)
+            )
             self._emit(TraceEventType.TURN_STARTED, {"turn": self.state.turn_number})
             if self.checkpoint_callback is not None:
                 self.checkpoint_callback(self)
@@ -160,9 +189,7 @@ class MinimalAgent(BaseAgent):
         self._patch_recovery_reminder_sent = False
         self._no_effect_patch_reminder_sent = False
         self._last_patch_failure_reason: str | None = None
-        self._no_effect_patch_targets: dict[
-            str, dict[str, tuple[tuple[int, int], ...] | None]
-        ] = {}
+        self._no_effect_patch_targets: dict[str, dict[str, tuple[tuple[int, int], ...] | None]] = {}
         self._repeated_no_effect_patch_signature: str | None = None
         self._fresh_read_required_for_patch = False
         self._fresh_target_reads: dict[str, list[tuple[int, int, int, bool]]] = {}
@@ -235,7 +262,7 @@ class MinimalAgent(BaseAgent):
             self._emit(TraceEventType.TASK_STARTED, {"task": task})
             self._emit_state()
             self._append_message(
-            Message(role=MessageRole.SYSTEM, content=self.config.system_prompt)
+                Message(role=MessageRole.SYSTEM, content=self.config.system_prompt)
             )
         if not resume and self.config.skills_enabled:
             catalog = self.tools.skill_catalog
@@ -287,20 +314,40 @@ class MinimalAgent(BaseAgent):
                 {"chars": len(self.repository_map)},
             )
         if not resume and getattr(self, "validation_targets", ()):
-            self._append_message(Message(
-                role=MessageRole.SYSTEM,
-                content=(
-                    "TraceFix 验收契约：必须保留并通过原测试目标与以下已有回归目标；"
-                    "不得修改测试来规避失败。自动结束前验收失败时，按工具反馈继续修复。\n"
-                    + "\n".join(
-                        f"- {target}" for target in
-                        (self.configured_original_target, *self.validation_targets)
-                    )
-                ),
-                metadata={"kind": "validation_gate_contract"},
-            ))
+            self._append_message(
+                Message(
+                    role=MessageRole.SYSTEM,
+                    content=(
+                        "TraceFix 验收契约：必须保留并通过原测试目标与以下已有回归目标；"
+                        "不得修改测试来规避失败。自动结束前验收失败时，按工具反馈继续修复。\n"
+                        + "\n".join(
+                            f"- {target}"
+                            for target in (
+                                self.configured_original_target,
+                                *self.validation_targets,
+                            )
+                        )
+                    ),
+                    metadata={"kind": "validation_gate_contract"},
+                )
+            )
         if not resume:
-            self._append_message(Message(role=MessageRole.USER, content=task))
+            for context_message in self.initial_context_messages:
+                self._append_message(context_message)
+        if not resume:
+            metadata: dict[str, Any] = {"turn": self.state.turn_number}
+            message_id = uuid4().hex
+            if self.initial_user_receipt is not None:
+                self._validate_host_receipt(
+                    self.initial_user_receipt,
+                    task,
+                    self.state.turn_number,
+                )
+                metadata["trusted_user_input_receipt"] = self.initial_user_receipt
+                message_id = str(self.initial_user_receipt["message_id"])
+            self._append_message(
+                Message(id=message_id, role=MessageRole.USER, content=task, metadata=metadata)
+            )
         if not resume and self.checkpoint_callback is not None:
             self.checkpoint_callback(self)
 
@@ -471,10 +518,14 @@ class MinimalAgent(BaseAgent):
                 self._add_usage_dict(usage)
             else:
                 self.state.cost_complete = False
-            self.state.usage_complete = all(
-                type(usage.get(key)) is int and usage[key] >= 0
-                for key in ("input_tokens", "output_tokens", "total_tokens")
-            ) if isinstance(usage, dict) else False
+            self.state.usage_complete = (
+                all(
+                    type(usage.get(key)) is int and usage[key] >= 0
+                    for key in ("input_tokens", "output_tokens", "total_tokens")
+                )
+                if isinstance(usage, dict)
+                else False
+            )
             raise
         except Exception:
             # A timed-out request may already have reached the provider and incurred cost.
@@ -485,16 +536,32 @@ class MinimalAgent(BaseAgent):
         self._add_usage(response.usage)
         if self.state.turn_number > 1 and response.message.tool_calls:
             # Provider IDs can restart in a new process; historical calls remain globally unique.
-            calls = tuple(call.model_copy(update={
-                "id": f"turn-{self.state.turn_number}-{call.id}",
-            }) for call in response.message.tool_calls)
-            response = response.model_copy(update={"message": response.message.model_copy(update={
-                "tool_calls": calls,
-                "metadata": {**response.message.metadata, "provider_call_ids": {
-                    saved.id: original.id for saved, original in
-                    zip(calls, response.message.tool_calls, strict=True)
-                }},
-            })})
+            calls = tuple(
+                call.model_copy(
+                    update={
+                        "id": f"turn-{self.state.turn_number}-{call.id}",
+                    }
+                )
+                for call in response.message.tool_calls
+            )
+            response = response.model_copy(
+                update={
+                    "message": response.message.model_copy(
+                        update={
+                            "tool_calls": calls,
+                            "metadata": {
+                                **response.message.metadata,
+                                "provider_call_ids": {
+                                    saved.id: original.id
+                                    for saved, original in zip(
+                                        calls, response.message.tool_calls, strict=True
+                                    )
+                                },
+                            },
+                        }
+                    )
+                }
+            )
         self._append_message(response.message)
         self._emit_model_response(response, model_duration_seconds)
 
@@ -510,9 +577,8 @@ class MinimalAgent(BaseAgent):
             raise budget_error
 
         if not response.message.tool_calls:
-            if (
-                getattr(self, "validation_targets", ())
-                and not self._finish_through_validation_gate(response.message.content or "")
+            if getattr(self, "validation_targets", ()) and not self._finish_through_validation_gate(
+                response.message.content or ""
             ):
                 return
             if (
@@ -556,11 +622,15 @@ class MinimalAgent(BaseAgent):
                         count = self._invalid_test_signatures.get(signature, 0) + 1
                         self._invalid_test_signatures[signature] = count
                         self.state.rejected_test_calls += 1
-                        self._emit(TraceEventType.TEST_CALL_REJECTED, {
-                            "call_id": call.id, "reason": exc.message,
-                            "same_call_count": count,
-                            "total_count": self.state.rejected_test_calls,
-                        })
+                        self._emit(
+                            TraceEventType.TEST_CALL_REJECTED,
+                            {
+                                "call_id": call.id,
+                                "reason": exc.message,
+                                "same_call_count": count,
+                                "total_count": self.state.rejected_test_calls,
+                            },
+                        )
                         if count >= 3 or self.state.rejected_test_calls >= 6:
                             raise TestLimitExceeded("invalid test call limit exceeded") from exc
                         result = ToolResult(
@@ -580,11 +650,17 @@ class MinimalAgent(BaseAgent):
                                 "limit": self.config.max_test_runs,
                             },
                         )
+
                     def record_test_start(call_id: str = call.id) -> None:
                         self.state.test_runs += 1
-                        self._emit(TraceEventType.TEST_PROCESS_STARTED, {
-                            "call_id": call_id, "test_runs": self.state.test_runs,
-                        })
+                        self._emit(
+                            TraceEventType.TEST_PROCESS_STARTED,
+                            {
+                                "call_id": call_id,
+                                "test_runs": self.state.test_runs,
+                            },
+                        )
+
                     if prepare is not None:
                         tool.on_process_started = record_test_start
                 result = self._execute_tool(call)
@@ -660,16 +736,19 @@ class MinimalAgent(BaseAgent):
         specs = self.tools.specs()
         if not self.config.context.enabled or not self.config.context.agent_tool_enabled:
             return specs
-        return (*specs, ToolSpec(
-            name="compact_context",
-            description="在当前工具批次结束后主动压缩旧上下文。",
-            input_schema={
-                "type": "object",
-                "properties": {"reason": {"type": "string", "maxLength": 280}},
-                "required": [],
-                "additionalProperties": False,
-            },
-        ))
+        return (
+            *specs,
+            ToolSpec(
+                name="compact_context",
+                description="在当前工具批次结束后主动压缩旧上下文。",
+                input_schema={
+                    "type": "object",
+                    "properties": {"reason": {"type": "string", "maxLength": 280}},
+                    "required": [],
+                    "additionalProperties": False,
+                },
+            ),
+        )
 
     def _count_context_tokens(self, messages, tools):
         counter = getattr(self.llm, "count_input_bound", None)
@@ -687,29 +766,29 @@ class MinimalAgent(BaseAgent):
             "latest_test": self._last_test_evidence,
             "validation_status": self.state.validation_status,
         }
-        serialized = json.dumps(
-            fact, ensure_ascii=False, sort_keys=True, separators=(",", ":")
-        )
+        serialized = json.dumps(fact, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
         digest = hashlib.sha256(serialized.encode("utf-8")).hexdigest()
         if digest == self._last_task_fact_digest:
             return
-        self._append_message(Message(
-            role=MessageRole.USER,
-            content=json.dumps(
-                {
-                    "source": "TraceFix tool evidence",
-                    "trust": "untrusted_observation_data",
-                    "fact": json.loads(serialized),
+        self._append_message(
+            Message(
+                role=MessageRole.USER,
+                content=json.dumps(
+                    {
+                        "source": "TraceFix tool evidence",
+                        "trust": "untrusted_observation_data",
+                        "fact": json.loads(serialized),
+                    },
+                    ensure_ascii=False,
+                    sort_keys=True,
+                ),
+                metadata={
+                    "kind": "task_fact_anchor",
+                    "trust_level": "untrusted_observation_data",
+                    "fact_sha256": digest,
                 },
-                ensure_ascii=False,
-                sort_keys=True,
-            ),
-            metadata={
-                "kind": "task_fact_anchor",
-                "trust_level": "untrusted_observation_data",
-                "fact_sha256": digest,
-            },
-        ))
+            )
+        )
         self._last_task_fact_digest = digest
 
     def _finish_through_validation_gate(self, candidate: str) -> bool:
@@ -721,9 +800,14 @@ class MinimalAgent(BaseAgent):
             self.state.validation_gate_status = "failed"
             self.state.validation_gate_results = []
             message = "自动验收未运行：当前补丁为空。"
-            self._emit(TraceEventType.VALIDATION_GATE_COMPLETED, {
-                "status": "failed", "source_sha256": source_sha, "reason": "empty_patch",
-            })
+            self._emit(
+                TraceEventType.VALIDATION_GATE_COMPLETED,
+                {
+                    "status": "failed",
+                    "source_sha256": source_sha,
+                    "reason": "empty_patch",
+                },
+            )
             self._finish(AgentStatus.INTERRUPTED, "validation_gate_failed")
             self.state.final_output = f"{candidate}\n\n{message}".strip()
             return False
@@ -738,10 +822,13 @@ class MinimalAgent(BaseAgent):
         self._validation_gate_attempted_sha = source_sha
         self.state.validation_gate_status = "incomplete"
         self.state.validation_gate_results = []
-        self._emit(TraceEventType.VALIDATION_GATE_STARTED, {
-            "source_sha256": source_sha,
-            "targets": [self.configured_original_target, *self.validation_targets],
-        })
+        self._emit(
+            TraceEventType.VALIDATION_GATE_STARTED,
+            {
+                "source_sha256": source_sha,
+                "targets": [self.configured_original_target, *self.validation_targets],
+            },
+        )
         if self.checkpoint_callback is not None:
             self.checkpoint_callback(self)
 
@@ -754,7 +841,8 @@ class MinimalAgent(BaseAgent):
                 result = self._execute_validation_test(target)
                 output = result.output if isinstance(result.output, dict) else {}
                 passed = (
-                    result.success is True and output.get("test_status") == "passed"
+                    result.success is True
+                    and output.get("test_status") == "passed"
                     and output.get("returncode") == 0
                 )
                 counts = output.get("test_counts")
@@ -800,30 +888,35 @@ class MinimalAgent(BaseAgent):
         except AgentLimitExceeded:
             self.state.validation_gate_status = "incomplete"
             self.state.validation_status = "unverified"
-            self._emit(TraceEventType.VALIDATION_GATE_COMPLETED, {
-                "status": "incomplete", "source_sha256": source_sha,
-                "results": outcomes,
-            })
+            self._emit(
+                TraceEventType.VALIDATION_GATE_COMPLETED,
+                {
+                    "status": "incomplete",
+                    "source_sha256": source_sha,
+                    "results": outcomes,
+                },
+            )
             raise
 
         accepted_outcomes = {"passed", "preserved", "fixed"}
         passed = all(
-            row["status"] == "passed" and row["outcome"] in accepted_outcomes
-            for row in outcomes
+            row["status"] == "passed" and row["outcome"] in accepted_outcomes for row in outcomes
         )
         incomplete = any(
-            row["status"] == "incomplete" or row["outcome"] == "incomplete"
-            for row in outcomes
+            row["status"] == "incomplete" or row["outcome"] == "incomplete" for row in outcomes
         )
         self.state.validation_gate_status = (
             "passed" if passed else "incomplete" if incomplete else "failed"
         )
         self.state.validation_status = "verified" if passed else "unverified"
-        self._emit(TraceEventType.VALIDATION_GATE_COMPLETED, {
-            "status": self.state.validation_gate_status,
-            "source_sha256": source_sha,
-            "results": outcomes,
-        })
+        self._emit(
+            TraceEventType.VALIDATION_GATE_COMPLETED,
+            {
+                "status": self.state.validation_gate_status,
+                "source_sha256": source_sha,
+                "results": outcomes,
+            },
+        )
         if passed:
             self.state.final_output = candidate
             return True
@@ -833,11 +926,13 @@ class MinimalAgent(BaseAgent):
             json.dumps(outcomes, ensure_ascii=False, indent=2),
             "各目标的完整 pytest 输出与审计文件位于轨迹记录的 evidence 路径。",
         ]
-        self._append_message(Message(
-            role=MessageRole.USER,
-            content="\n\n".join(feedback),
-            metadata={"kind": "validation_gate_feedback", "source_sha256": source_sha},
-        ))
+        self._append_message(
+            Message(
+                role=MessageRole.USER,
+                content="\n\n".join(feedback),
+                metadata={"kind": "validation_gate_feedback", "source_sha256": source_sha},
+            )
+        )
         if self.checkpoint_callback is not None:
             self.checkpoint_callback(self)
         return False
@@ -855,14 +950,20 @@ class MinimalAgent(BaseAgent):
             name=ReservedToolName.RUN_TESTS.value,
             arguments={"command": f"pytest -q {shlex.quote(target)}"},
         )
-        self._append_message(Message(
-            role=MessageRole.ASSISTANT,
-            tool_calls=(call,),
-            metadata={"origin": "validation_gate"},
-        ))
-        self._emit(TraceEventType.TOOL_CALLED, {
-            "call": call.model_dump(mode="json"), "origin": "validation_gate",
-        })
+        self._append_message(
+            Message(
+                role=MessageRole.ASSISTANT,
+                tool_calls=(call,),
+                metadata={"origin": "validation_gate"},
+            )
+        )
+        self._emit(
+            TraceEventType.TOOL_CALLED,
+            {
+                "call": call.model_dump(mode="json"),
+                "origin": "validation_gate",
+            },
+        )
         tool = self.tools.get(call.name)
         prepare = getattr(tool, "prepare", None)
         process_started = False
@@ -871,10 +972,14 @@ class MinimalAgent(BaseAgent):
             nonlocal process_started
             process_started = True
             self.state.test_runs += 1
-            self._emit(TraceEventType.TEST_PROCESS_STARTED, {
-                "call_id": call.id, "test_runs": self.state.test_runs,
-                "origin": "validation_gate",
-            })
+            self._emit(
+                TraceEventType.TEST_PROCESS_STARTED,
+                {
+                    "call_id": call.id,
+                    "test_runs": self.state.test_runs,
+                    "origin": "validation_gate",
+                },
+            )
 
         if prepare is not None:
             prepare(call)
@@ -882,9 +987,11 @@ class MinimalAgent(BaseAgent):
         result = self._execute_tool(call, origin="validation_gate", emit_call=False)
         if not process_started:
             record_start()
-        result = result.model_copy(update={
-            "metadata": {**result.metadata, "origin": "validation_gate"},
-        })
+        result = result.model_copy(
+            update={
+                "metadata": {**result.metadata, "origin": "validation_gate"},
+            }
+        )
         self._append_tool_result(result)
         self._check_time_budget()
         return result
@@ -894,22 +1001,29 @@ class MinimalAgent(BaseAgent):
     ) -> ToolResult:
         """执行一个工具；可恢复错误会被转换成结构化失败结果。"""
         if emit_call:
-            self._emit(TraceEventType.TOOL_CALLED, {
-                "call": call.model_dump(mode="json"),
-                **({"origin": origin} if origin else {}),
-            })
+            self._emit(
+                TraceEventType.TOOL_CALLED,
+                {
+                    "call": call.model_dump(mode="json"),
+                    **({"origin": origin} if origin else {}),
+                },
+            )
         started = time.monotonic()
         signature = self._tool_signature(call)
 
         if call.name == "compact_context":
             if not self.config.context.enabled:
                 return ToolResult(
-                    call_id=call.id, tool_name=call.name, success=False,
+                    call_id=call.id,
+                    tool_name=call.name,
+                    success=False,
                     error="context compaction is disabled",
                 )
             self._force_context_compaction = True
             result = ToolResult(
-                call_id=call.id, tool_name=call.name, success=True,
+                call_id=call.id,
+                tool_name=call.name,
+                success=True,
                 output={"status": "queued", "reason": call.arguments.get("reason", "")},
                 metadata={"compaction_scheduled": True},
                 duration_ms=(time.monotonic() - started) * 1000,
@@ -1207,8 +1321,8 @@ class MinimalAgent(BaseAgent):
                 normalized_requested_path = requested_path.replace("\\", "/")
                 if normalized_requested_path in self.repository_candidates:
                     self._repo_map_candidate_reads.add(normalized_requested_path)
-                    self.state.repo_map_candidate_reads = (
-                        self.state.turn_start_repo_reads + len(self._repo_map_candidate_reads)
+                    self.state.repo_map_candidate_reads = self.state.turn_start_repo_reads + len(
+                        self._repo_map_candidate_reads
                     )
                     # Repo Map 候选被读到只是一条定位证据，不强行切换阶段；模型仍可在
                     # 后续测试反馈下补读调用方，避免过早补丁导致准确率下降。
@@ -1340,10 +1454,7 @@ class MinimalAgent(BaseAgent):
                 existing = ranges.get(old_path)
                 if existing is not None:
                     existing.append((first, last))
-        return {
-            path: None if not spans else tuple(spans)
-            for path, spans in ranges.items()
-        }
+        return {path: None if not spans else tuple(spans) for path, spans in ranges.items()}
 
     @staticmethod
     def _path_key(path: str) -> str:
@@ -1376,8 +1487,7 @@ class MinimalAgent(BaseAgent):
     def _invalidate_no_effect_target_read_cache(self, signature: str) -> None:
         """A cached pre-failure read cannot satisfy recovery or hide a new read."""
         targets = {
-            self._path_key(path)
-            for path in self._no_effect_patch_targets.get(signature, {})
+            self._path_key(path) for path in self._no_effect_patch_targets.get(signature, {})
         }
         for cached_signature in tuple(self._successful_tool_cache):
             tool_name, separator, encoded = cached_signature.partition(":")
@@ -1404,8 +1514,10 @@ class MinimalAgent(BaseAgent):
             reasons.append("模型探索步骤已达到软上限")
         if self.state.search_calls - self.state.turn_start_searches >= self.config.max_search_calls:
             reasons.append("搜索调用已达到软上限")
-        if (self.state.file_read_calls - self.state.turn_start_reads
-                >= self.config.max_file_reads_before_patch):
+        if (
+            self.state.file_read_calls - self.state.turn_start_reads
+            >= self.config.max_file_reads_before_patch
+        ):
             reasons.append("补丁前文件读取已达到软上限")
         if not reasons:
             return
@@ -1555,8 +1667,10 @@ class MinimalAgent(BaseAgent):
         full_result_presented = (
             isinstance(presented_payload, dict)
             and presented_payload.get("output") == model_result.output
-            and result.tool_name in {
-                ReservedToolName.READ_FILE.value, ReservedToolName.SEARCH_CODE.value,
+            and result.tool_name
+            in {
+                ReservedToolName.READ_FILE.value,
+                ReservedToolName.SEARCH_CODE.value,
             }
         )
         self.state.presentation_metrics.add(original, presented)
@@ -1700,6 +1814,17 @@ class MinimalAgent(BaseAgent):
         self.history.append(message)
         self._emit(TraceEventType.MESSAGE_ADDED, {"message": message.model_dump(mode="json")})
 
+    @staticmethod
+    def _validate_host_receipt(receipt: dict[str, object], content: str, turn: int) -> None:
+        expected_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
+        if (
+            receipt.get("issuer") != "tracefix-host-v1"
+            or not isinstance(receipt.get("message_id"), str)
+            or receipt.get("turn") != turn
+            or receipt.get("content_sha256") != expected_hash
+        ):
+            raise AgentError("host user input receipt does not match the direct request")
+
     def _emit_model_response(self, response: LLMResponse, duration_seconds: float) -> None:
         """记录规范化后的模型响应与用量，不重复写入原始供应商响应。"""
         self._emit(
@@ -1721,8 +1846,11 @@ class MinimalAgent(BaseAgent):
         if status is AgentStatus.COMPLETED and self.experience_callback is not None:
             self.experience_callback(self)
             self.state.finished_at = datetime.now(UTC)
-        if (status is AgentStatus.COMPLETED and self.checkpoint_callback is not None
-                and (self.experience_callback is not None or self.persist_terminal_checkpoint)):
+        if (
+            status is AgentStatus.COMPLETED
+            and self.checkpoint_callback is not None
+            and (self.experience_callback is not None or self.persist_terminal_checkpoint)
+        ):
             self.checkpoint_callback(self)
         self._emit_state()
         self._emit(TraceEventType.TASK_FINISHED, {"state": self.state.model_dump(mode="json")})

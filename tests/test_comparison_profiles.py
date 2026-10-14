@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import io
 import json
+import os
 import subprocess
 from pathlib import Path
 from types import SimpleNamespace
@@ -368,6 +369,11 @@ def test_new_prepare_and_process_reentry(tmp_path, monkeypatch):
     results = campaign.run(root, max_trials=2)
     assert len(results) == 2 and all(r["passed"] for r in results)
     before = file_sha(root / "requests.json")
+    environment = os.environ.copy()
+    source_root = str(Path(__file__).resolve().parents[1] / "src")
+    environment["PYTHONPATH"] = os.pathsep.join(
+        item for item in (source_root, environment.get("PYTHONPATH", "")) if item
+    )
     completed = subprocess.run(
         [
             sys.executable,
@@ -382,6 +388,7 @@ def test_new_prepare_and_process_reentry(tmp_path, monkeypatch):
         capture_output=True,
         encoding="utf-8",
         check=False,
+        env=environment,
     )
     assert completed.returncode == 0, completed.stderr
     assert file_sha(root / "requests.json") == before

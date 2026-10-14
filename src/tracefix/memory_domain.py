@@ -8,9 +8,44 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from enum import StrEnum
-from typing import Protocol
+from typing import Any, Protocol
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+
+class FrozenDict(dict):
+    """JSON-serializable mapping that rejects mutation at every nested level."""
+
+    def __init__(self, value: Mapping[str, Any] | None = None) -> None:
+        dict.__init__(self, ((key, _deep_freeze(item)) for key, item in (value or {}).items()))
+
+    @staticmethod
+    def _reject(*_args: object, **_kwargs: object) -> None:
+        raise TypeError("immutable memory snapshot")
+
+    __setitem__ = _reject
+    __delitem__ = _reject
+    clear = _reject
+    pop = _reject
+    popitem = _reject
+    setdefault = _reject
+    update = _reject
+    __ior__ = _reject
+
+    def __deepcopy__(self, _memo: dict[int, object]) -> FrozenDict:
+        return self
+
+
+def _deep_freeze(value: Any) -> Any:
+    if isinstance(value, FrozenDict):
+        return value
+    if isinstance(value, Mapping):
+        return FrozenDict(value)
+    if isinstance(value, list | tuple):
+        return tuple(_deep_freeze(item) for item in value)
+    if isinstance(value, set | frozenset):
+        return frozenset(_deep_freeze(item) for item in value)
+    return value
 
 
 class KnowledgeKind(StrEnum):
@@ -62,6 +97,11 @@ class SourceSnapshot(BaseModel):
     environment_sha256: str | None = None
     patch_sha256: str | None = None
 
+    @field_validator("files", mode="after")
+    @classmethod
+    def freeze_files(cls, value: dict[str, str | None]) -> FrozenDict:
+        return FrozenDict(value)
+
 
 class SourceApplicability(BaseModel):
     """Evidence preconditions for one knowledge version; absent hashes mean unbound."""
@@ -73,6 +113,40 @@ class SourceApplicability(BaseModel):
     dependency_sha256: str | None = None
     environment_sha256: str | None = None
     patch_sha256: str | None = None
+
+    @field_validator("files", mode="after")
+    @classmethod
+    def freeze_files(cls, value: dict[str, str]) -> FrozenDict:
+        return FrozenDict(value)
+
+
+class EvidenceSnapshot(BaseModel):
+    """Bounded, immutable evidence projection prepared before a memory request."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    schema_version: int = 1
+    source_sha256: str
+    latest_test: dict[str, Any] | None = None
+    tool_results: dict[str, dict[str, Any]] = Field(default_factory=dict)
+    calls: dict[str, dict[str, Any]] = Field(default_factory=dict)
+    call_order: tuple[str, ...] = ()
+    trusted_user_inputs: tuple[dict[str, Any], ...] = ()
+    source_citations: tuple[dict[str, Any], ...] = ()
+    truncated_tool_results: int = Field(default=0, ge=0)
+    truncated_user_inputs: int = Field(default=0, ge=0)
+
+    @field_validator(
+        "latest_test",
+        "tool_results",
+        "calls",
+        "trusted_user_inputs",
+        "source_citations",
+        mode="after",
+    )
+    @classmethod
+    def freeze_evidence(cls, value: Any) -> Any:
+        return _deep_freeze(value)
 
 
 class ApplicabilityResult(BaseModel):
@@ -114,11 +188,18 @@ class RecallItem(BaseModel):
     record_id: str
     key: str
     version: int = Field(ge=1)
+    kind: KnowledgeKind
     content: dict[str, object]
     evidence: EvidenceLevel
     applicability: ApplicabilityResult
+    source_applicability: SourceApplicability | None = None
     score: int = Field(ge=0)
     reasons: tuple[str, ...] = ()
+
+    @field_validator("content", mode="after")
+    @classmethod
+    def freeze_content(cls, value: dict[str, object]) -> FrozenDict:
+        return FrozenDict(value)
 
 
 class RecallBundle(BaseModel):
@@ -138,7 +219,15 @@ class RepositoryIdentityResolver(Protocol):
     def resolve(self, repository: object) -> RepositoryIdentity: ...
 
 
+class SourceView(Protocol):
+    """Read-only access to approved regular source files under one repository root."""
+
+    def read_bytes(self, relative_path: str) -> bytes | None: ...
+
+
 class SourceSnapshotProvider(Protocol):
+    resolver: RepositoryIdentityResolver
+
     def snapshot(
         self,
         repository: object,
@@ -161,12 +250,23 @@ class ApplicabilityEvaluator(Protocol):
 
 
 class MemoryStore(Protocol):
-    def list(self) -> dict[str, object]: ...
+    def list(self) -> Mapping[str, object]: ...
+
+    def recall_bundle(self, task: str) -> RecallBundle: ...
+
+    def disable(self, key: str) -> None: ...
+
+    def rollback(self, key: str, version: int) -> None: ...
 
 
 class RecallMaterializer(Protocol):
-    def materialize(self, items: Sequence[RecallItem], *, repository_id: str,
-                    checkout_id: str) -> RecallBundle: ...
+    def materialize(
+        self,
+        *,
+        task: str,
+        records: Sequence[tuple[str, int, dict[str, object]]],
+        current: SourceSnapshot,
+    ) -> RecallBundle: ...
 
 
 def issue_user_input_receipt(message_id: str, turn: int, content: str) -> TrustedUserInputReceipt:
@@ -180,8 +280,9 @@ def issue_user_input_receipt(message_id: str, turn: int, content: str) -> Truste
     )
 
 
-def validate_user_input_receipt(receipt: TrustedUserInputReceipt, *, message_id: str,
-                                turn: int, content: str) -> bool:
+def validate_user_input_receipt(
+    receipt: TrustedUserInputReceipt, *, message_id: str, turn: int, content: str
+) -> bool:
     """Check receipt binding; a USER role alone never establishes user provenance."""
     expected = issue_user_input_receipt(message_id, turn, content)
     return receipt == expected

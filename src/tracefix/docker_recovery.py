@@ -18,6 +18,7 @@ def tool_identity(specs) -> str:
     Pydantic versions emit numeric schema bounds as either 1 or 1.0. JSON Schema
     treats these numbers identically; every key and actual numeric value remains bound.
     """
+
     def normalize(value):
         if isinstance(value, float) and value.is_integer():
             return int(value)
@@ -28,8 +29,11 @@ def tool_identity(specs) -> str:
         return value
 
     data = [spec.model_dump(mode="json") for spec in specs]
-    return hashlib.sha256(json.dumps(normalize(data), sort_keys=True, ensure_ascii=False,
-                                    allow_nan=False).encode("utf-8")).hexdigest()
+    return hashlib.sha256(
+        json.dumps(normalize(data), sort_keys=True, ensure_ascii=False, allow_nan=False).encode(
+            "utf-8"
+        )
+    ).hexdigest()
 
 
 def owned_file(root: Path, name: str) -> Path:
@@ -54,9 +58,13 @@ def validate_batch(root: Path, snapshot: dict, *, sequence: int, image_id: str) 
     if snapshot.get("schema_version") != 1 or snapshot.get("sequence") != sequence:
         raise CheckpointError("Docker checkpoint batch sequence changed")
     batch = snapshot.get("batch_id")
-    if (not isinstance(batch, str) or len(batch) != 41
-            or batch[:8] != f"{sequence:08d}" or batch[8] != "-"
-            or any(char not in "0123456789abcdef" for char in batch[9:])):
+    if (
+        not isinstance(batch, str)
+        or len(batch) != 41
+        or batch[:8] != f"{sequence:08d}"
+        or batch[8] != "-"
+        or any(char not in "0123456789abcdef" for char in batch[9:])
+    ):
         raise CheckpointError("invalid Docker checkpoint batch identity")
     archive = owned_file(root, snapshot["archive"])
     expected = root / "docker-checkpoints" / f"{batch}.tar"
@@ -81,8 +89,12 @@ def validate_batch(root: Path, snapshot: dict, *, sequence: int, image_id: str) 
             raise CheckpointError("Docker test evidence changed")
     journal = owned_file(root, "tool-events.jsonl").read_bytes()
     size = snapshot["journal_size"]
-    if (not isinstance(size, int) or size < 0 or size > len(journal)
-            or hashlib.sha256(journal[:size]).hexdigest() != snapshot["journal_sha256"]):
+    if (
+        not isinstance(size, int)
+        or size < 0
+        or size > len(journal)
+        or hashlib.sha256(journal[:size]).hexdigest() != snapshot["journal_sha256"]
+    ):
         raise CheckpointError("Docker journal prefix changed")
     pending = {}
     for line in journal.splitlines():
@@ -105,8 +117,15 @@ def validate_batch(root: Path, snapshot: dict, *, sequence: int, image_id: str) 
             raise CheckpointError("uncommitted Docker tool batch after checkpoint")
 
 
-def inspect_session(root: Path, manifest: dict, config, *, implementation_sha256: str,
-                    config_sha256: str, for_continue: bool = False) -> dict:
+def inspect_session(
+    root: Path,
+    manifest: dict,
+    config,
+    *,
+    implementation_sha256: str,
+    config_sha256: str,
+    for_continue: bool = False,
+) -> dict:
     """Inspect an ordinary Docker session independently of its former container."""
     from tracefix.agent import AgentState, AgentStatus, MinimalAgent
     from tracefix.checkpoint import CheckpointStore
@@ -122,16 +141,24 @@ def inspect_session(root: Path, manifest: dict, config, *, implementation_sha256
 
     reasons = []
     if not config.docker_recovery_enabled or manifest.get("checkpoint_supported") is not True:
-        return {"resumable": False, "reasons": ["Docker recovery was not enabled"],
-                "run": str(root)}
+        return {
+            "resumable": False,
+            "reasons": ["Docker recovery was not enabled"],
+            "run": str(root),
+        }
     identity = manifest["identity"]
-    actual = dict(identity, implementation_sha256=implementation_sha256,
-                  config_sha256=config_sha256)
+    actual = dict(
+        identity, implementation_sha256=implementation_sha256, config_sha256=config_sha256
+    )
     map_file = root / "repo-map.json"
-    repo_map = RepoMap.model_validate_json(map_file.read_text(encoding="utf-8")) \
-        if map_file.is_file() else None
+    repo_map = (
+        RepoMap.model_validate_json(map_file.read_text(encoding="utf-8"))
+        if map_file.is_file()
+        else None
+    )
     actual["repo_map_sha256"] = hashlib.sha256(
-        (repo_map.text if repo_map else "").encode("utf-8")).hexdigest()
+        (repo_map.text if repo_map else "").encode("utf-8")
+    ).hexdigest()
     store = CheckpointStore(root, identity)
     inspection = store.inspect(current_identity=actual)
     reasons.extend(inspection.reasons)
@@ -144,24 +171,39 @@ def inspect_session(root: Path, manifest: dict, config, *, implementation_sha256
         raise CheckpointError("Docker batch tool identity disagrees with session")
     validate_batch(root, snapshot, sequence=checkpoint.sequence, image_id=config.docker_image_id)
     bridge = snapshot["bridge_state"]
-    if (payload["skills"] != bridge["skills"]
-            or payload["protected_dirs"] != bridge["protected_dirs"]):
+    if (
+        payload["skills"] != bridge["skills"]
+        or payload["protected_dirs"] != bridge["protected_dirs"]
+    ):
         raise CheckpointError("Agent and Docker bridge state disagree")
     protected = bridge["protected_dirs"]
-    if (not isinstance(protected, list) or not all(isinstance(name, str) for name in protected)
-            or ".tracefix-build-tmp" not in protected
-            or not set(protected).issubset({".tracefix-build-tmp", ".tracefix-test-tmp"})):
+    if (
+        not isinstance(protected, list)
+        or not all(isinstance(name, str) for name in protected)
+        or ".tracefix-build-tmp" not in protected
+        or not set(protected).issubset({".tracefix-build-tmp", ".tracefix-test-tmp"})
+    ):
         raise CheckpointError("invalid Docker protected directory identity")
-    definitions = [tool._SPEC.model_copy(deep=True) for tool in (
-        SearchCodeTool, ReadFileTool, ApplyPatchTool, RunTestsTool, GetGitDiffTool,
-    )]
+    definitions = [
+        tool._SPEC.model_copy(deep=True)
+        for tool in (
+            SearchCodeTool,
+            ReadFileTool,
+            ApplyPatchTool,
+            RunTestsTool,
+            GetGitDiffTool,
+        )
+    ]
     skill = None
-    if config.agent_config.skills_enabled or config.memory_enabled:
+    if config.agent_config.skills_enabled:
         from tracefix.tools.skills import SkillActivationTool
 
-        skill_root = root / "experience-skills" if config.memory_enabled else config.skills_root
-        skill = (SkillActivationTool(root=skill_root, limits=config.agent_config.skill_limits)
-                 if skill_root else SkillActivationTool(limits=config.agent_config.skill_limits))
+        skill_root = config.skills_root
+        skill = (
+            SkillActivationTool(root=skill_root, limits=config.agent_config.skill_limits)
+            if skill_root
+            else SkillActivationTool(limits=config.agent_config.skill_limits)
+        )
         definitions.append(skill.spec)
     tool_sha = tool_identity(definitions)
     if tool_sha != identity["tool_sha256"]:
@@ -183,8 +225,11 @@ def inspect_session(root: Path, manifest: dict, config, *, implementation_sha256
     ):
         reasons.append("checkpoint runtime memory is incomplete")
     fact = runtime_memory.get("_last_test_evidence") if isinstance(runtime_memory, dict) else None
-    if (isinstance(fact, dict) and fact.get("valid") is True
-            and fact.get("source_sha256") != diff_sha):
+    if (
+        isinstance(fact, dict)
+        and fact.get("valid") is True
+        and fact.get("source_sha256") != diff_sha
+    ):
         reasons.append("passing test does not match Docker checkpoint products")
     if not state.cost_complete or not state.usage_complete:
         reasons.append("session has unresolved model accounting")
@@ -192,19 +237,25 @@ def inspect_session(root: Path, manifest: dict, config, *, implementation_sha256
         reasons.append("session has an unresolved memory request")
     trace = owned_file(root, "trajectory.jsonl").read_bytes()
     size = payload["trace_size"]
-    if (not isinstance(size, int) or size < 0 or size > len(trace)
-            or hashlib.sha256(trace[:size]).hexdigest() != payload["trace_sha256"]):
+    if (
+        not isinstance(size, int)
+        or size < 0
+        or size > len(trace)
+        or hashlib.sha256(trace[:size]).hexdigest() != payload["trace_sha256"]
+    ):
         raise CheckpointError("Docker trajectory prefix changed")
     allowed_status = {AgentStatus.INTERRUPTED.value}
     if for_continue:
         allowed_status.add(AgentStatus.COMPLETED.value)
         if not config.conversation_enabled or manifest.get("schema_version") != 2:
             reasons.append("run is not a continuous session")
-        if (state.step_count >= config.agent_config.max_steps
-                or state.test_runs >= config.agent_config.max_test_runs
-                or state.input_tokens >= config.agent_config.max_input_tokens
-                or state.output_tokens >= config.agent_config.max_output_tokens
-                or payload["agent"]["active_seconds"] >= config.agent_config.wall_time_seconds):
+        if (
+            state.step_count >= config.agent_config.max_steps
+            or state.test_runs >= config.agent_config.max_test_runs
+            or state.input_tokens >= config.agent_config.max_input_tokens
+            or state.output_tokens >= config.agent_config.max_output_tokens
+            or payload["agent"]["active_seconds"] >= config.agent_config.wall_time_seconds
+        ):
             reasons.append("cumulative session budget exhausted")
         result_data = json.loads(owned_file(root, "result.json").read_text(encoding="utf-8"))
         if result_data.get("turn_number", 1) != state.turn_number:
@@ -212,15 +263,25 @@ def inspect_session(root: Path, manifest: dict, config, *, implementation_sha256
         if config.conversation_enabled:
             for turn in range(1, state.turn_number + 1):
                 prefix = f"turns/{turn:04d}"
-                record = json.loads(owned_file(root, f"{prefix}/latest.json").read_text(
-                    encoding="utf-8"))
+                record = json.loads(
+                    owned_file(root, f"{prefix}/latest.json").read_text(encoding="utf-8")
+                )
                 attempt = record["attempt"]
-                if (record.get("schema_version") != 1 or record.get("turn_number") != turn
-                        or not isinstance(attempt, str) or len(attempt) != 32
-                        or any(char not in "0123456789abcdef" for char in attempt)):
+                if (
+                    record.get("schema_version") != 1
+                    or record.get("turn_number") != turn
+                    or not isinstance(attempt, str)
+                    or len(attempt) != 32
+                    or any(char not in "0123456789abcdef" for char in attempt)
+                ):
                     raise CheckpointError("invalid conversation round identity")
-                required = {"patch.diff", "trajectory.jsonl", "session.json",
-                            "validation.json", "result.json"}
+                required = {
+                    "patch.diff",
+                    "trajectory.jsonl",
+                    "session.json",
+                    "validation.json",
+                    "result.json",
+                }
                 if set(record["artifacts"]) != required:
                     raise CheckpointError("incomplete conversation round artifacts")
                 for name, expected in record["artifacts"].items():
@@ -230,27 +291,44 @@ def inspect_session(root: Path, manifest: dict, config, *, implementation_sha256
     for line in trace[size:].splitlines():
         event = json.loads(line)
         if event["event_type"] not in {
-            "agent_state_changed", "task_finished", "context_prepared", "context_compacted",
+            "agent_state_changed",
+            "task_finished",
+            "context_prepared",
+            "context_compacted",
         }:
             reasons.append("uncommitted model or tool outcome after checkpoint")
-        elif event["event_type"] == "task_finished" and event.get("payload", {}).get(
-            "state", {}).get("status") not in allowed_status:
+        elif (
+            event["event_type"] == "task_finished"
+            and event.get("payload", {}).get("state", {}).get("status") not in allowed_status
+        ):
             reasons.append("run has a non-interrupted terminal event")
     result_file = root / "result.json"
-    if result_file.is_file() and json.loads(result_file.read_text(encoding="utf-8"))[
-        "status"] not in allowed_status:
+    if (
+        result_file.is_file()
+        and json.loads(result_file.read_text(encoding="utf-8"))["status"] not in allowed_status
+    ):
         reasons.append("run is not interrupted")
     try:
-        image = subprocess.run(["docker", "image", "inspect", "--format", "{{.Id}}",
-                                config.docker_image_id], capture_output=True, text=True,
-                               timeout=30, check=False)
+        image = subprocess.run(
+            ["docker", "image", "inspect", "--format", "{{.Id}}", config.docker_image_id],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+        )
     except (OSError, subprocess.TimeoutExpired) as exc:
         raise CheckpointError("Docker image inspection is unavailable") from exc
     if image.returncode or image.stdout.strip() != config.docker_image_id:
         reasons.append("saved Docker image is unavailable or changed")
-    return {"resumable": not reasons, "reasons": reasons, "run": str(root),
-            "sequence": checkpoint.sequence, "step_count": state.step_count,
-            "turn_number": state.turn_number,
-            "task": state.task, "phase": state.phase.value,
-            "validation_status": state.validation_status,
-            "workspace_diff_sha256": diff_sha}
+    return {
+        "resumable": not reasons,
+        "reasons": reasons,
+        "run": str(root),
+        "sequence": checkpoint.sequence,
+        "step_count": state.step_count,
+        "turn_number": state.turn_number,
+        "task": state.task,
+        "phase": state.phase.value,
+        "validation_status": state.validation_status,
+        "workspace_diff_sha256": diff_sha,
+    }

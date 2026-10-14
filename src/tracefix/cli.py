@@ -147,11 +147,19 @@ def _add_shared_options(parser: argparse.ArgumentParser) -> None:
     )
     parser.add_argument("--skills-max-active", type=int, help="最多激活的技能数（默认 4）")
     parser.add_argument("--skills-dir", type=Path, help="显式审核的本地 Skills 目录")
-    parser.add_argument("--memory", action="store_true", default=None,
-                        help="启用有证据的经验提炼与跨任务 Skills 记忆（默认关闭）")
+    parser.add_argument(
+        "--memory",
+        action="store_true",
+        default=None,
+        help="启用有证据的类型记忆提炼与固定召回（默认关闭）",
+    )
     parser.add_argument("--memory-dir", type=Path, help="仓库外的经验记忆根目录")
-    parser.add_argument("--docker-recovery", action="store_true", default=None,
-                        help="启用 ordinary Docker 持久化恢复检查点")
+    parser.add_argument(
+        "--docker-recovery",
+        action="store_true",
+        default=None,
+        help="启用 ordinary Docker 持久化恢复检查点",
+    )
     parser.add_argument("--skills-max-bytes", type=int, help="单个技能正文 UTF-8 字节上限")
     parser.add_argument("--skills-max-reference-bytes", type=int, help="单份参考文本字节上限")
     parser.add_argument("--skills-max-total-bytes", type=int, help="技能与参考文本累计字节上限")
@@ -187,8 +195,9 @@ def _add_shared_options(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--context-retain-ratio", type=float, help="折叠后保留近期轮次的比例")
     parser.add_argument("--context-trigger-ratio", type=float, help="按有效输入容量触发折叠的比例")
     parser.add_argument("--context-target-ratio", type=float, help="折叠后的有效输入目标比例")
-    parser.add_argument("--context-output-reserve-tokens", type=int,
-                        help="上下文窗口中为模型输出预留的 Token")
+    parser.add_argument(
+        "--context-output-reserve-tokens", type=int, help="上下文窗口中为模型输出预留的 Token"
+    )
     parser.add_argument(
         "--record-request-views",
         action="store_true",
@@ -220,11 +229,14 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     memory_parser = subparsers.add_parser("memory", help="管理仓库级经验记忆，不调用模型")
-    memory_parser.add_argument("operation", choices=("list", "show", "disable", "rollback"))
+    memory_parser.add_argument(
+        "operation", choices=("list", "show", "disable", "rollback", "migrate")
+    )
     memory_parser.add_argument("--repo", type=Path, required=True)
     memory_parser.add_argument("--memory-dir", type=Path, required=True)
     memory_parser.add_argument("--key")
     memory_parser.add_argument("--version", type=int)
+    memory_parser.add_argument("--dry-run", action="store_true", help="仅预览记忆迁移，不写入存储")
 
     report_parser = subparsers.add_parser("report", help="将已保存的运行渲染为离线 HTML 报告")
     report_parser.add_argument("--run", type=Path, required=True, help="运行目录或单臂复现目录")
@@ -249,7 +261,9 @@ def build_parser() -> argparse.ArgumentParser:
     run_parser.add_argument("--repo", type=Path, help="干净的本地 Git 仓库")
     run_parser.add_argument("--test-target", help="pytest 相对测试路径或 node ID")
     run_parser.add_argument(
-        "--regression-target", action="append", default=None,
+        "--regression-target",
+        action="append",
+        default=None,
         help="结束前验收的已有 pytest 路径或 node ID；可重复传入",
     )
     run_parser.add_argument("--source-import", help="必须从隔离 checkout 导入的 Python 模块")
@@ -262,7 +276,8 @@ def build_parser() -> argparse.ArgumentParser:
         help="工具执行后端；普通仓库 Docker 需配合 --docker-profile ordinary",
     )
     run_parser.add_argument(
-        "--docker-profile", choices=("frozen", "synthetic", "ordinary"),
+        "--docker-profile",
+        choices=("frozen", "synthetic", "ordinary"),
         help="Docker 契约；ordinary 使用预构建镜像而非冻结任务输入",
     )
     run_parser.add_argument("--docker-image-id", help="Docker 镜像不可变 sha256 ID")
@@ -283,7 +298,10 @@ def build_parser() -> argparse.ArgumentParser:
     _add_shared_options(run_parser)
     run_parser.set_defaults(env_file=None)
     chat_parser = subparsers.add_parser(
-        "chat", parents=[run_parser], add_help=False, help="创建或重新进入连续会话",
+        "chat",
+        parents=[run_parser],
+        add_help=False,
+        help="创建或重新进入连续会话",
     )
     chat_parser.add_argument("--run", type=Path, help="重新进入已有连续会话")
 
@@ -300,7 +318,8 @@ def build_parser() -> argparse.ArgumentParser:
     doctor_parser.add_argument("--output-dir", type=Path)
     doctor_parser.add_argument("--json", action="store_true")
     doctor_parser.add_argument(
-        "--prepare", action="store_true",
+        "--prepare",
+        action="store_true",
         help="在临时独立 checkout 中核查源码导入，不安装依赖或调用模型",
     )
 
@@ -312,7 +331,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     verify_parser.add_argument("--run", type=Path, required=True)
     verify_parser.add_argument(
-        "--regression-target", action="append", default=[],
+        "--regression-target",
+        action="append",
+        default=[],
         help="在原始与补丁 checkout 中复跑的已有相对 pytest 目标；可重复",
     )
 
@@ -817,14 +838,22 @@ def _resolve_shared(args: argparse.Namespace, *, real_issue_budget: bool = False
                     None,
                 ),
                 compaction_trigger_ratio=_number_or_default(
-                    args.context_trigger_ratio, "TRACEFIX_CONTEXT_TRIGGER_RATIO", float, 0.8,
+                    args.context_trigger_ratio,
+                    "TRACEFIX_CONTEXT_TRIGGER_RATIO",
+                    float,
+                    0.8,
                 ),
                 compaction_target_ratio=_number_or_default(
-                    args.context_target_ratio, "TRACEFIX_CONTEXT_TARGET_RATIO", float, 0.6,
+                    args.context_target_ratio,
+                    "TRACEFIX_CONTEXT_TARGET_RATIO",
+                    float,
+                    0.6,
                 ),
                 output_reserve_tokens=_number_or_default(
                     args.context_output_reserve_tokens,
-                    "TRACEFIX_CONTEXT_OUTPUT_RESERVE_TOKENS", int, 4_096,
+                    "TRACEFIX_CONTEXT_OUTPUT_RESERVE_TOKENS",
+                    int,
+                    4_096,
                 ),
                 agent_tool_enabled=(
                     args.context_agent_tool_enabled
@@ -911,10 +940,7 @@ def _print_run_result(result: Any) -> None:
     if getattr(result, "validation_gate_status", None):
         print(f"结束前任务验收: {result.validation_gate_status}")
         for item in result.validation_gate_results:
-            print(
-                f"  {item.get('target')}: {item.get('outcome')} "
-                f"({item.get('status')})"
-            )
+            print(f"  {item.get('target')}: {item.get('outcome')} ({item.get('status')})")
     if result.final_output:
         print(f"Agent: {result.final_output}")
     error = getattr(result, "error", None)
@@ -947,17 +973,36 @@ def _ordinary_settings(args: argparse.Namespace) -> dict[str, Any]:
             "model",
             "env_file",
             "skills_dir",
-            "memory", "memory_dir", "conversation", "docker_recovery",
+            "memory",
+            "memory_dir",
+            "conversation",
+            "docker_recovery",
             "mcp_serena_image_id",
-            "execution_backend", "docker_profile", "docker_image_id",
-            "max_steps", "max_input_tokens", "max_output_tokens", "wall_time_seconds",
-            "max_test_runs", "context_window_tokens", "context_trigger_tokens",
-            "context_retain_ratio", "context_trigger_ratio", "context_target_ratio",
-            "context_output_reserve_tokens", "context_agent_tool_enabled",
-            "record_request_views", "no_context_compaction",
-            "skills", "skills_max_active", "skills_max_bytes",
-            "skills_max_reference_bytes", "skills_max_total_bytes",
-            "llm_timeout_seconds", "llm_max_retries", "per_request_output_tokens",
+            "execution_backend",
+            "docker_profile",
+            "docker_image_id",
+            "max_steps",
+            "max_input_tokens",
+            "max_output_tokens",
+            "wall_time_seconds",
+            "max_test_runs",
+            "context_window_tokens",
+            "context_trigger_tokens",
+            "context_retain_ratio",
+            "context_trigger_ratio",
+            "context_target_ratio",
+            "context_output_reserve_tokens",
+            "context_agent_tool_enabled",
+            "record_request_views",
+            "no_context_compaction",
+            "skills",
+            "skills_max_active",
+            "skills_max_bytes",
+            "skills_max_reference_bytes",
+            "skills_max_total_bytes",
+            "llm_timeout_seconds",
+            "llm_max_retries",
+            "per_request_output_tokens",
         }
         unknown = set(data["run"]) - allowed
         if unknown:
@@ -1003,9 +1048,10 @@ def _ordinary_settings(args: argparse.Namespace) -> dict[str, Any]:
         ),
         "test_target": choose("test_target", args.test_target, "TRACEFIX_TEST_TARGET"),
         "regression_targets": tuple(regression_targets),
-        "max_test_runs": int(choose(
-            "max_test_runs", getattr(args, "max_test_runs", None), "TRACEFIX_MAX_TEST_RUNS"
-        ) or 8),
+        "max_test_runs": int(
+            choose("max_test_runs", getattr(args, "max_test_runs", None), "TRACEFIX_MAX_TEST_RUNS")
+            or 8
+        ),
         "source_import": choose("source_import", args.source_import, "TRACEFIX_SOURCE_IMPORT"),
         "output_dir": path_value("output_dir", args.output_dir, "TRACEFIX_OUTPUT_DIR"),
         "model_name": choose("model", args.model, "TRACEFIX_MODEL") or DEFAULT_MODEL_NAME,
@@ -1017,31 +1063,52 @@ def _ordinary_settings(args: argparse.Namespace) -> dict[str, Any]:
         "memory_dir": path_value("memory_dir", getattr(args, "memory_dir", None)),
         "conversation_enabled": choose("conversation", None),
         "docker_recovery_enabled": choose(
-            "docker_recovery", getattr(args, "docker_recovery", None)),
+            "docker_recovery", getattr(args, "docker_recovery", None)
+        ),
         "mcp_serena_image_id": choose(
-            "mcp_serena_image_id", getattr(args, "mcp_serena_image_id", None),
+            "mcp_serena_image_id",
+            getattr(args, "mcp_serena_image_id", None),
             "TRACEFIX_MCP_SERENA_IMAGE_ID",
         ),
         "execution_backend": choose(
-            "execution_backend", getattr(args, "execution_backend", None),
+            "execution_backend",
+            getattr(args, "execution_backend", None),
             "TRACEFIX_EXECUTION_BACKEND",
         ),
         "docker_profile": choose(
-            "docker_profile", getattr(args, "docker_profile", None), "TRACEFIX_DOCKER_PROFILE",
+            "docker_profile",
+            getattr(args, "docker_profile", None),
+            "TRACEFIX_DOCKER_PROFILE",
         ),
         "docker_image_id": choose(
-            "docker_image_id", getattr(args, "docker_image_id", None),
+            "docker_image_id",
+            getattr(args, "docker_image_id", None),
             "TRACEFIX_DOCKER_IMAGE_ID",
         ),
         "shared_toml": {
-            key: value for key, value in values.items()
-            if key in allowed - {
-                "repo", "task", "test_python", "test_target", "source_import",
+            key: value
+            for key, value in values.items()
+            if key
+            in allowed
+            - {
+                "repo",
+                "task",
+                "test_python",
+                "test_target",
+                "source_import",
                 "regression_targets",
-                "output_dir", "model", "env_file", "skills_dir",
-                "memory", "memory_dir", "conversation", "docker_recovery",
+                "output_dir",
+                "model",
+                "env_file",
+                "skills_dir",
+                "memory",
+                "memory_dir",
+                "conversation",
+                "docker_recovery",
                 "mcp_serena_image_id",
-                "execution_backend", "docker_profile", "docker_image_id",
+                "execution_backend",
+                "docker_profile",
+                "docker_image_id",
             }
         },
     }
@@ -1050,8 +1117,10 @@ def _ordinary_settings(args: argparse.Namespace) -> dict[str, Any]:
 def _chat_loop(runner: TraceFixRunner, run_dir: Path) -> int:
     """Read user messages only between durable rounds; EOF leaves the session on disk."""
     manifest = json.loads((run_dir / "session.json").read_text(encoding="utf-8"))
-    if (manifest.get("schema_version") != 2
-            or manifest.get("config", {}).get("conversation_enabled") is not True):
+    if (
+        manifest.get("schema_version") != 2
+        or manifest.get("config", {}).get("conversation_enabled") is not True
+    ):
         raise ValueError("已有记录不是连续会话")
     print(f"会话: {run_dir.resolve()}")
     while True:
@@ -1066,8 +1135,11 @@ def _chat_loop(runner: TraceFixRunner, run_dir: Path) -> int:
             continue
         if not message.strip():
             continue
-        result = (runner.resume(run_dir) if message.strip() == ":resume"
-                  else runner.continue_turn(run_dir, message))
+        result = (
+            runner.resume(run_dir)
+            if message.strip() == ":resume"
+            else runner.continue_turn(run_dir, message)
+        )
         _print_run_result(result)
 
 
@@ -1079,8 +1151,10 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "memory":
             from tracefix.memory import ExperienceStore
 
+            if args.dry_run and args.operation != "migrate":
+                raise ValueError("--dry-run 仅适用于 memory migrate")
             store = ExperienceStore(args.memory_dir, args.repo)
-            if args.operation != "list" and not args.key:
+            if args.operation not in {"list", "migrate"} and not args.key:
                 raise ValueError("此操作需要 --key")
             if args.operation == "list":
                 _print_json(store.list())
@@ -1088,6 +1162,8 @@ def main(argv: list[str] | None = None) -> int:
                 _print_json(store.show(args.key))
             elif args.operation == "disable":
                 store.disable(args.key)
+            elif args.operation == "migrate":
+                _print_json(store.migrate(dry_run=args.dry_run))
             else:
                 if args.version is None:
                     raise ValueError("回滚需要 --version")
@@ -1104,8 +1180,13 @@ def main(argv: list[str] | None = None) -> int:
             if args.json:
                 _print_json(inspection)
             else:
-                print("可继续对话" if inspection.get("continuable")
-                      else "可恢复" if inspection["resumable"] else "不可恢复")
+                print(
+                    "可继续对话"
+                    if inspection.get("continuable")
+                    else "可恢复"
+                    if inspection["resumable"]
+                    else "不可恢复"
+                )
                 for reason in inspection["reasons"]:
                     print(f"原因: {reason}")
             return 0 if inspection["resumable"] or inspection.get("continuable") else 2
@@ -1115,8 +1196,11 @@ def main(argv: list[str] | None = None) -> int:
             return 0 if result.status is AgentStatus.COMPLETED else 2
         if args.command == "context":
             runner = TraceFixRunner()
-            outcome = (runner.inspect_context(args.run) if args.operation == "inspect"
-                       else runner.compact_context(args.run))
+            outcome = (
+                runner.inspect_context(args.run)
+                if args.operation == "inspect"
+                else runner.compact_context(args.run)
+            )
             _print_json(outcome)
             return 0
         if args.command == "chat" and args.run is not None:
@@ -1138,7 +1222,8 @@ def main(argv: list[str] | None = None) -> int:
             return 0 if checks["ok"] else 2
         if args.command == "verify":
             verification = verify_patch(
-                args.run, regression_targets=tuple(args.regression_target),
+                args.run,
+                regression_targets=tuple(args.regression_target),
             )
             _print_json(verification)
             return 0 if verification["passed"] else 2
@@ -1541,7 +1626,9 @@ def main(argv: list[str] | None = None) -> int:
                 {
                     key: settings[key]
                     for key in (
-                        "test_python_executable", "output_dir", "skills_root",
+                        "test_python_executable",
+                        "output_dir",
+                        "skills_root",
                         "mcp_serena_image_id",
                     )
                     if settings[key] is not None
@@ -1550,8 +1637,10 @@ def main(argv: list[str] | None = None) -> int:
             shared.update(
                 {
                     "execution_backend": settings["execution_backend"] or "docker",
-                    "docker_profile": settings["docker_profile"] or (
-                        "ordinary" if (settings["execution_backend"] or "docker") == "docker"
+                    "docker_profile": settings["docker_profile"]
+                    or (
+                        "ordinary"
+                        if (settings["execution_backend"] or "docker") == "docker"
                         else "frozen"
                     ),
                     "docker_image_id": settings["docker_image_id"],
@@ -1559,7 +1648,8 @@ def main(argv: list[str] | None = None) -> int:
                     "memory_enabled": settings["memory_enabled"] or False,
                     "memory_dir": settings["memory_dir"],
                     "conversation_enabled": args.command == "chat"
-                    or settings["conversation_enabled"] or False,
+                    or settings["conversation_enabled"]
+                    or False,
                     "docker_task_id": args.docker_task_id,
                     "docker_input_root": args.docker_input_root
                     if (settings["execution_backend"] or "docker") == "docker"

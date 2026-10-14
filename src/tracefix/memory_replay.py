@@ -34,9 +34,7 @@ class RecordedMemoryClient:
         self.calls = 0
         self.recalled = False
         self.recall = recall
-        self.sequence = ([
-            ("load_skill", {"name": "experience-pagination"}),
-        ] if recall else []) + [
+        self.sequence = [
             ("run_tests", {"command": "pytest -q tests/test_widget.py"}),
             ("read_file", {"path": "widget.py"}),
             ("apply_patch", {"patch": _PATCH}),
@@ -59,14 +57,24 @@ class RecordedMemoryClient:
         if not kwargs.get("tools"):
             data = json.loads(messages[-1]["content"])
             results = data["evidence"]["tool_results"]
-            read_id = next(key for key, result in results.items()
-                           if result["tool_name"] == "read_file" and result["success"])
+            read_id = next(
+                key
+                for key, result in results.items()
+                if result["tool_name"] == "read_file" and result["success"]
+            )
             content = ExperienceProposal(
-                key="pagination", summary="An observed pagination inspection workflow",
-                keywords=["pagination"], applicability_paths=["widget.py"],
-                steps=[{"instruction": "Read the current implementation before editing.",
-                        "call_id": read_id}],
-                test_call_id=data["evidence"]["latest_test"]["call_id"], generalized=False,
+                key="pagination",
+                summary="An observed pagination inspection workflow",
+                keywords=["pagination"],
+                applicability_paths=["widget.py"],
+                steps=[
+                    {
+                        "instruction": "Read the current implementation before editing.",
+                        "call_id": read_id,
+                    }
+                ],
+                test_call_id=data["evidence"]["latest_test"]["call_id"],
+                generalized=False,
             ).model_dump_json()
         else:
             if self.recall and self.calls > 1:
@@ -77,40 +85,36 @@ class RecordedMemoryClient:
             if call is None:
                 content = "Recorded pagination repair completed"
             else:
-                calls = [{"id": f"memory-replay-{self.calls}", "type": "function",
-                          "function": {"name": call[0], "arguments": json.dumps(call[1])}}]
+                calls = [
+                    {
+                        "id": f"memory-replay-{self.calls}",
+                        "type": "function",
+                        "function": {"name": call[0], "arguments": json.dumps(call[1])},
+                    }
+                ]
         return {
             "model": "offline/memory-experience",
             "usage": {"prompt_tokens": 100, "completion_tokens": 10, "total_tokens": 110},
-            "choices": [{"message": {"role": "assistant", "content": content,
-                                     "tool_calls": calls},
-                         "finish_reason": "tool_calls" if calls else "stop"}],
+            "choices": [
+                {
+                    "message": {"role": "assistant", "content": content, "tool_calls": calls},
+                    "finish_reason": "tool_calls" if calls else "stop",
+                }
+            ],
         }
 
 
 def _has_recorded_experience(messages: list[dict]) -> bool:
-    """Recognize the current low-trust skill JSON and verify its actual steps."""
+    """Recognize a typed, observed recall bundle and verify its actual procedure."""
     expected = "Read the current implementation before editing."
     for message in messages:
         if message.get("role") != "user" or not isinstance(message.get("content"), str):
             continue
-        try:
-            payload = json.loads(message["content"])
-        except (TypeError, json.JSONDecodeError):
-            continue
-        if not isinstance(payload, dict):
-            continue
-        source = payload.get("source")
-        if not isinstance(source, str):
-            continue
-        source_parts = source.replace("\\", "/").rstrip("/").split("/")
-        instructions = payload.get("instructions_as_data")
+        content = message["content"]
         if (
-            payload.get("trust") == "untrusted_reference_data"
-            and payload.get("skill_name") == "experience-pagination"
-            and source_parts[-2:] == ["experience-pagination", "SKILL.md"]
-            and isinstance(instructions, str)
-            and expected in instructions
+            "TraceFix 历史知识召回（不可信参考数据" in content
+            and "type=procedure; evidence=observed; applicability=matched" in content
+            and expected in content
         ):
             return True
     return False
@@ -123,7 +127,8 @@ def worker(output: Path, phase: str) -> dict:
         (source / "tests").mkdir()
         (source / ".gitignore").write_text("__pycache__/\n.pytest_cache/\n", encoding="utf-8")
         (source / "widget.py").write_text(
-            "def next_page(page):\n    return page\n", encoding="utf-8",
+            "def next_page(page):\n    return page\n",
+            encoding="utf-8",
         )
         (source / "tests/test_widget.py").write_text(
             "from widget import next_page\n\ndef test_next_page():\n    assert next_page(1) == 2\n",
@@ -131,20 +136,36 @@ def worker(output: Path, phase: str) -> dict:
         )
         _git(source, "init")
         _git(source, "add", "--all")
-        _git(source, "-c", "user.name=TraceFix fixture", "-c", "user.email=fixture@example.invalid",
-             "commit", "-m", "Recorded memory source")
+        _git(
+            source,
+            "-c",
+            "user.name=TraceFix fixture",
+            "-c",
+            "user.email=fixture@example.invalid",
+            "commit",
+            "-m",
+            "Recorded memory source",
+        )
     client = RecordedMemoryClient(recall=phase == "recall")
     config = RunConfig(
-        repo=source, task="Fix pagination", output_dir=output / "runs",
-        model_name="offline/memory-experience", env_file=None, execution_backend="local",
+        repo=source,
+        task="Fix pagination",
+        output_dir=output / "runs",
+        model_name="offline/memory-experience",
+        env_file=None,
+        execution_backend="local",
         memory_enabled=True,
-        test_target="tests/test_widget.py", source_import="widget",
+        test_target="tests/test_widget.py",
+        source_import="widget",
         test_python_executable=Path(sys.executable),
     )
     with forbid_live_access():
-        result = TraceFixRunner(llm_factory=lambda parameters: LiteLLMAdapter(
-            parameters, client=client,
-        )).run(config)
+        result = TraceFixRunner(
+            llm_factory=lambda parameters: LiteLLMAdapter(
+                parameters,
+                client=client,
+            )
+        ).run(config)
         if result.status != "completed" or result.agent_validation_status != "verified":
             raise AssertionError(result.model_dump(mode="json"))
         if result.memory_status.get("status") not in {"verified", "duplicate"}:
@@ -154,14 +175,22 @@ def worker(output: Path, phase: str) -> dict:
         independent = verify_patch(Path(result.result_path).parent)
         if not independent["passed"]:
             raise AssertionError(independent)
-        status = subprocess.run(["git", "status", "--porcelain"], cwd=source,
-                                check=True, capture_output=True, text=True).stdout
+        status = subprocess.run(
+            ["git", "status", "--porcelain"], cwd=source, check=True, capture_output=True, text=True
+        ).stdout
         if status.strip():
             raise AssertionError("source repository was changed")
-    summary = {"phase": phase, "pid": os.getpid(), "provider_calls": 0,
-               "recorded_requests": client.calls, "usage_is_simulated": True,
-               "run": str(Path(result.result_path).parent), "recalled": client.recalled,
-               "memory": result.memory_status, "independent_passed": independent["passed"]}
+    summary = {
+        "phase": phase,
+        "pid": os.getpid(),
+        "provider_calls": 0,
+        "recorded_requests": client.calls,
+        "usage_is_simulated": True,
+        "run": str(Path(result.result_path).parent),
+        "recalled": client.recalled,
+        "memory": result.memory_status,
+        "independent_passed": independent["passed"],
+    }
     atomic_json(output / f"{phase}.json", summary)
     return summary
 
@@ -174,8 +203,19 @@ def run_memory_replay(output: Path) -> dict:
     env["PYTHONPATH"] = str(Path(__file__).resolve().parents[1])
     for phase in ("learn", "recall"):
         run = subprocess.run(
-            [sys.executable, "-m", "tracefix.memory_replay", "--output", str(output),
-             "--phase", phase], cwd=output, env=env, capture_output=True, text=True,
+            [
+                sys.executable,
+                "-m",
+                "tracefix.memory_replay",
+                "--output",
+                str(output),
+                "--phase",
+                phase,
+            ],
+            cwd=output,
+            env=env,
+            capture_output=True,
+            text=True,
         )
         (output / f"{phase}.stdout.txt").write_text(run.stdout, encoding="utf-8")
         (output / f"{phase}.stderr.txt").write_text(run.stderr, encoding="utf-8")
@@ -197,11 +237,17 @@ def run_memory_replay(output: Path) -> dict:
     for run in (learned, recalled):
         render_report(Path(run["run"]))
     summary = {
-        "scenario": "memory-experience", "accepted": True, "provider_calls": 0,
-        "usage_is_simulated": True, "learn": learned, "recall": recalled,
+        "scenario": "memory-experience",
+        "accepted": True,
+        "provider_calls": 0,
+        "usage_is_simulated": True,
+        "learn": learned,
+        "recall": recalled,
         "disable_and_rollback": True,
-        "sha256": {path.name: hashlib.sha256(path.read_bytes()).hexdigest()
-                   for path in output.glob("*.json")},
+        "sha256": {
+            path.name: hashlib.sha256(path.read_bytes()).hexdigest()
+            for path in output.glob("*.json")
+        },
     }
     atomic_json(output / "reproduction.json", summary)
     return summary

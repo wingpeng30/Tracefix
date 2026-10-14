@@ -13,8 +13,14 @@ from pathlib import Path, PureWindowsPath
 from tracefix.memory_domain import RepositoryIdentity, SourceSnapshot
 
 _DEPENDENCY_FILES = (
-    "pyproject.toml", "requirements.txt", "requirements.lock", "uv.lock",
-    "poetry.lock", "Pipfile.lock", "environment.yml", "conda-lock.yml",
+    "pyproject.toml",
+    "requirements.txt",
+    "requirements.lock",
+    "uv.lock",
+    "poetry.lock",
+    "Pipfile.lock",
+    "environment.yml",
+    "conda-lock.yml",
 )
 _MAX_SOURCE_FILE_BYTES = 16 * 1024 * 1024
 
@@ -26,9 +32,18 @@ def _sha256(data: bytes) -> str:
 def _safe_relative(value: str) -> bool:
     path = Path(value)
     windows = PureWindowsPath(value)
-    return bool(value.strip()) and not any(ord(char) < 32 for char in value) and not (
-        path.is_absolute() or windows.drive or windows.root or ".." in path.parts
-        or ".." in windows.parts or ".git" in path.parts or ".git" in windows.parts
+    return (
+        bool(value.strip())
+        and not any(ord(char) < 32 for char in value)
+        and not (
+            path.is_absolute()
+            or windows.drive
+            or windows.root
+            or ".." in path.parts
+            or ".." in windows.parts
+            or ".git" in path.parts
+            or ".git" in windows.parts
+        )
     )
 
 
@@ -41,13 +56,25 @@ class GitRepositoryIdentityResolver:
             raise ValueError("repository identity requires a directory")
         try:
             result = subprocess.run(
-                ["git", "rev-parse", "--git-common-dir"], cwd=root,
-                capture_output=True, text=True, encoding="utf-8", errors="replace",
-                timeout=5, check=False,
+                ["git", "rev-parse", "--show-toplevel", "--git-common-dir"],
+                cwd=root,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=5,
+                check=False,
             )
-            if result.returncode != 0 or not result.stdout.strip():
+            lines = result.stdout.splitlines()
+            if result.returncode != 0 or len(lines) != 2 or not lines[1].strip():
                 raise ValueError("not a Git worktree")
-            common = Path(result.stdout.strip())
+            top_level = Path(lines[0].strip()).resolve(strict=True)
+            if (
+                os.path.normcase(str(top_level)).casefold()
+                != os.path.normcase(str(root)).casefold()
+            ):
+                raise ValueError("repository path is nested under another worktree")
+            common = Path(lines[1].strip())
             if not common.is_absolute():
                 common = root / common
             common = common.resolve(strict=True)
@@ -57,12 +84,43 @@ class GitRepositoryIdentityResolver:
             # intentionally never consulted because they do not prove shared source identity.
             common = root
             git_backed = False
-        normalize = lambda path: os.path.normcase(str(path)).casefold()
+
+        def normalize(path: Path) -> str:
+            return os.path.normcase(str(path)).casefold()
+
         return RepositoryIdentity(
             repository_id=_sha256(normalize(common).encode("utf-8")),
             checkout_id=_sha256(normalize(root).encode("utf-8")),
             git_backed=git_backed,
         )
+
+
+class LocalSourceView:
+    """Read-only, no-follow view of bounded regular files in one checkout."""
+
+    def __init__(self, root: Path) -> None:
+        self.root = root.expanduser().resolve(strict=True)
+        if not self.root.is_dir():
+            raise ValueError("source view root must be a directory")
+
+    def read_bytes(self, relative_path: str) -> bytes | None:
+        if not _safe_relative(relative_path):
+            raise ValueError(f"unsafe source snapshot path: {relative_path}")
+        candidate = self.root / relative_path
+        current = self.root
+        for part in Path(relative_path).parts:
+            current = current / part
+            if current.is_symlink():
+                raise ValueError(f"source snapshot path contains a symbolic link: {relative_path}")
+        try:
+            resolved = candidate.resolve(strict=True)
+        except FileNotFoundError:
+            return None
+        if not resolved.is_relative_to(self.root) or not resolved.is_file():
+            return None
+        if resolved.stat().st_size > _MAX_SOURCE_FILE_BYTES:
+            raise ValueError(f"source snapshot file exceeds size limit: {relative_path}")
+        return resolved.read_bytes()
 
 
 class LocalSourceSnapshotProvider:
@@ -73,23 +131,8 @@ class LocalSourceSnapshotProvider:
 
     @staticmethod
     def _read_hash(root: Path, relative: str) -> str | None:
-        if not _safe_relative(relative):
-            raise ValueError(f"unsafe source snapshot path: {relative}")
-        candidate = root / relative
-        current = root
-        for part in Path(relative).parts:
-            current = current / part
-            if current.is_symlink():
-                raise ValueError(f"source snapshot path contains a symbolic link: {relative}")
-        try:
-            resolved = candidate.resolve(strict=True)
-        except FileNotFoundError:
-            return None
-        if not resolved.is_relative_to(root) or not resolved.is_file():
-            return None
-        if resolved.stat().st_size > _MAX_SOURCE_FILE_BYTES:
-            raise ValueError(f"source snapshot file exceeds size limit: {relative}")
-        return _sha256(resolved.read_bytes())
+        content = LocalSourceView(root).read_bytes(relative)
+        return _sha256(content) if content is not None else None
 
     def snapshot(
         self,
@@ -107,12 +150,14 @@ class LocalSourceSnapshotProvider:
         identity = self.resolver.resolve(root)
         files = {path: self._read_hash(content, path) for path in sorted(set(paths))}
         dependency_hashes = {
-            name: self._read_hash(content, name) for name in _DEPENDENCY_FILES
+            name: self._read_hash(content, name)
+            for name in _DEPENDENCY_FILES
             if (content / name).exists()
         }
         dependency_sha256 = (
             _sha256(repr(sorted(dependency_hashes.items())).encode("utf-8"))
-            if dependency_hashes else None
+            if dependency_hashes
+            else None
         )
         environment_values = {
             "implementation": sys.implementation.name,
