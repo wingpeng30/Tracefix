@@ -5,16 +5,16 @@
 
 ## 2026-10-14 Harness Foundations 实施进度
 
-按用户明确授权，正在候选分支 `codex/harness-foundations` 分阶段实施知识记忆、工具产物、
+按用户明确授权，在候选分支 `codex/harness-foundations` 分阶段实施知识记忆、工具产物、
 TaskState、统一能力策略与 Docker/Serena 组合。完整设计、逐步编码顺序和退出条件见
 [阶段实施记录](tasks/2026-10-14-harness-foundations-implementation.md)。执行顺序为 G0→G1→G2→G3→G4，
-每阶段未通过其契约和工程门前不进入下一阶段；不新增供应商付费调用，不合并、不发布。
+G0 已通过且正在进入 G1；后续阶段仍需先通过各自契约和工程门。不新增供应商付费调用，不合并、不发布。
 
 候选分支起点为 `bc8b224d0419c5acab4a0a4d2abfb92e0ff4c67e` 加经核对的24个已跟踪修改及两份维护报告；没有复制凭据、原始 runs 或临时实验夹具。导入清单及 patch 哈希保存在本机忽略目录 `runs/harness-foundations-setup-20261014`。基线提交 `f79a5c876f5eea22782b44b823b3c0bd64fde951` 已推送并触发 CI #140（run `38558772365`）。基础 Docker、ordinary Docker 和 Serena MCP jobs 成功；两套 Windows quality jobs 失败，不能进入 G1。3.11 原始工程结果为 2 个测试失败、1361 个用例，combined line+branch `18956/21064 = 89.99240410178504%`；3.12 为 1 个测试失败、1360 个用例，`18954/21064 = 89.98290922901633%`。wheel recovery smoke 两版本均发现示例没有显式选择 local backend。精确日志和产物见[本次 G0 记录](development-history.md#2026-10-14-harness-foundations-g0-首次-ci-与基线修复)。
 
-修复提交 `14046435a206cf4f38751012db37373d3fbf50f2` 已推送；源清单含707个跟踪文件，tree `97c7bbf58587ceb3d3324c2bb74e1424187e054d`，清单 SHA-256 `da1868c8c71b2cd317ba724766980fb64b911f5d0112e537dea46894ccfab583`（本机忽略目录 `runs/g0-candidate-source-manifest-1404643.json`）。该提交 CI #141（run `38562776445`）双版本全量 pytest 均为1363 passed、0 failed/error/skip；Coverage.py combined line+branch：Python 3.11 `18964/21064 = 90.03038359285985%`，Python 3.12 `18962/21064 = 90.02088872009115%`；Ruff、compileall、diff 和 editable smoke 通过。基础 Docker、ordinary Docker、Serena MCP 均通过。但两个 Python job 后续的公开任务资格及 wheel smoke 都因 `scripts/qualify_public_task.py` 构造带 regression targets 的 `RunConfig` 时未指定 local backend 而失败。现已在工作树补上该字段，并新增回归契约；资格模块22 passed、Ruff 通过。该修复未提交，CI #141 仍为失败身份；必须在后续候选提交重跑全部阶段门。G1—G4 均未开始。
+`14046435a206cf4f38751012db37373d3fbf50f2` 的失败已按归因修复。G0 实现提交 `bcb6d24ac5e173228749b51c57a8a7d944c7d144` 的 CI #142（[run 38566440638](https://github.com/wingpeng30/Tracefix/actions/runs/38566440638)）完整通过：Python 3.11.9/3.12.10 各1364 passed、0 failed/error/skip；Coverage.py combined line+branch 分别为 `18964/21064 = 90.03038359285985%` 和 `18962/21064 = 90.02088872009115%`。Ruff、compileall、diff、editable、两版独立 wheel/recovery 及零供应商公开任务资格通过；基础 Docker、ordinary Docker 和 Serena MCP 也通过。公开资格及 wheel 中三项 fixture replay 均标为 simulated、每次2个合成客户端请求、`supplier_cost=null`、上游源保持不变，没有供应商请求。Artifact 原件和 digest 已归档在开发历程。此提交有707个跟踪文件，tree `0acb7ddd4bf5cd3b03964559bf08e57693661847`，清单 SHA-256 `c01dddfa0648e2607bc3b7bf6a537cf75ee151eaca696857aca6735291afd558`（本机忽略目录 `runs/g0-candidate-source-manifest-bcb6d24.json`）。G0 阶段门已关闭；G1 现在开始，G2—G4 尚未开始。
 
-本机没有 Python 3.11，Docker daemon 未连接；Windows 沙盒会拦截 `Path.resolve(strict=True)`，因此本地工程检查使用已授权的提权进程并把临时目录放在候选 worktree 的 `runs/` 下。CI #141 的代码、测试和容器门已有产物，但后续零供应商公开任务资格和 wheel 门失败；当前 G0 修复提交待全门重验后才能退出阶段。
+本机没有 Python 3.11，Docker daemon 未连接；Windows 沙盒会拦截 `Path.resolve(strict=True)`，因此本地测试使用已授权的提权进程并把临时目录放在候选 worktree 的 `runs/` 下。G0 双 Python 和真实容器结论均来自绑定 bcb6d24 的 GitHub CI，不借用该候选分支后续文档或 G1 代码提交宣称新的 HEAD 已重跑 G0。
 
 ## 最新 harness 比较与候选改进
 

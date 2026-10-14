@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import tempfile
 import time
 from pathlib import Path, PureWindowsPath
@@ -16,6 +17,25 @@ from pydantic import BaseModel, ConfigDict, Field
 from tracefix.checkpoint import CheckpointError, ProcessLock
 from tracefix.exceptions import AgentLimitExceeded, LLMResponseFormatError, PreRequestBudgetExceeded
 from tracefix.messages import Message, MessageRole
+from tracefix.memory_domain import (
+    ApplicabilityStatus,
+    EvidenceLevel,
+    KnowledgeKind,
+    KnowledgeVersion,
+    PublicationState,
+    RecallBundle,
+    SourceApplicability,
+    TrustedUserInputReceipt,
+    issue_user_input_receipt,
+    validate_user_input_receipt,
+)
+from tracefix.memory_recall import (
+    ApplicabilityEvaluator,
+    DeterministicRecallMaterializer,
+    EvidenceVerifier,
+    render_recall_bundle,
+)
+from tracefix.memory_sources import LocalSourceSnapshotProvider
 from tracefix.tools.skills import SkillActivationTool, SkillLimits
 from tracefix.tracing import TraceEventType
 
@@ -27,6 +47,15 @@ _VERIFIED_INSTRUCTIONS = {
     "get_git_diff": "Inspect the final diff before completing the task.",
 }
 _MAX_INDEX_BYTES = 16 * 1024 * 1024
+_V1_SCHEMA_VERSION = 1
+_V2_SCHEMA_VERSION = 2
+_SOURCE_SCHEMA_KEY = "__source_schema_version"
+_LEGACY_HASH_KEY = "__legacy_sha256"
+_LEGACY_PATH_KEY = "__legacy_source_path"
+_V1_SCHEMA_VERSION = 1
+_V2_SCHEMA_VERSION = 2
+_SOURCE_SCHEMA_KEY = "__source_schema_version"
+_LEGACY_HASH_KEY = "__legacy_sha256"
 
 
 def canonical(value: Any) -> bytes:
@@ -45,6 +74,32 @@ def atomic_json(path: Path, value: Any) -> None:
     try:
         with os.fdopen(descriptor, "wb") as stream:
             stream.write(canonical(value) + b"\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, path)
+    finally:
+        Path(temporary).unlink(missing_ok=True)
+
+
+def _atomic_bytes(path: Path, value: bytes, *, prefix: str = ".memory-") -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, temporary = tempfile.mkstemp(prefix=prefix, dir=path.parent)
+    try:
+        with os.fdopen(descriptor, "wb") as stream:
+            stream.write(value)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, path)
+    finally:
+        Path(temporary).unlink(missing_ok=True)
+
+
+def _atomic_bytes(path: Path, value: bytes, *, prefix: str = ".memory-") -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, temporary = tempfile.mkstemp(prefix=prefix, dir=path.parent)
+    try:
+        with os.fdopen(descriptor, "wb") as stream:
+            stream.write(value)
             stream.flush()
             os.fsync(stream.fileno())
         os.replace(temporary, path)
@@ -77,29 +132,46 @@ class MemoryError(CheckpointError):
 
 
 class ExperienceStore:
-    """One checksummed document per repository; versions and episode receipts commit together."""
+    """Versioned, evidence-gated memory with atomic v1 migration and checkout-local recall."""
 
     def __init__(self, root: Path, repo: Path) -> None:
         self.root = root.expanduser().resolve()
         self.repo = repo.expanduser().resolve()
         if self.root.is_relative_to(self.repo):
             raise MemoryError("memory directory must be outside the source repository")
-        self.repo_id = hashlib.sha256(os.path.normcase(str(self.repo)).encode()).hexdigest()
+        self.source_provider = LocalSourceSnapshotProvider()
+        self.applicability_evaluator = ApplicabilityEvaluator()
+        self.recall_materializer = DeterministicRecallMaterializer(self.applicability_evaluator)
+        self.evidence_verifier = EvidenceVerifier()
+        self.repo_id = self.source_provider.resolver.resolve(self.repo).repository_id
+        self.legacy_repo_id = hashlib.sha256(
+            os.path.normcase(str(self.repo)).encode("utf-8")
+        ).hexdigest()
         self.directory = self.root / self.repo_id
         self.path = self.directory / "index.json"
+        self.legacy_path = self.root / self.legacy_repo_id / "index.json"
+        self.legacy_backup_path = self.directory / "index.v1.json"
 
     def _read(self) -> dict[str, Any]:
         if self.directory.is_symlink():
             raise MemoryError("memory namespace cannot be a symbolic link")
-        if not self.path.exists():
-            return {"repo_id": self.repo_id, "records": {}, "episodes": {}}
+        source_path = self.path if self.path.exists() else self.legacy_path
+        if not source_path.exists():
+            return {"repo_id": self.repo_id, "records": {}, "episodes": {},
+                    _SOURCE_SCHEMA_KEY: _V2_SCHEMA_VERSION}
         try:
-            if self.path.is_symlink() or self.path.stat().st_size > _MAX_INDEX_BYTES:
+            if source_path.is_symlink() or source_path.stat().st_size > _MAX_INDEX_BYTES:
                 raise ValueError("invalid index file")
-            envelope = json.loads(self.path.read_text(encoding="utf-8"))
+            raw = source_path.read_bytes()
+            envelope = json.loads(raw.decode("utf-8"))
             data = envelope["data"]
-            if (envelope["schema_version"] != 1 or envelope["sha256"] != digest(data)
-                    or data["repo_id"] != self.repo_id):
+            schema_version = envelope["schema_version"]
+            if (schema_version not in {_V1_SCHEMA_VERSION, _V2_SCHEMA_VERSION}
+                    or envelope["sha256"] != digest(data)
+                    or data["repo_id"] not in {
+                        self.repo_id,
+                        self.legacy_repo_id if schema_version == _V1_SCHEMA_VERSION else self.repo_id,
+                    }):
                 raise ValueError("memory identity or checksum mismatch")
             if not isinstance(data["records"], dict) or not isinstance(data["episodes"], dict):
                 raise ValueError("invalid records")
@@ -111,7 +183,7 @@ class ExperienceStore:
                     raise ValueError("missing versions")
                 if record["active"] not in (None, *range(1, len(versions) + 1)):
                     raise ValueError("invalid active version")
-                for version in versions:
+                for number, version in enumerate(versions, 1):
                     proposal = ExperienceProposal.model_validate(version["proposal"])
                     if proposal.key != key or version["status"] not in {"verified", "candidate"}:
                         raise ValueError("invalid version identity or status")
@@ -127,18 +199,130 @@ class ExperienceStore:
                             or not all(isinstance(item, dict) for item in
                                        evidence["tool_results"].values())):
                         raise ValueError("invalid evidence structure")
+                    if schema_version == _V2_SCHEMA_VERSION:
+                        knowledge = KnowledgeVersion.model_validate(version["knowledge"])
+                        expected = self._publication_for(record, version, number)
+                        if knowledge.publication is not expected:
+                            raise ValueError("knowledge publication state is inconsistent")
                 if (record["active"] is not None
                         and versions[record["active"] - 1]["status"] != "verified"):
                     raise ValueError("unverified memory cannot be active")
+            if schema_version == _V1_SCHEMA_VERSION:
+                normalized = json.loads(json.dumps(data, ensure_ascii=False))
+                normalized["repo_id"] = self.repo_id
+                for key, record in normalized["records"].items():
+                    for number, version in enumerate(record["versions"], 1):
+                        version["knowledge"] = self._legacy_knowledge(
+                            key, number, record, version,
+                        ).model_dump(mode="json")
+                normalized[_SOURCE_SCHEMA_KEY] = _V1_SCHEMA_VERSION
+                normalized[_LEGACY_HASH_KEY] = hashlib.sha256(raw).hexdigest()
+                normalized[_LEGACY_PATH_KEY] = str(source_path)
+                return normalized
+            data[_SOURCE_SCHEMA_KEY] = _V2_SCHEMA_VERSION
             return data
         except (OSError, ValueError, KeyError, TypeError) as exc:
             raise MemoryError(f"cannot verify memory store: {exc}") from exc
 
-    def _write(self, data: dict[str, Any]) -> None:
-        envelope = {"schema_version": 1, "sha256": digest(data), "data": data}
+    @staticmethod
+    def _publication_for(record: dict[str, Any], version: dict[str, Any],
+                         number: int) -> PublicationState:
+        if version.get("status") == "candidate":
+            return PublicationState.CANDIDATE
+        if record.get("active") == number:
+            return PublicationState.ACTIVE
+        if record.get("disabled_version") == number or (
+            record.get("disabled") is True and record.get("active") is None
+            and record.get("disabled_version") is None
+            and number == len(record.get("versions", []))
+        ):
+            return PublicationState.DISABLED
+        return PublicationState.SUPERSEDED
+
+    def _legacy_knowledge(self, key: str, number: int, record: dict[str, Any],
+                          version: dict[str, Any]) -> KnowledgeVersion:
+        """Read-only normalization never invents historical source hashes or trust."""
+        evidence = (EvidenceLevel.UNSUBSTANTIATED if version.get("status") == "candidate"
+                    else EvidenceLevel.SOURCE_CITED)
+        return KnowledgeVersion(
+            record_id=f"{self.repo_id}:{key}:v{number}", kind=KnowledgeKind.PROCEDURE,
+            publication=self._publication_for(record, version, number), evidence=evidence,
+            applicability=None, legacy=True,
+        )
+
+    def _sync_publication(self, record: dict[str, Any]) -> None:
+        for number, version in enumerate(record["versions"], 1):
+            knowledge_data = version.get("knowledge")
+            if not isinstance(knowledge_data, dict):
+                knowledge_data = self._legacy_knowledge(
+                    "unknown", number, record, version,
+                ).model_dump(mode="json")
+                version["knowledge"] = knowledge_data
+            knowledge_data["publication"] = self._publication_for(
+                record, version, number,
+            ).value
+
+    def _write(self, data: dict[str, Any], *, operation: str = "update") -> None:
+        source_schema = data.pop(_SOURCE_SCHEMA_KEY, _V2_SCHEMA_VERSION)
+        legacy_hash = data.pop(_LEGACY_HASH_KEY, None)
+        legacy_source_path = Path(data.pop(_LEGACY_PATH_KEY, str(self.path)))
+        if source_schema == _V1_SCHEMA_VERSION:
+            try:
+                current_raw = legacy_source_path.read_bytes()
+            except OSError as exc:
+                raise MemoryError("v1 memory changed before atomic migration") from exc
+            current_hash = hashlib.sha256(current_raw).hexdigest()
+            if current_hash != legacy_hash:
+                raise MemoryError("v1 memory changed before atomic migration")
+            if self.legacy_backup_path.exists():
+                if (self.legacy_backup_path.is_symlink()
+                        or hashlib.sha256(self.legacy_backup_path.read_bytes()).hexdigest()
+                        != legacy_hash):
+                    raise MemoryError("existing v1 preservation copy conflicts with source")
+            else:
+                _atomic_bytes(self.legacy_backup_path, current_raw, prefix=".memory-v1-")
+            data["migration_receipt"] = {
+                "from_schema": _V1_SCHEMA_VERSION, "to_schema": _V2_SCHEMA_VERSION,
+                "source_sha256": legacy_hash, "record_count": len(data.get("records", {})),
+                "operation": operation,
+            }
+        elif source_schema != _V2_SCHEMA_VERSION:
+            raise MemoryError("unsupported memory source schema")
+        for record in data.get("records", {}).values():
+            self._sync_publication(record)
+        envelope = {"schema_version": _V2_SCHEMA_VERSION, "sha256": digest(data), "data": data}
         if len(canonical(envelope)) + 1 > _MAX_INDEX_BYTES:
             raise MemoryError("memory index capacity exceeded; previous versions retained")
         atomic_json(self.path, envelope)
+
+    def migration_preview(self) -> dict[str, Any]:
+        data = self._read()
+        schema = data.get(_SOURCE_SCHEMA_KEY, _V2_SCHEMA_VERSION)
+        unknown = sorted(set(data) - {
+            "repo_id", "records", "episodes", "migration_receipt",
+            _SOURCE_SCHEMA_KEY, _LEGACY_HASH_KEY, _LEGACY_PATH_KEY,
+        })
+        return {
+            "status": "migration_required" if schema == _V1_SCHEMA_VERSION else "current",
+            "from_schema": schema, "to_schema": _V2_SCHEMA_VERSION,
+            "source_sha256": data.get(_LEGACY_HASH_KEY),
+            "record_count": len(data.get("records", {})),
+            "version_count": sum(len(record.get("versions", []))
+                                  for record in data.get("records", {}).values()),
+            "unknown_top_level_fields_preserved": unknown,
+        }
+
+    def migrate(self, *, dry_run: bool = False) -> dict[str, Any]:
+        """Normalize v1 under the repository lock; dry-run never writes."""
+        if dry_run:
+            return self.migration_preview()
+        with ProcessLock(self.directory):
+            data = self._read()
+            if data.get(_SOURCE_SCHEMA_KEY) == _V2_SCHEMA_VERSION:
+                return {"status": "already_current", **self.migration_preview()}
+            report = self.migration_preview()
+            self._write(data, operation="migrate")
+            return {**report, "status": "migrated"}
 
     def list(self) -> dict[str, Any]:
         return self._read()["records"]
@@ -154,9 +338,11 @@ class ExperienceStore:
             data = self._read()
             if key not in data["records"]:
                 raise MemoryError("unknown experience")
-            data["records"][key]["active"] = None
-            data["records"][key]["disabled"] = True
-            self._write(data)
+            record = data["records"][key]
+            record["disabled_version"] = record["active"]
+            record["active"] = None
+            record["disabled"] = True
+            self._write(data, operation="disable")
 
     def rollback(self, key: str, version: int) -> None:
         with ProcessLock(self.directory):
@@ -168,7 +354,8 @@ class ExperienceStore:
                 raise MemoryError("cannot activate an unverified experience")
             record["active"] = version
             record["disabled"] = False
-            self._write(data)
+            record["disabled_version"] = None
+            self._write(data, operation="rollback")
 
     def publish(self, episode: str, proposal: ExperienceProposal,
                 evidence: dict[str, Any], reasons: list[str]) -> dict[str, Any]:
@@ -186,7 +373,7 @@ class ExperienceStore:
                         and (reasons or previous["status"] == "verified")):
                     receipt = {"status": "duplicate", "key": proposal.key, "version": number}
                     data["episodes"][episode] = receipt
-                    self._write(data)
+                    self._write(data, operation="publish_duplicate")
                     return receipt
             if record.get("disabled", False):
                 reasons = [*reasons, "experience was explicitly disabled"]
@@ -197,49 +384,76 @@ class ExperienceStore:
                     record["active"] = None
             version = len(record["versions"]) + 1
             status = "candidate" if reasons else "verified"
+            source_snapshot_data = evidence.get("source_snapshot")
+            if isinstance(source_snapshot_data, dict):
+                from tracefix.memory_domain import SourceSnapshot
+
+                snapshot = SourceSnapshot.model_validate(source_snapshot_data)
+            else:
+                snapshot = self.source_provider.snapshot(
+                    self.repo, proposal.applicability_paths,
+                    patch_sha256=evidence.get("patch_sha256"),
+                )
+            if snapshot.identity.repository_id != self.repo_id:
+                raise MemoryError("source snapshot belongs to another logical repository")
+            file_hashes = {path: value for path, value in snapshot.files.items()
+                           if isinstance(value, str)}
+            if set(file_hashes) != set(proposal.applicability_paths):
+                raise MemoryError("source snapshot is missing an applicability file")
+            knowledge = KnowledgeVersion(
+                record_id=f"{self.repo_id}:{proposal.key}:v{version}",
+                kind=KnowledgeKind.PROCEDURE,
+                publication=(PublicationState.ACTIVE if status == "verified"
+                             and not record.get("disabled", False)
+                             else PublicationState.CANDIDATE),
+                evidence=self.evidence_verifier.verify(
+                    KnowledgeKind.PROCEDURE,
+                    {"verified_procedure": status == "verified" and not reasons},
+                ),
+                applicability=SourceApplicability(
+                    repository_id=snapshot.identity.repository_id,
+                    files=file_hashes,
+                    dependency_sha256=snapshot.dependency_sha256,
+                    environment_sha256=snapshot.environment_sha256,
+                    patch_sha256=snapshot.patch_sha256,
+                ),
+            )
             record["versions"].append({
                 "proposal": proposal.model_dump(), "content": content, "sha256": fingerprint,
                 "evidence": evidence, "evidence_sha256": digest(evidence),
                 "status": status, "reasons": reasons,
+                "knowledge": knowledge.model_dump(mode="json"),
             })
-            if not reasons:
+            if not reasons and not record.get("disabled", False):
                 record["active"] = version
+            self._sync_publication(record)
             receipt = {"status": status, "key": proposal.key, "version": version,
                        "reasons": reasons}
             data["episodes"][episode] = receipt
-            self._write(data)
+            self._write(data, operation="publish")
             return receipt
 
     def select(self, task: str) -> list[tuple[str, int, dict[str, Any]]]:
-        terms = set(re.findall(r"[\w]+", task.casefold()))
-        selected = []
-        invalid = []
-        for key, record in self.list().items():
-            number = record["active"]
-            if number is None:
-                continue
-            item = record["versions"][number - 1]
-            proposal = ExperienceProposal.model_validate(item["proposal"])
-            if validate_proposal(proposal, item["evidence"], self.repo):
-                invalid.append((key, number))
-                continue
-            if any(not safe_relative(path) or not (self.repo / path).is_file()
-                   for path in proposal.applicability_paths):
-                invalid.append((key, number))
-                continue
-            keywords = set(re.findall(r"[\w]+", " ".join(proposal.keywords).casefold()))
-            score = len(terms & keywords)
-            if score:
-                selected.append((score, key, number, item))
-        if invalid:
-            with ProcessLock(self.directory):
-                data = self._read()
-                for key, number in invalid:
-                    if data["records"][key]["active"] == number:
-                        data["records"][key]["active"] = None
-                self._write(data)
-        return [(key, number, item) for _, key, number, item in
-                sorted(selected, key=lambda entry: (-entry[0], entry[1]))[:3]]
+        return [(item.key, item.version, self.show(item.key)["versions"][item.version - 1])
+                for item in self.recall_bundle(task).items]
+
+    def recall_bundle(self, task: str) -> RecallBundle:
+        data = self._read()
+        records: list[tuple[str, int, dict[str, Any]]] = []
+        paths: set[str] = set()
+        for key, record in data["records"].items():
+            for number, item in enumerate(record["versions"], 1):
+                if not isinstance(item.get("knowledge"), dict):
+                    continue
+                knowledge = KnowledgeVersion.model_validate(item["knowledge"])
+                if knowledge.publication is PublicationState.ACTIVE:
+                    records.append((key, number, item))
+                    if knowledge.applicability is not None:
+                        paths.update(knowledge.applicability.files)
+        current = self.source_provider.snapshot(self.repo, sorted(paths))
+        return self.recall_materializer.materialize(
+            task=task, records=records, current=current,
+        )
 
     def snapshot(self, task: str, destination: Path, skills_root: Path | None = None,
                  limits: SkillLimits | None = None) -> list[dict]:

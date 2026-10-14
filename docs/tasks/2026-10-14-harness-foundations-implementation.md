@@ -16,8 +16,8 @@
 
 | 阶段 | 目标 | 状态 | 进入下一阶段的证据 |
 |---|---|---|---|
-| G0 | 固定实现起点和双版本/容器验证链 | 进行中 | 当前源码清单、定向回归与完整工程门通过、CI 运行原始产物 |
-| G1 | 来源可信、证据分级、适用性独立评估、原子 v2 迁移和固定召回快照 | 未开始 | 本节 G1 契约、故障注入、恢复用例和完整工程门 |
+| G0 | 固定实现起点和双版本/容器验证链 | 完成：提交 `bcb6d24` / CI #142 全通过 | 当前源码清单、双版本全量工程门、editable/wheel、基础/ordinary Docker 与 Serena MCP 原始产物 |
+| G1 | 来源可信、证据分级、适用性独立评估、原子 v2 迁移和固定召回快照 | 进行中 | 本节 G1 契约、故障注入、恢复用例和完整工程门 |
 | G2 | 截断前有界采集、不可变安全视图、可分页/搜索、配额可恢复 | 未开始 | 双流/坏字节/超时/磁盘配额/篡改/Docker 重建契约及完整工程门 |
 | G3 | 需求、验收、观察、假设、计划与证据引用跨压缩/恢复保留 | 未开始 | 来源伪造、测试失效、双压缩、恢复一致性与完整工程门 |
 | G4 | 所有执行受同一能力策略约束，Skills/记忆/TaskState/产物/Serena/最终回归可在 ordinary Docker 组合运行 | 未开始 | 零调用组合回放、拒绝用例、editable/wheel 与双镜像真实 CI |
@@ -46,8 +46,8 @@
 - [x] CI #141 在提交 `14046435a206cf4f38751012db37373d3fbf50f2` 上完成 Python 3.11/3.12 全量 pytest（两版各1363 passed、0 failed/error/skip）和 Coverage.py line+branch：3.11 `18964/21064 = 90.03038359285985%`，3.12 `18962/21064 = 90.02088872009115%`；原始 artifacts digest 见开发历程。
 - [x] 同一提交 CI #141 Ruff、compileall、diff、editable smoke，以及基础 Docker、ordinary Docker、Serena MCP 通过；容器结果均绑定提交1404643。
 - [x] CI #141 新发现公开任务资格与 wheel recovery 后的公开资格回放同因缺少 `execution_backend="local"` 失败；已补资格脚本 backend 和 RunConfig 回归测试，本机资格模块22 passed、Ruff通过。
-- [ ] 最新资格脚本修复候选提交重新通过 full engineering、coverage、editable、所有 public qualification/wheel smoke 和三个 Docker/MCP job；G0 首轮 f79 的低 coverage 结果与 CI #141 的资格失败记录都保留，不以它们替代下一候选提交证据。
-- [ ] 提交、推送、CI 运行 ID、原始产物位置及限制同步写入当前状态与开发历程。
+- [x] 最新资格脚本修复提交 `bcb6d24ac5e173228749b51c57a8a7d944c7d144` 的 CI #142 通过双版本 full engineering/coverage、editable、独立 wheel/recovery、公开资格和三个 Docker/MCP job；保留 f79/CI #140 与 CI #141 失败证据及归因。
+- [x] CI run `38566440638`、双版本 artifacts、三项容器 artifacts、source manifest、环境和限制已同步到当前状态与开发历程；结论只绑定 bcb6d24。
 
 ## G1：有类型、可失效的知识记忆
 
