@@ -160,6 +160,12 @@ def _add_shared_options(parser: argparse.ArgumentParser) -> None:
         default=None,
         help="启用 ordinary Docker 持久化恢复检查点",
     )
+    parser.add_argument(
+        "--harness-foundations",
+        action="store_true",
+        default=None,
+        help="启用有界工具产物与结构化任务状态等组合 harness 能力",
+    )
     parser.add_argument("--skills-max-bytes", type=int, help="单个技能正文 UTF-8 字节上限")
     parser.add_argument("--skills-max-reference-bytes", type=int, help="单份参考文本字节上限")
     parser.add_argument("--skills-max-total-bytes", type=int, help="技能与参考文本累计字节上限")
@@ -977,6 +983,7 @@ def _ordinary_settings(args: argparse.Namespace) -> dict[str, Any]:
             "memory_dir",
             "conversation",
             "docker_recovery",
+            "harness_foundations_enabled",
             "mcp_serena_image_id",
             "execution_backend",
             "docker_profile",
@@ -1065,6 +1072,11 @@ def _ordinary_settings(args: argparse.Namespace) -> dict[str, Any]:
         "docker_recovery_enabled": choose(
             "docker_recovery", getattr(args, "docker_recovery", None)
         ),
+        "harness_foundations_enabled": choose(
+            "harness_foundations_enabled",
+            getattr(args, "harness_foundations", None),
+            "TRACEFIX_HARNESS_FOUNDATIONS",
+        ),
         "mcp_serena_image_id": choose(
             "mcp_serena_image_id",
             getattr(args, "mcp_serena_image_id", None),
@@ -1105,6 +1117,7 @@ def _ordinary_settings(args: argparse.Namespace) -> dict[str, Any]:
                 "memory_dir",
                 "conversation",
                 "docker_recovery",
+                "harness_foundations_enabled",
                 "mcp_serena_image_id",
                 "execution_backend",
                 "docker_profile",
@@ -1645,6 +1658,8 @@ def main(argv: list[str] | None = None) -> int:
                     ),
                     "docker_image_id": settings["docker_image_id"],
                     "docker_recovery_enabled": settings["docker_recovery_enabled"] or False,
+                    "harness_foundations_enabled": settings["harness_foundations_enabled"]
+                    or False,
                     "memory_enabled": settings["memory_enabled"] or False,
                     "memory_dir": settings["memory_dir"],
                     "conversation_enabled": args.command == "chat"

@@ -158,7 +158,15 @@ def test_synthetic_backend_prepare_builds_skills_bridge_and_owned_state(tmp_path
     )
 
     class Bridge:
-        def __init__(self, command, _timeout, _journal_path, *, skills_enabled=False):
+        def __init__(
+            self,
+            command,
+            _timeout,
+            _journal_path,
+            *,
+            skills_enabled=False,
+            artifacts_enabled=False,
+        ):
             bridge_calls.append((command, skills_enabled))
             self.run_id = run_id
             self.tools = (load_skill,)
@@ -476,6 +484,40 @@ def test_bridge_rejects_wrong_handshake_identity(tmp_path: Path) -> None:
     code = "print('{\"type\":\"hello\",\"protocol\":2,\"tools\":[]}', flush=True)"
     with pytest.raises(WorkspaceError, match="protocol identity mismatch"):
         _BridgeSession([sys.executable, "-u", "-c", code], 1, tmp_path / "bad-hello.jsonl")
+
+
+def test_bridge_requires_exact_artifact_protocol_when_enabled(tmp_path: Path) -> None:
+    protocol = {
+        "version": 1,
+        "max_artifact_bytes": 8 * 1024 * 1024,
+        "max_run_bytes": 64 * 1024 * 1024,
+        "max_run_artifacts": 128,
+    }
+    payload = {
+        "type": "hello", "protocol": 1, "run_id": "run-1", "tools": [],
+        "artifact_protocol": protocol,
+    }
+    code = f"import json; print({json.dumps(payload)!r}, flush=True)"
+    session = _BridgeSession(
+        [sys.executable, "-u", "-c", code], 2, tmp_path / "artifact-hello.jsonl",
+        artifacts_enabled=True,
+    )
+    session.close()
+
+    payload["artifact_protocol"] = {**protocol, "max_run_bytes": 1}
+    code = f"import json; print({json.dumps(payload)!r}, flush=True)"
+    with pytest.raises(WorkspaceError, match="artifact capability negotiation failed"):
+        _BridgeSession(
+            [sys.executable, "-u", "-c", code], 2, tmp_path / "bad-artifact-hello.jsonl",
+            artifacts_enabled=True,
+        )
+
+    with pytest.raises(WorkspaceError, match="exposed artifacts while disabled"):
+        payload["artifact_protocol"] = protocol
+        code = f"import json; print({json.dumps(payload)!r}, flush=True)"
+        _BridgeSession(
+            [sys.executable, "-u", "-c", code], 2, tmp_path / "disabled-artifact-hello.jsonl",
+        )
 
 
 def test_bridge_transfers_path_free_skill_catalog_and_rejects_mismatch(tmp_path: Path) -> None:

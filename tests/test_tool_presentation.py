@@ -36,3 +36,33 @@ def test_search_match_count_is_bounded_and_raw_mode_is_lossless() -> None:
     assert compact["metadata"]["duplicate"] is True
     raw = ToolResultPresenter(ToolPresentationConfig(enabled=False)).present(result)
     assert raw == result.model_dump_json()
+
+
+def test_artifact_search_presentation_keeps_bounded_opaque_locators() -> None:
+    result = ToolResult(
+        call_id="artifact-search",
+        tool_name="search_tool_artifact",
+        success=True,
+        output={
+            "query": "needle",
+            "truncated": False,
+            "queries_remaining": 63,
+            "characters_remaining": 128_000,
+            "evidence_role": "historical_tool_output_only",
+            "hits": [
+                {
+                    "artifact": {"artifact_id": f"{index:032x}", "integrity": "verified",
+                                 "complete": True},
+                    "stream": "stderr",
+                    "offset": index * 10,
+                    "excerpt": "needle" * 1000,
+                }
+                for index in range(8)
+            ],
+        },
+    )
+    payload = json.loads(ToolResultPresenter().present(result))
+    assert len(payload["output"]["hits"]) == 6
+    assert payload["output"]["hits"][0]["artifact_id"] == "0" * 32
+    assert payload["output"]["hits"][0]["stream"] == "stderr"
+    assert len(payload["output"]["hits"][0]["excerpt"]) <= 4000

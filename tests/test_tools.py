@@ -48,6 +48,8 @@ def test_reserved_tool_names_are_stable() -> None:
         "apply_patch",
         "run_tests",
         "get_git_diff",
+        "read_tool_artifact",
+        "search_tool_artifact",
     }
 
 

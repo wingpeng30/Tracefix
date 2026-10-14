@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import subprocess
+import tempfile
 from pathlib import Path, PureWindowsPath
 
 from tracefix.checkpoint import CheckpointError
@@ -53,6 +54,63 @@ def owned_file(root: Path, name: str) -> Path:
     return current
 
 
+def validate_artifact_archive(
+    root: Path,
+    snapshot: dict,
+    *,
+    expected_run_id: str,
+    workspace: Path | None = None,
+) -> dict:
+    """Stream-validate a Docker artifact archive and all run/quota bindings."""
+    from tracefix.artifacts import MAX_ARTIFACT_ARCHIVE_BYTES, ArtifactStore
+
+    if snapshot.get("artifacts_enabled") is not True:
+        raise CheckpointError("Docker artifact archive was not enabled for this snapshot")
+    batch = snapshot.get("batch_id")
+    expected_path = f"docker-checkpoints/{batch}.artifacts.tar"
+    if snapshot.get("artifact_archive") != expected_path:
+        raise CheckpointError("Docker artifact archive belongs to another batch")
+    archive = owned_file(root, expected_path)
+    byte_count = snapshot.get("artifact_archive_bytes")
+    if (
+        type(byte_count) is not int
+        or byte_count < 0
+        or byte_count > MAX_ARTIFACT_ARCHIVE_BYTES
+        or archive.stat().st_size != byte_count
+    ):
+        raise CheckpointError("Docker artifact archive size is invalid")
+    with archive.open("rb") as stream:
+        archive_sha = hashlib.file_digest(stream, "sha256").hexdigest()
+    if archive_sha != snapshot.get("artifact_archive_sha256"):
+        raise CheckpointError("Docker artifact archive digest changed")
+    receipt = snapshot.get("artifact_receipt")
+    if (
+        not isinstance(expected_run_id, str)
+        or not expected_run_id
+        or not isinstance(receipt, dict)
+        or receipt.get("schema_version") != 1
+        or receipt.get("run_id") != expected_run_id
+    ):
+        raise CheckpointError("Docker artifact transfer receipt belongs to another run")
+    with tempfile.TemporaryDirectory(prefix="tracefix-artifact-verify-") as temporary:
+        store = ArtifactStore(
+            Path(temporary) / "store",
+            run_id=expected_run_id,
+            workspace=workspace,
+        )
+        try:
+            with archive.open("rb") as stream:
+                imported = store.import_archive(stream)
+        except (OSError, ValueError) as exc:
+            raise CheckpointError("Docker artifact archive failed content validation") from exc
+    for field in (
+        "manifest_sha256", "artifact_count", "storage_bytes", "queries", "returned_chars"
+    ):
+        if imported.get(field) != receipt.get(field):
+            raise CheckpointError("Docker artifact receipt disagrees with archive contents")
+    return imported
+
+
 def validate_batch(root: Path, snapshot: dict, *, sequence: int, image_id: str) -> None:
     """Verify all batch bindings without starting a container or constructing a model."""
     if snapshot.get("schema_version") != 1 or snapshot.get("sequence") != sequence:
@@ -81,6 +139,15 @@ def validate_batch(root: Path, snapshot: dict, *, sequence: int, image_id: str) 
     if digest(snapshot["bridge_state"]) != snapshot["bridge_state_sha256"]:
         raise CheckpointError("Docker bridge state changed")
     validate_archive(archive, snapshot["metadata"])
+    if snapshot.get("artifacts_enabled") is True:
+        if snapshot.get("run_id") != root.name:
+            raise CheckpointError("Docker artifact run identity differs from its checkpoint")
+        validate_artifact_archive(root, snapshot, expected_run_id=root.name)
+    elif any(
+        field in snapshot
+        for field in ("artifact_archive", "artifact_archive_sha256", "artifact_receipt")
+    ):
+        raise CheckpointError("disabled Docker snapshot contains artifact archive state")
     for name, expected_sha in snapshot["test_evidence"].items():
         if Path(name).name != name or "\\" in name:
             raise CheckpointError("invalid Docker test evidence path")
@@ -170,6 +237,8 @@ def inspect_session(
     if snapshot.get("tool_sha256") != identity["tool_sha256"]:
         raise CheckpointError("Docker batch tool identity disagrees with session")
     validate_batch(root, snapshot, sequence=checkpoint.sequence, image_id=config.docker_image_id)
+    if config.harness_foundations_enabled != (snapshot.get("artifacts_enabled") is True):
+        raise CheckpointError("Docker checkpoint artifact capability changed")
     bridge = snapshot["bridge_state"]
     if (
         payload["skills"] != bridge["skills"]
@@ -194,6 +263,10 @@ def inspect_session(
             GetGitDiffTool,
         )
     ]
+    if config.harness_foundations_enabled:
+        from tracefix.tools.artifacts import ReadToolArtifactTool, SearchToolArtifactTool
+
+        definitions.extend((ReadToolArtifactTool.SPEC, SearchToolArtifactTool.SPEC))
     skill = None
     if config.agent_config.skills_enabled:
         from tracefix.tools.skills import SkillActivationTool

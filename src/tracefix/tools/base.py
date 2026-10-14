@@ -14,13 +14,15 @@ from tracefix.messages import ToolCall
 
 
 class ReservedToolName(StrEnum):
-    """TraceFix 保留的五个基础工具名称。"""
+    """TraceFix 保留的宿主工具名称。"""
 
     SEARCH_CODE = "search_code"
     READ_FILE = "read_file"
     APPLY_PATCH = "apply_patch"
     RUN_TESTS = "run_tests"
     GET_GIT_DIFF = "get_git_diff"
+    READ_TOOL_ARTIFACT = "read_tool_artifact"
+    SEARCH_TOOL_ARTIFACT = "search_tool_artifact"
 
 
 RESERVED_TOOL_NAMES = frozenset(member.value for member in ReservedToolName)
