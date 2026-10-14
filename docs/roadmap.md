@@ -5,7 +5,7 @@
 
 ## 2026-10-14 Harness Foundations 实施
 
-已将[分阶段实施计划](tasks/2026-10-14-harness-foundations-implementation.md)保存到候选分支，固定 G0 基线验收、G1 类型/证据/失效记忆、G2 工具产物、G3 TaskState、G4 统一能力策略与 ordinary Docker/Serena 组合的顺序和每阶段退出门。本节状态以[固定当前入口](current-status.md)为准。候选基线 f79 的 CI #140 首轮暴露测试/示例夹具问题；提交 `14046435a206cf4f38751012db37373d3fbf50f2` 的 CI #141 双版本全量 pytest、coverage、editable 及三个 Docker/MCP job 通过，但资格/wheel smoke 揭示脚本的 local backend 遗漏。该项已在 `bcb6d24ac5e173228749b51c57a8a7d944c7d144` 修复；CI #142（[run 38566440638](https://github.com/wingpeng30/Tracefix/actions/runs/38566440638)）的双版本全量测试、90% line+branch coverage、Ruff/compile/diff、editable/wheel/recovery、公开资格以及三个 Docker/MCP job 全部通过。G0 完成，下一阶段为 G1：有类型、可失效的知识记忆。
+已将[分阶段实施计划](tasks/2026-10-14-harness-foundations-implementation.md)保存到候选分支，固定 G0 基线验收、G1 类型/证据/失效记忆、G2 工具产物、G3 TaskState、G4 统一能力策略与 ordinary Docker/Serena 组合的顺序和每阶段退出门。本节状态以[固定当前入口](current-status.md)为准。G0 在 bcb6d24 / CI #142 完成。G1 在 `d059ec269e7b19571b16cc6fe823a66f6461e2da` 完成；CI #144（[run 38596011475](https://github.com/wingpeng30/Tracefix/actions/runs/38596011475)）双 Python 全量测试、90% line+branch coverage、Ruff/compile/diff、editable/wheel/recovery、公开资格、基础 Docker、ordinary Docker 和 Serena MCP 全部通过。CI #143 的 ordinary Docker 回放曾暴露累计请求/Token 预期值陈旧；按真实轨迹修正为7次/700输入/70输出后，CI #144 对 editable 与 wheel 两种入口均完成恢复回放。用户要求完成 G1 后中断；G2—G4 仍未开始。
 
 ## 2026-10-14 harness 候选方向
 

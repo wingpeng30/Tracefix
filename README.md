@@ -6,6 +6,8 @@
 旧实验、日期化交接和旧wheel不代表当前源码全部状态。
 
 普通 Python 仓库的任务检查与恢复说明见 [docs/recovery.md](docs/recovery.md)。
+候选分支 `codex/harness-foundations` 增加了有类型、按 checkout 源码适用性召回的仓库知识记忆；
+配置、v1→v2 迁移、证据门与当前验收状态见[知识记忆说明](docs/experience-memory.md)和[当前状态](docs/current-status.md)。
 
 想在自己的受信任 Python/pytest 仓库运行？先看[普通仓库安装与使用指南](docs/ordinary-repository.md)：配置、零调用预检、隔离运行、HTML 报告和补丁导出均有可复制命令。[系统审查](docs/reviews/2026-09-28-system-review.md)列出首批能力边界。本地运行现提供确定边界的 `inspect`／`resume` 和独立公开测试复跑；[可选 Serena MCP 指南](docs/mcp-serena.md)说明隔离的只读符号查询。[普通仓库 Docker 指南](docs/ordinary-docker.md)提供预构建镜像与独立容器验证路径，其实测范围以最新 CI 证据为准；2026-09-29 已完成八次限定真实模型验收；最新结束前回归门仍以离线回放验证。范围见[证据索引](docs/evidence.md)。
 
@@ -71,6 +73,7 @@ Token 预算下，通过仓库结构检索、动态上下文和测试驱动的�
 - 3 道来自 SWE-bench Verified、gold 实际修改多个源码文件的真实 Issue 任务。
 - 确定性 Python AST Repository Indexer 与任务相关 Repo Map，先给出候选文件和符号行号。
 - 可选 Skills 目录与按需正文加载；默认关闭，首版只附带 TraceFix 审核过的只读指令。
+- 候选分支提供可选的有类型知识记忆：区分项目事实、用户决策、已验证流程和负结果，并按证据等级及源码适用性筛选；v1 存储只读兼容并在写入时迁移。
 
 ## 架构
 

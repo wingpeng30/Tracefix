@@ -4,7 +4,12 @@
 [`docs/roadmap.md`](docs/roadmap.md)、[`docs/development-history.md`](docs/development-history.md)
 开头及当前状态引用的报告。不要以文件名日期、包版本号或旧交接末尾决定当前进度。
 
-## 当前状态提示（2026-10-13）
+## 当前状态提示（2026-10-15）
+
+- 候选分支 `codex/harness-foundations` 的 G0/G1 阶段门已完成。G1 实现提交为
+  `d059ec269e7b19571b16cc6fe823a66f6461e2da`，CI #144 双 Python、editable/wheel、ordinary Docker、
+  基础 Docker 与 Serena MCP 全通过。用户要求在 G1 后中断；G2—G4 未开始。详细状态及源码清单见
+  [`docs/current-status.md`](docs/current-status.md) 和 [`docs/development-history.md`](docs/development-history.md)。
 
 - 同一30题A/B/上下文修复后C主成功为11/30、11/30、19/30；超时计失败。
   最新汇总为[`ABC横向报告`](docs/experiments/2026-10-11-abc-full30-comparison.md)，不是旧C的14/30。

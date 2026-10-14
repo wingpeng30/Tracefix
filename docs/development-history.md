@@ -1,5 +1,63 @@
 # TraceFix 开发历程与代码说明
 
+## 2026-10-15 Harness Foundations G1 有类型与来源限定记忆
+
+G1 在隔离 worktree `D:\Tracefix\runs\harness-foundations-worktree` 的 `codex/harness-foundations`
+候选分支实施；原工作区 `D:\Tracefix` 未切换、未清理。G0 验收提交 `bcb6d24` 为起点。
+记忆领域模型和存储先在 `626181a` 建立，`2ad2198` 完成 runtime/recovery 接入与契约测试，
+`d059ec269e7b19571b16cc6fe823a66f6461e2da` 修正真实 Docker 回放暴露的累计账单预期并作为最终 G1 实现提交。
+提交已推送；没有创建 PR、合并或发布。tree `1562a6408f37f1b4d4d1475471a0dc80d09c7558`，
+711 个跟踪文件；忽略目录源码清单 `runs/g1-source-manifest-d059ec2.json` 的 SHA-256 为
+`771d8ad4ad1607e889addd4def6b634cd11d35d43f7ff77782a0ab2c4d912148`。
+
+实现四类知识 `project_fact`、`decision`、`procedure`、`negative_result`，独立表示发布状态、证据等级、
+checkout 适用性。宿主签发绑定直接用户消息 ID/轮次/原文哈希的可信收据；一般 `USER` 角色、Repo Map、
+Skills、工具事实或模型文本不能取得该信任。仓库身份按可信 Git common-dir 合并 worktree，具体 checkout
+单独评估；独立 clone 不按 remote 合并。源码文件、patch、依赖清单和环境指纹分别记录。适用性按整文件
+内容进行，首版不做符号级失效。
+
+v2 保持原子 JSON/锁/版本链/冲突处理；v1 查询只读归一化，不补造历史哈希或证据。显式迁移与首次写操作
+在锁内校验 v1 原始哈希，将迁移收据和当前操作写入同一 v2 校验信封后原子发布，并保留 v1。损坏 v2、
+冲突和写入失败 fail closed。新增 `memory migrate --dry-run`。确定性自动召回只接受 active 且 evidence 为
+`observed`/`user_stated`、checkout 为 `matched` 的记录；最多3条/8 KiB，路径/错误签名/关键词权重8/4/1，
+含选择理由和失效原因。不可变 recall bundle 随运行和恢复保存，恢复不会重查活库。反思沿用现有累计预算、
+每轮一次、未知响应不重试；以有界 `EvidenceSnapshot` 作为提炼输入，失败终止任务不自动学 negative result。
+
+完整阶段门绑定 CI #144：[run 38596011475](https://github.com/wingpeng30/Tracefix/actions/runs/38596011475)，
+最终 SHA 为 `d059ec269e7b19571b16cc6fe823a66f6461e2da`，2026-10-14 16:11:57Z 启动、16:39:39Z 完成，
+结论 success。Python 3.11.9 / Windows 10.0.26100 与 Python 3.12.10 / Windows Server 2025 10.0.26100
+各1388项测试全通过，无失败、错误或跳过；Coverage.py combined line+branch 分别为
+`19979/22196 = 90.01171382231033%` 与 `19977/22196 = 90.00270318976392%`。两版 Ruff、compileall、diff-check、
+editable smoke、独立 wheel/recovery 和公开资格 smoke 均通过。对应工程 artifacts：
+Python 3.11 ID `11913175650`，digest `sha256:9bdb3fd0fb9475c18a1b2e1cbb038259fc72b7cbe899143e7772b63e74918bca`；
+Python 3.12 ID `11913017467`，digest `sha256:8c10af44c8b024dd61911a310cc41a1d9052ca65a28de1bf05c2872e07448d7c`。
+
+真实容器 jobs 均通过：基础 Docker artifact `11909926892`
+（`sha256:e407c73ebdfe001139c77a524a00ef24abd3c3380c6a5eb8ce1b4e62db7a4750`）；ordinary Docker artifact
+`11909253709`（`sha256:b4443bd4e708403912d70a9dc972b6cd2956092e47aa9b8b9d3b79879bf64e26`）；Serena MCP artifact
+`11910405082`（`sha256:8128ed606da069ef09100ea999d7853680407a8ee8b7fc2203a78f30941ebf68`）。ordinary 的 editable 与
+wheel recovery replay 各自都验证了暂停后销毁旧容器、在新容器继续、复用固定 recall bundle、运行2次 Agent
+测试并在独立容器通过3/3测试。累计为7个模型请求、700输入/70输出 token，memory 状态 `duplicate`；
+`provider_calls=0`。两个 replay 与完整 ordinary job 都成功，未产生供应商调用。
+
+CI #143（原提交 `2ad2198`）的基础 Docker 与 Serena MCP 成功；ordinary recovery 已正确暂停/恢复、重新建容器、
+固定 bundle 未变且独立测试通过，但总账单门仍沿用旧的8次/800/80预期，因此失败。artifact ID `11909427233`，
+digest `sha256:54dd7d5bcd312cf30e237233a309c7e40a23b082844c4a89b8e146c958e07d52`。逐条 trajectory 显示实际为
+6次任务请求加1次反思请求，共7次/700/70；在 `integration_replay.py` 与其正/负测试中按该记录修正，
+之后 CI #144 的 wheel 和 editable ordinary replay 均通过。
+
+本机 Python 3.11 未安装且 Docker daemon 未连接；Windows sandbox 限制 `Path.resolve(strict=True)`，
+本地命令在已授权提权进程中运行并把临时数据留在 worktree 的忽略 `runs/`。本地 G1 full engineering
+记录 `runs/g1-engineering-python312-r2/summary.json`：Python 3.12.5，1388项含1项因 `WinError 1314`
+symlink 权限跳过，0失败/错误，combined coverage `19983/22196 = 90.02973508740314%`，Ruff/compileall/diff
+通过；该次记录的 source commit 是 dirty parent `626181a`，不是最终 SHA，因此只作辅助证据，双版本正式结论
+以上述 CI #144 为准。修正后的本地 integration/memory 定向集合69 passed，修改文件 Ruff、compileall、
+diff-check通过。所有演练使用录制客户端，没有付费供应商请求。
+
+G1 阶段已完成。按用户指示在此中断，G2 工具产物、G3 TaskState、G4 能力策略与 Docker/Serena 功能组合
+均未开始。本节后续仅保存状态文档；这些文档不属于 `d059ec2` 的已验收源码 tree，也不声称新文档 HEAD
+重新跑过工程门。
+
 ## 2026-10-14 Harness Foundations G0 启动
 
 用户明确要求按阶段计划实施前四项 harness 能力。新建候选分支 `codex/harness-foundations`，

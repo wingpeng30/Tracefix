@@ -17,7 +17,7 @@
 | 阶段 | 目标 | 状态 | 进入下一阶段的证据 |
 |---|---|---|---|
 | G0 | 固定实现起点和双版本/容器验证链 | 完成：提交 `bcb6d24` / CI #142 全通过 | 当前源码清单、双版本全量工程门、editable/wheel、基础/ordinary Docker 与 Serena MCP 原始产物 |
-| G1 | 来源可信、证据分级、适用性独立评估、原子 v2 迁移和固定召回快照 | 进行中 | 本节 G1 契约、故障注入、恢复用例和完整工程门 |
+| G1 | 来源可信、证据分级、适用性独立评估、原子 v2 迁移和固定召回快照 | 完成：提交 `d059ec2` / CI #144 全部通过 | Python 3.11/3.12、editable/wheel、基础 Docker、ordinary Docker 与 Serena MCP；源码清单和 Artifact 见当前状态及开发历程 |
 | G2 | 截断前有界采集、不可变安全视图、可分页/搜索、配额可恢复 | 未开始 | 双流/坏字节/超时/磁盘配额/篡改/Docker 重建契约及完整工程门 |
 | G3 | 需求、验收、观察、假设、计划与证据引用跨压缩/恢复保留 | 未开始 | 来源伪造、测试失效、双压缩、恢复一致性与完整工程门 |
 | G4 | 所有执行受同一能力策略约束，Skills/记忆/TaskState/产物/Serena/最终回归可在 ordinary Docker 组合运行 | 未开始 | 零调用组合回放、拒绝用例、editable/wheel 与双镜像真实 CI |
@@ -79,13 +79,13 @@
 
 ### G1 退出清单
 
-- [ ] v1/v2 并发、迁移、失败原子性、disable/version/rollback 行为有测试。
-- [ ] 可信用户来源不可由 Repo Map、Skill、tool result 或模型伪造。
-- [ ] worktree-local stale 不污染兄弟 checkout；禁用不会因内容恢复而自动解除。
-- [ ] 未应用补丁的 postimage fact stale；precondition 和成功 postimage 语义分开。
-- [ ] 自动召回只包含允许等级；固定 bundle 在恢复后不随活库变化。
-- [ ] 反思预算拒绝零调用，unknown 结果不重试，local/Docker recovery 验证通过。
-- [ ] 完成双版本工程门与对应真实 Docker CI 后，才更新状态并进入 G2。
+- [x] v1/v2 并发、迁移、失败原子性、disable/version/rollback 行为有测试。
+- [x] 可信用户来源不可由 Repo Map、Skill、tool result 或模型伪造。
+- [x] worktree-local stale 不污染兄弟 checkout；禁用不会因内容恢复而自动解除。
+- [x] 未应用补丁的 postimage fact stale；precondition 和成功 postimage 语义分开。
+- [x] 自动召回只包含允许等级；固定 bundle 在恢复后不随活库变化。
+- [x] 反思预算拒绝零调用，unknown 结果不重试，local/Docker recovery 验证通过。
+- [x] 完成双版本工程门与对应真实 Docker CI；CI #144 全部通过。用户要求在 G1 后中断，故本轮不进入 G2。
 
 ## G2：可取回的工具产物
 

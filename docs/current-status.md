@@ -1,20 +1,31 @@
 # TraceFix 当前状态
 
-更新日期：2026-10-14（Asia/Shanghai）。这是新会话的固定状态入口；日期化交接、路线图条目与实验报告
+更新日期：2026-10-15（Asia/Shanghai）。这是新会话的固定状态入口；日期化交接、路线图条目与实验报告
 保留当时事实，不自动成为今天的任务。先读本页，再按用户当前请求读取对应源码和证据。
 
-## 2026-10-14 Harness Foundations 实施进度
+## 2026-10-15 Harness Foundations 实施进度
 
 按用户明确授权，在候选分支 `codex/harness-foundations` 分阶段实施知识记忆、工具产物、
 TaskState、统一能力策略与 Docker/Serena 组合。完整设计、逐步编码顺序和退出条件见
 [阶段实施记录](tasks/2026-10-14-harness-foundations-implementation.md)。执行顺序为 G0→G1→G2→G3→G4，
-G0 已通过且正在进入 G1；后续阶段仍需先通过各自契约和工程门。不新增供应商付费调用，不合并、不发布。
+G0 与 G1 阶段门已通过。用户要求完成 G1 后中断，因此 G2—G4 尚未开始；本轮不新增供应商付费调用，
+不合并、不发布。
 
-候选分支起点为 `bc8b224d0419c5acab4a0a4d2abfb92e0ff4c67e` 加经核对的24个已跟踪修改及两份维护报告；没有复制凭据、原始 runs 或临时实验夹具。导入清单及 patch 哈希保存在本机忽略目录 `runs/harness-foundations-setup-20261014`。基线提交 `f79a5c876f5eea22782b44b823b3c0bd64fde951` 已推送并触发 CI #140（run `38558772365`）。基础 Docker、ordinary Docker 和 Serena MCP jobs 成功；两套 Windows quality jobs 失败，不能进入 G1。3.11 原始工程结果为 2 个测试失败、1361 个用例，combined line+branch `18956/21064 = 89.99240410178504%`；3.12 为 1 个测试失败、1360 个用例，`18954/21064 = 89.98290922901633%`。wheel recovery smoke 两版本均发现示例没有显式选择 local backend。精确日志和产物见[本次 G0 记录](development-history.md#2026-10-14-harness-foundations-g0-首次-ci-与基线修复)。
+候选分支起点为 `bc8b224d0419c5acab4a0a4d2abfb92e0ff4c67e` 加经核对的24个已跟踪修改及两份维护报告；没有复制凭据、原始 runs 或临时实验夹具。导入清单及 patch 哈希保存在本机忽略目录 `runs/harness-foundations-setup-20261014`。基线提交 `f79a5c876f5eea22782b44b823b3c0bd64fde951` 的 CI #140 首轮失败及归因、修复后的 CI #142 通过结论，均保留在[本次 G0 记录](development-history.md#2026-10-14-harness-foundations-g0-首次-ci-与基线修复)。
 
-`14046435a206cf4f38751012db37373d3fbf50f2` 的失败已按归因修复。G0 实现提交 `bcb6d24ac5e173228749b51c57a8a7d944c7d144` 的 CI #142（[run 38566440638](https://github.com/wingpeng30/Tracefix/actions/runs/38566440638)）完整通过：Python 3.11.9/3.12.10 各1364 passed、0 failed/error/skip；Coverage.py combined line+branch 分别为 `18964/21064 = 90.03038359285985%` 和 `18962/21064 = 90.02088872009115%`。Ruff、compileall、diff、editable、两版独立 wheel/recovery 及零供应商公开任务资格通过；基础 Docker、ordinary Docker 和 Serena MCP 也通过。公开资格及 wheel 中三项 fixture replay 均标为 simulated、每次2个合成客户端请求、`supplier_cost=null`、上游源保持不变，没有供应商请求。Artifact 原件和 digest 已归档在开发历程。此提交有707个跟踪文件，tree `0acb7ddd4bf5cd3b03964559bf08e57693661847`，清单 SHA-256 `c01dddfa0648e2607bc3b7bf6a537cf75ee151eaca696857aca6735291afd558`（本机忽略目录 `runs/g0-candidate-source-manifest-bcb6d24.json`）。G0 阶段门已关闭；G1 现在开始，G2—G4 尚未开始。
+G0 实现提交 `bcb6d24ac5e173228749b51c57a8a7d944c7d144` 的 CI #142（[run 38566440638](https://github.com/wingpeng30/Tracefix/actions/runs/38566440638)）完整通过：Python 3.11.9/3.12.10 各1364 passed、0 failed/error/skip；Coverage.py combined line+branch 分别为 `18964/21064 = 90.03038359285985%` 和 `18962/21064 = 90.02088872009115%`。Ruff、compileall、diff、editable、两版独立 wheel/recovery 及零供应商公开任务资格通过；基础 Docker、ordinary Docker 和 Serena MCP 也通过。G0 Artifact 原件、digest 与基线源码清单已归档在开发历程。G0 阶段门关闭。
 
-本机没有 Python 3.11，Docker daemon 未连接；Windows 沙盒会拦截 `Path.resolve(strict=True)`，因此本地测试使用已授权的提权进程并把临时目录放在候选 worktree 的 `runs/` 下。G0 双 Python 和真实容器结论均来自绑定 bcb6d24 的 GitHub CI，不借用该候选分支后续文档或 G1 代码提交宣称新的 HEAD 已重跑 G0。
+### G1：有类型、可失效的知识记忆
+
+实现提交 `d059ec269e7b19571b16cc6fe823a66f6461e2da` 已推送到候选分支；CI #144（[run 38596011475](https://github.com/wingpeng30/Tracefix/actions/runs/38596011475)）全部成功。Windows Python 3.11.9/3.12.10 各1388项测试、0失败、0错误、0跳过；Coverage.py combined line+branch 分别为 `19979/22196 = 90.01171382231033%` 和 `19977/22196 = 90.00270318976392%`。两版 Ruff、compileall、diff、editable、独立 wheel/recovery 和零供应商公开资格 smoke 均通过；基础 Docker、ordinary Docker、Serena MCP 三个真实 CI job 通过。
+
+[有类型知识记忆](experience-memory.md)增加四类知识 DTO，分离发布状态、证据等级与 checkout 适用性；宿主签发直接用户输入收据；以 common-dir 识别 worktree 仓库并对 checkout 分别按源码、依赖和环境身份评估。v1 只读归一化，迁移收据与本次写入进入同一个 v2 原子信封，保留原 v1。自动召回只接受 `observed/user_stated` 且当前 `matched` 的 active 记录，最多3条/8 KiB，并将不可变 bundle 固定在运行与恢复历史中。反思使用有界证据快照和既有累计预算。
+
+ordinary Docker 的 editable 与 wheel 零供应商回放都通过：暂停后销毁旧容器并恢复到新容器，固定记忆 bundle 未变化；最终7次累计请求、700输入/70输出 token、2次测试，反思状态为 `duplicate`，独立容器3/3测试通过。Python 3.11/3.12、容器和 MCP Artifact ID、digest、CI #143 首轮失败的归因修正、候选源码清单与本地限制见[G1 开发记录](development-history.md#2026-10-15-harness-foundations-g1-有类型与来源限定记忆)。
+
+最终实现身份：tree `1562a6408f37f1b4d4d1475471a0dc80d09c7558`，711个跟踪文件；忽略目录源码清单 `runs/g1-source-manifest-d059ec2.json` 的 SHA-256 为 `771d8ad4ad1607e889addd4def6b634cd11d35d43f7ff77782a0ab2c4d912148`。本轮之后的文档提交只记录该已验收实现，不表示文档提交的新 HEAD 重新跑过工程门。
+
+本机没有 Python 3.11，Docker daemon 未连接；Windows 沙盒会拦截 `Path.resolve(strict=True)`，因此本地测试使用已授权的提权进程并把临时目录放在候选 worktree 的 `runs/` 下。G0 结论绑定 bcb6d24/CI #142，G1 结论绑定 d059ec2/CI #144；本地 Python 3.12.5 全工程结果是辅助证据，不代替双版本和真实容器 CI。
 
 ## 最新 harness 比较与候选改进
 
