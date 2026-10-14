@@ -9,7 +9,7 @@
 
 ### 2026-10-15 G2 工具产物实施中
 
-主实现本地提交 `1d548f562dc4867cb94c3a5b7b86a0b0d6020708`，tree `bd05732ac832f62d44852b69a3e92d4c1e49ed76`；本地修复提交 `cbe7d25918ec66be4b244fb5ae7938f4c213c096`，当前 tree `932e8e0740fefe1401abe2038fa40e12e56b6128`。新增 artifact store、同步双流采集、脱敏检索视图、读取/搜索工具、有界 archive transport、Docker recovery 导入导出，以及无 Skills 的 memory+conversation checkpoint 回归。G2 相关本地测试在修复前 300 passed；修复后两项定向 runtime 回归 passed，改动文件 Ruff/compileall/diff-check 通过。完整本机 engineering 检查没有完成；筛选式 runtime 尝试受 Windows 沙盒进程/路径限制产生 setup errors，Docker 按用户要求跳过。
+主实现本地提交 `1d548f562dc4867cb94c3a5b7b86a0b0d6020708`，tree `bd05732ac832f62d44852b69a3e92d4c1e49ed76`；本地修复提交 `cbe7d25918ec66be4b244fb5ae7938f4c213c096` 的源码 tree 为 `932e8e0740fefe1401abe2038fa40e12e56b6128`。新增 artifact store、同步双流采集、脱敏检索视图、读取/搜索工具、有界 archive transport、Docker recovery 导入导出，以及无 Skills 的 memory+conversation checkpoint 回归。G2 相关本地测试在修复前 300 passed；修复后两项定向 runtime 回归 passed，改动文件 Ruff/compileall/diff-check 通过。完整本机 engineering 检查没有完成；筛选式 runtime 尝试受 Windows 沙盒进程/路径限制产生 setup errors，Docker 按用户要求跳过。
 
 远端候选 `ca96b2f64c157a156c0d360ec66c15f842acd0df`（[CI run 38614482340](https://github.com/wingpeng30/Tracefix/actions/runs/38614482340)）验证了基础 Docker、Serena MCP 和真实 ordinary Docker artifact recovery 回放，但 ordinary editable memory-dialogue 回放因 checkpoint 错把 memory 当成已注册 Skills 而失败。修复已在 `cbe7d25` 并增加回归，但自动审查拒绝向候选 GitHub 仓库上传完整 `runtime.py`，故远端仍在旧 SHA；不通过其他途径重试。该 run 双版本 quality job 最后查询仍在执行。G2 阶段门未通过，不进入 G3。
 

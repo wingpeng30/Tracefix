@@ -29,7 +29,7 @@ ordinary Docker 的 editable 与 wheel 零供应商回放都通过：暂停后�
 
 ### G2：可取回的工具产物（进行中，阶段门未通过）
 
-工具产物实现已在本地候选分支提交 `1d548f562dc4867cb94c3a5b7b86a0b0d6020708`；修复记忆会话检查点误查 Skills 的回归提交为 `cbe7d25918ec66be4b244fb5ae7938f4c213c096`，当前本地 tree 为 `932e8e0740fefe1401abe2038fa40e12e56b6128`。实现包含有界 `ProcessCapture`、raw/view 双产物、脱敏与分页搜索、run/session 配额、读取工具、Docker evidence 流式传输及 recovery 身份校验。G2 相关本地测试集合在修复前 300 passed；新增 memory＋conversation 且 Skills 关闭的检查点回归与配置回归 2 passed，改动文件 Ruff、compileall、diff-check 通过。
+工具产物实现已在本地候选分支提交 `1d548f562dc4867cb94c3a5b7b86a0b0d6020708`；修复记忆会话检查点误查 Skills 的回归提交为 `cbe7d25918ec66be4b244fb5ae7938f4c213c096`，该修复提交的源码 tree 为 `932e8e0740fefe1401abe2038fa40e12e56b6128`。实现包含有界 `ProcessCapture`、raw/view 双产物、脱敏与分页搜索、run/session 配额、读取工具、Docker evidence 流式传输及 recovery 身份校验。G2 相关本地测试集合在修复前 300 passed；新增 memory＋conversation 且 Skills 关闭的检查点回归与配置回归 2 passed，改动文件 Ruff、compileall、diff-check 通过。
 
 远端候选仍为 `ca96b2f64c157a156c0d360ec66c15f842acd0df`（G2 主实现 tree 与本地 `1d548f5` 相同），对应 CI [run 38614482340](https://github.com/wingpeng30/Tracefix/actions/runs/38614482340)。基础 Docker、Serena MCP 与 artifact recovery 的真实 ordinary Docker 回放通过；ordinary editable 连续记忆回放失败，根因是 checkpoint 将 `memory_enabled` 错当作 Skills 已注册的条件。本地已修复并加回归，但将修复提交推到 GitHub 时，自动审查拒绝上传完整 runtime 源码，要求不得换通道重试；因此修复未进远端，不能触发或宣称新 CI 通过。该 run 的 Python 3.11/3.12 全工程 job 在最后查询时仍为 in progress，旧远端结果不构成当前 G2 阶段门。
 
