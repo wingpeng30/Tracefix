@@ -209,7 +209,8 @@ def _child(phase: str, output: Path, repo: Path, image_id: str, run_root: Path |
         "phase": phase,
         "status": result.status.value,
         "step_count": result.step_count,
-        "provider_calls": client.calls,
+        "provider_calls": 0,
+        "synthetic_model_requests": client.calls,
         "result_path": result.result_path,
     }
 
@@ -311,6 +312,9 @@ def _parent(output: Path, image_id: str) -> dict:
     return {
         "passed": True,
         "provider_calls": first["provider_calls"] + resumed["provider_calls"],
+        "synthetic_model_requests": (
+            first["synthetic_model_requests"] + resumed["synthetic_model_requests"]
+        ),
         "first_process": first,
         "second_process": resumed,
         "artifact_id": read_results[0]["output"]["artifact_id"],

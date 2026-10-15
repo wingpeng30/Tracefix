@@ -8,6 +8,7 @@ from types import SimpleNamespace
 import pytest
 
 from examples.replay_ordinary import _git
+from tracefix.artifacts import ArtifactStore
 from tracefix.docker_backend import DockerToolBackend
 from tracefix.docker_recovery import validate_batch
 from tracefix.exceptions import WorkspaceError
@@ -102,4 +103,104 @@ def test_container_restore_failure_is_reported(transport, monkeypatch):
     monkeypatch.setattr(subprocess, "run", lambda *args, **kwargs: SimpleNamespace(
         returncode=1, stderr=b"injected restore failure"))
     with pytest.raises(WorkspaceError, match="could not restore"):
+        backend.restore_snapshot(saved)
+
+
+def test_artifact_snapshot_and_restore_preserve_bytes_and_cumulative_quota(
+    transport, monkeypatch,
+):
+    backend, source, target = transport
+    artifact_source = ArtifactStore(
+        backend.run_dir / "container-artifact-store", run_id=backend.run_id,
+        workspace=source,
+    )
+    artifact_target = ArtifactStore(
+        backend.run_dir / "restored-artifact-store", run_id=backend.run_id,
+        workspace=target,
+    )
+    ref = artifact_source.publish_process(
+        call_id="test-call", tool_name="run_tests", source_identity={"diff": "before"},
+        stdout=b"head MIDDLE_MARKER tail", stderr=b"warning", complete=True,
+    )
+    artifact_source.read(ref.artifact_id, limit=5)
+    backend.artifacts_enabled = True
+    backend.artifact_environment_path = "/input/environment.json"
+    original_run = subprocess.run
+
+    def run_with_artifacts(command, **kwargs):
+        if "tracefix.artifact_transport" in command:
+            operation = command[command.index("tracefix.artifact_transport") + 1]
+            if operation == "export":
+                receipt = artifact_source.export_archive(kwargs["stdout"])
+                return SimpleNamespace(
+                    returncode=0, stdout=b"", stderr=json.dumps(receipt).encode()
+                )
+            receipt = artifact_target.import_archive(kwargs["stdin"])
+            return SimpleNamespace(
+                returncode=0, stdout=json.dumps(receipt).encode(), stderr=b""
+            )
+        return original_run(command, **kwargs)
+
+    monkeypatch.setattr(subprocess, "run", run_with_artifacts)
+    snapshot = backend.save_snapshot(1)
+
+    validate_batch(backend.run_dir, snapshot, sequence=1, image_id=backend.image_id)
+    assert snapshot["artifacts_enabled"] is True
+    assert snapshot["artifact_receipt"]["queries"] == 1
+    assert snapshot["artifact_archive_bytes"] > 0
+    backend.restore_snapshot(snapshot)
+
+    assert artifact_target.quota().queries == 1
+    assert artifact_target.quota().returned_chars == 5
+    assert artifact_target.read(ref.artifact_id, offset=5, limit=16).content == (
+        "MIDDLE_MARKER tail"
+    )
+
+
+def test_artifact_publication_is_rolled_back_if_product_snapshot_export_fails(
+    transport, monkeypatch,
+):
+    backend, source, _ = transport
+    artifact_source = ArtifactStore(
+        backend.run_dir / "container-artifact-store", run_id=backend.run_id,
+        workspace=source,
+    )
+    artifact_source.publish_process(
+        call_id="test-call", tool_name="run_tests", source_identity={},
+        stdout=b"evidence", stderr=b"", complete=True,
+    )
+    backend.artifacts_enabled = True
+    backend.artifact_environment_path = "/input/environment.json"
+    original_run = subprocess.run
+
+    def fail_product_export_after_artifact_export(command, **kwargs):
+        if "tracefix.artifact_transport" in command:
+            receipt = artifact_source.export_archive(kwargs["stdout"])
+            return SimpleNamespace(
+                returncode=0, stdout=b"", stderr=json.dumps(receipt).encode()
+            )
+        if "tracefix.workspace_snapshot" in command and "export" in command:
+            return SimpleNamespace(returncode=1, stdout=b"", stderr=b"product failed")
+        return original_run(command, **kwargs)
+
+    monkeypatch.setattr(subprocess, "run", fail_product_export_after_artifact_export)
+    with pytest.raises(WorkspaceError, match="product snapshot failed"):
+        backend.save_snapshot(1)
+
+    checkpoints = backend.run_dir / "docker-checkpoints"
+    assert not list(checkpoints.glob("*.artifacts.tar"))
+    assert not list(checkpoints.glob("*.partial"))
+    assert not list(checkpoints.glob("*.artifacts.partial"))
+
+
+def test_artifact_snapshot_requires_environment_identity_and_recovery_mode(
+    transport,
+):
+    backend, _, _ = transport
+    backend.artifacts_enabled = True
+    with pytest.raises(WorkspaceError, match="environment identity"):
+        backend.save_snapshot(1)
+
+    saved = {"artifacts_enabled": False}
+    with pytest.raises(WorkspaceError, match="capability differs"):
         backend.restore_snapshot(saved)

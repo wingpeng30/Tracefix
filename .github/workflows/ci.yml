@@ -371,7 +371,7 @@ jobs:
           tracefix-reproduce --scenario memory-dialogue-integration --backend docker --image-id "$image_id" --output "$RUNNER_TEMP/ordinary-integration-wheel" > "$RUNNER_TEMP/ordinary-integration-wheel-summary.json"
           python -c 'import json,sys; d=json.load(open(sys.argv[1])); assert d["accepted"] and d["provider_calls"] == 0 and d["independent_test_counts"]["passed"] == 3' "$RUNNER_TEMP/ordinary-integration-wheel-summary.json"
           python "$GITHUB_WORKSPACE/examples/replay_artifact_recovery.py" --image-id "$image_id" --output "$RUNNER_TEMP/ordinary-artifact-recovery" > "$RUNNER_TEMP/ordinary-artifact-recovery-summary.json"
-          python -c 'import json,sys; d=json.load(open(sys.argv[1])); assert d["passed"] and d["provider_calls"] == 0 and d["all_containers_removed"] and d["artifact_queries_at_pause"] == 1' "$RUNNER_TEMP/ordinary-artifact-recovery-summary.json"
+          python -c 'import json,sys; d=json.load(open(sys.argv[1])); assert d["passed"] and d["provider_calls"] == 0 and d["synthetic_model_requests"] > 0 and d["all_containers_removed"] and d["artifact_queries_at_pause"] == 1' "$RUNNER_TEMP/ordinary-artifact-recovery-summary.json"
           python -m pip install --no-deps --no-build-isolation -e "$GITHUB_WORKSPACE"
           tracefix-reproduce --scenario memory-dialogue-integration --backend docker --image-id "$image_id" --output "$RUNNER_TEMP/ordinary-integration-editable" > "$RUNNER_TEMP/ordinary-integration-editable-summary.json"
           python -c 'import json,sys; d=json.load(open(sys.argv[1])); assert d["accepted"] and d["provider_calls"] == 0 and d["independent_test_counts"]["passed"] == 3' "$RUNNER_TEMP/ordinary-integration-editable-summary.json"

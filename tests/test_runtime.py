@@ -132,6 +132,71 @@ def test_harness_foundations_api_default_and_docker_recovery_dependency(tmp_path
         )
 
 
+def test_harness_foundations_records_searchable_test_output_and_checkpoint_identity(
+    tmp_path: Path,
+) -> None:
+    from tracefix.artifacts import ArtifactStore
+
+    repo = _make_repo(tmp_path)
+    tests = repo / "tests"
+    tests.mkdir()
+    (tests / "test_marker.py").write_text(
+        "def test_marker():\n    print('G2_RUNTIME_ARTIFACT_MARKER')\n",
+        encoding="utf-8",
+    )
+    _git(repo, "add", "--all")
+    _git(
+        repo, "-c", "user.name=Tests", "-c", "user.email=tests@example.invalid",
+        "commit", "--quiet", "-m", "add artifact output fixture",
+    )
+    responses = [
+        _response(None, tool_calls=(ToolCall(
+            id="capture-tests",
+            name="run_tests",
+            arguments={"command": "pytest -q -s tests"},
+        ),)),
+        _response(None, tool_calls=(ToolCall(
+            id="search-captured-output",
+            name="search_tool_artifact",
+            arguments={"query": "G2_RUNTIME_ARTIFACT_MARKER"},
+        ),)),
+        _response("The captured test output is searchable."),
+    ]
+    created: list[ScriptedLLM] = []
+
+    def factory(config: LLMConfig) -> BaseLLM:
+        llm = ScriptedLLM(config, responses)
+        created.append(llm)
+        return llm
+
+    result = TraceFixRunner(factory).run(
+        _local_run_config(
+            repo=repo,
+            task="capture test output and locate its marker",
+            model_name="offline/artifact-runtime",
+            output_dir=tmp_path / "runs",
+            env_file=None,
+            harness_foundations_enabled=True,
+            test_python_executable=Path(sys.executable),
+            agent_config=AgentConfig(require_tested_completion=False),
+        )
+    )
+
+    assert result.status is AgentStatus.COMPLETED
+    assert len(created) == 1 and responses == []
+    run_root = Path(result.result_path).parent
+    workspace = Path(result.workspace)
+    store = ArtifactStore(
+        run_root / "tool-artifacts", run_id=result.run_id, workspace=workspace,
+    )
+    assert len(store.refs()) == 1
+    checkpoint = json.loads((run_root / "checkpoint.json").read_text(encoding="utf-8"))
+    store.verify_checkpoint_identity(checkpoint["payload"]["artifact_store"])
+    hit = store.search("G2_RUNTIME_ARTIFACT_MARKER").hits
+    assert hit and hit[0].artifact.artifact_id == store.refs()[0].artifact_id
+    assert store.quota().queries == 2
+
+
 def test_memory_conversation_checkpoint_does_not_require_skills(tmp_path, monkeypatch) -> None:
     """Memory and conversation are independent of the optional Skills tool."""
     repo = _make_repo(tmp_path)
