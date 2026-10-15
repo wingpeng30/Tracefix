@@ -630,14 +630,14 @@ class ArtifactStore:
                         break
                 if truncated:
                     break
-            self._consume_query(manifest, returned)
+            manifest = self._consume_query(manifest, returned)
             return ArtifactSearchResult(
                 query=query, hits=tuple(hits), truncated=truncated,
                 queries_remaining=MAX_SESSION_QUERIES - manifest["query_count"],
                 characters_remaining=MAX_SESSION_RETURNED_CHARS - manifest["returned_chars"],
             )
 
-    def _consume_query(self, manifest: dict, returned_chars: int) -> None:
+    def _consume_query(self, manifest: dict, returned_chars: int) -> dict:
         if manifest["query_count"] >= MAX_SESSION_QUERIES:
             raise ArtifactError("artifact query quota is exhausted")
         if manifest["returned_chars"] + returned_chars > MAX_SESSION_RETURNED_CHARS:
@@ -646,6 +646,7 @@ class ArtifactStore:
         updated["query_count"] += 1
         updated["returned_chars"] += returned_chars
         self._save_manifest(updated)
+        return updated
 
     def export_archive(self, stream: BinaryIO) -> dict:
         """Stream a self-describing archive; no workspace or host path is included."""

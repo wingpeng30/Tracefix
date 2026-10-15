@@ -285,7 +285,7 @@ class _BridgeSession:
                 if len(line) > _MAX_FRAME or not line.endswith(b"\n"):
                     self.frames.put(ValueError("bridge response exceeded frame limit"))
                     return
-                self.frames.put(line.rstrip(b"\r\n"))
+                self.frames.put(line.rstrip(b"\n"))
         except BaseException as exc:
             self.frames.put(exc)
 
@@ -1210,7 +1210,9 @@ class DockerToolBackend:
                 artifact_record = {
                     "artifacts_enabled": True,
                     "run_id": self.run_id,
-                    "artifact_archive": str(artifact_archive_path.relative_to(self.run_dir)),
+                    "artifact_archive": artifact_archive_path.relative_to(
+                        self.run_dir
+                    ).as_posix(),
                     "artifact_archive_bytes": artifact_archive_path.stat().st_size,
                     "artifact_archive_sha256": artifact_archive_sha256,
                     "artifact_receipt": receipt,
@@ -1236,7 +1238,8 @@ class DockerToolBackend:
             journal = (self.run_dir / "tool-events.jsonl").read_bytes()
             record = {
                 "schema_version": 1, "sequence": sequence, "batch_id": identity,
-                "archive": str(archive_path.relative_to(self.run_dir)), "metadata": metadata,
+                "archive": archive_path.relative_to(self.run_dir).as_posix(),
+                "metadata": metadata,
                 "bridge_state": state.output, "bridge_state_sha256": digest(state.output),
                 "journal_size": len(journal), "journal_sha256": hashlib.sha256(journal).hexdigest(),
                 "baseline_sha256": hashlib.sha256(

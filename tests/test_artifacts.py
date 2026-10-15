@@ -5,15 +5,22 @@ import json
 import sys
 import tarfile
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
 from tracefix import ToolCall
-from tracefix.artifact_transport import _BoundedReader, _BoundedWriter
+from tracefix.artifact_transport import (
+    _BoundedReader,
+    _BoundedWriter,
+)
+from tracefix.artifact_transport import (
+    main as artifact_transport_main,
+)
 from tracefix.artifacts import (
     MAX_ARTIFACT_BYTES,
-    MAX_SESSION_RETURNED_CHARS,
     MAX_SESSION_QUERIES,
+    MAX_SESSION_RETURNED_CHARS,
     ArtifactError,
     ArtifactRef,
     ArtifactStore,
@@ -26,7 +33,7 @@ from tracefix.tools.artifacts import (
     ReadToolArtifactTool,
     SearchToolArtifactTool,
 )
-from tracefix.tools.base import BaseTool, ToolResult, ToolSpec
+from tracefix.tools.base import BaseTool, SkillCatalogEntry, ToolResult, ToolSpec
 
 
 def make_store(root: Path, *, run_id: str = "run-a") -> ArtifactStore:
@@ -218,6 +225,173 @@ def test_stream_transport_is_bounded_and_roundtrips_receipt(tmp_path: Path) -> N
         _BoundedReader(io.BytesIO(b"too large"), 4).read(10)
     with pytest.raises(ArtifactError, match="transfer limit"):
         _BoundedWriter(io.BytesIO(), 4).write(b"too large")
+
+
+def test_stream_transport_exact_limit_and_short_write_are_fail_closed() -> None:
+    reader = _BoundedReader(io.BytesIO(b"four"), 4)
+    assert reader.read() == b"four"
+    assert reader.read() == b""
+    with pytest.raises(ArtifactError, match="transfer limit"):
+        _BoundedReader(io.BytesIO(b"fives"), 4).read()
+
+    class ShortWriter:
+        def write(self, data: bytes) -> int:
+            return len(data) - 1
+
+    with pytest.raises(ArtifactError, match="incomplete"):
+        _BoundedWriter(ShortWriter(), 8).write(b"payload")
+
+
+def test_artifact_transport_cli_roundtrips_a_bounded_receipt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tracefix import artifact_transport
+
+    root = tmp_path / "source"
+    root.mkdir()
+    workspace = root / "workspace"
+    workspace.mkdir()
+    run_id = "transport-cli"
+    store_root = root / "artifacts"
+    environment_path = root / "environment.json"
+    environment_path.write_text('{"PROJECT_MODE":"safe"}', encoding="utf-8")
+    source = ArtifactStore(
+        store_root, run_id=run_id, workspace=workspace, secret_values=("safe",),
+    )
+    ref = source.publish_process(
+        call_id="cli-export", tool_name="run_tests", source_identity={},
+        stdout=b"safe", stderr=b"", complete=True,
+    )
+    common = [
+        "--root", str(store_root), "--workspace", str(workspace),
+        "--environment-json", str(environment_path), "--run-id", run_id,
+    ]
+
+    archive = io.BytesIO()
+    export_receipt = io.StringIO()
+    monkeypatch.setattr(
+        artifact_transport.sys,
+        "stdout",
+        SimpleNamespace(buffer=archive, write=archive.write, flush=archive.flush),
+    )
+    monkeypatch.setattr(artifact_transport.sys, "stderr", export_receipt)
+    assert artifact_transport_main(["export", *common]) == 0
+    exported = json.loads(export_receipt.getvalue())
+    assert exported["artifact_count"] == 1
+    assert archive.getvalue()
+
+    target_root = root / "restored-artifacts"
+    monkeypatch.setattr(
+        artifact_transport.sys,
+        "stdin",
+        SimpleNamespace(buffer=io.BytesIO(archive.getvalue())),
+    )
+    import_receipt = io.StringIO()
+    monkeypatch.setattr(artifact_transport.sys, "stdout", import_receipt)
+    assert artifact_transport_main([
+        "import", "--root", str(target_root), *common[2:],
+    ]) == 0
+    imported = json.loads(import_receipt.getvalue())
+    assert imported["manifest_sha256"] == exported["manifest_sha256"]
+    target = ArtifactStore(
+        target_root, run_id=run_id, workspace=workspace, secret_values=("safe",),
+    )
+    assert target.refs()[0].artifact_id == ref.artifact_id
+    assert target.read(ref.artifact_id).content == "[REDACTED]"
+
+
+def test_artifact_transport_cli_rejects_credential_environment_overrides(
+    tmp_path: Path,
+) -> None:
+    from tracefix.artifact_transport import main
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    environment_path = tmp_path / "environment.json"
+    environment_path.write_text('{"API_KEY":"fixture-only"}', encoding="utf-8")
+    with pytest.raises(ValueError, match="cannot set credentials"):
+        main([
+            "export", "--root", str(tmp_path / "artifacts"),
+            "--workspace", str(workspace), "--environment-json", str(environment_path),
+            "--run-id", "bad-environment",
+        ])
+
+
+def test_artifact_tool_adapters_reject_bad_reads_and_preserve_recording_results(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = make_store(tmp_path)
+    ref = store.publish_process(
+        call_id="tool-errors", tool_name="run_tests", source_identity={},
+        stdout=b"output", stderr=b"", complete=True,
+    )
+    monkeypatch.setattr(
+        store, "read", lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            ArtifactError("artifact view failed integrity validation")
+        ),
+    )
+    rejected_read = ReadToolArtifactTool(store).execute(ToolCall(
+        id="bad-read", name="read_tool_artifact", arguments={"artifact_id": ref.artifact_id},
+    ))
+    assert not rejected_read.success
+    assert rejected_read.error == "artifact view failed integrity validation"
+
+    rejected_search = SearchToolArtifactTool(store).execute(ToolCall(
+        id="bad-search", name="search_tool_artifact",
+        arguments={"query": "output", "regex": ".*"},
+    ))
+    assert not rejected_search.success
+    assert rejected_search.error == "invalid artifact search request"
+
+    class RecordingSearchTool(BaseTool):
+        @property
+        def spec(self) -> ToolSpec:
+            return ToolSpec(
+                name="search_code",
+                description="search",
+                input_schema={"type": "object", "properties": {}},
+            )
+
+        @property
+        def skill_catalog(self) -> tuple[SkillCatalogEntry, ...]:
+            return (SkillCatalogEntry(
+                name="test-skill", description="fixture skill", version="1",
+                sha256="a" * 64,
+            ),)
+
+        def prepare(self, call: ToolCall) -> str:
+            return call.id
+
+        def execute(self, call: ToolCall) -> ToolResult:
+            return ToolResult(
+                call_id=call.id, tool_name=call.name, success=True,
+                output={"matches": []}, metadata={"source": "test-tool"},
+            )
+
+    inner = RecordingSearchTool()
+    recorder = ArtifactRecordingTool(inner, store)
+    assert recorder.spec.name == "search_code"
+    assert recorder.skill_catalog[0].name == "test-skill"
+    assert recorder.prepare(ToolCall(id="prepared", name="search_code", arguments={})) == (
+        "prepared"
+    )
+
+    def fail_publish(*_args, **_kwargs):
+        raise ArtifactError("artifact store quota is exhausted")
+
+    monkeypatch.setattr(store, "publish_process", fail_publish)
+    result = recorder.execute(ToolCall(id="record", name="search_code", arguments={}))
+    assert result.success
+    assert result.output == {"matches": []}
+    assert result.metadata == {
+        "source": "test-tool", "artifact_recording_error": "artifact_quota_exhausted",
+    }
+
+    checkpoint_diff = recorder.execute(ToolCall(
+        id="checkpoint-diff", name="get_git_diff", arguments={},
+    ))
+    assert checkpoint_diff.success
+    assert checkpoint_diff.metadata == {"source": "test-tool"}
 
 
 def test_artifact_archive_rejects_traversal_before_writing(tmp_path: Path) -> None:
@@ -472,14 +646,14 @@ def test_redaction_view_covers_fixed_secret_formats_but_raw_capture_remains_audi
 ) -> None:
     store = make_store(tmp_path)
     raw = (
-        "Authorization: Bearer auth-secret-123456\n"
-        "bearer standalone-secret-123456\n"
-        "-----BEGIN RSA PRIVATE KEY-----\nprivate-key-body\n"
-        "-----END RSA PRIVATE KEY-----\n"
-        "AKIA1234567890ABCDEF\n"
-        "api_key=assigned-secret-123456\n"
-        "configured local-secret-value\n"
-    ).encode()
+        b"Authorization: Bearer auth-secret-123456\n"
+        b"bearer standalone-secret-123456\n"
+        b"-----BEGIN RSA PRIVATE KEY-----\nprivate-key-body\n"
+        b"-----END RSA PRIVATE KEY-----\n"
+        b"AKIA1234567890ABCDEF\n"
+        b"api_key=assigned-secret-123456\n"
+        b"configured local-secret-value\n"
+    )
     ref = store.publish_process(
         call_id="redaction", tool_name="run_tests", source_identity={},
         stdout=raw, stderr=b"", complete=True,
@@ -773,6 +947,9 @@ def test_search_literal_hits_are_bounded_and_report_truncation(tmp_path: Path) -
     assert len(result.hits) == 2
     assert {hit.artifact.artifact_id for hit in result.hits} == {ref.artifact_id}
     assert result.queries_remaining == MAX_SESSION_QUERIES - 1
+    assert result.characters_remaining == (
+        MAX_SESSION_RETURNED_CHARS - sum(len(hit.excerpt) for hit in result.hits)
+    )
     assert store.quota().returned_chars == sum(len(hit.excerpt) for hit in result.hits)
 
 
@@ -893,6 +1070,63 @@ def test_capture_budget_marks_partial_or_failed_spool_incomplete(failure: str) -
     assert budget.remaining == 0
 
 
+def test_capture_budget_keeps_only_remaining_bytes_after_exhaustion() -> None:
+    output = io.BytesIO()
+    budget = _Budget(4)
+    budget.take(b"abc", output)
+    budget.take(b"def", output)
+    budget.take(b"ignored", output)
+
+    assert output.getvalue() == b"abcd"
+    assert budget.exhausted
+    assert not budget.write_failed
+    assert budget.remaining == 0
+
+
+@pytest.mark.parametrize("taskkill_failure", [None, OSError("taskkill unavailable")])
+def test_process_capture_terminates_owned_descendants_on_windows(
+    monkeypatch: pytest.MonkeyPatch, taskkill_failure: OSError | None,
+) -> None:
+    import tracefix.process_capture as process_capture
+
+    class RunningProcess:
+        pid = 7331
+
+        def __init__(self) -> None:
+            self.returncode = None
+            self.killed = False
+
+        def poll(self) -> int | None:
+            return self.returncode
+
+        def kill(self) -> None:
+            self.killed = True
+            self.returncode = -9
+
+        def wait(self, timeout: float | None = None) -> int:
+            return self.returncode
+
+    process = RunningProcess()
+    calls: list[list[str]] = []
+
+    def run(command: list[str], **_kwargs) -> SimpleNamespace:
+        calls.append(command)
+        if taskkill_failure is not None:
+            raise taskkill_failure
+        return SimpleNamespace(returncode=0)
+
+    if sys.platform == "win32":
+        monkeypatch.setattr("tracefix.process_capture.subprocess.run", run)
+    else:
+        monkeypatch.setattr("tracefix.process_capture.os.killpg", lambda *_args: None)
+
+    process_capture.ProcessCapture._terminate(process, include_descendants=True)
+
+    assert process.killed
+    if sys.platform == "win32":
+        assert calls == [["taskkill", "/PID", "7331", "/T", "/F"]]
+
+
 def test_process_capture_preserves_nonzero_status_and_propagates_start_callback_failure(
     tmp_path: Path,
 ) -> None:
@@ -941,3 +1175,19 @@ def test_process_capture_classifies_publish_quota_failure_without_rerunning(
     assert result.artifact is None
     assert result.artifact_error == "artifact_quota_exhausted"
     assert "captured once" in result.stdout
+
+
+@pytest.mark.parametrize("timeout", [0, -1])
+def test_process_capture_rejects_nonpositive_timeouts(
+    tmp_path: Path, timeout: float,
+) -> None:
+    with pytest.raises(ValueError, match="timeout must be positive"):
+        ProcessCapture(make_store(tmp_path)).run(
+            [sys.executable, "-c", "pass"], cwd=tmp_path, env={}, timeout=timeout,
+            call_id="invalid-timeout", tool_name="run_tests", source_identity={},
+        )
+
+
+def test_process_capture_rejects_nonpositive_drain_deadlines(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="drain timeout must be positive"):
+        ProcessCapture(make_store(tmp_path), drain_timeout_seconds=0)

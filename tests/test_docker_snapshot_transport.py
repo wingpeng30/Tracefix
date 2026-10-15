@@ -9,8 +9,9 @@ import pytest
 
 from examples.replay_ordinary import _git
 from tracefix.artifacts import ArtifactStore
+from tracefix.checkpoint import CheckpointError
 from tracefix.docker_backend import DockerToolBackend
-from tracefix.docker_recovery import validate_batch
+from tracefix.docker_recovery import validate_artifact_archive, validate_batch
 from tracefix.exceptions import WorkspaceError
 from tracefix.tools import ToolResult
 from tracefix.workspace_snapshot import export_workspace, restore_stream
@@ -145,14 +146,37 @@ def test_artifact_snapshot_and_restore_preserve_bytes_and_cumulative_quota(
     snapshot = backend.save_snapshot(1)
 
     validate_batch(backend.run_dir, snapshot, sequence=1, image_id=backend.image_id)
+    assert snapshot["artifact_archive"].startswith("docker-checkpoints/")
+    assert "\\" not in snapshot["artifact_archive"]
     assert snapshot["artifacts_enabled"] is True
     assert snapshot["artifact_receipt"]["queries"] == 1
     assert snapshot["artifact_archive_bytes"] > 0
+
+    wrong_path = dict(snapshot)
+    wrong_path["artifact_archive"] = snapshot["artifact_archive"].replace("/", "\\")
+    with pytest.raises(CheckpointError, match="another batch"):
+        validate_artifact_archive(backend.run_dir, wrong_path, expected_run_id=backend.run_id)
+
+    wrong_digest = dict(snapshot)
+    wrong_digest["artifact_archive_sha256"] = "0" * 64
+    with pytest.raises(CheckpointError, match="digest changed"):
+        validate_artifact_archive(
+            backend.run_dir, wrong_digest, expected_run_id=backend.run_id,
+        )
+
+    wrong_receipt = dict(snapshot)
+    wrong_receipt["artifact_receipt"] = {
+        **snapshot["artifact_receipt"], "run_id": "another-run",
+    }
+    with pytest.raises(CheckpointError, match="another run"):
+        validate_artifact_archive(
+            backend.run_dir, wrong_receipt, expected_run_id=backend.run_id,
+        )
     backend.restore_snapshot(snapshot)
 
     assert artifact_target.quota().queries == 1
     assert artifact_target.quota().returned_chars == 5
-    assert artifact_target.read(ref.artifact_id, offset=5, limit=16).content == (
+    assert artifact_target.read(ref.artifact_id, offset=5, limit=32).content == (
         "MIDDLE_MARKER tail"
     )
 
