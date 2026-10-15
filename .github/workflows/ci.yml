@@ -345,6 +345,7 @@ jobs:
           set -euo pipefail
           python -m pip install --require-hashes -r requirements/locks/build-tools.txt
           python -m pip install --require-hashes -r requirements/locks/engineering-py311.txt
+          python -m pip install --require-hashes -r requirements/locks/mcp-py311.txt
           python -m pip wheel --no-deps --no-build-isolation . --wheel-dir "$RUNNER_TEMP/wheel"
           python -c "import glob,zipfile; z=zipfile.ZipFile(glob.glob('$RUNNER_TEMP/wheel/*.whl')[0]); assert {'tracefix/docker/ordinary.Dockerfile','tracefix/docker/ordinary-base.lock'} <= set(z.namelist())"
           python -m pip install --no-deps "$RUNNER_TEMP"/wheel/*.whl
@@ -372,7 +373,14 @@ jobs:
           python -c 'import json,sys; d=json.load(open(sys.argv[1])); assert d["accepted"] and d["provider_calls"] == 0 and d["independent_test_counts"]["passed"] == 3' "$RUNNER_TEMP/ordinary-integration-wheel-summary.json"
           python "$GITHUB_WORKSPACE/examples/replay_artifact_recovery.py" --image-id "$image_id" --output "$RUNNER_TEMP/ordinary-artifact-recovery" > "$RUNNER_TEMP/ordinary-artifact-recovery-summary.json"
           python -c 'import json,sys; d=json.load(open(sys.argv[1])); assert d["passed"] and d["provider_calls"] == 0 and d["synthetic_model_requests"] > 0 and d["all_containers_removed"] and d["artifact_queries_at_pause"] == 1' "$RUNNER_TEMP/ordinary-artifact-recovery-summary.json"
+          docker build --pull=true -f docker/serena-mcp.Dockerfile -t tracefix-serena-mcp:${{ github.sha }} .
+          serena_image_id="$(docker image inspect --format '{{.Id}}' tracefix-serena-mcp:${{ github.sha }})"
+          printf '%s\n' "$serena_image_id" > "$RUNNER_TEMP/ordinary-serena-image-id.txt"
+          python "$GITHUB_WORKSPACE/examples/replay_artifact_recovery.py" --image-id "$image_id" --mcp-image-id "$serena_image_id" --composite --output "$RUNNER_TEMP/ordinary-artifact-recovery-composite" > "$RUNNER_TEMP/ordinary-artifact-recovery-composite-summary.json"
+          python -c 'import json,sys; d=json.load(open(sys.argv[1])); assert d["passed"] and d["provider_calls"] == 0 and d["synthetic_model_requests"] > 0 and d["all_containers_removed"] and d["composite"] and d["serena_queries"] == 2 and d["validation_gate_status"] == "passed"' "$RUNNER_TEMP/ordinary-artifact-recovery-composite-summary.json"
           python -m pip install --no-deps --no-build-isolation -e "$GITHUB_WORKSPACE"
+          python "$GITHUB_WORKSPACE/examples/replay_artifact_recovery.py" --image-id "$image_id" --mcp-image-id "$serena_image_id" --composite --output "$RUNNER_TEMP/ordinary-composite-editable" > "$RUNNER_TEMP/ordinary-composite-editable-summary.json"
+          python -c 'import json,sys; d=json.load(open(sys.argv[1])); assert d["passed"] and d["provider_calls"] == 0 and d["all_containers_removed"] and d["composite"] and d["serena_queries"] == 2 and d["validation_gate_status"] == "passed"' "$RUNNER_TEMP/ordinary-composite-editable-summary.json"
           tracefix-reproduce --scenario memory-dialogue-integration --backend docker --image-id "$image_id" --output "$RUNNER_TEMP/ordinary-integration-editable" > "$RUNNER_TEMP/ordinary-integration-editable-summary.json"
           python -c 'import json,sys; d=json.load(open(sys.argv[1])); assert d["accepted"] and d["provider_calls"] == 0 and d["independent_test_counts"]["passed"] == 3' "$RUNNER_TEMP/ordinary-integration-editable-summary.json"
           test -z "$(docker ps -a --filter 'name=tracefix-' --format '{{.ID}}')"
@@ -393,6 +401,9 @@ jobs:
             ${{ runner.temp }}/ordinary-integration-wheel/**
             ${{ runner.temp }}/ordinary-integration-editable/**
             ${{ runner.temp }}/ordinary-artifact-recovery/**
+            ${{ runner.temp }}/ordinary-artifact-recovery-composite/**
+            ${{ runner.temp }}/ordinary-composite-editable/**
+            ${{ runner.temp }}/ordinary-serena-image-id.txt
             ${{ runner.temp }}/ordinary-failures/ordinary-timeout-disconnect/tool-events.jsonl
             ${{ runner.temp }}/ordinary-failures/ordinary-import-error/docker-run-state.json
             ${{ runner.temp }}/ordinary-export.patch

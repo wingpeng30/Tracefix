@@ -5,11 +5,15 @@
 
 ## 2026-10-15 Harness Foundations 实施进度
 
-按用户明确授权，在候选分支 `codex/harness-foundations` 分阶段实施知识记忆、工具产物、
-TaskState、统一能力策略与 Docker/Serena 组合。完整设计、逐步编码顺序和退出条件见
-[阶段实施记录](tasks/2026-10-14-harness-foundations-implementation.md)。执行顺序为 G0→G1→G2→G3→G4，
-G0 与 G1 阶段门已通过。用户随后要求继续 G2—G4；当前停留在 G2，G3/G4 尚未开始。本轮不新增供应商付费调用，
-不合并、不发布。本机 Docker 按用户要求跳过，真实 Docker/MCP 由候选分支 CI 验收。
+G0—G3阶段门已通过。用户授权补齐环境后，G4已完成本地功能与工程验收；仍禁止上传、触发CI、合并和发布。
+最新结果见[环境与验收记录](tasks/2026-10-15-g4-environment-acceptance.md)，设计与退出条件见
+[阶段计划](tasks/2026-10-14-harness-foundations-implementation.md)。此前本地补齐与失败记录保持历史归属。
+
+Windows Python3.11.16/3.12.5各1691 passed、0失败/错误、1项符号链接权限skip；同一测试Linux实际补证通过。
+精确综合覆盖率分别`23368/25931=90.11607728201766%`、`23366/25931=90.10836450580386%`；
+两版Ruff、编译、diff和当前工作树diff-check通过。editable/wheel真实ordinary Docker＋Serena完整组合、
+必要容器故障与恢复、双版本仓库外安装回放全部通过，没有供应商调用。
+原计划的远端候选CI退出项未执行，不能将本地结论写成新提交已经通过CI。
 
 候选分支起点为 `bc8b224d0419c5acab4a0a4d2abfb92e0ff4c67e` 加经核对的24个已跟踪修改及两份维护报告；没有复制凭据、原始 runs 或临时实验夹具。导入清单及 patch 哈希保存在本机忽略目录 `runs/harness-foundations-setup-20261014`。基线提交 `f79a5c876f5eea22782b44b823b3c0bd64fde951` 的 CI #140 首轮失败及归因、修复后的 CI #142 通过结论，均保留在[本次 G0 记录](development-history.md#2026-10-14-harness-foundations-g0-首次-ci-与基线修复)。
 
@@ -27,22 +31,69 @@ ordinary Docker 的 editable 与 wheel 零供应商回放都通过：暂停后�
 
 本机没有 Python 3.11，Docker daemon 未连接；Windows 沙盒会拦截 `Path.resolve(strict=True)`，因此本地测试使用已授权的提权进程并把临时目录放在候选 worktree 的 `runs/` 下。G0 结论绑定 bcb6d24/CI #142，G1 结论绑定 d059ec2/CI #144；本地 Python 3.12.5 全工程结果是辅助证据，不代替双版本和真实容器 CI。
 
-### G2：可取回的工具产物（进行中，阶段门未通过）
+### G2：可取回的工具产物（阶段门通过）
 
-工具产物实现已在本地候选分支提交 `1d548f562dc4867cb94c3a5b7b86a0b0d6020708`；修复记忆会话检查点误查 Skills 的回归提交为 `cbe7d25918ec66be4b244fb5ae7938f4c213c096`，该修复提交的源码 tree 为 `932e8e0740fefe1401abe2038fa40e12e56b6128`。实现包含有界 `ProcessCapture`、raw/view 双产物、脱敏与分页搜索、run/session 配额、读取工具、Docker evidence 流式传输及 recovery 身份校验。G2 相关本地测试集合在修复前 300 passed；新增 memory＋conversation 且 Skills 关闭的检查点回归与配置回归 2 passed，改动文件 Ruff、compileall、diff-check 通过。
+验收实现身份为候选提交 `075bfae7d921b0d4ca7729b5a69f5c5218e89a10`，tree
+`2d37ed9dc063f1a819104c6a640b5d88c0acdac5`；CI #152（[run 38699965369](https://github.com/wingpeng30/Tracefix/actions/runs/38699965369)）
+在该精确 SHA 上全部成功。Python 3.11 与 3.12 各1519 passed、0 failed/error/skip；Coverage.py combined
+line+branch 分别为 `21449/23812 = 90.07643205106669%` 与 `21447/23812 = 90.06803292457585%`。
+两版 Ruff、compileall、diff-check、editable、公开资格、wheel/recovery smoke 均通过，基础 Docker、ordinary Docker
+和 Serena MCP 三个真实容器 job 均通过。阶段证据、Artifact ID/digest 及前序失败归因见
+[G2 开发记录](development-history.md#2026-10-15-harness-foundations-g2-工具产物)。
 
-候选分支当前精确代码提交为 `a5824b14b7b8e2b2ecdcb740690dc85259caa219`，tree `0e3a4d7df129d820f1fccdf694874ee523f0f9bf`。用户已明确授权向 `wingpeng30/Tracefix` 的 `codex/harness-foundations` 更新候选代码；每次更新均核对 Git blob、tree、parent 和 ref 前置 SHA。CI [run 38614482340](https://github.com/wingpeng30/Tracefix/actions/runs/38614482340) 揭示 memory/Skills 检查点耦合，已由 `cbe7d25` 修复并添加回归。之后 [run 38616442269](https://github.com/wingpeng30/Tracefix/actions/runs/38616442269) 的 ordinary Docker artifact 恢复回放失败；[run 38617519135](https://github.com/wingpeng30/Tracefix/actions/runs/38617519135) 增加只读预检诊断后定位到离线 fixture 未报告费用，触发了正确的未知记账恢复拒绝。`a5824b14` 让合成本地调用显式提供零费用估算并加适配器回归，没有放宽未知真实请求保护。
+G2 增加同步双流进程采集、有界 raw 与脱敏 UTF-8 检索视图、完整性校验、持久读取配额、分页读取/字面搜索、
+Docker evidence 归档传输和恢复校验。使用入口及额度见[工具产物说明](tool-artifacts.md)。本机 Docker 未运行，
+按用户要求由 CI 的真实 Docker/MCP job 验收。G2 验收结论绑定上述实现 SHA/tree 和 CI #152，不声称文档提交
+重新跑过工程门。
 
-CI [run 38618345961](https://github.com/wingpeng30/Tracefix/actions/runs/38618345961) 的基础 Docker 与 Serena MCP 已通过；ordinary Docker 恢复主体已完成，但最终摘要断言失败，原因是回放脚本把合成模型响应数标成了供应商调用数。双 Python 全量工程 job 仍在运行，不能作为阶段门证据。当前本地已分开记录 `provider_calls=0` 与 `synthetic_model_requests`，并将 CI 断言调整为同时确认真实供应商调用为零、合成回放确实发生；该修复等待精确提交 CI。本机 Docker 按用户要求跳过；G2 未通过最终阶段门，尚不进入 G3。
+### G3：结构化 TaskState（阶段门通过）
 
-本机只运行 Windows Python 3.12.5 定向回归，未运行 Docker。一次筛选式 runtime 模块尝试在 Windows 沙盒的子进程/严格路径准备阶段产生 37 个 setup errors，不能当作产品测试失败或通过；完整双版本门、Coverage.py 90% 门、editable/wheel、ordinary Docker 与 Serena 仍待修复后的精确候选提交验收。当前不进入 G3。
+验收提交 `9d52583ede2b4d56b12c18794543e53afc20e1b1`，tree `497d478c004b34ceafd832b511156a0c4f04f0`，
+CI #156（[run 38714764105](https://github.com/wingpeng30/Tracefix/actions/runs/38714764105)）全部成功。
+Windows Python 3.11/3.12 各1544 passed、0 failed/error/skip；Coverage.py combined line+branch 分别为
+`22125/24541 = 90.15525039729432%` 与 `22123/24541 = 90.14710077013977%`。Ruff、compileall、diff-check、
+editable、独立 wheel/recovery smoke、基础 Docker、ordinary Docker 和 Serena MCP 均通过。
+
+TaskState 将直接用户需求及宿主收据、验收条件、带来源和有效性的观察、计划/假设/问题/阻塞、memory/skill/artifact 引用
+投影为单调 revision 的有界工作状态。模型更新工具只允许修改计划、假设、问题和阻塞，不能写入用户需求、可信证据、
+验证资格、预算或权限；恢复校验状态哈希及其提交历史引用。ordinary Docker 回放验证暂停后销毁旧容器，在新宿主/容器进程
+恢复后仍保留需求与 artifact 引用，并独立验收补丁。完整细节及早期 CI 修正轨迹见
+[G3 开发记录](development-history.md#2026-10-15-harness-foundations-g3-taskstate-阶段门通过)。
+
+最终源文件清单为18项，忽略目录清单 `runs/g3-source-manifest-9d52583e.json` SHA-256
+`6aff20378f7e6b18f562c963bdd26cd7ea0b5392d095c1bbc74ab5215cbd9ea9`；代码清单、CI 原始产物 ID/digest 及 #154/#155
+失败归因见开发记录。本机没有 Python 3.11、Docker daemon 与可用 Serena socket；按用户指示跳过本地容器，必需的双 Python、
+真实 Docker 和 MCP 检查由上述 CI 执行。阶段门关闭，下一阶段为 G4。
+
+### G4：统一能力策略与Docker/Serena组合（本地验收完成，远端CI未执行）
+
+本地候选目录`D:\Tracefix\runs\harness-foundations-worktree`，基底HEAD
+`9a3d756a84c22ee17ff9d27959f2716c8ab2d493`；实现仍是未提交工作树，没有合入原工作区源码。
+验收绑定258项源码/测试/构建输入清单，SHA-256
+`ce7618dbd4ac0828e17a91ecc93529f0a07aa84d28e14ecfb90697c9c89ea6ce`，运行期间无漂移。
+使用方法、CLI/TOML/API及后端矩阵见[能力策略](capability-policy.md)；完整结果见[验收记录](tasks/2026-10-15-g4-environment-acceptance.md)。
+
+本轮补齐Docker及独立双Python/MCP环境；修复Windows入口换行、3.11测试语法、回放记忆格式、
+TaskState压缩丢revision及固定Skills恢复误判。没有放宽预算、来源、路径或身份保护。
+两种安装方式真实组合均验证：固定记忆/Skill、日志中段检索、任务状态、补丁后Serena查询、
+销毁旧容器/新进程恢复、第二轮输入、最终回归门和独立新容器验收。每组16次合成请求、7次累计测试、2次Serena查询，供应商调用0。
+独立验收同时检查主目标与追加目标；本轮容器已清理，其他历史容器未改动。
+
+双版本完整工程原件`D:\Tracefix\runs\g4e311`与`g4e312`，各1691通过、0失败/错误、1项Windows权限跳过；
+当前源码Linux同用例1 passed、0 skipped。精确综合覆盖率90.11607728201766%/90.10836450580386%，未拼接旧数据。
+原始工程summary accepted=true，全部本地汇总`runs/g4-environment-acceptance/acceptance-summary.json`的local_acceptance_passed=true。
+最终wheel SHA-256 `61b174bc770296f0f16b3de60aeeae114c5effdb1065a0a1a1e87f51c13859bc`，85项Python文件与当前源码一致。
+
+保留限制：Windows真实符号链接创建权限未改变；深TEMP路径仍需避免，已用短验收目录解决本轮启动超时。
+源码尚未合并、提交、上传；远端CI按用户指示未触发，原CI退出项不能标记完成。
+旧本地结果/失败和原始计划保留在[前次补齐记录](tasks/2026-10-15-g4-local-completion.md)与开发历程，不用来替代本轮证据。
 
 ## 最新 harness 比较与候选改进
 
 2026-10-14 按用户要求比较官方 DeepSeek Harness、Codex、Claude Code 的说明和公开代码，
 已保存[比较与改进报告](maintenance/2026-10-14-harness-comparison-and-improvements.md)。
-比较报告中的有类型记忆已在 G1 通过阶段门；可取回工具产物处于 G2 实施中，但尚未通过完整阶段门。
-结构化 TaskState、统一能力策略与 Docker/Serena 能力组合仍待 G3/G4。没有新模型收益证据或付费授权。
+比较报告中的有类型记忆、可取回工具产物和 TaskState 已分别在 G1、G2、G3 通过阶段门；G4 实现已经存在于本地候选
+工作树，但尚无双 Python/真实容器 CI 验收。没有新模型收益证据或付费授权。
 
 审阅比较报告时的候选 HEAD 为 f79；随后 G0 follow-up 已在候选工作树修改基线测试和示例 smoke，
 没有改运行功能。CI139 部分归因项的现状需按当次代码核对，不能把历史失败清单直接等同当前未修复项。

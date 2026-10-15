@@ -25,6 +25,7 @@ def test_restored_runner_retains_actual_tool_history_tests_and_cumulative_usage(
 ):
     """Host adapter supplements the separately required real Linux Docker matrix."""
     from examples.replay_ordinary import _git
+    from tracefix.capabilities import CallerOrigin
     from tracefix.docker_recovery import tool_identity
     from tracefix.memory import atomic_json, digest
     from tracefix.memory_replay import RecordedMemoryClient
@@ -70,10 +71,41 @@ def test_restored_runner_retains_actual_tool_history_tests_and_cumulative_usage(
                 skills_root=kwargs.get("skills_root"), skill_limits=kwargs["skill_limits"],
                 test_python_executable=sys.executable,
             )
+            from tracefix.capabilities import (
+                CapabilityCatalog,
+                CapabilityPolicy,
+                executor_policy_document,
+                host_control_policy,
+            )
+            from tracefix.skill_snapshot import EMPTY_SKILL_BUNDLE_SHA256
+
+            executor_catalog = CapabilityCatalog.for_tool_names(
+                spec.name for spec in self.tools.specs()
+            )
+            executor_policy = CapabilityPolicy(executor_catalog, kwargs["execution_profile"])
+            control_policy = host_control_policy(kwargs["execution_profile"])
+            policy_document = executor_policy_document(
+                kwargs["execution_profile"],
+                artifacts_enabled=kwargs["artifacts_enabled"],
+                skills_enabled=kwargs["skills_enabled"],
+            )
+            policy_bytes = json.dumps(
+                policy_document,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+            self.host_control_policy = control_policy
+            self.skills_bundle_sha256 = EMPTY_SKILL_BUNDLE_SHA256
+            self.executor_policy_config_sha256 = hashlib.sha256(policy_bytes).hexdigest()
+            self.capability_catalog_sha256 = executor_catalog.sha256
+            self.capability_policy_sha256 = executor_policy.sha256
             if kwargs.get("recovery_snapshot") and kwargs["skills_enabled"]:
                 self.tools.get("load_skill").restore_recovery_state(saved["bridge_state"]["skills"])
             self.session = SimpleNamespace(call=lambda name, args: self.tools.get(name).execute(
-                ToolCall(id=uuid4().hex, name=name, arguments=args)))
+                ToolCall(id=uuid4().hex, name=name, arguments=args)),
+                capability_catalog_sha256=self.capability_catalog_sha256,
+                capability_policy_sha256=self.capability_policy_sha256)
             self.workspace_preparation = {"container_id": self.container_id, "backend": "docker"}
             return self.tools
 
@@ -93,6 +125,14 @@ def test_restored_runner_retains_actual_tool_history_tests_and_cumulative_usage(
             snapshot = {"schema_version": 1, "sequence": sequence, "batch_id": batch,
                         "archive": str(archive.relative_to(self.root)), "metadata": metadata,
                         "bridge_state": bridge, "bridge_state_sha256": digest(bridge),
+                        "capability_catalog_sha256": self.capability_catalog_sha256,
+                        "capability_policy_sha256": self.capability_policy_sha256,
+                        "host_control_policy_sha256": self.host_control_policy.sha256,
+                        "host_control_catalog_sha256": self.host_control_policy.catalog.sha256,
+                        "executor_policy_config_sha256": self.executor_policy_config_sha256,
+                        "checkpoint_commit_decision": self.host_control_policy.authorize(
+                            "checkpoint_commit", CallerOrigin.HOST_LIFECYCLE
+                        ).model_dump(mode="json"),
                         "journal_size": 0, "journal_sha256": hashlib.sha256(b"").hexdigest(),
                         "baseline_sha256": hashlib.sha256(b"fixed test baseline").hexdigest(),
                         "image_id": self.image_id, "container_id": self.container_id,
@@ -209,8 +249,109 @@ def test_prepare_and_cleanup_failures_are_durable_before_any_model(
         runner._resume_docker_locked(root, {"identity": identity}, config)
     assert constructed == [] and closed == [True]
     assert {name: (root / name).read_bytes() for name in preserved} == preserved
-    diagnostics = [json.loads(path.read_text(encoding="utf-8"))
-                   for path in root.glob("recovery-failure-*.json")]
+    diagnostics = [
+        json.loads(path.read_text(encoding="utf-8"))
+        for path in root.glob("recovery-failure-*.json")
+    ]
     assert {row["stage"] for row in diagnostics} == (
-        {"resume", "cleanup"} if cleanup_fails else {"resume"})
+        {"resume", "cleanup"} if cleanup_fails else {"resume"}
+    )
     assert all(row["checkpoint_sequence"] == 1 for row in diagnostics)
+
+
+@pytest.mark.parametrize("tool_failure", [False, True])
+def test_disposable_docker_regression_backend_is_always_removed(
+    tmp_path, monkeypatch, tool_failure
+):
+    source = tmp_path / "source"
+    source.mkdir()
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    config = RunConfig(
+        repo=source,
+        task="validate compatibility",
+        execution_backend="docker",
+        docker_profile="ordinary",
+        docker_image_id="sha256:" + "a" * 64,
+        source_import="widget",
+        test_target="tests/test_main.py",
+        regression_targets=("tests/test_compat.py",),
+        docker_recovery_enabled=True,
+    )
+    events = []
+
+    class RunTool:
+        from tracefix.tools.base import ToolSpec
+
+        spec = ToolSpec(name="run_tests", description="baseline fixture")
+
+        def prepare(self, call):
+            events.append(("prepare", call.id))
+
+        def execute(self, call):
+            events.append(("execute", call.id))
+            if tool_failure:
+                raise RuntimeError("baseline execution failed")
+            return SimpleNamespace(model_dump=lambda mode: {"success": True, "mode": mode})
+
+    class Registry:
+        def get(self, name):
+            assert name == "run_tests"
+            return RunTool()
+
+    class Backend:
+        def __init__(self, **kwargs):
+            events.append(("init", kwargs["run_id"], kwargs["image_id"]))
+
+        def prepare(self, source_commit, source_repo, package_root, **kwargs):
+            events.append(("backend-prepare", source_commit, kwargs["source_import_probe"]))
+            return Registry()
+
+        def export_evidence(self):
+            events.append(("export",))
+
+        def close(self, *, remove):
+            events.append(("close", remove))
+
+    import tracefix.docker_backend as docker_backend
+
+    monkeypatch.setattr(docker_backend, "DockerToolBackend", Backend)
+    call = runtime.ToolCall(id="baseline-call", name="run_tests", arguments={})
+    if tool_failure:
+        with pytest.raises(RuntimeError, match="baseline execution failed"):
+            runtime.TraceFixRunner._run_docker_regression_baseline(
+                config, source, "saved-commit", run_dir, 2, call
+            )
+    else:
+        result = runtime.TraceFixRunner._run_docker_regression_baseline(
+            config, source, "saved-commit", run_dir, 2, call
+        )
+        assert result == {"success": True, "mode": "json"}
+        assert ("export",) in events
+    assert events[-1] == ("close", True)
+
+
+def test_docker_validation_environment_binds_recipe_and_test_environment(tmp_path):
+    from tracefix.real_recipes import EnvironmentRecipe
+    from tracefix.validation import docker_validation_environment_sha256
+
+    config = RunConfig(
+        repo=tmp_path,
+        task="validate environment",
+        execution_backend="docker",
+        docker_profile="ordinary",
+        docker_image_id="sha256:" + "b" * 64,
+        source_import="widget",
+        test_target="tests/test_main.py",
+        environment_recipe=EnvironmentRecipe(
+            task_id="tracefix-ordinary", environment_variables={"BASE_FLAG": "base"}
+        ),
+        test_environment_variables={"TEST_FLAG": "test"},
+    )
+
+    actual = TraceFixRunner._validation_environment_sha256(config)
+
+    assert actual == docker_validation_environment_sha256(
+        config.docker_image_id,
+        {"BASE_FLAG": "base", "TEST_FLAG": "test"},
+    )

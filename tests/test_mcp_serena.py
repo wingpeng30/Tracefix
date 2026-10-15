@@ -13,7 +13,7 @@ from types import SimpleNamespace
 import pytest
 
 from tracefix import RunConfig, TraceFixRunner
-from tracefix.mcp_serena import SerenaMCP, _content_text
+from tracefix.mcp_serena import MCPPrerequisiteError, SerenaMCP, _content_text
 from tracefix.messages import ToolCall
 from tracefix.tools.base import ToolRegistry
 
@@ -139,6 +139,29 @@ def test_serena_tool_definitions_are_stable_and_noncolliding(tmp_path):
     assert len(set(names)) == 3
 
 
+def test_serena_source_export_policy_denial_precedes_snapshot(tmp_path):
+    manager = SerenaMCP(tmp_path, tmp_path, "sha256:" + "a" * 64)
+
+    class DeniedPolicy:
+        @staticmethod
+        def authorize(tool_name, origin):
+            assert tool_name == "source_snapshot_export"
+            assert origin.value == "host_lifecycle"
+            return SimpleNamespace(allowed=False, reason_code="policy_denied")
+
+    class MustNotExport:
+        @staticmethod
+        def materialize(_target):
+            raise AssertionError("source exporter ran after policy denial")
+
+    manager.bind_capability_dispatcher(DeniedPolicy())
+    manager.source_snapshot_provider = MustNotExport()
+    target = tmp_path / "snapshot"
+    target.mkdir()
+    with pytest.raises(RuntimeError, match="policy_denied"):
+        manager._snapshot(target)
+
+
 def test_runner_mcp_preflight_stops_before_model_construction(tmp_path, monkeypatch):
     repo = _repo(tmp_path / "source")
     constructed = []
@@ -146,7 +169,7 @@ def test_runner_mcp_preflight_stops_before_model_construction(tmp_path, monkeypa
     def denied(_self):
         raise RuntimeError("isolated image unavailable")
 
-    monkeypatch.setattr(SerenaMCP, "preflight", denied)
+    monkeypatch.setattr(SerenaMCP, "preflight_image", staticmethod(denied))
     result = TraceFixRunner(lambda config: constructed.append(config)).run(RunConfig(
         repo=repo, task="inspect next_page", model_name="offline/replay",
         output_dir=tmp_path / "runs", env_file=None,
@@ -214,13 +237,11 @@ def test_serena_snapshot_bounds_and_text_blocks(tmp_path, monkeypatch):
     )
     snapshot = tmp_path / "snapshot"
     snapshot.mkdir()
-    source_hash = manager._snapshot(snapshot)
+    source_hash, _policy_hash = manager._snapshot(snapshot)
     assert source_hash == "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
     monkeypatch.setattr(
-        "tracefix.mcp_serena.subprocess.run",
-        lambda *_args, **_kwargs: SimpleNamespace(
-            stdout=b"\0".join(f"file-{n}.py".encode() for n in range(5001)) + b"\0"
-        ),
+        "tracefix.source_snapshot._git_paths",
+        lambda _root, *_args: tuple(f"file-{n}.py" for n in range(5001)),
     )
     with pytest.raises(ValueError, match="5,000"):
         manager._snapshot(tmp_path / "snapshot")
@@ -280,12 +301,30 @@ def test_serena_missing_sdk_and_deleted_tracked_file(tmp_path, monkeypatch):
     repo = _repo(tmp_path / "source")
     manager = SerenaMCP(repo, tmp_path, "sha256:" + "a" * 64)
     monkeypatch.setitem(sys.modules, "mcp", None)
-    with pytest.raises(RuntimeError, match="tracefix-agent\\[mcp\\]"):
+    with pytest.raises(MCPPrerequisiteError, match="tracefix-agent\\[mcp\\]") as caught:
         manager.preflight()
+    assert caught.value.context["reason_code"] == "mcp_sdk_missing"
     (repo / "widget.py").unlink()
     target = tmp_path / "snapshot"
     target.mkdir()
-    assert manager._snapshot(target) == hashlib.sha256().hexdigest()
+    assert manager._snapshot(target)[0] == hashlib.sha256().hexdigest()
+
+
+@pytest.mark.parametrize(
+    "failure", [OSError("cannot spawn"), subprocess.TimeoutExpired("docker", 15)],
+)
+def test_serena_preflight_classifies_probe_failure(monkeypatch, failure):
+    monkeypatch.setitem(sys.modules, "mcp", SimpleNamespace(ClientSession=object))
+    monkeypatch.setattr("tracefix.mcp_serena.shutil.which", lambda _name: "docker")
+
+    def fail(*_args, **_kwargs):
+        raise failure
+
+    monkeypatch.setattr("tracefix.mcp_serena.subprocess.run", fail)
+    with pytest.raises(MCPPrerequisiteError) as caught:
+        SerenaMCP.preflight_image("sha256:" + "a" * 64)
+    assert caught.value.code == "mcp_prerequisite_unavailable"
+    assert caught.value.context == {"reason_code": "docker_image_probe_failed"}
 
 
 def test_serena_rejects_tool_name_and_long_or_windows_path(tmp_path):

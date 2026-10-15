@@ -106,6 +106,16 @@ class ToolResultPresenter:
             return self._shorten_fields(value, ("content",), self.config.max_read_chars)
         if tool_name == "search_tool_artifact":
             return self._present_artifact_search(value)
+        if tool_name in {"get_task_state", "update_task_state"}:
+            # Revision and item IDs are needed by the next update, even when
+            # the human-readable state exceeds the generic presentation cap.
+            presented = {
+                key: value[key]
+                for key in ("revision", "created_ids", "evidence_role") if key in value
+            }
+            if "state" in value:
+                presented["state"] = self._generic(value["state"])
+            return presented
         return self._generic(value)
 
     def _present_artifact_search(self, value: dict[str, JsonValue]) -> dict[str, JsonValue]:

@@ -29,6 +29,12 @@ from tracefix import (
     TraceEventType,
     TraceProtocolError,
 )
+from tracefix.capabilities import (
+    CapabilityCatalog,
+    CapabilityPolicy,
+    ExecutionProfile,
+    ToolDispatcher,
+)
 
 
 class ScriptedLLM(BaseLLM):
@@ -138,6 +144,70 @@ def test_agent_runs_tool_loop_and_accumulates_usage() -> None:
     assert len({event.task_id for event in sink.events}) == 1
 
 
+def test_capability_denial_precedes_cached_result_and_does_not_count_cache_hit() -> None:
+    tool = RecordingTool()
+    llm = ScriptedLLM([])
+    agent = MinimalAgent(llm, ToolRegistry([tool]), config=AgentConfig(read_cache_enabled=True))
+    policy = CapabilityPolicy(
+        CapabilityCatalog.for_tool_names(("search_code",)), ExecutionProfile.WORKSPACE_WRITE
+    )
+    agent.tool_dispatcher = ToolDispatcher(policy)
+    agent._reset_turn_runtime()
+    call = ToolCall(id="denied-read", name="search_code", arguments={"query": "x"})
+    previous = ToolResult(
+        call_id="previous-read", tool_name="search_code", success=True, output={"text": "cached"}
+    )
+    signature = agent._tool_signature(call)
+    agent._successful_tool_cache[signature] = previous
+    agent._visible_tool_result_ids.add(previous.call_id)
+
+    result = agent._execute_tool(call, origin="recovery")
+
+    assert not result.success
+    assert result.metadata["reason_code"] == "origin_not_allowed"
+    assert result.metadata["policy_sha256"] == policy.sha256
+    assert not result.metadata.get("cached", False)
+    assert agent.state.cached_tool_calls == 0
+    assert tool.calls == []
+
+
+def test_inspect_policy_rejects_run_tests_before_prepare_and_test_count() -> None:
+    class PreparedTestTool(RecordingTool):
+        name: str = "run_tests"
+        prepared: int = 0
+
+        def prepare(self, call: ToolCall) -> None:
+            self.prepared += 1
+
+    tool = PreparedTestTool()
+    llm = ScriptedLLM(
+        [
+            response(
+                calls=(
+                    ToolCall(id="inspect-test", name="run_tests", arguments={"command": "pytest"}),
+                )
+            ),
+            response(content="inspection finished"),
+        ]
+    )
+    agent = MinimalAgent(llm, ToolRegistry([tool]))
+    agent.tool_dispatcher = ToolDispatcher(
+        CapabilityPolicy(CapabilityCatalog.for_tool_names(("run_tests",)), ExecutionProfile.INSPECT)
+    )
+
+    state = agent.run("inspect only")
+
+    assert state.status is AgentStatus.COMPLETED
+    assert state.test_runs == 0
+    assert tool.prepared == 0
+    assert tool.calls == []
+    result_message = next(
+        item for item in agent.history.snapshot() if item.role is MessageRole.TOOL
+    )
+    result = json.loads(result_message.content or "")
+    assert result["error"] == "capability policy denied: profile_denied"
+
+
 def _validation_result(status: str, *, success: bool | None = None) -> ToolResult:
     if success is None:
         success = status == "passed"
@@ -153,14 +223,20 @@ def _validation_result(status: str, *, success: bool | None = None) -> ToolResul
         "junit_path": f"{status}.xml",
     }
     return ToolResult(
-        call_id=f"{status}-call", tool_name="run_tests", success=success,
-        error=None if success else f"test returned {status}", output=output,
+        call_id=f"{status}-call",
+        tool_name="run_tests",
+        success=success,
+        error=None if success else f"test returned {status}",
+        output=output,
     )
 
 
 def _validation_agent(
-    outcomes: dict[str, ToolResult], baseline: dict[str, str | None], *,
-    source_sha: str = "source-state-1", nonempty: bool = True,
+    outcomes: dict[str, ToolResult],
+    baseline: dict[str, str | None],
+    *,
+    source_sha: str = "source-state-1",
+    nonempty: bool = True,
 ) -> MinimalAgent:
     agent = MinimalAgent(ScriptedLLM([]))
     agent._validation_gate_attempted_sha = None
@@ -278,12 +354,15 @@ def test_validation_gate_checkpoints_each_completed_batch_and_feedback() -> None
     "result",
     [
         _validation_result("timed_out").model_copy(update={"output": None}),
-        _validation_result("test_failure").model_copy(update={
-            "output": {
-                "test_status": "test_failure", "returncode": 1,
-                "test_counts": {"failures": 1, "errors": 1},
-            },
-        }),
+        _validation_result("test_failure").model_copy(
+            update={
+                "output": {
+                    "test_status": "test_failure",
+                    "returncode": 1,
+                    "test_counts": {"failures": 1, "errors": 1},
+                },
+            }
+        ),
     ],
     ids=["missing-evidence", "pytest-error"],
 )
@@ -871,13 +950,15 @@ def test_duplicate_failed_patch_is_not_executed_twice_and_prompts_recovery() -> 
     assert state.status is AgentStatus.COMPLETED
     assert len(tool.calls) == 1
     duplicate = next(
-        json.loads(message.content or "{}") for message in agent.history.snapshot()
+        json.loads(message.content or "{}")
+        for message in agent.history.snapshot()
         if message.role is MessageRole.TOOL
         and json.loads(message.content or "{}").get("metadata", {}).get("duplicate") is True
     )
     assert duplicate["metadata"]["duplicate"] is True
     recovery = next(
-        message for message in agent.history.snapshot()
+        message
+        for message in agent.history.snapshot()
         if message.metadata.get("kind") == "patch_recovery"
     )
     assert recovery.role is MessageRole.USER
@@ -930,7 +1011,8 @@ def test_passing_tests_and_nonempty_diff_prompt_agent_to_finish() -> None:
     assert state.test_runs == 1
     assert state.phase is AgentPhase.FINISH
     reminder = next(
-        message for message in reversed(agent.history.snapshot())
+        message
+        for message in reversed(agent.history.snapshot())
         if message.metadata.get("kind") == "ready_to_finish"
     )
     assert reminder.role is MessageRole.USER
@@ -1096,33 +1178,53 @@ def test_existing_trace_protocol_error_is_not_wrapped() -> None:
 
 def test_compact_context_agent_tool_waits_for_closed_tool_batch() -> None:
     reader = RecordingTool(name="read_file")
-    llm = ScriptedLLM([
-        response(calls=(ToolCall(id="read-before-compact", name="read_file",
-                                 arguments={"path": "src/a.py"}),)),
-        response(calls=(ToolCall(id="compact-now", name="compact_context",
-                                 arguments={"reason": "整理历史"}),)),
-        response(content="完成"),
-    ])
+    llm = ScriptedLLM(
+        [
+            response(
+                calls=(
+                    ToolCall(
+                        id="read-before-compact", name="read_file", arguments={"path": "src/a.py"}
+                    ),
+                )
+            ),
+            response(
+                calls=(
+                    ToolCall(
+                        id="compact-now", name="compact_context", arguments={"reason": "整理历史"}
+                    ),
+                )
+            ),
+            response(content="完成"),
+        ]
+    )
     agent = MinimalAgent(
-        llm, ToolRegistry([reader]),
-        AgentConfig(context=ContextConfig(
-            context_window_tokens=20_000, compaction_trigger_tokens=2_000,
-            retain_ratio=0.001, agent_tool_enabled=True,
-        )),
+        llm,
+        ToolRegistry([reader]),
+        AgentConfig(
+            context=ContextConfig(
+                context_window_tokens=20_000,
+                compaction_trigger_tokens=2_000,
+                retain_ratio=0.001,
+                agent_tool_enabled=True,
+            )
+        ),
     )
 
     state = agent.run("修复")
 
     assert state.status is AgentStatus.COMPLETED
-    assert all(any(spec.name == "compact_context" for spec in tools)
-               for _messages, tools in llm.requests)
+    assert all(
+        any(spec.name == "compact_context" for spec in tools) for _messages, tools in llm.requests
+    )
     assert state.context_metrics.compaction_count == 1
-    assert any(message.metadata.get("tracefix_context_summary")
-               for message in llm.requests[-1][0])
+    assert any(message.metadata.get("tracefix_context_summary") for message in llm.requests[-1][0])
     history = agent.history.snapshot()
-    call_index = next(i for i, message in enumerate(history)
-                      if message.role is MessageRole.ASSISTANT
-                      and any(call.name == "compact_context" for call in message.tool_calls))
+    call_index = next(
+        i
+        for i, message in enumerate(history)
+        if message.role is MessageRole.ASSISTANT
+        and any(call.name == "compact_context" for call in message.tool_calls)
+    )
     assert history[call_index + 1].tool_call_id == "compact-now"
     assert history[call_index + 1].role is MessageRole.TOOL
 
@@ -1138,7 +1240,8 @@ def test_compact_context_agent_tool_is_opt_in() -> None:
 
     assert [spec.name for spec in default_agent._request_tool_specs()] == ["read_file"]
     assert [spec.name for spec in enabled_agent._request_tool_specs()] == [
-        "read_file", "compact_context",
+        "read_file",
+        "compact_context",
     ]
 
 
@@ -1154,18 +1257,26 @@ def test_partial_read_result_is_never_replaced_by_a_cache_reference() -> None:
         def execute(self, call):
             self.calls += 1
             return ToolResult(
-                call_id=call.id, tool_name=call.name, success=True,
-                output={"path": "src/large.py", "start_line": 1,
-                        "end_line": 500, "content": "x" * 6_000},
+                call_id=call.id,
+                tool_name=call.name,
+                success=True,
+                output={
+                    "path": "src/large.py",
+                    "start_line": 1,
+                    "end_line": 500,
+                    "content": "x" * 6_000,
+                },
             )
 
     tool = LargeReadTool()
     args = {"path": "src/large.py", "start_line": 1, "end_line": 500}
-    llm = ScriptedLLM([
-        response(calls=(ToolCall(id="large-read-1", name="read_file", arguments=args),)),
-        response(calls=(ToolCall(id="large-read-2", name="read_file", arguments=args),)),
-        response(content="完成"),
-    ])
+    llm = ScriptedLLM(
+        [
+            response(calls=(ToolCall(id="large-read-1", name="read_file", arguments=args),)),
+            response(calls=(ToolCall(id="large-read-2", name="read_file", arguments=args),)),
+            response(content="完成"),
+        ]
+    )
     agent = MinimalAgent(llm, ToolRegistry([tool]))
 
     state = agent.run("检查大文件")
@@ -1173,32 +1284,43 @@ def test_partial_read_result_is_never_replaced_by_a_cache_reference() -> None:
     assert state.status is AgentStatus.COMPLETED
     assert tool.calls == 2
     assert state.cached_tool_calls == 0
-    first_result = next(message for message in agent.history.snapshot()
-                        if message.tool_call_id == "large-read-1")
+    first_result = next(
+        message for message in agent.history.snapshot() if message.tool_call_id == "large-read-1"
+    )
     assert first_result.metadata["full_result_presented"] is False
 
 
 def test_verified_facts_are_appended_after_complete_batch() -> None:
-    llm = ScriptedLLM([
-        response(calls=(
-            ToolCall(id="tests", name="run_tests"),
-            ToolCall(id="diff", name="get_git_diff"),
-        )),
-        response(content="完成"),
-    ])
+    llm = ScriptedLLM(
+        [
+            response(
+                calls=(
+                    ToolCall(id="tests", name="run_tests"),
+                    ToolCall(id="diff", name="get_git_diff"),
+                )
+            ),
+            response(content="完成"),
+        ]
+    )
     agent = MinimalAgent(
-        llm, ToolRegistry([
-            RecordingTool(name="run_tests"), RecordingTool(name="get_git_diff"),
-        ]),
+        llm,
+        ToolRegistry(
+            [
+                RecordingTool(name="run_tests"),
+                RecordingTool(name="get_git_diff"),
+            ]
+        ),
     )
 
     agent.run("修复并验证")
 
     history = agent.history.snapshot()
-    anchors = [i for i, message in enumerate(history)
-               if message.metadata.get("kind") == "task_fact_anchor"]
+    anchors = [
+        i for i, message in enumerate(history) if message.metadata.get("kind") == "task_fact_anchor"
+    ]
     assert len(anchors) == 1
-    assert anchors[0] > max(i for i, message in enumerate(history)
-                            if message.role is MessageRole.TOOL)
+    assert anchors[0] > max(
+        i for i, message in enumerate(history) if message.role is MessageRole.TOOL
+    )
     assert history[anchors[0]].role is MessageRole.USER
     assert history[anchors[0]].metadata["trust_level"] == "untrusted_observation_data"

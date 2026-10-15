@@ -1,40 +1,125 @@
 # TraceFix 开发历程与代码说明
 
-## 2026-10-15 Harness Foundations G2 工具产物（阶段门进行中）
+## 2026-10-15 G4 环境补齐与本地验收完成
 
-用户要求从 G1 继续完成 G2—G4。本节记录当前 G2 进度；G2 阶段门未过，不进入 G3。工作树位于
-`D:\Tracefix\runs\harness-foundations-worktree`，分支 `codex/harness-foundations`，G1 验收提交为父级。
-G2 主实现提交 `1d548f562dc4867cb94c3a5b7b86a0b0d6020708`，tree
-`bd05732ac832f62d44852b69a3e92d4c1e49ed76`；memory+conversation 检查点回归修复为
-`cbe7d25918ec66be4b244fb5ae7938f4c213c096`。用户明确授权后，候选分支更新已按 Git 对象 API
-核对 blob/tree/parent 与 ref 前置 SHA。诊断提交 `fc5cfadb7be60c5c9537ed2f81a0d76d8a2ae86a`
-让 Docker 恢复回放报告只读预检原因；fixture 记账修复提交 `a5824b14b7b8e2b2ecdcb740690dc85259caa219`
-的 tree 为 `0e3a4d7df129d820f1fccdf694874ee523f0f9bf`，远端候选分支当前指向此精确代码提交。
+用户授权下载必要依赖和镜像，禁止上传。Docker Desktop/Linux engine启动成功；建立双Python工程环境及独立MCP环境，
+按锁安装并补上Windows pywin32 companion锁。真实验收修复记忆预置夹具、3.11 f-string兼容、Serena入口LF、
+TaskState裁剪丢revision及固定Skills恢复误判；组合夹具按两轮七次实际测试给8次有限预算，产品保护未放宽。
+Windows长TEMP路径导致venv子进程挂起，独立探针确认后改用短验收目录，未更改最小环境白名单。
 
-实现新增 run-owned `ArtifactStore`、`ProcessCapture` 二进制双流 drain、raw 与脱敏 UTF-8 view 分离、
-不可变 hash/完整性引用、8 MiB 单产物、64 MiB/run、128 项/run、4096 字符分页、每会话64次/累计128 KiB
-读取、字面搜索及20条结果上限。`read_tool_artifact` 与 `search_tool_artifact` 接入工具目录；工具结果和
-二次上下文裁剪保留 locator。Docker bridge 协商产物协议，将归档置于容器 evidence 域并通过有界传输导入/导出；
-恢复校验内容和配额，再允许请求模型。另有零供应商恢复回放入口和测试。
+最终Python3.11.16/3.12.5各1691 passed、0失败/错误、1项Windows权限skip；同一符号链接用例Linux补证通过。
+精确综合覆盖率分别23368/25931=90.11607728201766%、23366/25931=90.10836450580386%；
+两版Ruff、编译、diff及当前工作树diff-check通过。真实editable/wheel完整ordinary＋Serena组合、四种恢复及快照故障、
+身份/模式/链接、超时断线清理、双版本仓库外10组安装回放全部通过。没有供应商调用、GitHub写入、CI或发布。
+本地验收绑定258文件清单`ce7618dbd4ac0828e17a91ecc93529f0a07aa84d28e14ecfb90697c9c89ea6ce`及
+未提交工作树基底9a3d756；完整工程原件在`D:\Tracefix\runs\g4e311`/`g4e312`。
+详细镜像/wheel/环境身份、原始失败、限制及汇总哈希见[环境与验收记录](tasks/2026-10-15-g4-environment-acceptance.md)。
+结论为本地验收完成，原候选CI退出项未执行，不冒称新提交已获CI；原工作区源码没有合入候选改动。
 
-本地 G2 相关定向测试在 checkpoint bug 修复前 300 passed（121.64秒）；新增 runtime 回归验证 memory 与
-conversation 启用、Skills 关闭时能提交 terminal checkpoint，和 API 配置依赖，2 passed。改动文件 Ruff、
-compileall、git diff --check 通过。未完成本机完整工程链；一次筛选式 runtime 测试在 Windows 沙盒中因严格路径/
-子进程准备产生37个 setup errors，未以此判定产品回归。本机 Docker 按用户指示跳过。
+## 2026-10-15 G4 本地续做
 
-CI run `38614482340` 的基础 Docker、Serena MCP 成功；ordinary Docker 暴露 memory+conversation checkpoint
-closure 查询未注册 `load_skill`，由 `cbe7d25` 修复并新增回归。其后 run `38616442269` 在 artifact recovery
-重新启动前通用失败，未能判断原因。run `38617519135` 加入 `runner.inspect()` 只读预检诊断后给出
-`session has unresolved model accounting`。检查 fixture 发现离线响应只有 token usage，没有已知成本；恢复拒绝是正确的
-fail-closed 行为。`ArtifactReplayClient.completion_cost()` 现明确返回合成零费用，并由
-`test_replay_adapter_marks_synthetic_usage_as_known_zero_cost` 验证。没有更改真实未知账单策略。
+按用户新指令，仅在本地补齐PreparedInvocation、ValidationBackend及适配器、统一功能resolver、editable完整组合，
+并修复ordinary Docker独立验收仍拒绝追加回归目标的路径和doctor的组合开关/权限检查。没有上传、改远端ref或触发CI。
+3.12全量1683项通过、0失败/错误、1项因真实符号链接权限不足跳过；最终MCP改动80项补测通过，
+独立重测发生变化模块后精确覆盖率23318/25908=90.00308784931295%。原始全量summary保持accepted=false，未覆盖为通过。
+3.11相关核心339项及最终MCP19项通过（集合重叠），但没有完整依赖；最终wheel/editable仓库外各五组本地回放通过。
+Docker服务和MCP SDK缺失，真实容器组合未验证；后续仍需固定最终身份重新执行完整阶段门。
+源码、环境、完整回归与安装包证据统一保存于[本轮本地记录](tasks/2026-10-15-g4-local-completion.md)，阶段门尚未关闭。
 
-精确代码提交 `a5824b14` 的 CI run `38618345961` 中基础 Docker 和 Serena MCP 通过；ordinary Docker 的恢复主体
-通过，但最后摘要断言失败。回放脚本把离线合成响应次数误报为供应商调用数，CI 因此拒绝“零供应商调用”摘要。当前修复
-将二者分别记录为 `provider_calls=0` 和 `synthetic_model_requests`，并在 workflow 检查两种指标，等待精确提交 CI。
-此前本机 G2 定向集合 300 passed；此次回放模块 2 passed，Ruff、compileall 与 diff-check 通过。双 Python quality job
-仍在执行，完整本机 engineering 检查和本机 Docker未运行；后者按用户要求略过。没有供应商调用、PR、合并或发布。
-G2 阶段门未通过，G3 尚未开始。
+## 2026-10-15 Harness Foundations G4 统一能力策略与 Docker/Serena 组合（本地阶段记录）
+
+G4核心实现位于隔离候选工作树 `D:\Tracefix\runs\harness-foundations-worktree`，工作区 HEAD
+`9a3d756a84c22ee17ff9d27959f2716c8ab2d493`、分支 `codex/harness-foundations`；此前47项路径清单含G3同步内容，不能算G4净新增文件数，
+没有创建 G4 commit。忽略目录清单 `runs/g4-local-source-manifest.json` 收录42项实现文件
+（不含可变进度文档），SHA-256 为 `a2d11c54544e70bd75d308c6ff7f7fc4fd955fbff3c975321fe5336556a6261e`；
+生成的 pytest 临时目录未纳入清单。
+
+实现包括：工具独立能力 ID/资源域/副作用/幂等性元数据与 fail-closed `CapabilityPolicy`/`ToolDispatcher`；调用前检查
+覆盖模型调用、缓存、测试 prepare/执行与受控宿主操作；Skills 正文与允许的 references 固定为只读快照；源码 exporter
+先做路径过滤、再读取普通文件，并通过 `SourceSnapshotProvider` 给隔离的 Serena MCP 容器提供只读快照；增加Docker baseline/最终验证接线
+与 ordinary Docker + Serena + recovery 的组合回放代码；TaskState、artifact、策略和执行器工具目录身份
+在 runtime/checkpoint/bridge 中协同核验。主要模块及测试位置见本地 `src/tracefix/capabilities.py`、
+`skill_snapshot.py`、`source_snapshot.py`、`validation.py` 及 `tests/test_capabilities.py`、
+`test_skill_snapshot.py`、`test_source_snapshot.py`、`test_task_state.py`、`test_validation.py`。
+
+以下为本轮续做前的历史复核，缺口现已补齐：当时原计划的 `PreparedInvocation`、`ValidationBackend` 协议及local/Docker适配器、统一功能组合resolver尚未实现；
+`validation.py`目前仅有Docker环境哈希函数，验证编排仍在Runner，后端依赖仍在Pydantic validator。
+CI完整组合目前只安排在wheel安装后，editable仅有旧memory-dialogue integration，不能声称两种安装方式的完整组合已就绪。
+
+早期本地完整工程原件在 `runs/g4-engineering-local/`：1573项，1562 passed、10 failed、1 skipped，综合覆盖率
+`22905/25722 = 89.0482855143457%`，summary accepted=false。十项失败均为Docker recovery prepare参数组，
+原因是旧夹具把包含其他文件的目录作为自定义Skills根；当前夹具已改为独立Skills目录。随后本机Python 3.12.5 G4定向回归
+513 passed（117.46秒），Ruff、compileall、`git diff --check`通过。定向追加coverage文件不能代替最终干净全量验收。
+最终全量重跑在Serena asyncio路径挂起后中断，`runs/g4-engineering-final/`没有最终通过报告；本机没有Python 3.11和Docker daemon，
+故没有G4双版本、wheel或真实容器验收。此前“本地实现已完成”与“新增ValidationBackend”表述过强，已同步纠正；G4仍进行中。
+
+公开上传的原因和处理：GitHub 自动审查对公共 blob 单文件拒绝部分 README/历史文档和测试，指出潜在内部历史、成本/定价、
+本地路径、凭据配置/测试夹具、恢复任务标识等。针对性本地抽查显示 token 形状测试值带模拟标记，README 命中项是示例任务路径，
+没有发现真实凭据的证据；该抽查不替代完整密钥审计。用户选择跳过被拒文件，随后明确要求停止上传。此前已审查通过的34个 blob
+虽已创建，但从未纳入候选分支 tree；候选分支最后核验为 G3 SHA `9d52583ede2b4d56b12c18794543e53afc20e1b1`，
+没有执行 ref 更新、PR 或 G4 CI。这里不尝试重新上传被拒内容或其改写版本。
+
+阶段门下一步只有在用户恢复上传授权后，才可将获准文件作为精确候选提交并跑双 Python/coverage/wheel 与真实 Docker/MCP CI；
+被自动审查拒绝的文件仍需留在本地，除非用户另行明确处理。没有供应商调用、合并或发布。
+
+## 2026-10-15 Harness Foundations G3 TaskState（阶段门通过）
+
+验收源码提交 `9d52583ede2b4d56b12c18794543e53afc20e1b1`，tree `497d478c004b34ceafd832b511156a0c4f04f0`；GitHub Actions CI #156
+([run 38714764105](https://github.com/wingpeng30/Tracefix/actions/runs/38714764105)) 在该精确提交上全绿。Windows Python 3.11：1544 passed、
+0 failed/error/skip，Coverage.py combined line+branch `22125/24541 = 90.15525039729432%`；Python 3.12：1544 passed、
+0 failed/error/skip，`22123/24541 = 90.14710077013977%`。两版 Ruff、format、compileall、diff-check、editable 安装、公开资格、独立
+wheel/recovery smoke 均通过。基础 Docker、ordinary Docker、Serena MCP job 也全部通过。
+
+TaskState 是独立的纯领域模型，含直接用户需求及宿主签发收据、验收条件、带来源的观察及 valid/historical/stale 状态、计划、
+假设、问题、阻塞与 memory/skill/artifact 引用。持久上限256 KiB，渲染摘要8 KiB；模型更新需要 expected revision，一批最多16项、
+自由文本每项最多1000字符，且只能操作计划、假设、问题和阻塞。用户来源、事实观察、验证资格、预算和权限不能由模型写入。
+工具结果进入已闭合历史后才投影；TaskState anchor 使用 digest 避免重复，checkpoint 绑定 canonical 状态 hash 与历史前缀，恢复时核对
+用户收据及 tool/artifact/skill/memory 引用。模型把计划步骤标为 done 不代表测试通过或可结束任务。
+
+ordinary Docker 合成回放通过：保存暂停状态后销毁旧任务容器，由新宿主与新容器进程恢复；保留直接用户需求、TaskState revision 和原 artifact refs，
+并允许恢复后追加 observation/ref；最终补丁经独立容器验收。回放实际供应商调用数为0，合成模型请求单独记账，所有容器清理。无供应商付费调用。
+
+阶段历史包括：CI #154 暴露旧保留工具名契约未纳入新增 TaskState 工具，且覆盖率略低于门槛；CI #155 的单测和覆盖率修正通过，但 ordinary replay 对 artifact 数量做了错误的“必须恰好一个”假设。修复为核验回执清单、查询观察与状态 references 的真实关系后，CI #156 全通过。最终18项源码/测试修改均核对了本地 Git blob 与远端上传身份；忽略目录源清单 `runs/g3-source-manifest-9d52583e.json` SHA-256 为 `6aff20378f7e6b18f562c963bdd26cd7ea0b5392d095c1bbc74ab5215cbd9ea9`。
+
+原始 Engineering Artifact：Python 3.11 ID `11962714771` / digest `sha256:0a700d2fcaf1932bc8e00efb38f8b61b823d6cfca88b6a41e64f9b83cf7eef3a`；Python 3.12 ID `11963980422` / digest `sha256:7898df90306617230605b300703eaa0b29d8594400c42c2506e58d21bdc93669`。基础 Docker ID `11962356740` / digest `sha256:fdf46860d9dac47e3a4ae52060902c41ab1060320d1288f204ea2b2c46c2c2dc`；ordinary Docker ID `11961982806` / digest `sha256:cdb855577e288f590a202e0ecf6122d860b436cd92d91bc851b1c224a328cf50`；Serena ID `11962735922` / digest `sha256:62c8de46639d4cfa4e7c31968d99185de5704959a0f1961b4f65b6a821c48170`。Artifact 来自 run `38714764105`，原始 run 结果与其精确提交/tree 绑定。
+
+本机 Python 3.12.5 的相关 G3 定向集95 passed，Ruff、format、compileall、diff-check 通过。更宽子集424 passed/1 failed，唯一失败为沙盒阻止 MSYS Git clone semaphore；无本机 Python 3.11、Docker daemon 或可用 Serena asyncio socket。遵从用户“本机 Docker 被沙箱拦截时先跳过”的指示，真实容器/MCP 以 CI job 为验收。文档更新对应已验收源码 SHA，不声称当前文档 HEAD 重跑了上述完整工程门。
+
+## 2026-10-15 Harness Foundations G2 工具产物（阶段门通过）
+
+G2 最终验收身份为候选提交 `075bfae7d921b0d4ca7729b5a69f5c5218e89a10`，tree
+`2d37ed9dc063f1a819104c6a640b5d88c0acdac5`，CI #152（[run 38699965369](https://github.com/wingpeng30/Tracefix/actions/runs/38699965369)）。
+本阶段位于隔离 worktree 的候选分支 `codex/harness-foundations`；用户已授权更新公开候选分支并触发 CI。
+G2 实现之前经过 `1d548f5`、`cbe7d25`、`fc5cfad`、`a5824b1` 和
+`9a3d756` 的开发/恢复修订；正式验收提交以远端当前 SHA `075bfae` 为准，阶段记录不把不同本地提交图误写成远端身份。
+
+实现新增 run-owned `ArtifactStore`、`ProcessCapture` 二进制双流 drain、raw 与脱敏 UTF-8 view 分离、不可变
+hash/完整性引用、8 MiB 单产物、64 MiB/run、128 项/run、4096 字符分页、每会话64次/累计128 KiB读取、字面搜索
+及20条结果上限。`read_tool_artifact` 与 `search_tool_artifact` 接入冻结工具目录；读取 locator 在二次上下文裁剪中保留。
+Docker bridge 明确协商产物协议，归档置于容器 evidence 域并通过有界传输导入/导出；checkpoint 校验来源、内容、配额，
+恢复验证产物后才允许调用模型。完整使用入口见[工具产物说明](tool-artifacts.md)。
+
+CI #151 先证明双 Python 全量测试为各1485 passed、0 failed/error/skip，但精确 combined line+branch 只有
+`21370/23812 = 89.74466655467832%` 与 `21368/23812 = 89.73626742818747%`，低于90%；diff-check 另因
+`docker_backend.py` 与 Docker transport test 的 CRLF 失败。补充了 manifest 清单/配额篡改、产物路径和完整性、读取偏移、
+管道 reader 失败、drain deadline 与回收等行为覆盖，并将 Windows API 上传文件规范为 LF，没有降低覆盖率或缩小测试范围。
+随后 G2 四个相关模块本地定向集合为179 passed（68.58秒），Ruff、compileall、git diff --check 均通过；本机未连接 Docker，
+按用户指示不在本机执行容器验收。
+
+CI #152 的 Windows Python 3.11.9 与 3.12.10 各1519 passed、0 failed/error/skip；Coverage.py 精确 combined
+line+branch 分别 `21449/23812 = 90.07643205106669%`、`21447/23812 = 90.06803292457585%`。两版 Ruff、
+compileall、diff-check、editable smoke、公开任务资格 replay、独立 wheel/recovery smoke 均通过。质量 artifact：
+3.11 ID `11956153812`，digest `sha256:374f52c957782f59b8abe52cf32c94d80b34f011b397ae1771f68bb3ef4cbaa9`；
+3.12 ID `11956941922`，digest `sha256:25859b0f1294e16284e74d57e8ac454ab9a32f306d1d03cf0acddd677a1392f0`。
+真实容器 job：基础 Docker ID `11956720543` / `sha256:6080b0589ee8a24ae1f4e6e5d6d56e3ca4767b4417e04b81a017514935de2b45`；
+ordinary Docker ID `11956510642` / `sha256:db6b97feef6df5a9579faf3c61b2255389a4e57cedbc8bbd19d33cbef081a22e`；
+Serena MCP ID `11955846664` / `sha256:4b853944d0b667276cb507a065bf1d052fef165735fff0a0f50b88ddeaaf5bc9`。
+ordinary recovery/wheel 与 editable 回放、容器销毁重建、产物恢复和零供应商调用均成功。所有阶段回放均未发出供应商请求。
+
+CI #151 两版工程 artifact 的早期失败证据本机归档于候选 worktree 忽略目录 `runs/ci151-engineering-py311.zip`、
+`runs/ci151-engineering-py312.zip`；CI #152 原始工程 artifact 为 `runs/ci152-engineering-py311.zip` 与
+`runs/ci152-engineering-py312.zip`，容器原件保留在 GitHub run artifacts。文档状态同步晚于实现验收，只记录
+`075bfae`/tree 和 CI #152 的已验收功能，不声称文档提交的新 HEAD 重新通过工程门。没有 PR、合并、发布或付费请求。
 
 ## 2026-10-15 Harness Foundations G1 有类型与来源限定记忆
 

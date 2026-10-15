@@ -7,7 +7,7 @@
 - 只有可信用户明确陈述和机器可核对观察在适用时自动召回。模型解释、归纳和推断只作为候选。证据等级、发布状态和当前 checkout 适用性互相独立。
 - 现有 `--memory` 使用新版记忆。产物和 TaskState 通过 `harness_foundations_enabled` 组合开关加入，默认关闭；能力策略始终执行。工具目录在会话启动时冻结。
 - 首次修改 v1 记忆时，在同一仓库锁内创建 v2 信封并完成迁移与写入的一次原子替换，保留 v1。坏库、冲突、失败均 fail closed。
-- 通过专用候选分支和 GitHub CI 验收；需要的 Python 3.11/3.12、ordinary Docker 与 Serena MCP 验收使用实际 CI 环境。提交并推送，不合并、不发布。
+- 原计划通过专用候选分支和GitHub CI验收。用户最新指令覆盖推送安排：G4仅本地修改和测试，不上传、不触发CI；环境缺项记录为未验证，不降低原阶段门。
 - 不调用付费供应商，不续用历史额度，不重发响应未知请求。
 - 不实现后台作业、多代理、通用 MCP 插件、向量库、任意 shell hook 或新的联网模式。
 - Runner 负责装配。纯领域层通过小接口依赖注入；下层不导入 Runner、MinimalAgent 或具体 Docker 后端。TaskState 不取得预算、验证资格或完成状态的权威。能力描述属于执行侧元数据，不进入供应商 ToolSpec schema。
@@ -18,9 +18,12 @@
 |---|---|---|---|
 | G0 | 固定实现起点和双版本/容器验证链 | 完成：提交 `bcb6d24` / CI #142 全通过 | 当前源码清单、双版本全量工程门、editable/wheel、基础/ordinary Docker 与 Serena MCP 原始产物 |
 | G1 | 来源可信、证据分级、适用性独立评估、原子 v2 迁移和固定召回快照 | 完成：提交 `d059ec2` / CI #144 全部通过 | Python 3.11/3.12、editable/wheel、基础 Docker、ordinary Docker 与 Serena MCP；源码清单和 Artifact 见当前状态及开发历程 |
-| G2 | 截断前有界采集、不可变安全视图、可分页/搜索、配额可恢复 | 实现进行中；候选 `a5824b14`，CI #148 容器和双 Python 门进行中 | 双流/坏字节/超时/磁盘配额/篡改/Docker 重建契约及完整工程门全部通过 |
-| G3 | 需求、验收、观察、假设、计划与证据引用跨压缩/恢复保留 | 未开始 | 来源伪造、测试失效、双压缩、恢复一致性与完整工程门 |
-| G4 | 所有执行受同一能力策略约束，Skills/记忆/TaskState/产物/Serena/最终回归可在 ordinary Docker 组合运行 | 未开始 | 零调用组合回放、拒绝用例、editable/wheel 与双镜像真实 CI |
+| G2 | 截断前有界采集、不可变安全视图、可分页/搜索、配额可恢复 | 完成：`075bfae` / CI #152 | 双Python各1519项、覆盖率均≥90%、editable/wheel和真实Docker/MCP通过；见当前状态/开发历程 |
+| G3 | 需求、验收、观察、假设、计划与证据引用跨压缩/恢复保留 | 完成：`9d52583` / CI #156 | 双Python各1544项、覆盖率均≥90%、editable/wheel和真实Docker/MCP通过；见当前状态/开发历程 |
+| G4 | 所有执行受同一能力策略约束，Skills/记忆/TaskState/产物/Serena/最终回归可在 ordinary Docker 组合运行 | 本地功能与双版本工程验收完成；真实两种安装组合通过；原候选CI未执行，禁止上传 | 当前完整原件见[环境与验收记录](2026-10-15-g4-environment-acceptance.md)，不借旧CI宣称新提交通过 |
+
+2026-10-15复核：详细子项与退出清单保留实施分解，当前阶段状态以本表、固定current-status和精确CI身份为准。
+不得根据旧的未勾选条目把已通过G2/G3重新解释为未开始；G4也不得由“核心代码存在”推定为完成。
 
 ## G0：基线验收
 
@@ -182,12 +185,15 @@
 
 ### G4 最终组合退出清单
 
-- [ ] 策略拒绝、未知能力、假 origin、内部 control 名、缓存绕过和嵌套 prepare 绕过均失败关闭且不计次/不派发。
-- [ ] memory、custom Skill/reference 和 regression baseline 初始化；ordinary Docker task 召回并加载；Serena 当前符号查询；中段日志落 artifact 并可 search/read。
-- [ ] patch 后再次查询 Serena 可见更新快照；闭合批次后 checkpoint。
-- [ ] 销毁 task 容器并重启宿主进程恢复：旧 artifact、TaskState 和来源身份完整，追加一轮用户消息并继续验证。
-- [ ] 新 Docker 容器独立验收所有目标，核对累计预算、策略 hash、来源和资源清理。
-- [ ] 整条零供应商调用组合分别通过 editable 和 wheel，以及真实 ordinary task image + 固定 Serena MCP image 回放。
+- [x] 策略拒绝、未知能力、假 origin、内部 control 名、缓存绕过和嵌套 prepare 绕过均失败关闭且不计次/不派发。
+- [x] memory、custom Skill/reference 和 regression baseline 初始化；ordinary Docker task 召回并加载；Serena 当前符号查询；中段日志落 artifact 并可 search/read。
+- [x] patch 后再次查询 Serena 可见更新快照；闭合批次后 checkpoint。
+- [x] 销毁 task 容器并重启宿主进程恢复：旧 artifact、TaskState 和来源身份完整，追加一轮用户消息并继续验证。
+- [x] 新 Docker 容器独立验收所有目标，核对累计预算、策略 hash、来源和资源清理。
+- [x] 整条零供应商调用组合分别通过 editable 和 wheel，以及真实 ordinary task image + 固定 Serena MCP image 回放。
+
+以上勾选对应本地功能契约与真实组合原件；双版本本地工程门已完成，Windows唯一权限skip已有Linux同用例补证。
+原计划的远端候选CI退出项未执行，不将本地证据冒称CI或新提交已验收。
 
 ## 所有阶段的共同工程门
 

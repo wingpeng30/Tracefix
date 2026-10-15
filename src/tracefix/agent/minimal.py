@@ -14,6 +14,7 @@ from uuid import uuid4
 
 from tracefix.agent.base import AgentPhase, AgentState, AgentStatus, BaseAgent
 from tracefix.agent.presentation import ToolResultPresenter
+from tracefix.capabilities import CallerOrigin, CapabilityDecision, ToolDispatcher
 from tracefix.context import ContextSessionState
 from tracefix.exceptions import (
     AgentCompleted,
@@ -33,7 +34,9 @@ from tracefix.exceptions import (
 )
 from tracefix.messages import Message, MessageRole, ToolCall
 from tracefix.models.base import LLMResponse, TokenUsage
+from tracefix.task_state import TaskReference, TaskStateError, TaskStateRenderer, TaskStateSession
 from tracefix.tools.base import ReservedToolName, ToolResult, ToolSpec
+from tracefix.tools.invocation import PreparedInvocation
 from tracefix.tracing.base import TraceEvent, TraceEventType
 
 
@@ -43,6 +46,9 @@ class MinimalAgent(BaseAgent):
     checkpoint_callback: Callable[[MinimalAgent], None] | None = None
     experience_callback: Callable[[MinimalAgent], None] | None = None
     persist_terminal_checkpoint: bool = False
+    task_state_session: TaskStateSession | None = None
+    task_state_source_identity: Callable[[], str | None] | None = None
+    tool_dispatcher: ToolDispatcher | None = None
 
     _RECOVERY_FIELDS = (
         "_failed_apply_calls",
@@ -79,13 +85,16 @@ class MinimalAgent(BaseAgent):
         memory["_context_session_state"] = self._context_session_state.model_dump(mode="json")
         memory["_repo_map_candidate_reads"] = sorted(self._repo_map_candidate_reads)
         memory["_budget_guidance_sent"] = sorted(self._budget_guidance_sent)
-        return {
+        payload = {
             "state": self.state.model_dump(mode="json"),
             "history": [message.model_dump(mode="json") for message in self.history.snapshot()],
             "memory": json.loads(json.dumps(memory, ensure_ascii=False)),
             "task_id": self._task_id,
             "active_seconds": max(0.0, time.monotonic() - self._started_monotonic),
         }
+        if self.task_state_session is not None:
+            payload["task_state"] = self.task_state_session.checkpoint(self.history.snapshot())
+        return payload
 
     def verify_test_source(self, source_sha256: str) -> None:
         """Invalidate a passing test if the checkout diff has since changed."""
@@ -108,6 +117,9 @@ class MinimalAgent(BaseAgent):
         *,
         message: str | None = None,
         user_input_receipt: dict[str, object] | None = None,
+        trusted_user_receipts: dict[str, dict[str, object]] | None = None,
+        artifact_ids: set[str] | None = None,
+        supersedes: tuple[str, ...] = (),
     ) -> AgentState:
         """Continue a previously validated local checkpoint without resetting history."""
         from tracefix.messages import MessageHistory
@@ -138,6 +150,18 @@ class MinimalAgent(BaseAgent):
                 }
             )
         )
+        if self.task_state_session is not None:
+            try:
+                self.task_state_session.restore(
+                    payload.get("task_state"),
+                    self.history.snapshot(),
+                    trusted_receipts=trusted_user_receipts,
+                    artifact_ids=artifact_ids,
+                )
+            except TaskStateError as exc:
+                raise AgentError(f"checkpoint TaskState is invalid: {exc}") from exc
+        elif "task_state" in payload:
+            raise AgentError("checkpoint contains disabled TaskState")
         self.state.status = AgentStatus.RUNNING
         self.state.finished_at = None
         self.state.stop_reason = None
@@ -173,6 +197,19 @@ class MinimalAgent(BaseAgent):
             self._append_message(
                 Message(id=message_id, role=MessageRole.USER, content=message, metadata=metadata)
             )
+            if self.task_state_session is not None:
+                if user_input_receipt is None:
+                    raise AgentError("continuous TaskState requires a host user-input receipt")
+                self.task_state_session.add_user_input(
+                    message_id=message_id,
+                    turn=self.state.turn_number,
+                    content=message,
+                    receipt=user_input_receipt,
+                    receipt_verified=True,
+                    supersedes=supersedes,
+                )
+            elif supersedes:
+                raise AgentError("supersedes is available only when TaskState is enabled")
             self._emit(TraceEventType.TURN_STARTED, {"turn": self.state.turn_number})
             if self.checkpoint_callback is not None:
                 self.checkpoint_callback(self)
@@ -225,6 +262,8 @@ class MinimalAgent(BaseAgent):
         baseline_seconds = getattr(self, "validation_baseline_seconds", 0.0)
         self.reset()
         self._reset_turn_runtime()
+        if self.task_state_session is not None:
+            self.task_state_session.reset()
         self.validation_targets = validation_targets
         self.validation_baseline = validation_baseline
         self.validation_source_identity = validation_source_identity
@@ -334,6 +373,20 @@ class MinimalAgent(BaseAgent):
         if not resume:
             for context_message in self.initial_context_messages:
                 self._append_message(context_message)
+                if (
+                    self.task_state_session is not None
+                    and context_message.metadata.get("kind") == "memory_recall_bundle"
+                ):
+                    bundle_sha = context_message.metadata.get("bundle_sha256")
+                    if isinstance(bundle_sha, str):
+                        self.task_state_session.add_reference(
+                            TaskReference(
+                                kind="memory",
+                                reference_id=bundle_sha,
+                                sha256=bundle_sha,
+                                source_message_id=context_message.id,
+                            )
+                        )
         if not resume:
             metadata: dict[str, Any] = {"turn": self.state.turn_number}
             message_id = uuid4().hex
@@ -348,6 +401,16 @@ class MinimalAgent(BaseAgent):
             self._append_message(
                 Message(id=message_id, role=MessageRole.USER, content=task, metadata=metadata)
             )
+            if self.task_state_session is not None:
+                if self.initial_user_receipt is None:
+                    raise AgentError("TaskState requires a host user-input receipt")
+                self.task_state_session.add_user_input(
+                    message_id=message_id,
+                    turn=self.state.turn_number,
+                    content=task,
+                    receipt=self.initial_user_receipt,
+                    receipt_verified=True,
+                )
         if not resume and self.checkpoint_callback is not None:
             self.checkpoint_callback(self)
 
@@ -607,16 +670,23 @@ class MinimalAgent(BaseAgent):
             )
 
         pending_skill_messages: list[tuple[Message, dict[str, object]]] = []
-        task_fact_changed = False
+        task_fact_changed = self.task_state_session is not None
         for index, call in enumerate(response.message.tool_calls):
+            invocation = None
             try:
                 self._check_time_budget()
+                decision = self._capability_decision(call, CallerOrigin.MODEL)
+                if decision is not None and not decision.allowed:
+                    result = self._execute_tool(call)
+                    self._append_tool_result(result)
+                    continue
                 if call.name == ReservedToolName.RUN_TESTS.value:
                     tool = self.tools.get(call.name)
                     try:
-                        prepare = getattr(tool, "prepare", None)
-                        if prepare is not None:
-                            prepare(call)
+                        invocation = (
+                            self.tool_dispatcher.prepare_invocation(tool, call, CallerOrigin.MODEL)
+                            if self.tool_dispatcher is not None else PreparedInvocation(tool, call)
+                        )
                     except ToolError as exc:
                         signature = self._tool_signature(call)
                         count = self._invalid_test_signatures.get(signature, 0) + 1
@@ -661,10 +731,11 @@ class MinimalAgent(BaseAgent):
                             },
                         )
 
-                    if prepare is not None:
-                        tool.on_process_started = record_test_start
-                result = self._execute_tool(call)
-                if call.name == ReservedToolName.RUN_TESTS.value and prepare is None:
+                result = self._execute_tool(
+                    call, invocation=invocation,
+                    on_process_started=(record_test_start if invocation is not None else None),
+                )
+                if invocation is not None and not invocation.tracks_process_start:
                     record_test_start()
             except AgentLimitExceeded as exc:
                 # 消息历史要求每个 tool call 都有结果，因此为未执行调用补齐失败消息。
@@ -718,6 +789,21 @@ class MinimalAgent(BaseAgent):
         # 提示只能在本轮全部 tool result 写回后追加，否则会违反消息配对协议。
         for message, metadata in pending_skill_messages:
             self._append_message(message)
+            if self.task_state_session is not None:
+                skill_name = metadata.get("skill_name")
+                if isinstance(skill_name, str):
+                    self.task_state_session.add_reference(
+                        TaskReference(
+                            kind="skill",
+                            reference_id=skill_name,
+                            sha256=(
+                                metadata.get("content_sha256")
+                                if isinstance(metadata.get("content_sha256"), str)
+                                else None
+                            ),
+                            source_message_id=message.id,
+                        )
+                    )
             self._emit(
                 TraceEventType.SKILL_ACTIVATED,
                 {**metadata, "content": message.content},
@@ -736,18 +822,20 @@ class MinimalAgent(BaseAgent):
         specs = self.tools.specs()
         if not self.config.context.enabled or not self.config.context.agent_tool_enabled:
             return specs
-        return (
-            *specs,
-            ToolSpec(
-                name="compact_context",
-                description="在当前工具批次结束后主动压缩旧上下文。",
-                input_schema={
-                    "type": "object",
-                    "properties": {"reason": {"type": "string", "maxLength": 280}},
-                    "required": [],
-                    "additionalProperties": False,
-                },
-            ),
+        return (*specs, self.compact_context_tool_spec())
+
+    @staticmethod
+    def compact_context_tool_spec() -> ToolSpec:
+        """Return the host-only context control schema for frozen catalog identities."""
+        return ToolSpec(
+            name="compact_context",
+            description="在当前工具批次结束后主动压缩旧上下文。",
+            input_schema={
+                "type": "object",
+                "properties": {"reason": {"type": "string", "maxLength": 280}},
+                "required": [],
+                "additionalProperties": False,
+            },
         )
 
     def _count_context_tokens(self, messages, tools):
@@ -766,6 +854,10 @@ class MinimalAgent(BaseAgent):
             "latest_test": self._last_test_evidence,
             "validation_status": self.state.validation_status,
         }
+        if self.task_state_session is not None:
+            fact["task_state"] = json.loads(
+                TaskStateRenderer.render(self.task_state_session.snapshot())
+            )
         serialized = json.dumps(fact, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
         digest = hashlib.sha256(serialized.encode("utf-8")).hexdigest()
         if digest == self._last_task_fact_digest:
@@ -964,8 +1056,22 @@ class MinimalAgent(BaseAgent):
                 "origin": "validation_gate",
             },
         )
+        decision = self._capability_decision(call, CallerOrigin.VALIDATION_GATE)
+        if decision is not None and not decision.allowed:
+            result = self._execute_tool(
+                call, origin=CallerOrigin.VALIDATION_GATE.value, emit_call=False
+            )
+            result = result.model_copy(
+                update={
+                    "metadata": {**result.metadata, "origin": CallerOrigin.VALIDATION_GATE.value}
+                }
+            )
+            self._append_tool_result(result)
+            return result
         tool = self.tools.get(call.name)
-        prepare = getattr(tool, "prepare", None)
+        from tracefix.validation import ActiveValidationBackend
+
+        invocation = ActiveValidationBackend(tool, self.tool_dispatcher).prepare(call)
         process_started = False
 
         def record_start() -> None:
@@ -981,11 +1087,11 @@ class MinimalAgent(BaseAgent):
                 },
             )
 
-        if prepare is not None:
-            prepare(call)
-            tool.on_process_started = record_start
-        result = self._execute_tool(call, origin="validation_gate", emit_call=False)
-        if not process_started:
+        result = self._execute_tool(
+            call, origin="validation_gate", emit_call=False,
+            invocation=invocation, on_process_started=record_start,
+        )
+        if not process_started and not invocation.tracks_process_start:
             record_start()
         result = result.model_copy(
             update={
@@ -997,7 +1103,9 @@ class MinimalAgent(BaseAgent):
         return result
 
     def _execute_tool(
-        self, call: ToolCall, *, origin: str | None = None, emit_call: bool = True
+        self, call: ToolCall, *, origin: str | None = None, emit_call: bool = True,
+        invocation: PreparedInvocation | None = None,
+        on_process_started: Callable[[], None] | None = None,
     ) -> ToolResult:
         """执行一个工具；可恢复错误会被转换成结构化失败结果。"""
         if emit_call:
@@ -1008,6 +1116,9 @@ class MinimalAgent(BaseAgent):
                     **({"origin": origin} if origin else {}),
                 },
             )
+        decision = self._capability_decision(call, origin or CallerOrigin.MODEL)
+        if decision is not None and not decision.allowed:
+            return self._capability_denial_result(call, decision)
         started = time.monotonic()
         signature = self._tool_signature(call)
 
@@ -1171,7 +1282,13 @@ class MinimalAgent(BaseAgent):
 
         try:
             tool = self.tools.get(call.name)
-            result = tool.execute(call)
+            result = (
+                invocation.execute(on_process_started)
+                if invocation is not None else (
+                    self.tool_dispatcher.invoke(tool, call, origin or CallerOrigin.MODEL)
+                    if self.tool_dispatcher is not None else tool.execute(call)
+                )
+            )
             if result.call_id != call.id or result.tool_name != call.name:
                 raise ToolExecutionError(
                     "tool returned mismatched call metadata",
@@ -1217,6 +1334,31 @@ class MinimalAgent(BaseAgent):
         ):
             self._successful_tool_cache[signature] = result.model_copy(deep=True)
         return result
+
+    def _capability_decision(
+        self, call: ToolCall, origin: CallerOrigin | str
+    ) -> CapabilityDecision | None:
+        dispatcher = self.tool_dispatcher
+        if dispatcher is None:
+            return None
+        return dispatcher.authorize(call.name, CallerOrigin(origin))
+
+    @staticmethod
+    def _capability_denial_result(call: ToolCall, decision: CapabilityDecision) -> ToolResult:
+        return ToolResult(
+            call_id=call.id,
+            tool_name=call.name,
+            success=False,
+            error=f"capability policy denied: {decision.reason_code}",
+            metadata={
+                "policy_blocked": True,
+                "reason_code": decision.reason_code,
+                "origin": decision.origin.value,
+                "profile": decision.profile.value,
+                "policy_sha256": decision.policy_sha256,
+                "catalog_sha256": decision.catalog_sha256,
+            },
+        )
 
     def _is_targeted_retrieval(self, call: ToolCall) -> bool:
         """判断高预算下的读取是否足够具体，并限制为一次补充证据机会。"""
@@ -1674,18 +1816,35 @@ class MinimalAgent(BaseAgent):
             }
         )
         self.state.presentation_metrics.add(original, presented)
-        self._append_message(
-            Message(
-                role=MessageRole.TOOL,
-                content=presented,
-                tool_call_id=result.call_id,
-                metadata={
-                    "tool_name": result.tool_name,
-                    "success": result.success,
-                    "full_result_presented": full_result_presented,
-                },
-            )
+        tool_message = Message(
+            role=MessageRole.TOOL,
+            content=presented,
+            tool_call_id=result.call_id,
+            metadata={
+                "tool_name": result.tool_name,
+                "success": result.success,
+                "full_result_presented": full_result_presented,
+            },
         )
+        self._append_message(tool_message)
+        if self.task_state_session is not None:
+            source_sha256 = None
+            if (
+                result.tool_name not in {"get_task_state", "update_task_state"}
+                and self.task_state_source_identity is not None
+            ):
+                try:
+                    source_sha256 = self.task_state_source_identity()
+                except (OSError, TraceFixError, ValueError):
+                    source_sha256 = None
+            self.task_state_session.observe_tool_result(
+                call_id=result.call_id,
+                tool_name=result.tool_name,
+                success=result.success,
+                output=result.output,
+                source_message_id=tool_message.id,
+                source_sha256=source_sha256,
+            )
         self._emit(
             TraceEventType.TOOL_RETURNED,
             {"result": result.model_dump(mode="json")},

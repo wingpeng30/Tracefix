@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
+from tracefix.capabilities import CallerOrigin, independent_validation_dispatcher
 from tracefix.messages import ToolCall
 from tracefix.provenance import inspect_test_environment
 from tracefix.report import _read_run
@@ -34,12 +35,12 @@ def _target_path(root: Path, target: str) -> Path:
     return resolved
 
 
-def _test(tool: RunTestsTool, target: str, evidence: Path) -> dict[str, Any]:
+def _test(tool: RunTestsTool, target: str, evidence: Path, dispatcher) -> dict[str, Any]:
     tool.evidence_dir = evidence
-    result = tool.execute(ToolCall(
+    result = dispatcher.invoke(tool, ToolCall(
         id=uuid4().hex, name="run_tests",
         arguments={"command": f"pytest -q {shlex.quote(target)}"},
-    ))
+    ), CallerOrigin.INDEPENDENT_VALIDATION)
     return result.model_dump(mode="json")
 
 
@@ -66,6 +67,7 @@ def verify_regressions(run: Path, targets: tuple[str, ...]) -> dict[str, Any]:
         raise ValueError("运行缺少可核验的 session.json 配置")
     manifest = json.loads(session.read_text(encoding="utf-8"))
     config = _saved_run_config(manifest["config"])
+    dispatcher = independent_validation_dispatcher(config.execution_profile)
     identity = manifest["identity"]
     if config.execution_backend != "local" or not config.test_target or not config.source_import:
         raise ValueError("追加回归验证仅支持普通本地运行")
@@ -112,10 +114,10 @@ def verify_regressions(run: Path, targets: tuple[str, ...]) -> dict[str, Any]:
                 preparation = TraceFixRunner._prepare_workspace(config, workspace, root)
                 if preparation.get("success") is not True:
                     raise ValueError(f"独立验证环境预检失败: {preparation.get('failure')}")
-            applied = ApplyPatchTool(patched).execute(ToolCall(
+            applied = dispatcher.invoke(ApplyPatchTool(patched), ToolCall(
                 id=uuid4().hex, name="apply_patch",
                 arguments={"patch": patch.decode("utf-8")},
-            ))
+            ), CallerOrigin.INDEPENDENT_VALIDATION)
             if not applied.success:
                 raise ValueError(f"补丁无法应用于原始提交: {applied.error}")
             base_tool = RunTestsTool(
@@ -128,13 +130,13 @@ def verify_regressions(run: Path, targets: tuple[str, ...]) -> dict[str, Any]:
                 pythonpath_entries=config.test_pythonpath_entries,
                 evidence_dir=record_dir / "patched-evidence",
             )
-            original = _test(patched_tool, config.test_target, record_dir / "original")
+            original = _test(patched_tool, config.test_target, record_dir / "original", dispatcher)
             record["original_test"] = original
             record["original_status"] = _status(original)
             for index, target in enumerate(targets):
-                base_test = _test(base_tool, target, record_dir / str(index) / "base")
+                base_test = _test(base_tool, target, record_dir / str(index) / "base", dispatcher)
                 patched_test = _test(
-                    patched_tool, target, record_dir / str(index) / "patched",
+                    patched_tool, target, record_dir / str(index) / "patched", dispatcher,
                 )
                 before, after = _status(base_test), _status(patched_test)
                 if "incomplete" in (before, after):

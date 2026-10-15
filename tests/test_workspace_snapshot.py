@@ -32,8 +32,16 @@ def saved(tmp_path):
     (source / "keep.py").write_bytes(b"base\n")
     _git(source, "init")
     _git(source, "add", ".")
-    _git(source, "-c", "user.name=Test", "-c", "user.email=test@example.invalid",
-         "commit", "-m", "base")
+    _git(
+        source,
+        "-c",
+        "user.name=Test",
+        "-c",
+        "user.email=test@example.invalid",
+        "commit",
+        "-m",
+        "base",
+    )
     (source / "old.py").unlink()
     (source / "keep.py").write_bytes(b"changed\n")
     (source / "product").mkdir()
@@ -93,6 +101,17 @@ def test_tracked_cache_named_products_survive_while_generated_files_are_excluded
     assert not (target / "product/__pycache__/temporary.pyc").exists()
 
 
+def test_snapshot_skips_linked_worktree_gitfile(saved, tmp_path):
+    source, _, _ = saved
+    worktree = tmp_path / "linked-worktree"
+    _git(source, "worktree", "add", "--detach", str(worktree), "HEAD")
+    git_file = worktree / ".git"
+    assert git_file.is_file() and not git_file.is_dir()
+    archive = io.BytesIO()
+    metadata = export_workspace(worktree, archive)
+    assert ".git" not in {row["path"] for row in metadata["files"]}
+
+
 def test_snapshot_rejects_unsupported_product_file_kind(saved, monkeypatch):
     import tracefix.workspace_snapshot as snapshot
 
@@ -144,10 +163,16 @@ def test_snapshot_rejects_product_metadata_change_after_open(saved, monkeypatch)
         export_workspace(source, io.BytesIO())
 
 
-@pytest.mark.parametrize("target,member_under_link", [
-    ("data.py", False), ("../outside", False), ("/outside", False),
-    ("C:/outside", False), ("data.py", True),
-])
+@pytest.mark.parametrize(
+    "target,member_under_link",
+    [
+        ("data.py", False),
+        ("../outside", False),
+        ("/outside", False),
+        ("C:/outside", False),
+        ("data.py", True),
+    ],
+)
 def test_link_archive_validation_preserves_path_boundaries(tmp_path, target, member_under_link):
     archive = tmp_path / "links.tar"
     link = tarfile.TarInfo("link")
@@ -159,11 +184,22 @@ def test_link_archive_validation_preserves_path_boundaries(tmp_path, target, mem
             child = tarfile.TarInfo("link/child.py")
             child.mode = 0o644
             stream.addfile(child, io.BytesIO())
-            records.append({"path": child.name, "type": "file", "mode": child.mode,
-                            "size": 0, "sha256": hashlib.sha256(b"").hexdigest()})
-    metadata = {"schema_version": 1, "files": records, "deleted": [],
-                "archive_bytes": archive.stat().st_size,
-                "archive_sha256": hashlib.sha256(archive.read_bytes()).hexdigest()}
+            records.append(
+                {
+                    "path": child.name,
+                    "type": "file",
+                    "mode": child.mode,
+                    "size": 0,
+                    "sha256": hashlib.sha256(b"").hexdigest(),
+                }
+            )
+    metadata = {
+        "schema_version": 1,
+        "files": records,
+        "deleted": [],
+        "archive_bytes": archive.stat().st_size,
+        "archive_sha256": hashlib.sha256(archive.read_bytes()).hexdigest(),
+    }
     if target == "data.py" and not member_under_link:
         assert validate_archive(archive, metadata)[0].issym()
         restored = tmp_path / "link-mirror"
@@ -174,10 +210,24 @@ def test_link_archive_validation_preserves_path_boundaries(tmp_path, target, mem
             validate_archive(archive, metadata)
 
 
-@pytest.mark.parametrize("mode", [
-    "schema", "files", "deleted", "bytes", "hash", "duplicate", "escape", "mode", "size",
-    "content", "type", "missing", "deleted_escape",
-])
+@pytest.mark.parametrize(
+    "mode",
+    [
+        "schema",
+        "files",
+        "deleted",
+        "bytes",
+        "hash",
+        "duplicate",
+        "escape",
+        "mode",
+        "size",
+        "content",
+        "type",
+        "missing",
+        "deleted_escape",
+    ],
+)
 def test_corrupt_metadata_is_rejected_before_target_changes(saved, tmp_path, mode):
     _, archive, original = saved
     metadata = copy.deepcopy(original)
@@ -227,21 +277,24 @@ def test_archive_corruption_and_both_size_preflights(saved):
         validate_archive(archive, metadata)
 
 
-@pytest.mark.parametrize(("name", "expected"), [
-    ("", False),
-    ("src/module.py", True),
-    ("目录/文件.py", True),
-    ("/absolute/file.py", False),
-    ("C:relative.py", False),
-    ("folder\\child.py", False),
-    ("../outside.py", False),
-    ("folder/../outside.py", False),
-    ("folder/\x01name.py", False),
-    ("folder/.GiT/config", False),
-    ("folder/.TRACEFIX-TEST-TMP/output", False),
-    ("folder//child.py", False),
-    ("folder/./child.py", False),
-])
+@pytest.mark.parametrize(
+    ("name", "expected"),
+    [
+        ("", False),
+        ("src/module.py", True),
+        ("目录/文件.py", True),
+        ("/absolute/file.py", False),
+        ("C:relative.py", False),
+        ("folder\\child.py", False),
+        ("../outside.py", False),
+        ("folder/../outside.py", False),
+        ("folder/\x01name.py", False),
+        ("folder/.GiT/config", False),
+        ("folder/.TRACEFIX-TEST-TMP/output", False),
+        ("folder//child.py", False),
+        ("folder/./child.py", False),
+    ],
+)
 def test_snapshot_path_names_are_relative_normalized_and_unprotected(name, expected):
     assert safe_name(name) is expected
 
@@ -272,10 +325,13 @@ def test_symbolic_link_archive_cannot_escape(tmp_path, target):
         link = tarfile.TarInfo("link")
         link.type, link.linkname, link.mode = tarfile.SYMTYPE, target, 0o777
         archive.addfile(link)
-    metadata = {"schema_version": 1, "archive_bytes": path.stat().st_size,
-                "archive_sha256": hashlib.sha256(path.read_bytes()).hexdigest(), "deleted": [],
-                "files": [{"path": "link", "type": "symlink", "target": target,
-                           "mode": 0o777, "size": 0}]}
+    metadata = {
+        "schema_version": 1,
+        "archive_bytes": path.stat().st_size,
+        "archive_sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+        "deleted": [],
+        "files": [{"path": "link", "type": "symlink", "target": target, "mode": 0o777, "size": 0}],
+    }
     with pytest.raises(CheckpointError, match="link"):
         validate_archive(path, metadata)
 
@@ -295,8 +351,19 @@ def test_snapshot_cli_export_and_restore(saved, tmp_path, monkeypatch):
     path.write_bytes(binary.getvalue())
     meta.write_text(messages.getvalue(), encoding="utf-8")
     target = tmp_path / "cli-restored"
-    monkeypatch.setattr("sys.argv", ["snapshot", "restore", "--workspace", str(target),
-                                     "--archive", str(path), "--metadata", str(meta)])
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "snapshot",
+            "restore",
+            "--workspace",
+            str(target),
+            "--archive",
+            str(path),
+            "--metadata",
+            str(meta),
+        ],
+    )
     assert main() == 0
     assert json.loads(meta.read_text())["deleted"] == ["old.py"]
     assert (target / "keep.py").read_bytes() == b"changed\n"
@@ -331,8 +398,17 @@ def test_empty_workspace_and_restore_stream_cli_roundtrip(saved, tmp_path, monke
     metadata_path = tmp_path / "stream-metadata.json"
     metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
     target = tmp_path / "stream-cli-target"
-    monkeypatch.setattr("sys.argv", ["snapshot", "restore-stream", "--workspace", str(target),
-                                     "--metadata", str(metadata_path)])
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "snapshot",
+            "restore-stream",
+            "--workspace",
+            str(target),
+            "--metadata",
+            str(metadata_path),
+        ],
+    )
     monkeypatch.setattr("sys.stdin", SimpleNamespace(buffer=io.BytesIO(archive.read_bytes())))
     assert main() == 0
     assert (target / "keep.py").read_bytes() == b"changed\n"
@@ -361,12 +437,16 @@ def test_restore_rechecks_resolved_parent_before_writing(saved, tmp_path, monkey
     assert not (outside / "product" / "new.bin").exists()
 
 
-@pytest.mark.parametrize(("operation", "has_metadata", "message"), [
-    ("restore-stream", False, "restore-stream requires metadata"),
-    ("restore", True, "restore requires archive and metadata"),
-])
-def test_snapshot_cli_rejects_incomplete_restore_arguments(tmp_path, monkeypatch,
-                                                           operation, has_metadata, message):
+@pytest.mark.parametrize(
+    ("operation", "has_metadata", "message"),
+    [
+        ("restore-stream", False, "restore-stream requires metadata"),
+        ("restore", True, "restore requires archive and metadata"),
+    ],
+)
+def test_snapshot_cli_rejects_incomplete_restore_arguments(
+    tmp_path, monkeypatch, operation, has_metadata, message
+):
     from tracefix.workspace_snapshot import main
 
     argv = ["snapshot", operation, "--workspace", str(tmp_path / "target")]
@@ -412,11 +492,20 @@ def test_streaming_restore_hashes_trailing_stream_bytes(saved, tmp_path):
         restore_stream(tmp_path / "disposable-with-tail", stream, metadata)
 
 
-@pytest.mark.parametrize("fault,reason", [
-    ("schema", "envelope"), ("limit", "envelope"), ("path", "product paths"),
-    ("duplicate", "product paths"), ("missing", "unexpected"), ("mode", "permissions"),
-    ("size", "size changed"), ("hash", "content changed"), ("type", "unsupported"),
-])
+@pytest.mark.parametrize(
+    "fault,reason",
+    [
+        ("schema", "envelope"),
+        ("limit", "envelope"),
+        ("path", "product paths"),
+        ("duplicate", "product paths"),
+        ("missing", "unexpected"),
+        ("mode", "permissions"),
+        ("size", "size changed"),
+        ("hash", "content changed"),
+        ("type", "unsupported"),
+    ],
+)
 def test_streaming_restore_rejects_corrupt_disposable_products(saved, tmp_path, fault, reason):
     _, archive, metadata = saved
     changed = copy.deepcopy(metadata)
@@ -424,7 +513,7 @@ def test_streaming_restore_rejects_corrupt_disposable_products(saved, tmp_path, 
     if fault == "schema":
         changed["schema_version"] = 2
     elif fault == "limit":
-        changed["archive_bytes"] = 1024 ** 3 + 1
+        changed["archive_bytes"] = 1024**3 + 1
     elif fault == "path":
         file["path"] = "../outside"
     elif fault == "duplicate":

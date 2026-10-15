@@ -5,13 +5,32 @@
 
 ## 2026-10-14 Harness Foundations 实施
 
-已将[分阶段实施计划](tasks/2026-10-14-harness-foundations-implementation.md)保存到候选分支，固定 G0→G1→G2→G3→G4 顺序和退出门。G0 在 bcb6d24 / CI #142 完成，G1 在 `d059ec269e7b19571b16cc6fe823a66f6461e2da` / CI #144 完成。用户现已要求继续 G2—G4；当前代码在候选分支，G2 的精确双版本与 Docker/MCP 阶段门仍在验证，G3/G4 尚未开始。详见[固定当前状态](current-status.md)和本记录下方的 G2 进度。
+已将[分阶段实施计划](tasks/2026-10-14-harness-foundations-implementation.md)保存到候选分支，固定 G0→G1→G2→G3→G4 顺序和退出门。G0 在 bcb6d24 / CI #142、G1 在 `d059ec269e7b19571b16cc6fe823a66f6461e2da` / CI #144、G2 在 `075bfae7d921b0d4ca7729b5a69f5c5218e89a10` / CI #152、G3 在 `9d52583ede2b4d56b12c18794543e53afc20e1b1` / CI #156 完成。G4本地功能与工程验收完成，原候选CI退出项未执行；用户要求停止上传，本轮未更新远端，最后核验为G3。详见[固定当前状态](current-status.md)及下列阶段进度。
 
-### 2026-10-15 G2 工具产物实施中
+### 2026-10-15 G2 工具产物（阶段门通过）
 
-主实现提交 `1d548f562dc4867cb94c3a5b7b86a0b0d6020708`，tree `bd05732ac832f62d44852b69a3e92d4c1e49ed76`；修复 memory+conversation checkpoint 对 Skills 的错误依赖提交 `cbe7d25918ec66be4b244fb5ae7938f4c213c096`。恢复诊断提交 `fc5cfadb7be60c5c9537ed2f81a0d76d8a2ae86a` 暴露预检原因；fixture 费用记账修复提交 `a5824b14b7b8e2b2ecdcb740690dc85259caa219`，当前 tree 为 `0e3a4d7df129d820f1fccdf694874ee523f0f9bf`。新增 artifact store、同步双流采集、脱敏检索视图、读取/搜索工具、有界 archive transport、Docker recovery 导入导出及相应契约测试。G2 相关本地测试 300 passed；此次适配器回归模块 2 passed，Ruff、compileall、diff-check 通过。完整本机 engineering 检查未完成；筛选式 runtime 尝试受 Windows 沙盒进程/路径限制产生 setup errors，Docker 按用户要求跳过。
+最终验收实现是 `075bfae7d921b0d4ca7729b5a69f5c5218e89a10`，tree `2d37ed9dc063f1a819104c6a640b5d88c0acdac5`，CI #152（[run 38699965369](https://github.com/wingpeng30/Tracefix/actions/runs/38699965369)）全部成功。实现包括 artifact store、同步双流采集、脱敏检索视图、读取/搜索工具、有界 archive transport、Docker recovery 导入导出及完整性/配额契约。CLI/TOML/Python 开关、limits 与读取规则见[工具产物说明](tool-artifacts.md)。
 
-CI #144 后的 G2 验收迭代中，run `38614482340` 发现 memory/Skills 检查点耦合并由 `cbe7d25` 修复；run `38616442269` 的 ordinary Docker artifact 恢复在通用 `run cannot be resumed` 处失败。run `38617519135` 增加只读预检诊断后确认离线 fixture 未报告费用，恢复门正确拒绝不完整记账；随后 `a5824b14` 明确登记合成零费用。run `38618345961` 的基础 Docker、Serena MCP 通过，ordinary Docker 恢复主体也通过，但摘要把合成响应数误标为供应商调用数，最终零调用断言失败。当前已修正指标拆分和 workflow 断言，等待精确提交 CI；G2 阶段门未通过，不进入 G3。
+前序验收中，run `38614482340` 揭示 memory/Skills 检查点耦合，由 `cbe7d25` 修复；run `38616442269` 的 ordinary Docker artifact 恢复失败；run `38617519135` 的只读预检诊断确认离线 fixture 未报告费用，恢复门正确拒绝不完整记账，`a5824b14` 随后为合成调用明确登记零费用。run `38618345961` 暴露回放摘要混淆合成请求与供应商调用数，最终在 G2 代码/测试修订中分开记录并断言 `provider_calls=0` 和 `synthetic_model_requests>0`。CI #151 双 Python 各1485 passed、0失败/错误/跳过，但覆盖率为 89.74466655467832%/89.73626742818747%，且 Windows CRLF 导致 diff-check 失败。增加有意义的 manifest 完整性、读取路径、进程 drain 与异常清理回归并规范 LF 后，CI #152 双 Python 各1519 passed，精确综合覆盖率 90.07643205106669%/90.06803292457585%，Ruff、compileall、diff-check、editable/wheel/recovery smoke 及基础 Docker、ordinary Docker、Serena MCP 全部通过。具体原始结果与 artifact digest 见[开发历程](development-history.md#2026-10-15-harness-foundations-g2-工具产物)。阶段门关闭；下阶段为 G3。
+
+### 2026-10-15 G3 TaskState（阶段门通过）
+
+G3 验收提交 `9d52583ede2b4d56b12c18794543e53afc20e1b1` / tree `497d478c004b34ceafd832b511156a0c4f04f0` 的 CI #156
+([run 38714764105](https://github.com/wingpeng30/Tracefix/actions/runs/38714764105)) 全部成功。Python 3.11/3.12
+各1544 passed、0 failed/error/skip，combined line+branch 覆盖率 `22125/24541 = 90.15525039729432%` /
+`22123/24541 = 90.14710077013977%`；Ruff、compileall、diff-check、editable/wheel/recovery smoke、基础 Docker、
+ordinary Docker 和 Serena MCP 均通过。TaskState 数据模型、工具权限、恢复身份、回放与 CI 原始证据详见
+[G3 开发记录](development-history.md#2026-10-15-harness-foundations-g3-taskstate-阶段门通过)。本机容器按用户指示跳过，
+由真实 CI 验收。G3 关闭，下一阶段为 G4。
+
+### 2026-10-15 G4 能力策略与Docker/Serena（本地验收完成，原候选CI未执行）
+
+用户允许下载必要依赖和镜像、禁止上传。Docker及双Python/MCP环境已补齐；真实组合发现的裁剪、
+Skills恢复及Windows/夹具问题已修复。两版完整工程各1691通过、0失败/错误、1项Windows权限skip，Linux同用例补证通过。
+精确覆盖率90.11607728201766%/90.10836450580386%，Ruff/编译/diff通过；editable/wheel真实完整组合、
+最必要容器故障回放及仓库外安装检查通过。本轮本地范围完成，源码保持候选工作树，CI/上传/合并未进行。
+下一入口是使用或审阅已验收的本地实现；只有用户另行要求时才处理远端候选CI。
+详见[完整记录](tasks/2026-10-15-g4-environment-acceptance.md)和[当前状态](current-status.md)。
 
 ## 2026-10-14 harness 候选方向
 

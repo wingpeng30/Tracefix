@@ -71,11 +71,7 @@ class ArtifactRef(BaseModel):
     @model_validator(mode="after")
     def validate_source_identity(self) -> ArtifactRef:
         if len(self.source_identity) > 16 or any(
-            not key
-            or len(key) > 64
-            or len(value) > 1024
-            or "\x00" in key
-            or "\x00" in value
+            not key or len(key) > 64 or len(value) > 1024 or "\x00" in key or "\x00" in value
             for key, value in self.source_identity.items()
         ):
             raise ValueError("artifact source identity exceeds its bounded contract")
@@ -313,7 +309,10 @@ class ArtifactStore:
             if artifact_id != ref.artifact_id or ref.run_id != self.run_id:
                 raise ArtifactError("artifact identity does not match its run")
             if set(entry.get("files", {})) != {
-                "raw_stdout", "raw_stderr", "view_stdout", "view_stderr"
+                "raw_stdout",
+                "raw_stderr",
+                "view_stdout",
+                "view_stderr",
             }:
                 raise ArtifactError("artifact file inventory is incomplete")
             expected_paths = {
@@ -346,14 +345,10 @@ class ArtifactStore:
                     raw_parts.append((stream_name, path, size))
                 else:
                     view_parts.append((stream_name, path, size))
-            raw_bytes = sum(
-                entry["files"][f"raw_{name}"][2] for name in ("stdout", "stderr")
-            )
+            raw_bytes = sum(entry["files"][f"raw_{name}"][2] for name in ("stdout", "stderr"))
             if raw_bytes != ref.raw_bytes:
                 raise ArtifactError("artifact raw byte count does not match its receipt")
-            view_bytes = sum(
-                entry["files"][f"view_{name}"][2] for name in ("stdout", "stderr")
-            )
+            view_bytes = sum(entry["files"][f"view_{name}"][2] for name in ("stdout", "stderr"))
             if view_bytes != ref.view_bytes:
                 raise ArtifactError("artifact view byte count does not match its receipt")
             if (
@@ -405,8 +400,11 @@ class ArtifactStore:
             manifest = self._load_manifest()
             if len(manifest["artifacts"]) >= MAX_RUN_ARTIFACTS:
                 return 0
-            used = sum(info[2] for entry in manifest["artifacts"].values()
-                       for info in entry["files"].values())
+            used = sum(
+                info[2]
+                for entry in manifest["artifacts"].values()
+                for info in entry["files"].values()
+            )
             return max(0, min(MAX_ARTIFACT_BYTES, (MAX_RUN_BYTES - used) // 2))
 
     def publish_process(
@@ -428,8 +426,11 @@ class ArtifactStore:
                 raise ArtifactError("artifact store run identity changed")
             if len(manifest["artifacts"]) >= MAX_RUN_ARTIFACTS:
                 raise ArtifactError("artifact count quota is exhausted")
-            used = sum(info[2] for entry in manifest["artifacts"].values()
-                       for info in entry["files"].values())
+            used = sum(
+                info[2]
+                for entry in manifest["artifacts"].values()
+                for info in entry["files"].values()
+            )
             available = MAX_RUN_BYTES - used
             raw_total = len(stdout) + len(stderr)
             if raw_total > available:
@@ -445,8 +446,10 @@ class ArtifactStore:
                 view_used += len(view)
                 view_parts_list.append((name, view))
             views = tuple(view_parts_list)
-            if view_used < sum(len(_redact(data.decode("utf-8", "replace"), self.secret_values)
-                                   .encode("utf-8")) for _, data in raw_parts):
+            if view_used < sum(
+                len(_redact(data.decode("utf-8", "replace"), self.secret_values).encode("utf-8"))
+                for _, data in raw_parts
+            ):
                 complete = False
             raw_sha = _combined_sha(raw_parts)
             view_sha = _combined_sha(views)
@@ -478,7 +481,9 @@ class ArtifactStore:
                         filename = f"{kind}-{stream_name}.{suffix}"
                         (temp / filename).write_bytes(data)
                         files[f"{kind}_{stream_name}"] = (
-                            f"objects/{artifact_id}/{filename}", _sha(data), len(data)
+                            f"objects/{artifact_id}/{filename}",
+                            _sha(data),
+                            len(data),
                         )
                 os.replace(temp, destination)
                 updated = dict(manifest)
@@ -499,15 +504,17 @@ class ArtifactStore:
         with self._lock:
             manifest = self._load_manifest()
             return tuple(
-                self._entry_ref(entry)
-                for _, entry in sorted(manifest["artifacts"].items())
+                self._entry_ref(entry) for _, entry in sorted(manifest["artifacts"].items())
             )
 
     def quota(self) -> ArtifactQuota:
         with self._lock:
             manifest = self._load_manifest()
-            used = sum(info[2] for entry in manifest["artifacts"].values()
-                       for info in entry["files"].values())
+            used = sum(
+                info[2]
+                for entry in manifest["artifacts"].values()
+                for info in entry["files"].values()
+            )
             return ArtifactQuota(
                 artifacts=len(manifest["artifacts"]),
                 storage_bytes=used,
@@ -568,8 +575,12 @@ class ArtifactStore:
             self._consume_query(manifest, len(page))
             next_offset = offset + len(page)
             return ArtifactPage(
-                artifact=ref, stream=stream, content=page, offset=offset,
-                next_offset=next_offset, eof=next_offset >= len(content),
+                artifact=ref,
+                stream=stream,
+                content=page,
+                offset=offset,
+                next_offset=next_offset,
+                eof=next_offset >= len(content),
             )
 
     def search(
@@ -621,23 +632,27 @@ class ArtifactStore:
                         ):
                             truncated = True
                             break
-                        hits.append(ArtifactSearchHit(
-                            artifact=ref, stream=stream, offset=left, excerpt=excerpt
-                        ))
+                        hits.append(
+                            ArtifactSearchHit(
+                                artifact=ref, stream=stream, offset=left, excerpt=excerpt
+                            )
+                        )
                         returned += len(excerpt)
                         cursor = at + max(1, len(needle))
                     if truncated:
                         break
                 if truncated:
                     break
-            self._consume_query(manifest, returned)
+            manifest = self._consume_query(manifest, returned)
             return ArtifactSearchResult(
-                query=query, hits=tuple(hits), truncated=truncated,
+                query=query,
+                hits=tuple(hits),
+                truncated=truncated,
                 queries_remaining=MAX_SESSION_QUERIES - manifest["query_count"],
                 characters_remaining=MAX_SESSION_RETURNED_CHARS - manifest["returned_chars"],
             )
 
-    def _consume_query(self, manifest: dict, returned_chars: int) -> None:
+    def _consume_query(self, manifest: dict, returned_chars: int) -> dict:
         if manifest["query_count"] >= MAX_SESSION_QUERIES:
             raise ArtifactError("artifact query quota is exhausted")
         if manifest["returned_chars"] + returned_chars > MAX_SESSION_RETURNED_CHARS:
@@ -646,6 +661,7 @@ class ArtifactStore:
         updated["query_count"] += 1
         updated["returned_chars"] += returned_chars
         self._save_manifest(updated)
+        return updated
 
     def export_archive(self, stream: BinaryIO) -> dict:
         """Stream a self-describing archive; no workspace or host path is included."""
@@ -668,6 +684,7 @@ class ArtifactStore:
                 "run_id": self.run_id,
                 "manifest_sha256": _sha(serialized),
                 "artifact_count": len(manifest["artifacts"]),
+                "artifact_ids": sorted(manifest["artifacts"]),
                 "storage_bytes": self.quota().storage_bytes,
                 "queries": manifest["query_count"],
                 "returned_chars": manifest["returned_chars"],
@@ -721,7 +738,10 @@ class ArtifactStore:
                         if ref.redaction_policy_sha256 != self.redaction_policy_sha256:
                             raise ArtifactError("artifact archive redaction identity changed")
                         if set(entry.get("files", {})) != {
-                            "raw_stdout", "raw_stderr", "view_stdout", "view_stderr"
+                            "raw_stdout",
+                            "raw_stderr",
+                            "view_stdout",
+                            "view_stderr",
                         }:
                             raise ArtifactError("artifact archive file inventory is incomplete")
                         expected_paths = {
@@ -841,8 +861,12 @@ class ArtifactStore:
                 return {
                     "manifest_sha256": _sha(manifest_bytes),
                     "artifact_count": len(manifest["artifacts"]),
-                    "storage_bytes": sum(info[2] for entry in manifest["artifacts"].values()
-                                          for info in entry["files"].values()),
+                    "artifact_ids": sorted(manifest["artifacts"]),
+                    "storage_bytes": sum(
+                        info[2]
+                        for entry in manifest["artifacts"].values()
+                        for info in entry["files"].values()
+                    ),
                     "queries": manifest["query_count"],
                     "returned_chars": manifest["returned_chars"],
                 }

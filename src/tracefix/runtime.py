@@ -12,6 +12,7 @@ import sys
 import tempfile
 import time
 from collections.abc import Callable
+from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
@@ -27,6 +28,14 @@ from tracefix.agent import (
     ToolPresentationMetrics,
 )
 from tracefix.artifacts import ArtifactStore
+from tracefix.capabilities import (
+    CapabilityCatalog,
+    CapabilityError,
+    CapabilityPolicy,
+    ExecutionProfile,
+    ToolDispatcher,
+    host_control_policy,
+)
 from tracefix.checkpoint import CheckpointError, CheckpointStore, ProcessLock
 from tracefix.context import ContextManager, ContextMetrics, ContextSessionState
 from tracefix.docker_backend import DockerToolBackend
@@ -37,6 +46,7 @@ from tracefix.exceptions import (
     WorkspaceError,
     sanitize_payload,
 )
+from tracefix.features import resolve_features
 from tracefix.mcp_serena import SerenaMCP
 from tracefix.messages import Message, MessageHistory, MessageRole, ToolCall
 from tracefix.models import BaseLLM, LiteLLMAdapter, LLMConfig
@@ -62,6 +72,12 @@ from tracefix.tracing import JSONLTraceSink, TraceEvent, TraceEventType
 DEFAULT_MODEL_NAME = "deepseek/deepseek-flash"
 DEFAULT_USD_CNY_RATE = 7.20
 DEFAULT_DEEPSEEK_API_BASE = "https://api.deepseek.com"
+_HOST_CAPABILITY_NAMES = (
+    "validation_baseline",
+    "source_snapshot_export",
+    "checkpoint_restore",
+    "checkpoint_commit",
+)
 
 LLMFactory = Callable[[LLMConfig], BaseLLM]
 
@@ -116,6 +132,7 @@ def config_identity_sha256(
                 "conversation_enabled",
                 "docker_recovery_enabled",
                 "harness_foundations_enabled",
+                "execution_profile",
             )
             if name not in manifest_config
         )
@@ -147,6 +164,7 @@ class RunConfig(BaseModel):
     conversation_enabled: bool = False
     docker_recovery_enabled: bool = False
     harness_foundations_enabled: bool = False
+    execution_profile: ExecutionProfile = ExecutionProfile.WORKSPACE_WRITE
     mcp_serena_image_id: str | None = None
     environment_recipe: EnvironmentRecipe | None = None
     test_environment_variables: dict[str, str] = Field(default_factory=dict)
@@ -177,6 +195,7 @@ class RunConfig(BaseModel):
             raise ValueError("task cannot be empty")
         if not self.model_name:
             raise ValueError("model_name cannot be empty")
+        object.__setattr__(self, "execution_profile", ExecutionProfile(self.execution_profile))
         if self.source_import is not None and not all(
             segment.isidentifier() for segment in self.source_import.split(".")
         ):
@@ -190,12 +209,6 @@ class RunConfig(BaseModel):
             raise ValueError("regression_targets must not contain duplicates")
         if self.test_target in self.regression_targets:
             raise ValueError("regression_targets must be distinct from test_target")
-        if self.regression_targets and (
-            self.execution_backend != "local" or not self.test_target or not self.source_import
-        ):
-            raise ValueError(
-                "regression_targets require a local backend, test target, and source import"
-            )
         for target in self.regression_targets:
             try:
                 pytest_target_path(target)
@@ -203,51 +216,6 @@ class RunConfig(BaseModel):
                 raise ValueError(
                     f"regression_targets must contain a relative pytest path or node ID: {exc}"
                 ) from exc
-        if (
-            self.execution_backend == "docker"
-            and self.docker_profile != "ordinary"
-            and (not self.docker_task_id or not self.docker_input_root)
-        ):
-            raise ValueError("Docker execution requires a task ID and input root")
-        if self.execution_backend == "docker" and self.docker_profile == "ordinary":
-            if self.docker_task_id not in (None, "tracefix-ordinary"):
-                raise ValueError("ordinary Docker does not accept a frozen task ID")
-            if self.docker_input_root is not None:
-                raise ValueError("ordinary Docker does not accept frozen task inputs")
-        if self.execution_backend == "docker" and self.skills_root is not None:
-            raise ValueError("custom Skills directories are supported only by local execution")
-        if self.docker_recovery_enabled and (
-            self.execution_backend != "docker" or self.docker_profile != "ordinary"
-        ):
-            raise ValueError("Docker recovery requires the ordinary Docker backend")
-        if (
-            self.harness_foundations_enabled
-            and self.execution_backend == "docker"
-            and not self.docker_recovery_enabled
-        ):
-            raise ValueError("Docker harness foundations require ordinary Docker recovery")
-        if (
-            self.memory_enabled
-            and self.execution_backend != "local"
-            and not self.docker_recovery_enabled
-        ):
-            raise ValueError("experience memory currently requires the local backend")
-        if (
-            self.conversation_enabled
-            and self.execution_backend != "local"
-            and not self.docker_recovery_enabled
-        ):
-            raise ValueError("continuous dialogue currently requires the local backend")
-        if self.execution_backend == "docker" and self.mcp_serena_image_id is not None:
-            raise ValueError("Serena MCP is supported only with the local Agent backend")
-        if self.execution_backend != "docker" and (
-            self.docker_profile != "frozen" or self.docker_image_id is not None
-        ):
-            raise ValueError("Docker profile and image identity require the Docker backend")
-        if self.docker_profile == "synthetic" and not self.docker_image_id:
-            raise ValueError("synthetic Docker execution requires a frozen image ID")
-        if self.docker_profile == "frozen" and self.docker_image_id is not None:
-            raise ValueError("frozen pilot image identities cannot be overridden")
         validate_project_environment(self.test_environment_variables)
         if self.environment_recipe is not None:
             validate_project_environment(self.environment_recipe.environment_variables)
@@ -263,7 +231,9 @@ def _saved_run_config(value: Any) -> RunConfig:
         saved["execution_backend"] = "local"
     if saved.get("execution_backend") == "local" and "docker_profile" not in saved:
         saved["docker_profile"] = "frozen"
-    return RunConfig.model_validate(saved)
+    config = RunConfig.model_validate(saved)
+    resolve_features(config)
+    return config
 
 
 def _artifact_store_for_run(
@@ -284,6 +254,38 @@ def _artifact_store_for_run(
         workspace=workspace,
         secret_values=tuple(environment.values()),
     )
+
+
+def _task_state_session_for_run(config: RunConfig):
+    """Create the optional canonical TaskState with criteria frozen from run config."""
+    if not config.harness_foundations_enabled:
+        return None
+    from tracefix.task_state import TaskAcceptanceCriterion, TaskStateSession
+
+    targets = tuple(
+        target
+        for target in (config.test_target, *config.regression_targets)
+        if isinstance(target, str) and target
+    )
+    criteria = tuple(
+        TaskAcceptanceCriterion(
+            criterion_id=f"run-config-{index}-{hashlib.sha256(target.encode()).hexdigest()[:12]}",
+            source="run_config",
+            text=f"Validation target: {target}",
+        )
+        for index, target in enumerate(targets, start=1)
+    )
+    return TaskStateSession(criteria)
+
+
+def _register_task_state_tools(tools, task_state_session) -> None:
+    """Register host-only state tools without adding them to a remote executor."""
+    if task_state_session is None:
+        return
+    from tracefix.tools.task_state import GetTaskStateTool, UpdateTaskStateTool
+
+    tools.register(GetTaskStateTool(task_state_session))
+    tools.register(UpdateTaskStateTool(task_state_session))
 
 
 class RunResult(BaseModel):
@@ -370,6 +372,88 @@ class TraceFixRunner:
         )
 
     @staticmethod
+    def _capability_dispatcher(config: RunConfig, tools: Any) -> ToolDispatcher:
+        """Freeze the runtime tool set and policy before the first model request."""
+        names = list(tools.names)
+        if config.agent_config.context.enabled and config.agent_config.context.agent_tool_enabled:
+            names.append("compact_context")
+        names.extend(_HOST_CAPABILITY_NAMES)
+        try:
+            catalog = CapabilityCatalog.for_tool_names(names)
+        except CapabilityError as exc:
+            raise RunConfigurationError(str(exc)) from exc
+        return ToolDispatcher(CapabilityPolicy(catalog, ExecutionProfile(config.execution_profile)))
+
+    @staticmethod
+    def _bind_host_capability_policy(
+        dispatcher: ToolDispatcher, manager: SerenaMCP | None
+    ) -> None:
+        if manager is not None:
+            manager.bind_capability_dispatcher(dispatcher)
+
+    @staticmethod
+    def _capability_identity(
+        config: RunConfig, tools: Any, dispatcher: ToolDispatcher | None = None
+    ) -> dict[str, str]:
+        """Bind policy, executor, agent and provider tool catalogs separately."""
+        names = list(tools.names)
+        if config.agent_config.context.enabled and config.agent_config.context.agent_tool_enabled:
+            names.append("compact_context")
+        names.extend(_HOST_CAPABILITY_NAMES)
+        try:
+            catalog = CapabilityCatalog.for_tool_names(names)
+        except CapabilityError as exc:
+            raise RunConfigurationError(str(exc)) from exc
+        policy = (
+            dispatcher.policy
+            if dispatcher is not None
+            else CapabilityPolicy(catalog, ExecutionProfile(config.execution_profile))
+        )
+        host_policy = host_control_policy(config.execution_profile)
+        specs = list(tools.specs())
+        if "compact_context" in names:
+            specs.append(MinimalAgent.compact_context_tool_spec())
+        by_name = {spec.name: spec.model_dump(mode="json") for spec in specs}
+        descriptors = [item.model_dump(mode="json") for item in catalog.descriptors]
+        descriptor_by_name = {item["tool_name"]: item for item in descriptors}
+        executor_names = sorted(
+            name
+            for name in by_name
+            if descriptor_by_name[name]["execution_location"] not in {"host", "mcp"}
+        )
+
+        def digest(value: object) -> str:
+            canonical = json.dumps(
+                value, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+            ).encode("utf-8")
+            return hashlib.sha256(canonical).hexdigest()
+
+        return {
+            "policy_sha256": policy.sha256,
+            "capability_catalog_sha256": catalog.sha256,
+            "host_control_policy_sha256": host_policy.sha256,
+            "host_control_catalog_sha256": host_policy.catalog.sha256,
+            "executor_tool_catalog_sha256": digest(
+                {
+                    "tools": [by_name[name] for name in executor_names],
+                    "capabilities": [descriptor_by_name[name] for name in executor_names],
+                }
+            ),
+            "agent_tool_catalog_sha256": digest(
+                {
+                    "tools": list(by_name.values()),
+                    "capabilities": [descriptor_by_name[name] for name in sorted(by_name)],
+                }
+            ),
+            "provider_tool_spec_sha256": digest([spec.model_dump(mode="json") for spec in specs]),
+        }
+
+    @staticmethod
+    def _capability_identity_matches(expected: dict[str, str], recorded: dict[str, Any]) -> bool:
+        """Missing legacy policy identities fail closed instead of granting defaults."""
+        return all(recorded.get(name) == value for name, value in expected.items())
+
+    @staticmethod
     def _skills_root(config: RunConfig, root: Path) -> Path | None:
         del root
         return config.skills_root
@@ -397,10 +481,10 @@ class TraceFixRunner:
     @staticmethod
     def _verify_recovery_memory(
         root: Path, config: RunConfig, agent_payload: dict[str, Any]
-    ) -> None:
-        """Validate pinned recall and host receipts before a recovery request can be sent."""
-        if not config.memory_enabled:
-            return
+    ) -> dict[str, dict[str, Any]]:
+        """Validate host receipts and any pinned memory before a recovery request."""
+        if not config.memory_enabled and not config.harness_foundations_enabled:
+            return {}
         from tracefix.memory_domain import TrustedUserInputReceipt, validate_user_input_receipt
 
         history = agent_payload.get("history")
@@ -449,7 +533,9 @@ class TraceFixRunner:
             except (OSError, ValueError, TypeError) as exc:
                 raise CheckpointError("trusted user input provenance is invalid") from exc
         else:
-            raise CheckpointError("memory recovery is missing trusted user input receipts")
+            raise CheckpointError("recovery is missing trusted user input receipts")
+        if not config.memory_enabled:
+            return verified
         from tracefix.memory import canonical
         from tracefix.memory_domain import RecallBundle
         from tracefix.memory_recall import render_recall_bundle
@@ -483,6 +569,7 @@ class TraceFixRunner:
                 raise CheckpointError("fixed memory recall differs from the committed request")
         elif matching:
             raise CheckpointError("empty memory recall bundle has a history message")
+        return verified
 
     def _attach_memory(
         self,
@@ -717,6 +804,10 @@ class TraceFixRunner:
                         or [row.get("target") for row in baseline.get("targets", [])]
                         != list(config.regression_targets)
                         or baseline.get("source_commit") != recorded.get("source_commit")
+                        or baseline.get("execution_backend") != "local"
+                        or baseline.get("policy_sha256") != recorded.get("policy_sha256")
+                        or baseline.get("capability_catalog_sha256")
+                        != recorded.get("capability_catalog_sha256")
                         or baseline.get("test_environment_sha256")
                         != actual.get("test_environment_sha256")
                     ):
@@ -783,9 +874,7 @@ class TraceFixRunner:
                     or (workspace / ".tracefix-test-tmp").is_symlink()
                 ):
                     reasons.append("test temporary directory changed")
-                artifact_store = _artifact_store_for_run(
-                    config, root.name, root, workspace
-                )
+                artifact_store = _artifact_store_for_run(config, root.name, root, workspace)
                 if config.harness_foundations_enabled:
                     try:
                         artifact_store.verify_checkpoint_identity(
@@ -808,6 +897,7 @@ class TraceFixRunner:
                     test_pythonpath_entries=config.test_pythonpath_entries,
                     test_environment_variables=config.test_environment_variables,
                 )
+                _register_task_state_tools(registry, _task_state_session_for_run(config))
                 tool_sha = hashlib.sha256(
                     json.dumps(
                         [spec.model_dump(mode="json") for spec in registry.specs()],
@@ -817,6 +907,10 @@ class TraceFixRunner:
                 ).hexdigest()
                 if tool_sha != recorded["tool_sha256"]:
                     reasons.append("tool definitions changed")
+                if not cls._capability_identity_matches(
+                    cls._capability_identity(config, registry), recorded
+                ):
+                    reasons.append("capability policy identity is missing or changed")
                 if config.agent_config.skills_enabled:
                     try:
                         registry.get("load_skill").restore_recovery_state(
@@ -1187,13 +1281,21 @@ class TraceFixRunner:
 
         return count
 
-    def continue_turn(self, run_dir: Path, message: str) -> RunResult:
+    def continue_turn(
+        self, run_dir: Path, message: str, *, supersedes: tuple[str, ...] = ()
+    ) -> RunResult:
         """Append an explicit user instruction at a committed continuous-session boundary."""
         if not message.strip():
             raise CheckpointError("message cannot be empty")
-        return self._continue_existing(run_dir, message=message)
+        return self._continue_existing(run_dir, message=message, supersedes=supersedes)
 
-    def _continue_existing(self, run_dir: Path, *, message: str | None = None) -> RunResult:
+    def _continue_existing(
+        self,
+        run_dir: Path,
+        *,
+        message: str | None = None,
+        supersedes: tuple[str, ...] = (),
+    ) -> RunResult:
         """Continue a validated local session in its original checkout."""
         root = run_dir.expanduser().resolve()
         manifest_path = root / "session.json"
@@ -1208,11 +1310,17 @@ class TraceFixRunner:
                 )
             manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
             config = _saved_run_config(manifest["config"])
+            if supersedes and not config.harness_foundations_enabled:
+                raise CheckpointError("supersedes requires TaskState to be enabled")
             if config.execution_backend != "local":
-                return self._resume_docker_locked(root, manifest, config, message=message)
+                return self._resume_docker_locked(
+                    root, manifest, config, message=message, supersedes=supersedes
+                )
             store = CheckpointStore(root, manifest["identity"])
             snapshot = store.load()
-            self._verify_recovery_memory(root, config, snapshot.payload.get("agent", {}))
+            trusted_user_receipts = self._verify_recovery_memory(
+                root, config, snapshot.payload.get("agent", {})
+            )
             user_input_receipt = None
             if message is not None:
                 from tracefix.memory_domain import issue_user_input_receipt
@@ -1244,6 +1352,7 @@ class TraceFixRunner:
                 else None
             )
             artifact_store = _artifact_store_for_run(config, root.name, root, workspace)
+            task_state_session = _task_state_session_for_run(config)
             if config.harness_foundations_enabled:
                 try:
                     artifact_store.verify_checkpoint_identity(
@@ -1267,6 +1376,7 @@ class TraceFixRunner:
                 pytest_config=None,
                 test_environment_variables=config.test_environment_variables,
             )
+            _register_task_state_tools(tools, task_state_session)
             mcp_manager = None
             if config.mcp_serena_image_id is not None:
                 mcp_manager = SerenaMCP(workspace, root, config.mcp_serena_image_id)
@@ -1282,6 +1392,13 @@ class TraceFixRunner:
             ).hexdigest()
             if tool_hash != manifest["identity"]["tool_sha256"]:
                 raise CheckpointError("tool definitions changed since checkpoint")
+            capability_dispatcher = self._capability_dispatcher(config, tools)
+            self._bind_host_capability_policy(capability_dispatcher, mcp_manager)
+            if not self._capability_identity_matches(
+                self._capability_identity(config, tools, capability_dispatcher),
+                manifest["identity"],
+            ):
+                raise CheckpointError("capability policy identity is missing or changed")
             skill_tool = tools.get("load_skill") if (config.agent_config.skills_enabled) else None
             if skill_tool is not None:
                 skill_tool.restore_recovery_state(snapshot.payload["skills"])
@@ -1322,6 +1439,12 @@ class TraceFixRunner:
                     repository_map=repo_map.text if repo_map else None,
                     repository_candidates=repo_map.candidate_files if repo_map else (),
                 )
+                agent.tool_dispatcher = capability_dispatcher
+                agent.task_state_session = task_state_session
+                if task_state_session is not None:
+                    agent.task_state_source_identity = lambda: hashlib.sha256(
+                        self._collect_diff(workspace, protected_dirs)[0].encode("utf-8")
+                    ).hexdigest()
 
                 if config.regression_targets:
                     baseline_path = root / "validation-baseline.json"
@@ -1364,6 +1487,7 @@ class TraceFixRunner:
                     if artifact_store is not None:
                         payload["artifact_store"] = artifact_store.checkpoint_identity()
                     store.save(payload, sequence=sequence)
+
                 agent.checkpoint_callback = save_checkpoint
                 agent.persist_terminal_checkpoint = config.conversation_enabled
                 self._attach_memory(agent, config, root, workspace, protected_dirs)
@@ -1372,6 +1496,13 @@ class TraceFixRunner:
                         snapshot.payload["agent"],
                         message=message,
                         user_input_receipt=user_input_receipt,
+                        trusted_user_receipts=trusted_user_receipts,
+                        artifact_ids=(
+                            {ref.artifact_id for ref in artifact_store.refs()}
+                            if artifact_store is not None
+                            else set()
+                        ),
+                        supersedes=supersedes,
                     )
                 except KeyboardInterrupt:
                     state = agent.state
@@ -1447,12 +1578,20 @@ class TraceFixRunner:
             return result
 
     def _resume_docker_locked(
-        self, root: Path, manifest: dict, config: RunConfig, *, message: str | None = None
+        self,
+        root: Path,
+        manifest: dict,
+        config: RunConfig,
+        *,
+        message: str | None = None,
+        supersedes: tuple[str, ...] = (),
     ) -> RunResult:
         """Rebuild an inspected ordinary workspace while retaining cumulative Agent state."""
         store = CheckpointStore(root, manifest["identity"])
         saved = store.load()
-        self._verify_recovery_memory(root, config, saved.payload.get("agent", {}))
+        trusted_user_receipts = self._verify_recovery_memory(
+            root, config, saved.payload.get("agent", {})
+        )
         user_input_receipt = None
         if message is not None:
             from tracefix.memory_domain import issue_user_input_receipt
@@ -1473,8 +1612,19 @@ class TraceFixRunner:
             profile="ordinary",
             image_id=config.docker_image_id,
             timeout_seconds=min(120, int(config.agent_config.wall_time_seconds)),
+            execution_profile=config.execution_profile,
         )
+        mcp_manager: SerenaMCP | None = None
         try:
+            skills_snapshot = None
+            if config.skills_root is not None:
+                from tracefix.skill_snapshot import read_skill_snapshot
+
+                skills_snapshot = read_skill_snapshot(
+                    root / "skills-snapshot.tar",
+                    expected_archive_sha256=manifest["identity"]["skills_archive_sha256"],
+                    expected_bundle_sha256=manifest["identity"]["skills_bundle_sha256"],
+                )
             tools = backend.prepare(
                 manifest["identity"]["source_commit"],
                 config.repo,
@@ -1486,9 +1636,26 @@ class TraceFixRunner:
                 skills_enabled=config.agent_config.skills_enabled,
                 skill_limits=config.agent_config.skill_limits,
                 source_import_probe=config.source_import,
-                skills_root=self._skills_root(config, root),
+                skills_snapshot=skills_snapshot,
+                execution_profile=config.execution_profile,
             )
+            task_state_session = _task_state_session_for_run(config)
+            _register_task_state_tools(tools, task_state_session)
+            if config.mcp_serena_image_id is not None:
+                mcp_manager = SerenaMCP(
+                    backend.source_snapshot_provider(), root, config.mcp_serena_image_id
+                )
+                mcp_manager.preflight()
+                for tool in mcp_manager.tools():
+                    tools.register(tool)
             backend.workspace_preparation["test_target"] = config.test_target
+            capability_dispatcher = self._capability_dispatcher(config, tools)
+            self._bind_host_capability_policy(capability_dispatcher, mcp_manager)
+            if not self._capability_identity_matches(
+                self._capability_identity(config, tools, capability_dispatcher),
+                manifest["identity"],
+            ):
+                raise CheckpointError("capability policy identity is missing or changed")
             backend.remove_previous_container(saved.payload["docker_snapshot"])
             load_environment_file(config.env_file)
             self._validate_credentials(config.model_name)
@@ -1517,6 +1684,38 @@ class TraceFixRunner:
                     repository_map=repo_map.text if repo_map else None,
                     repository_candidates=repo_map.candidate_files if repo_map else (),
                 )
+                agent.tool_dispatcher = capability_dispatcher
+                agent.task_state_session = task_state_session
+                if config.regression_targets:
+                    baseline_path = root / "validation-baseline.json"
+                    baseline_bytes = baseline_path.read_bytes()
+                    if hashlib.sha256(baseline_bytes).hexdigest() != manifest["identity"].get(
+                        "validation_baseline_sha256"
+                    ):
+                        raise CheckpointError("regression validation baseline identity changed")
+                    baseline_data = json.loads(baseline_bytes.decode("utf-8"))
+                    agent.validation_targets = config.regression_targets
+                    agent.configured_original_target = config.test_target
+                    agent.validation_baseline = {
+                        row["target"]: row["status"] for row in baseline_data["targets"]
+                    }
+
+                    def resumed_docker_checkout_identity() -> tuple[str, bool]:
+                        result = backend.session.call("get_git_diff", {"context_lines": 3})
+                        patch_text = result.output.get("diff") if result.success else None
+                        if not isinstance(patch_text, str):
+                            return "", False
+                        return hashlib.sha256(patch_text.encode("utf-8")).hexdigest(), bool(
+                            patch_text.strip()
+                        )
+
+                    agent.validation_source_identity = resumed_docker_checkout_identity
+                if task_state_session is not None:
+                    agent.task_state_source_identity = lambda: hashlib.sha256(
+                        backend.session.call("get_git_diff", {"context_lines": 3})
+                        .output["diff"]
+                        .encode("utf-8")
+                    ).hexdigest()
 
                 def checkpoint(active: MinimalAgent) -> None:
                     nonlocal sequence
@@ -1550,6 +1749,13 @@ class TraceFixRunner:
                         saved.payload["agent"],
                         message=message,
                         user_input_receipt=user_input_receipt,
+                        trusted_user_receipts=trusted_user_receipts,
+                        artifact_ids=set(
+                            saved.payload["docker_snapshot"]
+                            .get("artifact_receipt", {})
+                            .get("artifact_ids", [])
+                        ),
+                        supersedes=supersedes,
                     )
                 except KeyboardInterrupt:
                     state = agent.state
@@ -1628,7 +1834,8 @@ class TraceFixRunner:
             raise
         finally:
             try:
-                backend.close(remove=True)
+                if mcp_manager is not None:
+                    mcp_manager.close()
             except Exception as exc:
                 from tracefix.memory import atomic_json
 
@@ -1643,10 +1850,28 @@ class TraceFixRunner:
                     },
                 )
                 raise
+            finally:
+                try:
+                    backend.close(remove=True)
+                except Exception as exc:
+                    from tracefix.memory import atomic_json
+
+                    atomic_json(
+                        root / f"recovery-failure-{saved.sequence}-{uuid4().hex}.json",
+                        {
+                            "schema_version": 1,
+                            "checkpoint_sequence": saved.sequence,
+                            "stage": "cleanup",
+                            "error": self._serialize_error(exc),
+                            "container_id": backend.container_id,
+                        },
+                    )
+                    raise
 
     @staticmethod
     def _preflight_execution(config: RunConfig, source: Path) -> None:
         """Check Docker and ordinary-task inputs before credentials or model setup."""
+        resolve_features(config)
         if config.execution_backend != "docker":
             return
         if config.docker_profile == "ordinary":
@@ -1712,6 +1937,7 @@ class TraceFixRunner:
 
     def run(self, config: RunConfig) -> RunResult:
         """执行任务并保证成功、预算终止或异常时都保存结构化结果。"""
+        resolve_features(config)
         source_path = config.repo.expanduser().resolve()
         output_root = config.output_dir.expanduser().resolve()
         if output_root.is_relative_to(source_path):
@@ -1756,6 +1982,12 @@ class TraceFixRunner:
         repository_map: RepoMap | None = None
         memory_bundle = None
         initial_user_receipt: dict[str, Any] | None = None
+        from tracefix.skill_snapshot import (
+            EMPTY_SKILL_ARCHIVE_SHA256,
+        )
+
+        skills_snapshot = None
+        skills_archive_sha256 = EMPTY_SKILL_ARCHIVE_SHA256
         repository_index_seconds = 0.0
         llm_config = LLMConfig(
             model_name=config.model_name,
@@ -1777,6 +2009,17 @@ class TraceFixRunner:
             )
             source, source_commit = self._validate_source_repository(config.repo)
             self._preflight_execution(config, source)
+            if config.mcp_serena_image_id is not None and config.execution_backend == "local":
+                SerenaMCP.preflight_image(config.mcp_serena_image_id)
+            if config.execution_backend == "docker" and config.skills_root is not None:
+                from tracefix.skill_snapshot import snapshot_custom_skills, write_skill_snapshot
+
+                skills_snapshot = snapshot_custom_skills(
+                    config.skills_root, limits=config.agent_config.skill_limits
+                )
+                skills_archive_sha256 = write_skill_snapshot(
+                    skills_snapshot, run_dir / "skills-snapshot.tar"
+                )
             source_repo = str(source)
             load_environment_file(config.env_file)
             llm_config = llm_config.model_copy(
@@ -1830,6 +2073,7 @@ class TraceFixRunner:
                     timeout_seconds=min(120, int(config.agent_config.wall_time_seconds)),
                     profile=config.docker_profile,
                     image_id=config.docker_image_id,
+                    execution_profile=config.execution_profile,
                 )
                 docker_prepare_options = (
                     {
@@ -1856,6 +2100,8 @@ class TraceFixRunner:
                     repo_map_config=config.agent_config.repo_map,
                     skills_enabled=config.agent_config.skills_enabled,
                     skill_limits=config.agent_config.skill_limits,
+                    skills_snapshot=skills_snapshot,
+                    execution_profile=config.execution_profile,
                     **docker_prepare_options,
                 )
                 workspace_preparation = docker_backend.workspace_preparation
@@ -1917,9 +2163,7 @@ class TraceFixRunner:
 
             if tools is None:
                 assert workspace is not None
-                artifact_store = _artifact_store_for_run(
-                    config, run_id, run_dir, workspace
-                )
+                artifact_store = _artifact_store_for_run(config, run_id, run_dir, workspace)
                 tools = create_default_tool_registry(
                     workspace,
                     evidence_dir=run_dir / "test-evidence",
@@ -1938,19 +2182,27 @@ class TraceFixRunner:
                     ),
                     test_environment_variables=config.test_environment_variables,
                 )
+            task_state_session = _task_state_session_for_run(config)
+            _register_task_state_tools(tools, task_state_session)
             if config.mcp_serena_image_id is not None:
-                assert workspace is not None
-                mcp_manager = SerenaMCP(workspace, run_dir, config.mcp_serena_image_id)
+                if docker_backend is not None:
+                    snapshot_provider = docker_backend.source_snapshot_provider()
+                else:
+                    assert workspace is not None
+                    snapshot_provider = workspace
+                mcp_manager = SerenaMCP(snapshot_provider, run_dir, config.mcp_serena_image_id)
                 mcp_manager.preflight()
                 for tool in mcp_manager.tools():
                     tools.register(tool)
 
             regression_baseline: dict[str, str] = {}
             regression_baseline_seconds = 0.0
+            capability_dispatcher = self._capability_dispatcher(config, tools)
+            self._bind_host_capability_policy(capability_dispatcher, mcp_manager)
             if config.regression_targets:
-                if workspace is None or config.test_target is None:
+                if (workspace is None and docker_backend is None) or config.test_target is None:
                     raise RunConfigurationError(
-                        "end-of-task regression validation requires local execution"
+                        "end-of-task regression validation requires a prepared execution backend"
                     )
                 required_processes = 2 * len(config.regression_targets) + 1
                 if config.agent_config.max_test_runs < required_processes:
@@ -1963,7 +2215,12 @@ class TraceFixRunner:
                     )
                 baseline_started = time.monotonic()
                 regression_baseline = self._prepare_regression_baseline(
-                    config, source, run_dir, sink, run_id
+                    config,
+                    source,
+                    run_dir,
+                    sink,
+                    run_id,
+                    capability_dispatcher=capability_dispatcher,
                 )
                 regression_baseline_seconds = time.monotonic() - baseline_started
             llm = self._llm_factory(llm_config)
@@ -1975,6 +2232,28 @@ class TraceFixRunner:
                 repository_map=repository_map.text if repository_map else None,
                 repository_candidates=(repository_map.candidate_files if repository_map else ()),
             )
+            agent.tool_dispatcher = capability_dispatcher
+            agent.task_state_session = task_state_session
+            if task_state_session is not None:
+                if config.execution_backend == "local":
+                    assert workspace is not None
+                    agent.task_state_source_identity = lambda: hashlib.sha256(
+                        self._collect_diff(workspace, internal_artifacts)[0].encode("utf-8")
+                    ).hexdigest()
+                elif docker_backend is not None:
+
+                    def docker_task_state_source_identity() -> str | None:
+                        result = docker_backend.session.call("get_git_diff", {"context_lines": 3})
+                        if not result.success or not isinstance(result.output, dict):
+                            return None
+                        diff = result.output.get("diff")
+                        return (
+                            hashlib.sha256(diff.encode("utf-8")).hexdigest()
+                            if isinstance(diff, str)
+                            else None
+                        )
+
+                    agent.task_state_source_identity = docker_task_state_source_identity
             agent.initial_user_receipt = initial_user_receipt
             initial_context: list[Message] = []
             if memory_bundle is not None and memory_bundle.items:
@@ -2013,21 +2292,36 @@ class TraceFixRunner:
                 )
             agent.initial_context_messages = tuple(initial_context)
             if config.regression_targets:
-                assert workspace is not None
                 agent.validation_targets = config.regression_targets
                 agent.configured_original_target = config.test_target
                 agent.validation_baseline = regression_baseline
                 agent.validation_baseline_runs = len(config.regression_targets)
                 agent.validation_baseline_seconds = regression_baseline_seconds
+                if config.execution_backend == "local":
+                    assert workspace is not None
 
-                def checkout_identity() -> tuple[str, bool]:
-                    current_patch, _ = self._collect_diff(workspace, internal_artifacts)
-                    return (
-                        hashlib.sha256(current_patch.encode("utf-8")).hexdigest(),
-                        bool(current_patch.strip()),
-                    )
+                    def checkout_identity() -> tuple[str, bool]:
+                        current_patch, _ = self._collect_diff(workspace, internal_artifacts)
+                        return (
+                            hashlib.sha256(current_patch.encode("utf-8")).hexdigest(),
+                            bool(current_patch.strip()),
+                        )
 
-                agent.validation_source_identity = checkout_identity
+                    agent.validation_source_identity = checkout_identity
+                elif docker_backend is not None:
+
+                    def docker_checkout_identity() -> tuple[str, bool]:
+                        result = docker_backend.session.call(
+                            "get_git_diff", {"context_lines": 3}
+                        )
+                        patch_text = result.output.get("diff") if result.success else None
+                        if not isinstance(patch_text, str):
+                            return "", False
+                        return hashlib.sha256(patch_text.encode("utf-8")).hexdigest(), bool(
+                            patch_text.strip()
+                        )
+
+                    agent.validation_source_identity = docker_checkout_identity
             if config.execution_backend == "docker" and config.docker_profile == "ordinary":
                 from tracefix.docker_recovery import tool_identity
 
@@ -2036,7 +2330,40 @@ class TraceFixRunner:
                     "config_sha256": config_identity_sha256(config),
                     "image_id": config.docker_image_id,
                     "implementation_sha256": self._implementation_sha256(),
-                    "tool_sha256": tool_identity(tools.specs()),
+                    **self._capability_identity(config, tools, capability_dispatcher),
+                    # TaskState adapters are host-only and are excluded from the
+                    # executor identity negotiated by the ordinary bridge.
+                    "tool_sha256": tool_identity(
+                        tuple(
+                            spec
+                            for spec in tools.specs()
+                            if (
+                                capability_dispatcher.policy.catalog.get(spec.name) is not None
+                                and capability_dispatcher.policy.catalog.get(
+                                    spec.name
+                                ).execution_location
+                                not in {"host", "mcp"}
+                            )
+                        )
+                    ),
+                    "executor_capability_catalog_sha256": (
+                        docker_backend.session.capability_catalog_sha256
+                    ),
+                    "executor_policy_sha256": docker_backend.session.capability_policy_sha256,
+                    "executor_policy_config_sha256": (
+                        docker_backend.executor_policy_config_sha256
+                    ),
+                    "skills_bundle_sha256": docker_backend.skills_bundle_sha256,
+                    "skills_archive_sha256": skills_archive_sha256,
+                    **(
+                        {
+                            "validation_baseline_sha256": hashlib.sha256(
+                                (run_dir / "validation-baseline.json").read_bytes()
+                            ).hexdigest()
+                        }
+                        if config.regression_targets
+                        else {}
+                    ),
                     "repo_map_sha256": hashlib.sha256(
                         (repository_map.text if repository_map else "").encode("utf-8")
                     ).hexdigest(),
@@ -2092,6 +2419,7 @@ class TraceFixRunner:
                 checkpoint_identity = {
                     "source_commit": source_commit,
                     "config_sha256": config_identity_sha256(config),
+                    **self._capability_identity(config, tools, capability_dispatcher),
                     "tool_sha256": hashlib.sha256(
                         json.dumps(
                             [spec.model_dump(mode="json") for spec in tools.specs()],
@@ -2138,9 +2466,7 @@ class TraceFixRunner:
                     active.verify_test_source(current_sha)
                     trace_bytes = trace_path.read_bytes()
                     skill_tool = (
-                        tools.get("load_skill")
-                        if config.agent_config.skills_enabled
-                        else None
+                        tools.get("load_skill") if config.agent_config.skills_enabled else None
                     )
                     sequence += 1
                     payload = {
@@ -2154,6 +2480,7 @@ class TraceFixRunner:
                     if artifact_store is not None:
                         payload["artifact_store"] = artifact_store.checkpoint_identity()
                     store.save(payload, sequence=sequence)
+
                 agent.checkpoint_callback = save_checkpoint
                 agent.persist_terminal_checkpoint = config.conversation_enabled
             if workspace is not None:
@@ -2407,10 +2734,21 @@ class TraceFixRunner:
         run_dir: Path,
         sink: JSONLTraceSink,
         run_id: str,
+        *,
+        capability_dispatcher: ToolDispatcher | None = None,
     ) -> dict[str, str]:
-        """Record each declared target against an isolated, frozen source checkout."""
+        """Record each target in a clean checkout or a fresh ordinary Docker container."""
         from tracefix.messages import ToolCall
 
+        if capability_dispatcher is None:
+            control_catalog = CapabilityCatalog.for_tool_names(
+                ("run_tests", "validation_baseline")
+            )
+            capability_dispatcher = ToolDispatcher(
+                CapabilityPolicy(
+                    control_catalog, ExecutionProfile(config.execution_profile)
+                )
+            )
         baseline_path = run_dir / "validation-baseline.json"
         if baseline_path.exists():
             raise RunConfigurationError("validation baseline already exists")
@@ -2429,6 +2767,23 @@ class TraceFixRunner:
                     "validation target is not allowed by the pytest command policy",
                     context={"target": required, "reason": str(exc)},
                 ) from exc
+        from tracefix.capabilities import CallerOrigin
+
+        for capability_name in ("validation_baseline", "run_tests"):
+            decision = capability_dispatcher.authorize(
+                capability_name, CallerOrigin.VALIDATION_GATE
+            )
+            if not decision.allowed:
+                raise RunConfigurationError(
+                    "validation baseline denied by capability policy",
+                    context={
+                        "capability": capability_name,
+                        "reason_code": decision.reason_code,
+                    },
+                )
+        source_commit = cls._run_git(
+            ["rev-parse", "HEAD"], cwd=source, purpose="read baseline commit"
+        ).stdout.strip()
         rows: list[dict[str, Any]] = []
         evidence_root = run_dir / "validation-baseline-evidence"
         for index, target in enumerate(config.regression_targets):
@@ -2442,51 +2797,42 @@ class TraceFixRunner:
                     "regression target does not exist in the frozen source",
                     context={"target": target, "reason": str(exc)},
                 ) from exc
-            with tempfile.TemporaryDirectory(prefix="tracefix-baseline-") as temporary:
-                root = Path(temporary)
-                checkout = cls._clone_repository(source, root / "checkout")
-                preparation = cls._prepare_workspace(config, checkout, root)
-                if preparation.get("success") is not True:
-                    raise WorkspaceError(
-                        "regression baseline checkout preparation failed",
-                        context={"target": target, "preparation": preparation},
-                    )
-                call = ToolCall(
-                    id=uuid4().hex,
-                    name="run_tests",
-                    arguments={"command": f"pytest -q {shlex.quote(target)}"},
+            call = ToolCall(
+                id=uuid4().hex,
+                name="run_tests",
+                arguments={"command": f"pytest -q {shlex.quote(target)}"},
+            )
+            sink.write(
+                TraceEvent(
+                    event_type=TraceEventType.VALIDATION_BASELINE_STARTED,
+                    task_id=run_id,
+                    step=0,
+                    payload={
+                        "target": target,
+                        "call_id": call.id,
+                        "origin": "validation_baseline",
+                        "backend": config.execution_backend,
+                    },
                 )
-                sink.write(
-                    TraceEvent(
-                        event_type=TraceEventType.VALIDATION_BASELINE_STARTED,
-                        task_id=run_id,
-                        step=0,
-                        payload={
-                            "target": target,
-                            "call_id": call.id,
-                            "origin": "validation_baseline",
-                        },
+            )
+            if config.execution_backend == "docker":
+                try:
+                    result = cls._run_docker_regression_baseline(
+                        config, source, source_commit, run_dir, index, call
                     )
+                except Exception as exc:
+                    result = {
+                        "call_id": call.id,
+                        "tool_name": "run_tests",
+                        "success": False,
+                        "error": f"{type(exc).__name__}: {exc}",
+                        "output": {},
+                    }
+            else:
+                backend = cls._local_validation_backend(
+                    config, source, evidence_root / str(index), capability_dispatcher
                 )
-                result = (
-                    RunTestsTool(
-                        checkout,
-                        default_timeout_seconds=min(
-                            120.0, float(config.agent_config.wall_time_seconds)
-                        ),
-                        python_executable=config.test_python_executable,
-                        pythonpath_entries=config.test_pythonpath_entries,
-                        pytest_config=(
-                            config.environment_recipe.pytest_config
-                            if config.environment_recipe is not None
-                            else None
-                        ),
-                        environment_variables=config.test_environment_variables,
-                        evidence_dir=evidence_root / str(index),
-                    )
-                    .execute(call)
-                    .model_dump(mode="json")
-                )
+                result = backend.execute(call)
             output = result.get("output") if isinstance(result.get("output"), dict) else {}
             if result.get("success") is True and output.get("test_status") == "passed":
                 status = "passed"
@@ -2532,7 +2878,17 @@ class TraceFixRunner:
                         "diagnostic_path": str(run_dir / "validation-baseline-progress.json"),
                     },
                 )
-            rows.append({"target": target, "status": status, "test": result})
+            result_sha256 = hashlib.sha256(
+                json.dumps(
+                    result, sort_keys=True, ensure_ascii=False, separators=(",", ":")
+                ).encode("utf-8")
+            ).hexdigest()
+            rows.append({
+                "target": target,
+                "status": status,
+                "test": result,
+                "evidence_sha256": result_sha256,
+            })
             (run_dir / "validation-baseline-progress.json").write_text(
                 json.dumps(
                     {"schema_version": 1, "targets": rows, "complete": False},
@@ -2543,13 +2899,12 @@ class TraceFixRunner:
             )
         payload = {
             "schema_version": 1,
-            "source_commit": cls._run_git(
-                ["rev-parse", "HEAD"], cwd=source, purpose="read baseline commit"
-            ).stdout.strip(),
-            "test_environment_sha256": inspect_test_environment(
-                config.test_python_executable or sys.executable,
-                pythonpath_entries=config.test_pythonpath_entries,
-            ).fingerprint_sha256,
+            "source_commit": source_commit,
+            "execution_backend": config.execution_backend,
+            "image_id": config.docker_image_id if config.execution_backend == "docker" else None,
+            "test_environment_sha256": cls._validation_environment_sha256(config),
+            "policy_sha256": capability_dispatcher.policy.sha256,
+            "capability_catalog_sha256": capability_dispatcher.policy.catalog.sha256,
             "targets": rows,
             "complete": True,
         }
@@ -2558,6 +2913,110 @@ class TraceFixRunner:
         )
         (run_dir / "validation-baseline-progress.json").unlink(missing_ok=True)
         return {row["target"]: row["status"] for row in rows}
+
+    @staticmethod
+    def _validation_environment_sha256(config: RunConfig) -> str:
+        if config.execution_backend == "local":
+            return inspect_test_environment(
+                config.test_python_executable or sys.executable,
+                pythonpath_entries=config.test_pythonpath_entries,
+            ).fingerprint_sha256
+        environment = (
+            dict(config.environment_recipe.environment_variables)
+            if config.environment_recipe is not None
+            else {}
+        )
+        environment.update(config.test_environment_variables)
+        from tracefix.validation import docker_validation_environment_sha256
+
+        return docker_validation_environment_sha256(config.docker_image_id, environment)
+
+    @classmethod
+    def _local_validation_backend(
+        cls, config: RunConfig, source: Path, evidence_dir: Path,
+        dispatcher: ToolDispatcher,
+    ):
+        from tracefix.validation import LocalValidationBackend
+
+        @contextmanager
+        def acquire():
+            with tempfile.TemporaryDirectory(prefix="tracefix-baseline-") as temporary:
+                baseline_root = Path(temporary)
+                checkout = cls._clone_repository(source, baseline_root / "checkout")
+                preparation = cls._prepare_workspace(config, checkout, baseline_root)
+                if preparation.get("success") is not True:
+                    raise WorkspaceError(
+                        "regression baseline checkout preparation failed",
+                        context={"preparation": preparation},
+                    )
+                yield RunTestsTool(
+                    checkout,
+                    default_timeout_seconds=min(120.0, config.agent_config.wall_time_seconds),
+                    python_executable=config.test_python_executable,
+                    pythonpath_entries=config.test_pythonpath_entries,
+                    pytest_config=(config.environment_recipe.pytest_config
+                                   if config.environment_recipe is not None else None),
+                    environment_variables=config.test_environment_variables,
+                    evidence_dir=evidence_dir,
+                )
+
+        return LocalValidationBackend(acquire, dispatcher)
+
+    @classmethod
+    def _run_docker_regression_baseline(
+        cls,
+        config: RunConfig,
+        source: Path,
+        source_commit: str,
+        run_dir: Path,
+        index: int,
+        call: ToolCall,
+    ) -> dict[str, Any]:
+        """Run one target in a disposable ordinary container on the fixed image."""
+        if (
+            config.docker_profile != "ordinary"
+            or not config.docker_image_id
+            or not config.source_import
+        ):
+            raise RunConfigurationError("Docker regression baseline requires ordinary image inputs")
+        from tracefix.docker_backend import DockerToolBackend
+
+        baseline_id = "baseline-" + hashlib.sha256(
+            f"{run_dir.name}:{index}".encode()
+        ).hexdigest()[:24]
+        baseline_root = run_dir / "validation-baseline-containers" / str(index)
+        environment = (
+            dict(config.environment_recipe.environment_variables)
+            if config.environment_recipe is not None
+            else {}
+        )
+        environment.update(config.test_environment_variables)
+        from tracefix.validation import DockerValidationBackend
+
+        def create():
+            baseline_root.mkdir(parents=True, exist_ok=False)
+            return DockerToolBackend(
+                task_id="tracefix-ordinary", input_root=run_dir, run_dir=baseline_root,
+                run_id=baseline_id,
+                timeout_seconds=min(120, int(config.agent_config.wall_time_seconds)),
+                profile="ordinary", image_id=config.docker_image_id,
+                execution_profile=config.execution_profile,
+            )
+
+        def prepare(backend):
+            return backend.prepare(
+                source_commit,
+                source,
+                Path(__file__).resolve().parents[2],
+                source_import_probe=config.source_import,
+                environment_variables=environment,
+                execution_profile=config.execution_profile,
+            )
+        dispatcher = ToolDispatcher(CapabilityPolicy(
+            CapabilityCatalog.for_tool_names(("run_tests", "validation_baseline")),
+            config.execution_profile,
+        ))
+        return DockerValidationBackend(create, prepare, dispatcher).execute(call)
 
     @staticmethod
     def _prepare_workspace(

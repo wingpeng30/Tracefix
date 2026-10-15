@@ -1,0 +1,6 @@
+# Windows x86-64 / Python 3.11 companion to the existing Linux MCP lock.
+# Keep the shared versions/hashes; add MCP's platform-specific dependency.
+-r mcp-py311.txt
+
+pywin32==312 ; sys_platform == "win32" \
+    --hash=sha256:d11417d84412f859b722fad0841b3614459ed0047f7542d8362e77884f6b6e8a

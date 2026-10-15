@@ -8,6 +8,7 @@ import subprocess
 import tempfile
 from pathlib import Path, PureWindowsPath
 
+from tracefix.capabilities import CapabilityCatalog, CapabilityPolicy
 from tracefix.checkpoint import CheckpointError
 from tracefix.memory import digest
 from tracefix.workspace_snapshot import validate_archive
@@ -104,7 +105,12 @@ def validate_artifact_archive(
         except (OSError, ValueError) as exc:
             raise CheckpointError("Docker artifact archive failed content validation") from exc
     for field in (
-        "manifest_sha256", "artifact_count", "storage_bytes", "queries", "returned_chars"
+        "manifest_sha256",
+        "artifact_count",
+        "artifact_ids",
+        "storage_bytes",
+        "queries",
+        "returned_chars",
     ):
         if imported.get(field) != receipt.get(field):
             raise CheckpointError("Docker artifact receipt disagrees with archive contents")
@@ -133,6 +139,27 @@ def validate_batch(root: Path, snapshot: dict, *, sequence: int, image_id: str) 
         raise CheckpointError("Docker batch metadata changed")
     if snapshot.get("image_id") != image_id:
         raise CheckpointError("Docker image identity changed")
+    if any(
+        not isinstance(snapshot.get(name), str) or len(snapshot[name]) != 64
+        for name in (
+            "capability_catalog_sha256",
+            "capability_policy_sha256",
+            "host_control_policy_sha256",
+            "host_control_catalog_sha256",
+            "executor_policy_config_sha256",
+        )
+    ):
+        raise CheckpointError("Docker checkpoint capability identity is missing")
+    commit_decision = snapshot.get("checkpoint_commit_decision")
+    if (
+        not isinstance(commit_decision, dict)
+        or commit_decision.get("allowed") is not True
+        or commit_decision.get("tool_name") != "checkpoint_commit"
+        or commit_decision.get("origin") != "host_lifecycle"
+        or commit_decision.get("policy_sha256") != snapshot["host_control_policy_sha256"]
+        or commit_decision.get("catalog_sha256") != snapshot["host_control_catalog_sha256"]
+    ):
+        raise CheckpointError("Docker checkpoint commit authorization is invalid")
     baseline = owned_file(root, "agent-base.tar")
     if hashlib.sha256(baseline.read_bytes()).hexdigest() != snapshot["baseline_sha256"]:
         raise CheckpointError("Docker source baseline changed")
@@ -214,6 +241,50 @@ def inspect_session(
             "run": str(root),
         }
     identity = manifest["identity"]
+    required_policy_fields = {
+        "policy_sha256",
+        "capability_catalog_sha256",
+        "executor_tool_catalog_sha256",
+        "agent_tool_catalog_sha256",
+        "provider_tool_spec_sha256",
+        "executor_policy_config_sha256",
+        "host_control_policy_sha256",
+        "host_control_catalog_sha256",
+        "executor_capability_catalog_sha256",
+        "executor_policy_sha256",
+        "skills_bundle_sha256",
+        "skills_archive_sha256",
+    }
+    if config.regression_targets:
+        required_policy_fields.add("validation_baseline_sha256")
+    if not required_policy_fields.issubset(identity):
+        reasons.append("capability policy identity is missing")
+    from tracefix.capabilities import executor_policy_document
+
+    expected_executor_policy = executor_policy_document(
+        config.execution_profile,
+        artifacts_enabled=config.harness_foundations_enabled,
+        skills_enabled=config.agent_config.skills_enabled,
+    )
+    expected_executor_policy_sha256 = hashlib.sha256(
+        json.dumps(
+            expected_executor_policy,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+    if identity.get("executor_policy_config_sha256") != expected_executor_policy_sha256:
+        reasons.append("executor policy bundle does not match the current feature profile")
+    from tracefix.skill_snapshot import EMPTY_SKILL_ARCHIVE_SHA256, EMPTY_SKILL_BUNDLE_SHA256
+
+    if config.skills_root is None and (
+        identity.get("skills_bundle_sha256") != EMPTY_SKILL_BUNDLE_SHA256
+        or identity.get("skills_archive_sha256") != EMPTY_SKILL_ARCHIVE_SHA256
+    ):
+        reasons.append("unexpected custom Skills snapshot identity")
+    if reasons:
+        return {"resumable": False, "reasons": reasons, "run": str(root)}
     actual = dict(
         identity, implementation_sha256=implementation_sha256, config_sha256=config_sha256
     )
@@ -236,9 +307,74 @@ def inspect_session(
     snapshot = payload["docker_snapshot"]
     if snapshot.get("tool_sha256") != identity["tool_sha256"]:
         raise CheckpointError("Docker batch tool identity disagrees with session")
+    if (
+        snapshot.get("capability_catalog_sha256")
+        != identity.get("executor_capability_catalog_sha256")
+        or snapshot.get("capability_policy_sha256") != identity.get("executor_policy_sha256")
+        or snapshot.get("host_control_policy_sha256")
+        != identity.get("host_control_policy_sha256")
+        or snapshot.get("host_control_catalog_sha256")
+        != identity.get("host_control_catalog_sha256")
+        or snapshot.get("executor_policy_config_sha256")
+        != identity.get("executor_policy_config_sha256")
+    ):
+        raise CheckpointError("Docker batch capability identity disagrees with session")
     validate_batch(root, snapshot, sequence=checkpoint.sequence, image_id=config.docker_image_id)
+    skills_snapshot = None
+    if config.skills_root is not None:
+        from tracefix.skill_snapshot import read_skill_snapshot
+
+        skills_snapshot = read_skill_snapshot(
+            root / "skills-snapshot.tar",
+            expected_archive_sha256=identity["skills_archive_sha256"],
+            expected_bundle_sha256=identity["skills_bundle_sha256"],
+        )
     if config.harness_foundations_enabled != (snapshot.get("artifacts_enabled") is True):
         raise CheckpointError("Docker checkpoint artifact capability changed")
+    if config.regression_targets:
+        baseline_path = root / "validation-baseline.json"
+        try:
+            raw_baseline = baseline_path.read_bytes()
+            baseline = json.loads(raw_baseline.decode("utf-8"))
+            environment = (
+                dict(config.environment_recipe.environment_variables)
+                if config.environment_recipe is not None
+                else {}
+            )
+            environment.update(config.test_environment_variables)
+            from tracefix.validation import docker_validation_environment_sha256
+
+            expected_environment = docker_validation_environment_sha256(
+                config.docker_image_id, environment
+            )
+            if (
+                baseline_path.is_symlink()
+                or hashlib.sha256(raw_baseline).hexdigest()
+                != identity.get("validation_baseline_sha256")
+                or baseline.get("complete") is not True
+                or baseline.get("source_commit") != identity.get("source_commit")
+                or baseline.get("execution_backend") != "docker"
+                or baseline.get("image_id") != identity.get("image_id")
+                or baseline.get("test_environment_sha256") != expected_environment
+                or baseline.get("policy_sha256") != identity.get("policy_sha256")
+                or baseline.get("capability_catalog_sha256")
+                != identity.get("capability_catalog_sha256")
+                or [row.get("target") for row in baseline.get("targets", [])]
+                != list(config.regression_targets)
+            ):
+                reasons.append("regression validation baseline does not match the run")
+            else:
+                for row in baseline["targets"]:
+                    encoded = json.dumps(
+                        row.get("test"), sort_keys=True, ensure_ascii=False, separators=(",", ":")
+                    ).encode("utf-8")
+                    if row.get("evidence_sha256") != hashlib.sha256(encoded).hexdigest():
+                        reasons.append("regression validation baseline evidence changed")
+                        break
+        except (OSError, UnicodeError, ValueError, TypeError, json.JSONDecodeError):
+            reasons.append("regression validation baseline is missing or invalid")
+        if reasons:
+            return {"resumable": False, "reasons": reasons, "run": str(root)}
     bridge = snapshot["bridge_state"]
     if (
         payload["skills"] != bridge["skills"]
@@ -271,18 +407,39 @@ def inspect_session(
     if config.agent_config.skills_enabled:
         from tracefix.tools.skills import SkillActivationTool
 
-        skill_root = config.skills_root
-        skill = (
-            SkillActivationTool(root=skill_root, limits=config.agent_config.skill_limits)
-            if skill_root
-            else SkillActivationTool(limits=config.agent_config.skill_limits)
-        )
-        definitions.append(skill.spec)
+        if skills_snapshot is not None:
+            import tempfile
+
+            from tracefix.skill_snapshot import materialize_skill_snapshot
+
+            with tempfile.TemporaryDirectory(prefix="tracefix-skills-inspect-") as temporary:
+                skill_root = Path(temporary) / "skills"
+                skill_root.mkdir()
+                materialize_skill_snapshot(skills_snapshot, skill_root)
+                skill = SkillActivationTool(
+                    root=skill_root, limits=config.agent_config.skill_limits
+                )
+                skill.restore_recovery_state(payload["skills"])
+                definitions.append(skill.spec)
+        else:
+            skill = SkillActivationTool(limits=config.agent_config.skill_limits)
+            definitions.append(skill.spec)
     tool_sha = tool_identity(definitions)
     if tool_sha != identity["tool_sha256"]:
         reasons.append("tool definitions changed")
+    try:
+        executor_catalog = CapabilityCatalog.for_tool_names(spec.name for spec in definitions)
+        executor_policy = CapabilityPolicy(executor_catalog, config.execution_profile)
+    except ValueError:
+        reasons.append("executor capability catalog is invalid")
+    else:
+        if identity.get("executor_capability_catalog_sha256") != executor_catalog.sha256:
+            reasons.append("executor capability catalog changed")
+        if identity.get("executor_policy_sha256") != executor_policy.sha256:
+            reasons.append("executor capability policy changed")
     if skill is not None:
-        skill.restore_recovery_state(payload["skills"])
+        if skills_snapshot is None:
+            skill.restore_recovery_state(payload["skills"])
     elif payload["skills"] is not None:
         reasons.append("checkpoint contains disabled Skills")
     diff_sha = hashlib.sha256(bridge["diff"]["diff"].encode("utf-8")).hexdigest()

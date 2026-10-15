@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import io
 import json
 import sys
@@ -8,13 +9,16 @@ from types import SimpleNamespace
 import pytest
 
 import tracefix.agent_bridge as agent_bridge
+from tracefix.capabilities import CapabilityCatalog, CapabilityPolicy, ExecutionProfile
 from tracefix.messages import ToolCall
 from tracefix.tools import ToolResult
+from tracefix.tools.base import ToolSpec
 
 
 class _Tool:
     def __init__(self, name: str):
         self.name = name
+        self.spec = ToolSpec(name=name, description="bridge fixture")
         self.prepared: list[ToolCall] = []
         self.on_process_started = None
 
@@ -34,6 +38,7 @@ class _Tool:
 
 class _Registry:
     def __init__(self):
+        self.names = ("search_code", "run_tests")
         self.tool = _Tool("search_code")
         self.test_tool = _Tool("run_tests")
         self.skill_catalog = (
@@ -181,6 +186,119 @@ def test_artifact_enabled_bridge_exposes_negotiated_protocol(tmp_path, monkeypat
     assert created["artifact_store"].run_id == "run-artifact"
     manifest = json.loads((artifact_root / "manifest.json").read_text(encoding="utf-8"))
     assert "a-private-token-value" not in json.dumps(manifest)
+
+
+def test_bridge_binds_read_only_executor_policy_file_before_handshake(tmp_path, monkeypatch):
+    workspace = tmp_path / "workspace"
+    evidence = tmp_path / "evidence"
+    workspace.mkdir()
+    evidence.mkdir()
+    environment_file = tmp_path / "environment.json"
+    environment_file.write_text("{}", encoding="utf-8")
+    registry = _Registry()
+    registry.skill_catalog = ()
+    catalog = CapabilityCatalog.for_tool_names(registry.names)
+    policy = CapabilityPolicy(catalog, ExecutionProfile.WORKSPACE_WRITE)
+    policy_file = tmp_path / "capability-policy.json"
+    policy_file.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "policy_version": policy.VERSION,
+                "execution_profile": policy.profile.value,
+                "capability_catalog_sha256": catalog.sha256,
+                "capability_policy_sha256": policy.sha256,
+                "capabilities": [
+                    item.model_dump(mode="json") for item in catalog.descriptors
+                ],
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        agent_bridge, "create_default_tool_registry", lambda *_args, **_kwargs: registry
+    )
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "agent_bridge",
+            "--workspace", str(workspace),
+            "--evidence", str(evidence),
+            "--python", sys.executable,
+            "--environment-json", str(environment_file),
+            "--run-id", "run-policy",
+            "--capability-policy-file", str(policy_file),
+        ],
+    )
+    monkeypatch.setattr(sys, "stdin", io.StringIO(""))
+    output = io.StringIO()
+    monkeypatch.setattr(sys, "stdout", output)
+
+    assert agent_bridge.main() == 0
+    hello = json.loads(output.getvalue().splitlines()[0])
+    assert hello["capability_policy_sha256"] == policy.sha256
+    assert hello["executor_policy_config_sha256"] == hashlib.sha256(
+        policy_file.read_bytes()
+    ).hexdigest()
+
+
+def test_bridge_rejects_policy_bundle_profile_drift_before_handshake(tmp_path, monkeypatch):
+    workspace = tmp_path / "workspace"
+    evidence = tmp_path / "evidence"
+    workspace.mkdir()
+    evidence.mkdir()
+    environment_file = tmp_path / "environment.json"
+    environment_file.write_text("{}", encoding="utf-8")
+    registry = _Registry()
+    registry.skill_catalog = ()
+    wrong_policy = CapabilityPolicy(
+        CapabilityCatalog.for_tool_names(registry.names), ExecutionProfile.INSPECT
+    )
+    policy_file = tmp_path / "capability-policy.json"
+    policy_file.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "policy_version": wrong_policy.VERSION,
+                "execution_profile": wrong_policy.profile.value,
+                "capability_catalog_sha256": wrong_policy.catalog.sha256,
+                "capability_policy_sha256": wrong_policy.sha256,
+                "capabilities": [
+                    item.model_dump(mode="json")
+                    for item in wrong_policy.catalog.descriptors
+                ],
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        agent_bridge, "create_default_tool_registry", lambda *_args, **_kwargs: registry
+    )
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "agent_bridge",
+            "--workspace", str(workspace),
+            "--evidence", str(evidence),
+            "--python", sys.executable,
+            "--environment-json", str(environment_file),
+            "--run-id", "run-policy-drift",
+            "--capability-policy-file", str(policy_file),
+        ],
+    )
+    monkeypatch.setattr(sys, "stdin", io.StringIO(""))
+    output = io.StringIO()
+    monkeypatch.setattr(sys, "stdout", output)
+
+    with pytest.raises(ValueError, match="does not match tool catalog"):
+        agent_bridge.main()
+    assert output.getvalue() == ""
 
 
 @pytest.mark.parametrize("environment", ['[]', '{"BAD":1}'])

@@ -17,8 +17,16 @@ import time
 from pathlib import Path
 from typing import Any
 
+from tracefix.capabilities import (
+    CallerOrigin,
+    CapabilityCatalog,
+    CapabilityPolicy,
+    ExecutionProfile,
+    ToolDispatcher,
+)
+from tracefix.exceptions import RunConfigurationError
 from tracefix.messages import ToolCall
-from tracefix.security import UnsafeWorkspacePath, resolve_workspace_path
+from tracefix.source_snapshot import SourceSnapshotProvider, WorkspaceSourceSnapshotProvider
 from tracefix.tools.base import BaseTool, ToolResult, ToolSpec
 
 _METHODS = {
@@ -42,35 +50,74 @@ _PROPERTIES: dict[str, dict[str, dict[str, object]]] = {
 }
 
 
+class MCPPrerequisiteError(RunConfigurationError, RuntimeError):
+    """A missing local prerequisite, detected before model initialization."""
+
+    code = "mcp_prerequisite_unavailable"
+
+
 class SerenaMCP:
     """Own the Docker-backed MCP transport and its bounded source snapshots."""
 
     def __init__(
-        self, workspace: Path, run_dir: Path, image_id: str, *,
+        self,
+        source_snapshot_provider: SourceSnapshotProvider | Path,
+        run_dir: Path,
+        image_id: str,
+        *,
         timeout_seconds: float = 90, max_output_chars: int = 16_000,
     ) -> None:
-        self.workspace = workspace.resolve()
+        self.source_snapshot_provider = (
+            WorkspaceSourceSnapshotProvider(source_snapshot_provider)
+            if isinstance(source_snapshot_provider, Path)
+            else source_snapshot_provider
+        )
         self.run_dir = run_dir.resolve()
         self.image_id = image_id
         self.timeout_seconds = timeout_seconds
         self.max_output_chars = max_output_chars
         self._active: set[str] = set()
+        self._capability_dispatcher: ToolDispatcher | None = None
+
+    def bind_capability_dispatcher(self, dispatcher: ToolDispatcher) -> None:
+        """Use the session's frozen capability policy for host source exports."""
+        self._capability_dispatcher = dispatcher
 
     def preflight(self) -> None:
-        if re.fullmatch(r"sha256:[0-9a-f]{64}", self.image_id) is None:
+        self.preflight_image(self.image_id)
+
+    @staticmethod
+    def preflight_image(image_id: str) -> None:
+        """Check every Serena prerequisite before a provider model is constructed."""
+        if re.fullmatch(r"sha256:[0-9a-f]{64}", image_id) is None:
             raise ValueError("Serena MCP requires an immutable Docker sha256 image ID")
         try:
             from mcp import ClientSession  # noqa: F401
         except ImportError as exc:
-            raise RuntimeError("install tracefix-agent[mcp] for Serena MCP") from exc
+            raise MCPPrerequisiteError(
+                "install tracefix-agent[mcp] for Serena MCP",
+                context={"reason_code": "mcp_sdk_missing"},
+            ) from exc
         if shutil.which("docker") is None:
-            raise RuntimeError("Docker CLI is required for isolated Serena MCP")
-        probe = subprocess.run(
-            ["docker", "image", "inspect", self.image_id, "--format", "{{.Id}}"],
-            capture_output=True, text=True, timeout=15, check=False,
-        )
-        if probe.returncode or probe.stdout.strip() != self.image_id:
-            raise RuntimeError("Serena MCP Docker image ID is unavailable or changed")
+            raise MCPPrerequisiteError(
+                "Docker CLI is required for isolated Serena MCP",
+                context={"reason_code": "docker_cli_missing"},
+            )
+        try:
+            probe = subprocess.run(
+                ["docker", "image", "inspect", image_id, "--format", "{{.Id}}"],
+                capture_output=True, text=True, timeout=15, check=False,
+            )
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            raise MCPPrerequisiteError(
+                "Serena MCP Docker image inspection could not complete",
+                context={"reason_code": "docker_image_probe_failed"},
+            ) from exc
+        if probe.returncode or probe.stdout.strip() != image_id:
+            raise MCPPrerequisiteError(
+                "Serena MCP Docker image ID is unavailable or changed",
+                context={"reason_code": "docker_image_unavailable"},
+            )
 
     def tools(self) -> tuple[BaseTool, ...]:
         return tuple(_SerenaTool(self, name) for name in _METHODS)
@@ -92,46 +139,32 @@ class SerenaMCP:
             return True
         return False
 
-    def _snapshot(self, target: Path) -> str:
-        listing = subprocess.run(
-            ["git", "ls-files", "-z", "--cached", "--others", "--exclude-standard"],
-            cwd=self.workspace, capture_output=True, check=True, timeout=20,
-        ).stdout
-        names = sorted(set(os.fsdecode(raw) for raw in listing.split(b"\0") if raw))
-        if len(names) > 5_000:
-            raise ValueError("Serena MCP source snapshot exceeds 5,000 files")
-        digest = hashlib.sha256()
-        total_bytes = 0
-        for name in names:
-            relative = Path(name)
-            if relative.is_absolute() or ".." in relative.parts:
-                continue
-            source = self.workspace / relative
-            try:
-                resolve_workspace_path(self.workspace, name, must_exist=True)
-            except UnsafeWorkspacePath:
-                continue
-            if source.is_symlink() or not source.is_file():
-                continue
-            data = source.read_bytes()
-            total_bytes += len(data)
-            if total_bytes > 100 * 1024 * 1024:
-                raise ValueError("Serena MCP source snapshot exceeds 100 MiB")
-            destination = target / relative
-            destination.parent.mkdir(parents=True, exist_ok=True)
-            destination.write_bytes(data)
-            digest.update(name.encode("utf-8", errors="surrogateescape"))
-            digest.update(b"\0")
-            digest.update(hashlib.sha256(data).digest())
-        return digest.hexdigest()
+    def _snapshot(self, target: Path) -> tuple[str, str]:
+        dispatcher = self._capability_dispatcher
+        if dispatcher is None:
+            catalog = CapabilityCatalog.for_tool_names(("source_snapshot_export",))
+            dispatcher = ToolDispatcher(
+                CapabilityPolicy(catalog, ExecutionProfile.WORKSPACE_WRITE)
+            )
+        decision = dispatcher.authorize(
+            "source_snapshot_export", CallerOrigin.HOST_LIFECYCLE
+        )
+        if not decision.allowed:
+            raise RuntimeError(
+                "source snapshot export denied by capability policy: "
+                + decision.reason_code
+            )
+        identity = self.source_snapshot_provider.materialize(target)
+        return identity.sha256, decision.policy_sha256
 
     def call(self, method: str, arguments: dict[str, Any], call_id: str) -> dict[str, Any]:
         safe_id = hashlib.sha256(call_id.encode()).hexdigest()[:12]
         run_tag = hashlib.sha256(str(self.run_dir).encode()).hexdigest()[:12]
         name = f"tracefix-mcp-{run_tag}-{safe_id}"
         with tempfile.TemporaryDirectory(prefix="mcp-source-", dir=self.run_dir) as temporary:
-            snapshot = Path(temporary)
-            source_hash = self._snapshot(snapshot)
+            snapshot = Path(temporary) / "source"
+            snapshot.mkdir()
+            source_hash, source_policy_sha256 = self._snapshot(snapshot)
             # Docker's fixed unprivileged UID must be able to traverse the
             # short-lived read-only bind source created with mkdtemp mode 0700.
             snapshot.chmod(0o755)
@@ -149,7 +182,12 @@ class SerenaMCP:
         output = _content_text(response)
         if len(output) > self.max_output_chars:
             output = output[: self.max_output_chars] + "\n[TraceFix MCP output truncated]"
-        return {"text": output, "source_sha256": source_hash, "service": "serena/1.7.0"}
+        return {
+            "text": output,
+            "source_sha256": source_hash,
+            "source_export_policy_sha256": source_policy_sha256,
+            "service": "serena/1.7.0",
+        }
 
     async def _call_async(
         self, name: str, snapshot: Path, method: str, arguments: dict[str, Any],

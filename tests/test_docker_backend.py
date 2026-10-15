@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import io
 import json
 import subprocess
 import sys
@@ -13,10 +15,17 @@ from scripts.inspect_docker_run import (
     persisted_tool_call_ids,
     unresolved_tool_calls,
 )
+from tracefix.capabilities import (
+    CapabilityCatalog,
+    CapabilityPolicy,
+    ExecutionProfile,
+    executor_policy_document,
+)
 from tracefix.docker_backend import (
     _IMAGES,
     DockerToolBackend,
     _BridgeSession,
+    _make_trusted_executor_bundle,
     _RemoteTool,
     _run,
     _validate_synthetic_profile,
@@ -28,6 +37,27 @@ from tracefix.reproduction import _make_docker_inputs, _make_source
 from tracefix.tools import SkillCatalogEntry
 from tracefix.tools.base import ToolResult, ToolSpec
 from tracefix.tools.skills import SkillLimits
+
+
+def _with_capability_identity(payload: dict, profile: str = "workspace_write") -> dict:
+    names = [item["name"] for item in payload.get("tools", [])]
+    try:
+        catalog = CapabilityCatalog.for_tool_names(names)
+        policy = CapabilityPolicy(catalog, ExecutionProfile(profile))
+    except (KeyError, TypeError, ValueError):
+        return payload
+    return {
+        **payload,
+        "execution_profile": profile,
+        "capability_catalog_sha256": catalog.sha256,
+        "capability_policy_sha256": policy.sha256,
+    }
+
+
+def _hello_frame(run_id: str, tools: list[dict] | None = None) -> str:
+    return json.dumps(_with_capability_identity({
+        "type": "hello", "protocol": 1, "run_id": run_id, "tools": tools or [],
+    }))
 
 
 def _git(repo: Path, *args: str) -> str:
@@ -58,6 +88,137 @@ def test_source_archive_exposes_only_requested_commit(tmp_path: Path) -> None:
     assert "base.py" in names
     assert "future-answer.py" not in names
     assert all(".git" not in name.split("/") for name in names)
+
+
+def test_ordinary_executor_bundle_contains_hashed_policy_configuration(tmp_path: Path) -> None:
+    package = tmp_path / "package"
+    tracefix_root = tmp_path / "tracefix-root"
+    package.mkdir()
+    tracefix_root.mkdir()
+    (package / "capability_marker.py").write_text("POLICY = True\n", encoding="utf-8")
+    document = executor_policy_document(
+        ExecutionProfile.INSPECT, artifacts_enabled=True, skills_enabled=False
+    )
+
+    bundle, bundle_sha256, certificate_sha256 = _make_trusted_executor_bundle(
+        package,
+        tracefix_root,
+        {},
+        include_tls_test_support=False,
+        capability_policy_document=document,
+    )
+    with tarfile.open(fileobj=io.BytesIO(bundle), mode="r:") as archive:
+        policy_bytes = archive.extractfile("runtime/capability-policy.json").read()
+        manifest = json.loads(archive.extractfile("runtime/executor-manifest.json").read())
+
+    policy_sha256 = hashlib.sha256(policy_bytes).hexdigest()
+    assert json.loads(policy_bytes) == document
+    assert manifest["bundle_sha256"] == bundle_sha256
+    assert manifest["files"]["runtime/capability-policy.json"] == policy_sha256
+    assert certificate_sha256 is None
+
+
+def test_ordinary_executor_bundle_contains_only_frozen_skill_text(tmp_path: Path) -> None:
+    from tracefix.skill_snapshot import snapshot_custom_skills
+
+    package = tmp_path / "package"
+    tracefix_root = tmp_path / "tracefix-root"
+    skill_root = tmp_path / "skills"
+    skill_root.mkdir()
+    package.mkdir()
+    tracefix_root.mkdir()
+    skill = skill_root / "tracefix-debugging"
+    skill.mkdir()
+    (skill / "SKILL.md").write_text(
+        "---\nname: tracefix-debugging\ndescription: Diagnose TraceFix\n"
+        "---\n\nRead current source.\n",
+        encoding="utf-8",
+    )
+    references = skill / "references"
+    references.mkdir()
+    (references / "guide.md").write_text("Use focused tests.\n", encoding="utf-8")
+    snapshot = snapshot_custom_skills(skill_root)
+    document = executor_policy_document(
+        ExecutionProfile.WORKSPACE_WRITE, artifacts_enabled=False, skills_enabled=True
+    )
+
+    bundle, _bundle_sha, _certificate_sha = _make_trusted_executor_bundle(
+        package,
+        tracefix_root,
+        {},
+        include_tls_test_support=False,
+        capability_policy_document=document,
+        skills_snapshot=snapshot,
+    )
+
+    with tarfile.open(fileobj=io.BytesIO(bundle), mode="r:") as archive:
+        members = {
+            member.name: archive.extractfile(member).read()
+            for member in archive.getmembers()
+        }
+    assert members["runtime/skills/tracefix-debugging/SKILL.md"] == (
+        skill / "SKILL.md"
+    ).read_bytes()
+    assert members["runtime/skills/tracefix-debugging/references/guide.md"] == (
+        skill / "references" / "guide.md"
+    ).read_bytes()
+    assert not any("live" in name for name in members)
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        "skill-conflict",
+        "skill-disabled",
+        "snapshot-disabled",
+        "baseline-outside",
+        "baseline-missing",
+    ],
+)
+def test_ordinary_prepare_rejects_invalid_skill_or_baseline_inputs(tmp_path, case):
+    from tracefix.skill_snapshot import snapshot_custom_skills
+
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    source = tmp_path / "source"
+    source.mkdir()
+    skills = tmp_path / "skills"
+    skills.mkdir()
+    empty_snapshot = snapshot_custom_skills(skills)
+    backend = DockerToolBackend(
+        task_id="tracefix-ordinary",
+        input_root=tmp_path,
+        run_dir=run_dir,
+        run_id="input-guards",
+        profile="ordinary",
+        image_id="sha256:" + "a" * 64,
+    )
+    arguments = {}
+    expected = ""
+    if case == "skill-conflict":
+        arguments = {
+            "skills_root": skills,
+            "skills_snapshot": empty_snapshot,
+            "skills_enabled": True,
+        }
+        expected = "cannot both be provided"
+    elif case == "skill-disabled":
+        arguments = {"skills_root": skills, "skills_enabled": False}
+        expected = "require Skills to be enabled"
+    elif case == "snapshot-disabled":
+        arguments = {"skills_snapshot": empty_snapshot, "skills_enabled": False}
+        expected = "requires Skills to be enabled"
+    elif case == "baseline-outside":
+        baseline = tmp_path / "outside.tar"
+        baseline.write_bytes(b"not owned by the run")
+        arguments = {"baseline_archive": baseline}
+        expected = "invalid saved Docker source baseline"
+    else:
+        arguments = {"baseline_archive": run_dir / "missing.tar"}
+        expected = "invalid saved Docker source baseline"
+
+    with pytest.raises(WorkspaceError, match=expected):
+        backend.prepare("commit", source, tmp_path, source_import_probe="widget", **arguments)
 
 
 def test_synthetic_profile_requires_fixed_task_and_full_image_id(tmp_path: Path) -> None:
@@ -166,10 +327,16 @@ def test_synthetic_backend_prepare_builds_skills_bridge_and_owned_state(tmp_path
             *,
             skills_enabled=False,
             artifacts_enabled=False,
+            execution_profile=ExecutionProfile.WORKSPACE_WRITE,
+            executor_policy_config_sha256=None,
         ):
             bridge_calls.append((command, skills_enabled))
             self.run_id = run_id
             self.tools = (load_skill,)
+            policy_catalog = CapabilityCatalog.for_tool_names([load_skill.name])
+            policy = CapabilityPolicy(policy_catalog, execution_profile)
+            self.capability_catalog_sha256 = policy_catalog.sha256
+            self.capability_policy_sha256 = policy.sha256
             self.skill_catalog = (catalog,)
             self.repo_map = {"text": "synthetic map"}
             self.closed = False
@@ -333,7 +500,7 @@ def test_export_evidence_reports_container_copy_failure(tmp_path, monkeypatch):
 def test_bridge_correlates_events_and_tool_results(tmp_path: Path) -> None:
     code = """
 import json, sys
-print(json.dumps({'type':'hello','protocol':1,'run_id':'run-1','tools':[]}), flush=True)
+print(HELLO, flush=True)
 for line in sys.stdin:
     call = json.loads(line)
     if call['name'] == 'run_tests':
@@ -343,6 +510,7 @@ for line in sys.stdin:
               'timestamp':'2026-09-26T00:00:00Z','duration_ms':0}
     print(json.dumps({'type':'result','call_id':call['id'],'result':result}), flush=True)
 """
+    code = code.replace("HELLO", repr(_hello_frame("run-1")))
     journal = tmp_path / "events.jsonl"
     session = _BridgeSession([sys.executable, "-u", "-c", code], timeout=2, journal_path=journal)
     starts: list[bool] = []
@@ -371,13 +539,14 @@ for line in sys.stdin:
 def test_bridge_rejects_identity_mismatch(tmp_path: Path) -> None:
     code = """
 import json, sys
-print(json.dumps({'type':'hello','protocol':1,'run_id':'run-1','tools':[]}), flush=True)
+print(HELLO, flush=True)
 for line in sys.stdin:
     call=json.loads(line)
     result={'call_id':'other','tool_name':call['name'],'success':True,'output':None,
             'error':None,'metadata':{},'timestamp':'2026-09-26T00:00:00Z','duration_ms':0}
     print(json.dumps({'type':'result','call_id':'other','result':result}), flush=True)
 """
+    code = code.replace("HELLO", repr(_hello_frame("run-1")))
     journal = tmp_path / "mismatch-events.jsonl"
     session = _BridgeSession([sys.executable, "-u", "-c", code], timeout=2, journal_path=journal)
     try:
@@ -393,7 +562,7 @@ for line in sys.stdin:
 def test_pytest_rpc_deadline_exceeds_remote_test_timeout(tmp_path: Path) -> None:
     code = """
 import json, sys, time
-print(json.dumps({'type':'hello','protocol':1,'run_id':'run-1','tools':[]}), flush=True)
+print(HELLO, flush=True)
 for line in sys.stdin:
     call = json.loads(line)
     time.sleep(0.3)
@@ -402,6 +571,7 @@ for line in sys.stdin:
               'timestamp':'2026-09-26T00:00:00Z','duration_ms':0}
     print(json.dumps({'type':'result','call_id':call['id'],'result':result}), flush=True)
 """
+    code = code.replace("HELLO", repr(_hello_frame("run-1")))
     session = _BridgeSession(
         [sys.executable, "-u", "-c", code], timeout=0.2, journal_path=tmp_path / "events.jsonl"
     )
@@ -460,10 +630,11 @@ def test_bridge_rpc_timeout_is_recorded_unknown_and_never_fabricates_result(
 ) -> None:
     code = """
 import json, sys
-print(json.dumps({'type':'hello','protocol':1,'run_id':'timeout-run','tools':[]}), flush=True)
+print(HELLO, flush=True)
 for _line in sys.stdin:
     pass
 """
+    code = code.replace("HELLO", repr(_hello_frame("timeout-run")))
     journal = tmp_path / "timeout-events.jsonl"
     session = _BridgeSession(
         [sys.executable, "-u", "-c", code], timeout=3, journal_path=journal
@@ -497,6 +668,7 @@ def test_bridge_requires_exact_artifact_protocol_when_enabled(tmp_path: Path) ->
         "type": "hello", "protocol": 1, "run_id": "run-1", "tools": [],
         "artifact_protocol": protocol,
     }
+    payload = _with_capability_identity(payload)
     code = f"import json; print({json.dumps(payload)!r}, flush=True)"
     session = _BridgeSession(
         [sys.executable, "-u", "-c", code], 2, tmp_path / "artifact-hello.jsonl",
@@ -537,8 +709,10 @@ def test_bridge_transfers_path_free_skill_catalog_and_rejects_mismatch(tmp_path:
             "additionalProperties": False,
         },
     }
-    payload = {"type": "hello", "protocol": 1, "run_id": "skills", "tools": [spec],
-               "skill_catalog": catalog}
+    payload = _with_capability_identity({
+        "type": "hello", "protocol": 1, "run_id": "skills", "tools": [spec],
+        "skill_catalog": catalog,
+    })
     code = f"print({json.dumps(payload)!r}, flush=True)"
     session = _BridgeSession(
         [sys.executable, "-u", "-c", code], 2, tmp_path / "skill-catalog.jsonl",
@@ -636,6 +810,7 @@ def test_bridge_rejects_malformed_or_inconsistent_handshakes(
         "type": "hello", "protocol": 1, "run_id": "run-1", "tools": [],
     }
     payload.update(payload_update)
+    payload = _with_capability_identity(payload)
     code = f"import json; print({json.dumps(payload)!r}, flush=True)"
     with pytest.raises(WorkspaceError, match=message):
         _BridgeSession(
@@ -755,10 +930,11 @@ def test_bridge_rejects_process_started_event_for_another_call(tmp_path: Path) -
 
     code = """
 import json, sys
-print(json.dumps({'type':'hello','protocol':1,'run_id':'event-run','tools':[]}), flush=True)
+print(HELLO, flush=True)
 for _line in sys.stdin:
     print(json.dumps({'type':'process_started','call_id':'other-call'}), flush=True)
 """
+    code = code.replace("HELLO", repr(_hello_frame("event-run")))
     journal = tmp_path / "wrong-process-event.jsonl"
     session = _BridgeSession([sys.executable, "-u", "-c", code], 2, journal)
     try:
@@ -798,7 +974,7 @@ def test_bridge_malformed_tool_results_remain_unknown(
 
     code = f"""
 import json, sys
-print(json.dumps({{'type':'hello','protocol':1,'run_id':'malformed-run','tools':[]}}), flush=True)
+print({_hello_frame('malformed-run')!r}, flush=True)
 for _line in sys.stdin:
     print({response!r}, flush=True)
 """

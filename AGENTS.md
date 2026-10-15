@@ -6,9 +6,9 @@
 
 ## 当前状态提示（2026-10-15）
 
-- 候选分支 `codex/harness-foundations` 的 G0/G1 阶段门已完成。G1 实现提交为
-  `d059ec269e7b19571b16cc6fe823a66f6461e2da`，CI #144 双 Python、editable/wheel、ordinary Docker、
-  基础 Docker 与 Serena MCP 全通过。用户要求在 G1 后中断；G2—G4 未开始。详细状态及源码清单见
+- 候选分支 `codex/harness-foundations` 的 G0—G3阶段门已完成，远端最后核验G3提交为
+  `9d52583ede2b4d56b12c18794543e53afc20e1b1` / CI #156。G4已完成环境补齐、双版本完整工程及真实editable/wheel Docker＋Serena组合的本地验收，
+  不上传、不触发CI；原候选CI退出项未执行，不能冒称新提交通过CI。详细状态及源码清单见
   [`docs/current-status.md`](docs/current-status.md) 和 [`docs/development-history.md`](docs/development-history.md)。
 
 - 同一30题A/B/上下文修复后C主成功为11/30、11/30、19/30；超时计失败。

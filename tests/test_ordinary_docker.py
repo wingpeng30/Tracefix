@@ -45,16 +45,18 @@ def test_ordinary_docker_requires_explicit_image_source_and_test(tmp_path):
     assert result.status.value == "failed"
     assert "prebuilt image ID" in result.error["message"]
     assert llm_factory_calls == []
+    from tracefix.features import resolve_features
+
     with pytest.raises(ValueError, match="frozen task ID"):
-        RunConfig(**{
+        resolve_features(RunConfig(**{
             **base, "docker_image_id": _IMAGE_ID,
             "docker_task_id": "pytest-dev__pytest-10081",
-        })
+        }))
     with pytest.raises(ValueError, match="custom Skills"):
-        RunConfig(**{
+        resolve_features(RunConfig(**{
             **base, "docker_image_id": _IMAGE_ID,
             "skills_root": tmp_path,
-        })
+        }))
 
 
 @pytest.mark.parametrize("failure", ["daemon", "image"])
@@ -261,8 +263,9 @@ def test_read_only_container_uses_exec_stream_for_input(tmp_path, monkeypatch):
     ]
 
 
+@pytest.mark.parametrize("extra_targets", [(), ("tests/test_compat.py",)])
 def test_independent_docker_validation_binds_patch_source_image_and_test(
-    tmp_path, monkeypatch,
+    tmp_path, monkeypatch, extra_targets,
 ):
     repo = tmp_path / "source"
     repo.mkdir()
@@ -294,7 +297,10 @@ def test_independent_docker_validation_binds_patch_source_image_and_test(
 
     class FakeTool:
         def __init__(self, name):
+            from tracefix.tools.base import ToolSpec
+
             self.name = name
+            self.spec = ToolSpec(name=name, description="verification fixture")
 
         def execute(self, call):
             calls.append(call.name)
@@ -332,10 +338,14 @@ def test_independent_docker_validation_binds_patch_source_image_and_test(
             calls.append("close")
 
     monkeypatch.setattr("tracefix.ordinary_docker.DockerToolBackend", FakeBackend)
-    record = verify_docker_patch(run_dir, config, manifest, result, patch)
+    record = verify_docker_patch(
+        run_dir, config, manifest, result, patch, regression_targets=extra_targets
+    )
     assert record["passed"] is True
     assert record["image_id"] == _IMAGE_ID
-    assert calls == ["apply_patch", "run_tests", "export_evidence", "close"]
+    assert calls == ["apply_patch", "run_tests", *(["run_tests"] if extra_targets else []),
+                     "export_evidence", "close"]
+    assert [row["target"] for row in record["targets"]] == [config.test_target, *extra_targets]
     assert json.loads((run_dir / "independent-validation.json").read_text())["passed"]
     assert (run_dir / "independent-validation-evidence" / "audit.json").is_file()
     with pytest.raises(ValueError, match="already exists"):

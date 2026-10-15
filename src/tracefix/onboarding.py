@@ -14,6 +14,8 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
+from tracefix.capabilities import CallerOrigin, independent_validation_dispatcher
+from tracefix.features import resolve_features
 from tracefix.messages import ToolCall
 from tracefix.provenance import inspect_test_environment
 from tracefix.report import _read_run
@@ -32,6 +34,34 @@ def doctor(settings: dict[str, Any], *, prepare: bool = False) -> dict[str, Any]
 
     def add(name: str, ok: bool, detail: str, fix: str = "") -> None:
         checks.append({"name": name, "ok": ok, "detail": detail, "fix": fix})
+
+    try:
+        from tracefix.agent import AgentConfig
+
+        values = {key: value for key, value in settings.items()
+                  if key in RunConfig.model_fields and value is not None}
+        backend_name = settings.get("execution_backend") or "local"
+        values.update(
+            repo=settings.get("repo") or Path("."), task="configuration preflight",
+            execution_backend=backend_name,
+            docker_profile=settings.get("docker_profile")
+            or ("ordinary" if backend_name == "docker" else "frozen"),
+            agent_config=AgentConfig(skills_enabled=settings.get("skills_enabled") or False),
+        )
+        feature_config = RunConfig(**values)
+        resolved = resolve_features(feature_config)
+        add("feature_combination", True, ", ".join(resolved.enabled) or "base")
+    except Exception as exc:
+        add("feature_combination", False, str(exc), "检查功能开关及后端依赖")
+
+    if settings.get("mcp_serena_image_id") is not None:
+        try:
+            from tracefix.mcp_serena import SerenaMCP
+
+            SerenaMCP.preflight_image(settings["mcp_serena_image_id"])
+            add("serena_mcp", True, "SDK和固定镜像可用")
+        except Exception as exc:
+            add("serena_mcp", False, str(exc), "配置已准备好的镜像及MCP依赖")
 
     git = shutil.which("git")
     add("git", git is not None, git or "Git 未安装", "安装 Git 并加入 PATH")
@@ -68,8 +98,6 @@ def doctor(settings: dict[str, Any], *, prepare: bool = False) -> dict[str, Any]
                 valid_image = False
         add("docker_image", valid_image, str(image_id or "未配置"),
             "运行 tracefix docker-prepare 并配置返回的完整 image_id")
-        if settings.get("skills_root") is not None:
-            add("docker_skills", False, "普通 Docker 首版不支持宿主自定义 Skills 目录")
     else:
         add(
             "test_python", python.is_file(), str(python),
@@ -110,7 +138,8 @@ def doctor(settings: dict[str, Any], *, prepare: bool = False) -> dict[str, Any]
     regression_minimum = 2 * len(regression_targets) + 1
     if regression_targets:
         valid_gate = (
-            execution_backend == "local" and target is not None
+            (execution_backend == "local" or ordinary_docker
+             and settings.get("docker_recovery_enabled")) and target is not None
             and settings.get("source_import") is not None
             and max_test_runs >= regression_minimum
         )
@@ -121,7 +150,7 @@ def doctor(settings: dict[str, Any], *, prepare: bool = False) -> dict[str, Any]
                 f"{len(regression_targets)} 个追加目标；最低测试进程 {regression_minimum}，"
                 f"配置上限 {max_test_runs}"
             ),
-            "使用本地后端，配置 --test-target、--source-import，并提高 --max-test-runs",
+            "使用本地或ordinary Docker recovery，配置测试/导入目标及足够测试次数",
         )
         for index, regression_target in enumerate(regression_targets):
             candidate = str(regression_target).split("::", 1)[0]
@@ -149,6 +178,14 @@ def doctor(settings: dict[str, Any], *, prepare: bool = False) -> dict[str, Any]
             str(approved),
             "指定已审核且位于目标仓库之外的 Skills 目录",
         )
+        if ordinary_docker and approved.is_dir() and outside_repo:
+            try:
+                from tracefix.skill_snapshot import snapshot_custom_skills
+
+                snapshot = snapshot_custom_skills(approved)
+                add("docker_skills", True, snapshot.sha256)
+            except Exception as exc:
+                add("docker_skills", False, str(exc))
     output = settings["output_dir"] or Path(os.getenv("TRACEFIX_RUNS_ROOT") or "runs")
     output = Path(output).expanduser().resolve()
     if repo is not None and output.is_relative_to(Path(repo).expanduser().resolve()):
@@ -180,6 +217,7 @@ def doctor(settings: dict[str, Any], *, prepare: bool = False) -> dict[str, Any]
     if prepare:
         if all(item["ok"] for item in checks):
             try:
+                independent_validation_dispatcher(feature_config.execution_profile)
                 # A temporary clone exercises the same checkout and source-import
                 # preparation as run, without constructing a model client.
                 with tempfile.TemporaryDirectory(prefix="tracefix-doctor-") as temporary:
@@ -260,14 +298,11 @@ def verify_patch(
         raise ValueError("运行缺少可核验的 session.json 配置")
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     config = _saved_run_config(manifest["config"])
+    dispatcher = independent_validation_dispatcher(config.execution_profile)
     saved_regression_targets = tuple(config.regression_targets)
     if len(set(regression_targets)) != len(regression_targets):
         raise ValueError("追加回归目标不能重复")
     combined_targets = tuple(dict.fromkeys((*saved_regression_targets, *regression_targets)))
-    if combined_targets:
-        from tracefix.regression import verify_regressions
-
-        return verify_regressions(run, combined_targets)
     if config_identity_sha256(config, manifest["config"]) != (
         manifest["identity"].get("config_sha256")
     ):
@@ -277,7 +312,13 @@ def verify_patch(
 
         result = json.loads((run_dir / "result.json").read_text(encoding="utf-8"))
         patch = (run_dir / "patch.diff").read_bytes()
-        return verify_docker_patch(run_dir, config, manifest, result, patch)
+        return verify_docker_patch(
+            run_dir, config, manifest, result, patch, regression_targets=combined_targets
+        )
+    if combined_targets:
+        from tracefix.regression import verify_regressions
+
+        return verify_regressions(run, combined_targets)
     if config.execution_backend != "local" or not config.test_target or not config.source_import:
         raise ValueError("独立验证仅支持记录了测试目标与源码导入的普通本地运行")
     environment_sha = inspect_test_environment(
@@ -304,21 +345,22 @@ def verify_patch(
         preparation = TraceFixRunner._prepare_workspace(config, workspace, temporary_root)
         if preparation.get("success") is not True:
             raise ValueError(f"独立验证环境预检失败: {preparation.get('failure')}")
-        patch_result = ApplyPatchTool(workspace).execute(ToolCall(
+        patch_result = dispatcher.invoke(ApplyPatchTool(workspace), ToolCall(
             id="independent-patch", name="apply_patch",
             arguments={"patch": patch.decode("utf-8")},
-        ))
+        ), CallerOrigin.INDEPENDENT_VALIDATION)
         if not patch_result.success:
             raise ValueError(f"补丁无法应用于原始提交: {patch_result.error}")
-        test_result = RunTestsTool(
+        test_tool = RunTestsTool(
             workspace,
             python_executable=config.test_python_executable,
             pythonpath_entries=config.test_pythonpath_entries,
             evidence_dir=evidence_dir,
-        ).execute(ToolCall(
+        )
+        test_result = dispatcher.invoke(test_tool, ToolCall(
             id="independent-test", name="run_tests",
             arguments={"command": f"pytest -q {config.test_target}"},
-        ))
+        ), CallerOrigin.INDEPENDENT_VALIDATION)
         record = {
             "schema_version": 1,
             "source_commit": commit,

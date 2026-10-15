@@ -174,7 +174,8 @@ def _python_files(root: Path) -> list[str]:
     workspaces which can live beside the repository during qualification.
     """
     tracked = subprocess.check_output(
-        ["git", "ls-files", "--cached", "--", "src", "tests", "scripts"],
+        ["git", "ls-files", "--cached", "--others", "--exclude-standard", "--",
+         "src", "tests", "scripts"],
         cwd=root,
         env=_utf8_environment(),
         text=True,

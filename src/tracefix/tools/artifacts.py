@@ -67,6 +67,7 @@ class ReadToolArtifactTool(BaseTool):
                 success=True,
                 output={
                     "artifact_id": page.artifact.artifact_id,
+                    "view_sha256": page.artifact.view_sha256,
                     "source_identity": page.artifact.source_identity,
                     "integrity": page.artifact.integrity,
                     "complete": page.artifact.complete,
@@ -84,9 +85,7 @@ class ReadToolArtifactTool(BaseTool):
                 tool_name=self.spec.name,
                 success=False,
                 error=(
-                    str(exc)
-                    if isinstance(exc, ArtifactError)
-                    else "invalid artifact page request"
+                    str(exc) if isinstance(exc, ArtifactError) else "invalid artifact page request"
                 ),
             )
 

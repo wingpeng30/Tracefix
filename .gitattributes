@@ -1,0 +1,2 @@
+# Linux container entrypoints must keep a Unix shebang on Windows checkouts.
+docker/tracefix-serena-mcp text eol=lf

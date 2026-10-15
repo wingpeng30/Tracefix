@@ -2,7 +2,29 @@
 
 import json
 
+import pytest
+
 from tracefix import ToolPresentationConfig, ToolResult, ToolResultPresenter
+
+
+@pytest.mark.parametrize("name", ["get_task_state", "update_task_state"])
+def test_task_state_control_fields_survive_large_state_presentation(name) -> None:
+    output = {"revision": 7, "evidence_role": "working_state_only"}
+    if name == "get_task_state":
+        output["state"] = {"requirements": ["retained user text" * 1000]}
+    else:
+        output["created_ids"] = ["plan-1"]
+    result = ToolResult(call_id="state-call", tool_name=name, success=True, output=output)
+    payload = json.loads(ToolResultPresenter(
+        ToolPresentationConfig(max_generic_chars=256)
+    ).present(result))
+    assert payload["output"]["revision"] == 7
+    assert payload["output"]["evidence_role"] == "working_state_only"
+    if name == "get_task_state":
+        assert "truncated_output" in payload["output"]["state"]
+        assert len(result.output["state"]["requirements"][0]) > 256
+    else:
+        assert payload["output"]["created_ids"] == ["plan-1"]
 
 
 def test_test_output_is_shortened_but_keeps_tail() -> None:

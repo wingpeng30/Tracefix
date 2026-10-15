@@ -8,6 +8,8 @@
 普通 Python 仓库的任务检查与恢复说明见 [docs/recovery.md](docs/recovery.md)。
 候选分支 `codex/harness-foundations` 增加了有类型、按 checkout 源码适用性召回的仓库知识记忆；
 配置、v1→v2 迁移、证据门与当前验收状态见[知识记忆说明](docs/experience-memory.md)和[当前状态](docs/current-status.md)。
+同一候选分支还提供可分页、可搜索且在 Docker recovery 中保留配额的工具产物；详见[工具产物说明](docs/tool-artifacts.md)。
+G3 已通过双 Python 与真实 Docker/MCP CI：新增有界 TaskState 工作摘要和只读/受限模型更新入口，详见[TaskState 说明](docs/task-state.md)。G4已加入统一策略、功能准入和验证适配器，使用约定见[能力策略与后端组合](docs/capability-policy.md)；本地测试与真实容器验收的完成情况以[当前状态](docs/current-status.md)为准。
 
 想在自己的受信任 Python/pytest 仓库运行？先看[普通仓库安装与使用指南](docs/ordinary-repository.md)：配置、零调用预检、隔离运行、HTML 报告和补丁导出均有可复制命令。[系统审查](docs/reviews/2026-09-28-system-review.md)列出首批能力边界。本地运行现提供确定边界的 `inspect`／`resume` 和独立公开测试复跑；[可选 Serena MCP 指南](docs/mcp-serena.md)说明隔离的只读符号查询。[普通仓库 Docker 指南](docs/ordinary-docker.md)提供预构建镜像与独立容器验证路径，其实测范围以最新 CI 证据为准；2026-09-29 已完成八次限定真实模型验收；最新结束前回归门仍以离线回放验证。范围见[证据索引](docs/evidence.md)。
 
@@ -59,7 +61,7 @@ Token 预算下，通过仓库结构检索、动态上下文和测试驱动的�
 - Pydantic 强类型消息、模型响应、工具调用、运行配置与评测结果。
 - 可运行的 `MinimalAgent` 单 Agent Loop。
 - LiteLLM 模型适配层，默认配置为 `deepseek/deepseek-flash`（已有限定场景真实调用证据）。
-- `search_code`、`read_file`、`apply_patch`、`run_tests`、`get_git_diff` 五个工具。
+- `search_code`、`read_file`、`apply_patch`、`run_tests`、`get_git_diff` 基础工具；harness foundations 开启时还提供产物读取/搜索与 TaskState 查询/更新宿主工具。
 - 独立 Git 克隆、干净源仓库校验和源 commit 记录。
 - UTF-8 JSONL 轨迹、最终 `patch.diff` 和 `result.json`。
 - 输入/输出 Token、美元原始费用和人民币估算费用。
@@ -74,6 +76,7 @@ Token 预算下，通过仓库结构检索、动态上下文和测试驱动的�
 - 确定性 Python AST Repository Indexer 与任务相关 Repo Map，先给出候选文件和符号行号。
 - 可选 Skills 目录与按需正文加载；默认关闭，首版只附带 TraceFix 审核过的只读指令。
 - 候选分支提供可选的有类型知识记忆：区分项目事实、用户决策、已验证流程和负结果，并按证据等级及源码适用性筛选；v1 存储只读兼容并在写入时迁移。
+- 候选分支提供可选的有界 TaskState：保留直接用户需求、验收条件、来源观察、工作计划和证据引用；模型只能编辑工作计划类字段，不能改变验证、权限或预算事实。
 
 ## 架构
 
@@ -148,10 +151,9 @@ python -m pip install -i https://pypi.tuna.tsinghua.edu.cn/simple -e ".[dev,llm,
 Copy-Item .env.example .env
 ```
 
-然后只在本机 `.env` 中填写：
+然后只在本机 `.env` 中配置供应商密钥；不要将其提交到 Git：
 
 ```dotenv
-DEEPSEEK_API_KEY=你的密钥
 DEEPSEEK_API_BASE=https://api.deepseek.com
 TRACEFIX_MODEL=deepseek/deepseek-flash
 TRACEFIX_USD_CNY_RATE=7.20

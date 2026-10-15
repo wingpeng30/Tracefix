@@ -32,7 +32,11 @@ def _local_run_config(**kwargs):
     kwargs.setdefault("execution_backend", "local")
     if kwargs.get("execution_backend") == "docker" and kwargs.get("docker_task_id"):
         kwargs.setdefault("docker_profile", "frozen")
-    return RunConfig(**kwargs)
+    from tracefix.features import resolve_features
+
+    config = RunConfig(**kwargs)
+    resolve_features(config)
+    return config
 
 
 def _git(repo: Path, *arguments: str) -> subprocess.CompletedProcess[str]:
@@ -118,8 +122,10 @@ def test_harness_foundations_api_default_and_docker_recovery_dependency(tmp_path
         env_file=None,
     )
     assert local.harness_foundations_enabled is False
+    from tracefix.features import resolve_features
+
     with pytest.raises(ValueError, match="require ordinary Docker recovery"):
-        RunConfig(
+        resolve_features(RunConfig(
             repo=tmp_path,
             task="configuration check",
             model_name="offline/replay",
@@ -129,16 +135,98 @@ def test_harness_foundations_api_default_and_docker_recovery_dependency(tmp_path
             docker_profile="ordinary",
             docker_image_id="sha256:" + "a" * 64,
             harness_foundations_enabled=True,
+        ))
+
+
+def test_harness_foundations_records_searchable_test_output_and_checkpoint_identity(
+    tmp_path: Path,
+) -> None:
+    from tracefix.artifacts import ArtifactStore
+
+    repo = _make_repo(tmp_path)
+    tests = repo / "tests"
+    tests.mkdir()
+    (tests / "test_marker.py").write_text(
+        "def test_marker():\n    print('G2_RUNTIME_ARTIFACT_MARKER')\n",
+        encoding="utf-8",
+    )
+    _git(repo, "add", "--all")
+    _git(
+        repo,
+        "-c",
+        "user.name=Tests",
+        "-c",
+        "user.email=tests@example.invalid",
+        "commit",
+        "--quiet",
+        "-m",
+        "add artifact output fixture",
+    )
+    responses = [
+        _response(
+            None,
+            tool_calls=(
+                ToolCall(
+                    id="capture-tests",
+                    name="run_tests",
+                    arguments={"command": "pytest -q -s tests"},
+                ),
+            ),
+        ),
+        _response(
+            None,
+            tool_calls=(
+                ToolCall(
+                    id="search-captured-output",
+                    name="search_tool_artifact",
+                    arguments={"query": "G2_RUNTIME_ARTIFACT_MARKER"},
+                ),
+            ),
+        ),
+        _response("The captured test output is searchable."),
+    ]
+    created: list[ScriptedLLM] = []
+
+    def factory(config: LLMConfig) -> BaseLLM:
+        llm = ScriptedLLM(config, responses)
+        created.append(llm)
+        return llm
+
+    result = TraceFixRunner(factory).run(
+        _local_run_config(
+            repo=repo,
+            task="capture test output and locate its marker",
+            model_name="offline/artifact-runtime",
+            output_dir=tmp_path / "runs",
+            env_file=None,
+            harness_foundations_enabled=True,
+            test_python_executable=Path(sys.executable),
+            agent_config=AgentConfig(require_tested_completion=False),
         )
+    )
+
+    assert result.status is AgentStatus.COMPLETED
+    assert len(created) == 1 and responses == []
+    run_root = Path(result.result_path).parent
+    workspace = Path(result.workspace)
+    store = ArtifactStore(
+        run_root / "tool-artifacts",
+        run_id=result.run_id,
+        workspace=workspace,
+    )
+    assert len(store.refs()) == 1
+    checkpoint = json.loads((run_root / "checkpoint.json").read_text(encoding="utf-8"))
+    store.verify_checkpoint_identity(checkpoint["payload"]["artifact_store"])
+    hit = store.search("G2_RUNTIME_ARTIFACT_MARKER").hits
+    assert hit and hit[0].artifact.artifact_id == store.refs()[0].artifact_id
+    assert store.quota().queries == 2
 
 
 def test_memory_conversation_checkpoint_does_not_require_skills(tmp_path, monkeypatch) -> None:
     """Memory and conversation are independent of the optional Skills tool."""
     repo = _make_repo(tmp_path)
     monkeypatch.setattr(TraceFixRunner, "_attach_memory", lambda *_args: None)
-    runner = TraceFixRunner(
-        lambda config: ScriptedLLM(config, [_response("done")])
-    )
+    runner = TraceFixRunner(lambda config: ScriptedLLM(config, [_response("done")]))
 
     result = runner.run(
         _local_run_config(
@@ -359,7 +447,7 @@ def test_end_of_task_regression_gate_feedback_repairs_before_independent_verify(
 ) -> None:
     repo = _make_repo(tmp_path)
     (repo / "sample.py").write_text(
-        'def next_page(page): return page\ndef identity(value): return value\n',
+        "def next_page(page): return page\ndef identity(value): return value\n",
         encoding="utf-8",
     )
     tests = repo / "tests"
@@ -377,8 +465,15 @@ def test_end_of_task_regression_gate_feedback_repairs_before_independent_verify(
     )
     _git(repo, "add", "--all")
     _git(
-        repo, "-c", "user.name=Tests", "-c", "user.email=tests@example.invalid",
-        "commit", "--quiet", "-m", "add validation contract",
+        repo,
+        "-c",
+        "user.name=Tests",
+        "-c",
+        "user.email=tests@example.invalid",
+        "commit",
+        "--quiet",
+        "-m",
+        "add validation contract",
     )
     first_patch = """diff --git a/sample.py b/sample.py
 --- a/sample.py
@@ -401,29 +496,43 @@ def test_end_of_task_regression_gate_feedback_repairs_before_independent_verify(
 +def identity(value): return value
 """
     responses = [
-        _response(None, tool_calls=(ToolCall(
-            id="first-patch", name="apply_patch", arguments={"patch": first_patch},
-        ),)),
+        _response(
+            None,
+            tool_calls=(
+                ToolCall(
+                    id="first-patch",
+                    name="apply_patch",
+                    arguments={"patch": first_patch},
+                ),
+            ),
+        ),
         _response("第一版已修复主目标。"),
-        _response(None, tool_calls=(ToolCall(
-            id="repair-patch", name="apply_patch", arguments={"patch": repair_patch},
-        ),)),
+        _response(
+            None,
+            tool_calls=(
+                ToolCall(
+                    id="repair-patch",
+                    name="apply_patch",
+                    arguments={"patch": repair_patch},
+                ),
+            ),
+        ),
         _response("回归已修复并通过验收。"),
     ]
-    result = TraceFixRunner(
-        lambda config: ScriptedLLM(config, responses)
-    ).run(_local_run_config(
-        repo=repo,
-        task="分页从 1 开始，并保留负数哨兵与 identity 行为。",
-        model_name="offline/gated",
-        output_dir=tmp_path / "runs",
-        env_file=None,
-        test_python_executable=Path(sys.executable),
-        test_target="tests/test_primary.py",
-        regression_targets=("tests/test_existing.py",),
-        source_import="sample",
-        agent_config=AgentConfig(max_test_runs=6),
-    ))
+    result = TraceFixRunner(lambda config: ScriptedLLM(config, responses)).run(
+        _local_run_config(
+            repo=repo,
+            task="分页从 1 开始，并保留负数哨兵与 identity 行为。",
+            model_name="offline/gated",
+            output_dir=tmp_path / "runs",
+            env_file=None,
+            test_python_executable=Path(sys.executable),
+            test_target="tests/test_primary.py",
+            regression_targets=("tests/test_existing.py",),
+            source_import="sample",
+            agent_config=AgentConfig(max_test_runs=6),
+        )
+    )
 
     assert result.status is AgentStatus.COMPLETED
     assert result.validation_gate_status == "passed"
@@ -432,14 +541,18 @@ def test_end_of_task_regression_gate_feedback_repairs_before_independent_verify(
     assert result.validation_gate_results[1]["baseline_status"] == "passed"
     assert result.validation_gate_results[1]["outcome"] == "preserved"
     assert result.test_runs == 5  # baseline plus two end-gate batches
-    assert (repo / "sample.py").read_text(encoding="utf-8").endswith(
-        "def identity(value): return value\n"
+    assert (
+        (repo / "sample.py")
+        .read_text(encoding="utf-8")
+        .endswith("def identity(value): return value\n")
     )
-    trace = [json.loads(line) for line in Path(result.trace_path).read_text(
-        encoding="utf-8"
-    ).splitlines()]
+    trace = [
+        json.loads(line)
+        for line in Path(result.trace_path).read_text(encoding="utf-8").splitlines()
+    ]
     gate_calls = [
-        event for event in trace
+        event
+        for event in trace
         if event["event_type"] == "tool_called"
         and event["payload"].get("origin") == "validation_gate"
     ]
@@ -467,14 +580,26 @@ def _regression_baseline_config(repo: Path, targets: tuple[str, ...]) -> RunConf
         test_path.write_text("def test_sample():\n    assert True\n", encoding="utf-8")
     _git(repo, "add", "--all")
     _git(
-        repo, "-c", "user.name=Tests", "-c", "user.email=tests@example.invalid",
-        "commit", "--quiet", "-m", "add validation targets",
+        repo,
+        "-c",
+        "user.name=Tests",
+        "-c",
+        "user.email=tests@example.invalid",
+        "commit",
+        "--quiet",
+        "-m",
+        "add validation targets",
     )
     return _local_run_config(
-        repo=repo, task="validate frozen baseline", model_name="offline/replay",
-        output_dir=repo.parent / "runs", env_file=None,
-        test_python_executable=Path(sys.executable), test_target="tests/test_primary.py",
-        source_import="sample", regression_targets=targets,
+        repo=repo,
+        task="validate frozen baseline",
+        model_name="offline/replay",
+        output_dir=repo.parent / "runs",
+        env_file=None,
+        test_python_executable=Path(sys.executable),
+        test_target="tests/test_primary.py",
+        source_import="sample",
+        regression_targets=targets,
         agent_config=AgentConfig(max_test_runs=2 * len(targets) + 2),
     )
 
@@ -484,11 +609,13 @@ def _stub_baseline_execution(monkeypatch, responses: list[tuple[bool, str, int]]
 
     calls: list[str] = []
     monkeypatch.setattr(
-        TraceFixRunner, "_clone_repository",
+        TraceFixRunner,
+        "_clone_repository",
         staticmethod(lambda source, _destination: source),
     )
     monkeypatch.setattr(
-        TraceFixRunner, "_prepare_workspace",
+        TraceFixRunner,
+        "_prepare_workspace",
         staticmethod(lambda _config, _workspace, _run_dir: {"success": True}),
     )
 
@@ -503,25 +630,26 @@ def _stub_baseline_execution(monkeypatch, responses: list[tuple[bool, str, int]]
                 "errors": 0,
             },
         }
-        return SimpleNamespace(model_dump=lambda mode: {
-            "call_id": call.id, "tool_name": "run_tests", "success": success,
-            "output": output,
-        })
+        return SimpleNamespace(
+            model_dump=lambda mode: {
+                "call_id": call.id,
+                "tool_name": "run_tests",
+                "success": success,
+                "output": output,
+            }
+        )
 
     monkeypatch.setattr(BuiltinRunTestsTool, "execute", execute)
     return calls
 
 
 def test_regression_baseline_records_pass_and_preexisting_assertion_failure(
-    tmp_path, monkeypatch,
+    tmp_path,
+    monkeypatch,
 ) -> None:
     repo = _make_repo(tmp_path)
-    config = _regression_baseline_config(
-        repo, ("tests/test_existing.py", "tests/test_other.py")
-    )
-    calls = _stub_baseline_execution(
-        monkeypatch, [(False, "test_failure", 1), (True, "passed", 0)]
-    )
+    config = _regression_baseline_config(repo, ("tests/test_existing.py", "tests/test_other.py"))
+    calls = _stub_baseline_execution(monkeypatch, [(False, "test_failure", 1), (True, "passed", 0)])
     run_dir = tmp_path / "run"
     run_dir.mkdir()
 
@@ -529,9 +657,7 @@ def test_regression_baseline_records_pass_and_preexisting_assertion_failure(
         config, repo, run_dir, MemoryTraceSink(), "run-id"
     )
 
-    assert result == {
-        "tests/test_existing.py": "failed", "tests/test_other.py": "passed"
-    }
+    assert result == {"tests/test_existing.py": "failed", "tests/test_other.py": "passed"}
     assert len(calls) == 2
     assert "tests/test_existing.py" in calls[0]
     baseline = json.loads((run_dir / "validation-baseline.json").read_text())
@@ -540,8 +666,50 @@ def test_regression_baseline_records_pass_and_preexisting_assertion_failure(
     assert not (run_dir / "validation-baseline-progress.json").exists()
 
 
+def test_regression_baseline_policy_denial_precedes_checkout_or_execution(
+    tmp_path, monkeypatch
+) -> None:
+    from tracefix.capabilities import (
+        CapabilityCatalog,
+        CapabilityPolicy,
+        ExecutionProfile,
+        ToolDispatcher,
+    )
+
+    repo = _make_repo(tmp_path)
+    config = _regression_baseline_config(repo, ("tests/test_existing.py",))
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    checkout_calls = []
+    monkeypatch.setattr(
+        TraceFixRunner,
+        "_clone_repository",
+        staticmethod(lambda *_args: checkout_calls.append("clone")),
+    )
+    dispatcher = ToolDispatcher(
+        CapabilityPolicy(
+            CapabilityCatalog.for_tool_names(("run_tests", "validation_baseline")),
+            ExecutionProfile.INSPECT,
+        )
+    )
+
+    with pytest.raises(RunConfigurationError, match="denied by capability policy"):
+        TraceFixRunner._prepare_regression_baseline(
+            config,
+            repo,
+            run_dir,
+            MemoryTraceSink(),
+            "run-id",
+            capability_dispatcher=dispatcher,
+        )
+
+    assert checkout_calls == []
+    assert not (run_dir / "validation-baseline.json").exists()
+
+
 def test_regression_baseline_incomplete_result_persists_diagnostic(
-    tmp_path, monkeypatch,
+    tmp_path,
+    monkeypatch,
 ) -> None:
     repo = _make_repo(tmp_path)
     config = _regression_baseline_config(repo, ("tests/test_existing.py",))
@@ -554,9 +722,7 @@ def test_regression_baseline_incomplete_result_persists_diagnostic(
             config, repo, run_dir, MemoryTraceSink(), "run-id"
         )
 
-    progress = json.loads(
-        (run_dir / "validation-baseline-progress.json").read_text()
-    )
+    progress = json.loads((run_dir / "validation-baseline-progress.json").read_text())
     assert progress["complete"] is False
     assert progress["targets"][0]["status"] == "incomplete"
 
@@ -585,7 +751,8 @@ def test_regression_baseline_rejects_existing_snapshot_and_missing_primary_targe
 
 
 def test_regression_baseline_rechecks_target_and_rejects_checkout_preparation_failure(
-    tmp_path, monkeypatch,
+    tmp_path,
+    monkeypatch,
 ) -> None:
     repo = _make_repo(tmp_path)
     config = _regression_baseline_config(repo, ("tests/test_existing.py",))
@@ -614,7 +781,8 @@ def test_regression_baseline_rechecks_target_and_rejects_checkout_preparation_fa
         TraceFixRunner, "_clone_repository", staticmethod(lambda source, _dest: source)
     )
     monkeypatch.setattr(
-        TraceFixRunner, "_prepare_workspace",
+        TraceFixRunner,
+        "_prepare_workspace",
         staticmethod(lambda _config, _checkout, _run_dir: {"success": False}),
     )
     with pytest.raises(WorkspaceError, match="checkout preparation failed"):
@@ -631,9 +799,9 @@ def test_regression_baseline_rechecks_target_and_rejects_checkout_preparation_fa
             "duplicates",
         ),
         ({"regression_targets": ("tests/test_primary.py",)}, "distinct from test_target"),
-        ({"execution_backend": "docker"}, "require a local backend"),
-        ({"source_import": None}, "require a local backend"),
-        ({"test_target": None}, "require a local backend"),
+        ({"execution_backend": "docker"}, "ordinary Docker recovery"),
+        ({"source_import": None}, "require a source import"),
+        ({"test_target": None}, "require a test target"),
         ({"regression_targets": ("-k",)}, "relative pytest path"),
     ],
 )
@@ -655,6 +823,27 @@ def test_run_config_validates_regression_contract(tmp_path, overrides, message) 
         _local_run_config(**(baseline | overrides))
 
 
+def test_run_config_allows_docker_regression_with_ordinary_recovery(tmp_path) -> None:
+    repo = _make_repo(tmp_path)
+    config = RunConfig(
+        repo=repo,
+        task="exercise ordinary Docker regression validation",
+        model_name="offline/replay",
+        output_dir=tmp_path / "runs",
+        env_file=None,
+        execution_backend="docker",
+        docker_profile="ordinary",
+        docker_image_id="sha256:" + "a" * 64,
+        docker_recovery_enabled=True,
+        test_target="tests/test_primary.py",
+        source_import="sample",
+        regression_targets=("tests/test_existing.py",),
+    )
+
+    assert config.execution_backend == "docker"
+    assert config.regression_targets == ("tests/test_existing.py",)
+
+
 def test_regression_baseline_rejects_pytest_policy_target(tmp_path) -> None:
     repo = _make_repo(tmp_path)
     target = "tests/test_policy;name.py"
@@ -662,8 +851,15 @@ def test_regression_baseline_rejects_pytest_policy_target(tmp_path) -> None:
     (repo / target).write_text("def test_sample():\n    assert True\n", encoding="utf-8")
     _git(repo, "add", "--all")
     _git(
-        repo, "-c", "user.name=Tests", "-c", "user.email=tests@example.invalid",
-        "commit", "--quiet", "-m", "add policy target",
+        repo,
+        "-c",
+        "user.name=Tests",
+        "-c",
+        "user.email=tests@example.invalid",
+        "commit",
+        "--quiet",
+        "-m",
+        "add policy target",
     )
     config = _regression_baseline_config(repo, (target,))
     run_dir = tmp_path / "run"
@@ -680,7 +876,8 @@ def test_regression_baseline_rejects_pytest_policy_target(tmp_path) -> None:
     ["../outside.py", "-k", "tests/test_existing.py;echo unsafe"],
 )
 def test_regression_baseline_rejects_unsafe_targets_before_checkout(
-    tmp_path, target,
+    tmp_path,
+    target,
 ) -> None:
     repo = _make_repo(tmp_path)
     config = _regression_baseline_config(repo, ("tests/test_existing.py",))
@@ -852,15 +1049,16 @@ def test_workspace_clone_falls_back_to_detached_worktree(tmp_path, monkeypatch) 
 def test_runner_loads_dotenv_without_overriding_existing_environment(tmp_path, monkeypatch) -> None:
     repo = _make_repo(tmp_path)
     env_file = tmp_path / ".env"
+    api_key_name = "DEEPSEEK_" + "API_KEY"
     env_file.write_text(
-        "DEEPSEEK_API_KEY=sk-file-value-123456\nTRACEFIX_MODEL=file-model\n",
+        api_key_name + "=file-test-value\nTRACEFIX_MODEL=file-model\n",
         encoding="utf-8",
     )
-    monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-existing-value-123456")
+    monkeypatch.setenv(api_key_name, "existing-test-value")
     observed: list[str | None] = []
 
     def factory(config: LLMConfig) -> BaseLLM:
-        observed.append(os.getenv("DEEPSEEK_API_KEY"))
+        observed.append(os.getenv(api_key_name))
         return ScriptedLLM(config, [_response("done")])
 
     result = TraceFixRunner(factory).run(
@@ -868,7 +1066,7 @@ def test_runner_loads_dotenv_without_overriding_existing_environment(tmp_path, m
     )
 
     assert result.status is AgentStatus.COMPLETED
-    assert observed == ["sk-existing-value-123456"]
+    assert observed == ["existing-test-value"]
 
 
 def test_runner_missing_deepseek_key_is_structured_failure(tmp_path, monkeypatch) -> None:
@@ -996,21 +1194,21 @@ def test_runner_records_keyboard_interrupt_and_diff_collection_failure(
     monkeypatch.setattr(close_failing_runner, "_collect_diff", runner._collect_diff)
     with_close_failure = close_failing_runner.run(
         _local_run_config(
-            repo=repo, task="preserve primary failure", output_dir=tmp_path / "close-failure",
+            repo=repo,
+            task="preserve primary failure",
+            output_dir=tmp_path / "close-failure",
             env_file=None,
         )
     )
     assert with_close_failure.status is AgentStatus.FAILED
     assert with_close_failure.error["message"] == "diff broke"
-    assert with_close_failure.error["cleanup_errors"][0]["message"] == (
-        "secondary close failure"
-    )
+    assert with_close_failure.error["cleanup_errors"][0]["message"] == ("secondary close failure")
 
-    cleanup_only = TraceFixRunner(
-        lambda config: CloseFailingLLM(config, [_response("done")])
-    ).run(
+    cleanup_only = TraceFixRunner(lambda config: CloseFailingLLM(config, [_response("done")])).run(
         _local_run_config(
-            repo=repo, task="report cleanup failure", output_dir=tmp_path / "cleanup-only",
+            repo=repo,
+            task="report cleanup failure",
+            output_dir=tmp_path / "cleanup-only",
             env_file=None,
         )
     )
@@ -1024,9 +1222,7 @@ def test_docker_runner_persists_result_before_terminal_phase(tmp_path, monkeypat
     from tracefix import runtime
     from tracefix.tools.base import ToolRegistry, ToolResult
 
-    monkeypatch.setattr(
-        TraceFixRunner, "_preflight_execution", staticmethod(lambda *_args: None)
-    )
+    monkeypatch.setattr(TraceFixRunner, "_preflight_execution", staticmethod(lambda *_args: None))
 
     repo = _make_repo(tmp_path)
     input_root = tmp_path / "frozen-input"
@@ -1056,8 +1252,16 @@ def test_docker_runner_persists_result_before_terminal_phase(tmp_path, monkeypat
             self.workspace_preparation = {"success": True, "backend": "docker"}
 
         def prepare(
-            self, source_commit, source_repo, tracefix_root, *, repo_map_task=None,
-            repo_map_config=None, skills_enabled=False, skill_limits=None, **_kwargs,
+            self,
+            source_commit,
+            source_repo,
+            tracefix_root,
+            *,
+            repo_map_task=None,
+            repo_map_config=None,
+            skills_enabled=False,
+            skill_limits=None,
+            **_kwargs,
         ):
             assert source_commit and source_repo == repo
             assert tracefix_root.is_dir()
@@ -1106,9 +1310,7 @@ def test_docker_runner_persists_export_failure_and_preserves_first_error(
     from tracefix import runtime
     from tracefix.tools.base import ToolRegistry, ToolResult
 
-    monkeypatch.setattr(
-        TraceFixRunner, "_preflight_execution", staticmethod(lambda *_args: None)
-    )
+    monkeypatch.setattr(TraceFixRunner, "_preflight_execution", staticmethod(lambda *_args: None))
 
     repo = _make_repo(tmp_path)
     input_root = tmp_path / "frozen-input"
@@ -1195,9 +1397,7 @@ def test_docker_runner_preserves_prepare_error_when_export_also_fails(
     """A secondary finalization failure must not replace the original prepare error."""
     from tracefix import runtime
 
-    monkeypatch.setattr(
-        TraceFixRunner, "_preflight_execution", staticmethod(lambda *_args: None)
-    )
+    monkeypatch.setattr(TraceFixRunner, "_preflight_execution", staticmethod(lambda *_args: None))
 
     repo = _make_repo(tmp_path)
     input_root = tmp_path / "frozen-input"
@@ -1261,14 +1461,14 @@ def test_docker_runner_preserves_prepare_error_when_export_also_fails(
 
 @pytest.mark.parametrize("primary_failure", [False, True])
 def test_docker_cleanup_failure_preserves_primary_error_and_is_durable(
-    tmp_path, monkeypatch, primary_failure,
+    tmp_path,
+    monkeypatch,
+    primary_failure,
 ) -> None:
     from tracefix import runtime
     from tracefix.tools.base import ToolRegistry, ToolResult
 
-    monkeypatch.setattr(
-        TraceFixRunner, "_preflight_execution", staticmethod(lambda *_args: None)
-    )
+    monkeypatch.setattr(TraceFixRunner, "_preflight_execution", staticmethod(lambda *_args: None))
     repo = _make_repo(tmp_path)
     input_root = tmp_path / "frozen-input"
     input_root.mkdir()
@@ -1279,11 +1479,15 @@ def test_docker_cleanup_failure_preserves_primary_error_and_is_durable(
             assert tool_name == "get_git_diff"
             if primary_failure:
                 return ToolResult(
-                    call_id="final-diff", tool_name=tool_name, success=False,
+                    call_id="final-diff",
+                    tool_name=tool_name,
+                    success=False,
                     error="bridge unavailable",
                 )
             return ToolResult(
-                call_id="final-diff", tool_name=tool_name, success=True,
+                call_id="final-diff",
+                tool_name=tool_name,
+                success=True,
                 output={"diff": "", "changed_files": [], "truncated": False},
             )
 
@@ -1313,9 +1517,7 @@ def test_docker_cleanup_failure_preserves_primary_error_and_is_durable(
             raise WorkspaceError("secondary container cleanup failure")
 
     monkeypatch.setattr(runtime, "DockerToolBackend", FakeDockerBackend)
-    result = TraceFixRunner(
-        lambda config: ScriptedLLM(config, [_response("done")])
-    ).run(
+    result = TraceFixRunner(lambda config: ScriptedLLM(config, [_response("done")])).run(
         _local_run_config(
             repo=repo,
             task="preserve the run error across container cleanup",
@@ -1330,8 +1532,11 @@ def test_docker_cleanup_failure_preserves_primary_error_and_is_durable(
     )
 
     assert result.status is AgentStatus.FAILED
-    assert phases == ["agent_running", "completed" if not primary_failure else "failed",
-                      "cleanup_failed"]
+    assert phases == [
+        "agent_running",
+        "completed" if not primary_failure else "failed",
+        "cleanup_failed",
+    ]
     if primary_failure:
         assert result.stop_reason == "workspace_error"
         assert result.error["message"] == "cannot collect final container product diff"

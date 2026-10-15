@@ -6,6 +6,7 @@ from types import SimpleNamespace
 import pytest
 
 from tracefix import docker_backend
+from tracefix.capabilities import CapabilityCatalog, CapabilityPolicy, ExecutionProfile
 from tracefix.docker_recovery import tool_identity
 from tracefix.exceptions import WorkspaceError
 from tracefix.tools.base import ToolResult, ToolSpec
@@ -26,12 +27,22 @@ def test_prepare_binds_recovery_identity_and_only_opted_in_cache_policy(
     baseline.write_bytes(b"saved baseline")
     skills = tmp_path / "skills"
     skills.mkdir()
-    (skills / "SKILL.md").write_bytes(b"immutable skill snapshot")
+    skill = skills / "tracefix-debugging"
+    skill.mkdir()
+    (skill / "SKILL.md").write_text(
+        "---\nname: tracefix-debugging\ndescription: Diagnose TraceFix\n"
+        "---\n\nRead the current source first.\n",
+        encoding="utf-8",
+    )
     spec = ToolSpec(name="load_skill", description="load", input_schema={"type": "object"})
     interpreter = {"python": "3.11.16", "pytest": "8.4.2"}
     state = {"schema_version": 1, "protected_dirs": [".tracefix-build-tmp"], "skills": {}}
+    catalog = CapabilityCatalog.for_tool_names(["load_skill"])
+    policy = CapabilityPolicy(catalog, ExecutionProfile.WORKSPACE_WRITE)
     snapshot = {"tool_sha256": tool_identity([spec]), "interpreter": interpreter,
-                "bridge_state": state}
+                "bridge_state": state,
+                "capability_catalog_sha256": catalog.sha256,
+                "capability_policy_sha256": policy.sha256}
     if mode == "tool":
         snapshot["tool_sha256"] = "different"
     if mode == "interpreter":
@@ -81,6 +92,9 @@ def test_prepare_binds_recovery_identity_and_only_opted_in_cache_policy(
             self.tools = (spec,)
             self.skill_catalog = ()
             self.repo_map = None
+            self.capability_catalog_sha256 = catalog.sha256
+            self.capability_policy_sha256 = policy.sha256
+            self.executor_policy_config_sha256 = backend.executor_policy_config_sha256
 
         def call(self, name, arguments):
             assert name == "__restore_state__" and arguments == state

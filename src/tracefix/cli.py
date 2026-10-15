@@ -258,6 +258,12 @@ def build_parser() -> argparse.ArgumentParser:
     continue_parser = subparsers.add_parser("continue", help="向连续会话追加一轮消息")
     continue_parser.add_argument("--run", type=Path, required=True)
     continue_parser.add_argument("--message", required=True)
+    continue_parser.add_argument(
+        "--supersedes",
+        action="append",
+        default=None,
+        help="明确替代一个 active TaskState 用户需求 ID；仅在 foundations 启用时可用",
+    )
     context_parser = subparsers.add_parser("context", help="检查或主动压缩已保存的上下文")
     context_parser.add_argument("operation", choices=("inspect", "compact"))
     context_parser.add_argument("--run", type=Path, required=True)
@@ -280,6 +286,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--execution-backend",
         choices=("local", "docker"),
         help="工具执行后端；普通仓库 Docker 需配合 --docker-profile ordinary",
+    )
+    run_parser.add_argument(
+        "--execution-profile",
+        choices=("inspect", "workspace_write"),
+        help="统一工具能力策略；默认 workspace_write，inspect 禁止工作区写入和进程执行",
     )
     run_parser.add_argument(
         "--docker-profile",
@@ -986,6 +997,7 @@ def _ordinary_settings(args: argparse.Namespace) -> dict[str, Any]:
             "harness_foundations_enabled",
             "mcp_serena_image_id",
             "execution_backend",
+            "execution_profile",
             "docker_profile",
             "docker_image_id",
             "max_steps",
@@ -1066,6 +1078,9 @@ def _ordinary_settings(args: argparse.Namespace) -> dict[str, Any]:
         "skills_root": path_value(
             "skills_dir", getattr(args, "skills_dir", None), "TRACEFIX_SKILLS_DIR"
         ),
+        "skills_enabled": choose(
+            "skills", getattr(args, "skills", None), "TRACEFIX_SKILLS_ENABLED"
+        ),
         "memory_enabled": choose("memory", getattr(args, "memory", None)),
         "memory_dir": path_value("memory_dir", getattr(args, "memory_dir", None)),
         "conversation_enabled": choose("conversation", None),
@@ -1086,6 +1101,11 @@ def _ordinary_settings(args: argparse.Namespace) -> dict[str, Any]:
             "execution_backend",
             getattr(args, "execution_backend", None),
             "TRACEFIX_EXECUTION_BACKEND",
+        ),
+        "execution_profile": choose(
+            "execution_profile",
+            getattr(args, "execution_profile", None),
+            "TRACEFIX_EXECUTION_PROFILE",
         ),
         "docker_profile": choose(
             "docker_profile",
@@ -1120,6 +1140,7 @@ def _ordinary_settings(args: argparse.Namespace) -> dict[str, Any]:
                 "harness_foundations_enabled",
                 "mcp_serena_image_id",
                 "execution_backend",
+                "execution_profile",
                 "docker_profile",
                 "docker_image_id",
             }
@@ -1204,7 +1225,11 @@ def main(argv: list[str] | None = None) -> int:
                     print(f"原因: {reason}")
             return 0 if inspection["resumable"] or inspection.get("continuable") else 2
         if args.command == "continue":
-            result = TraceFixRunner().continue_turn(args.run, args.message)
+            result = TraceFixRunner().continue_turn(
+                args.run,
+                args.message,
+                supersedes=tuple(args.supersedes or ()),
+            )
             _print_run_result(result)
             return 0 if result.status is AgentStatus.COMPLETED else 2
         if args.command == "context":
@@ -1650,6 +1675,7 @@ def main(argv: list[str] | None = None) -> int:
             shared.update(
                 {
                     "execution_backend": settings["execution_backend"] or "docker",
+                    "execution_profile": settings["execution_profile"] or "workspace_write",
                     "docker_profile": settings["docker_profile"]
                     or (
                         "ordinary"
@@ -1658,8 +1684,7 @@ def main(argv: list[str] | None = None) -> int:
                     ),
                     "docker_image_id": settings["docker_image_id"],
                     "docker_recovery_enabled": settings["docker_recovery_enabled"] or False,
-                    "harness_foundations_enabled": settings["harness_foundations_enabled"]
-                    or False,
+                    "harness_foundations_enabled": settings["harness_foundations_enabled"] or False,
                     "memory_enabled": settings["memory_enabled"] or False,
                     "memory_dir": settings["memory_dir"],
                     "conversation_enabled": args.command == "chat"

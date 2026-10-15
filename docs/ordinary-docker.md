@@ -51,7 +51,12 @@ tracefix export --run ./runs/<run-id> --output ./fix.patch
 
 测试和构建只继承最小操作系统环境；项目需要的变量必须通过显式配置加入，凭据和 pytest 控制变量不允许传给项目子进程。测试目标路径及 pytest 参数在进程启动和计次前验证，固定输出目录由 TraceFix 管理。测试通过只说明所列测试成功，不证明补丁没有危险行为。
 
-不能在普通 Docker profile 上使用 `resume`。桥接断连、执行结果未知或容器丢失时应检查保存的轨迹和容器身份，并从新运行开始；不得自动重放可能有副作用的工具。正常与异常退出都会尝试清理 TraceFix 拥有的容器；如果 daemon 不可达导致清理失败，结果会标为 `container_cleanup_failed`，`docker-run-state.json` 记录待人工核对的容器 ID。清理前必须验证容器的 `tracefix.run_id` 标签。
+ordinary会话可在启动时用`--docker-recovery`（TOML：`docker_recovery_enabled = true`）启用恢复。
+只恢复已提交且身份核验通过的完整工具批次；执行结果未知时拒绝重放。记忆、连续对话及harness foundations的Docker组合要求启用recovery，
+自定义Skills使用固定只读快照。策略profile、Serena及最终回归的组合约定见[能力策略](capability-policy.md)。
+没有启用恢复的旧会话不能临时补开开关；断连后需检查轨迹，从新运行开始。
+正常与异常退出都会尝试清理TraceFix拥有的容器；daemon不可达导致清理失败时记录待核对容器ID，
+清理前验证`tracefix.run_id`标签。恢复与独立补丁验收使用新容器，原仓库不被改写。
 
 零供应商调用回放：
 

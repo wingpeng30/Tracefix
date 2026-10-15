@@ -24,11 +24,25 @@ from uuid import uuid4
 
 from pydantic import ValidationError
 
+from tracefix.capabilities import (
+    CallerOrigin,
+    CapabilityCatalog,
+    CapabilityError,
+    CapabilityPolicy,
+    ExecutionProfile,
+    executor_policy_document,
+    host_control_policy,
+)
 from tracefix.docker_tls import write_test_tls_material
 from tracefix.exceptions import RunConfigurationError, WorkspaceError
 from tracefix.messages import ToolCall
 from tracefix.repository import RepoMap, RepoMapConfig
 from tracefix.security import SECURITY_POLICY_VERSION, validate_project_environment
+from tracefix.skill_snapshot import (
+    EMPTY_SKILL_BUNDLE_SHA256,
+    SkillBundleSnapshot,
+    snapshot_custom_skills,
+)
 from tracefix.tools import BaseTool, SkillCatalogEntry, ToolRegistry, ToolResult, ToolSpec
 from tracefix.tools.skills import SkillLimits
 
@@ -55,7 +69,9 @@ def _make_trusted_executor_bundle(
     environment: dict[str, str],
     *,
     include_tls_test_support: bool,
+    capability_policy_document: dict[str, object],
     skills_root: Path | None = None,
+    skills_snapshot: SkillBundleSnapshot | None = None,
 ) -> tuple[bytes, str, str | None]:
     """Package current harness code and fixed config for root-owned extraction."""
     archive_files: dict[str, bytes] = {}
@@ -73,14 +89,19 @@ def _make_trusted_executor_bundle(
     archive_files["runtime/environment.json"] = json.dumps(
         validate_project_environment(environment), ensure_ascii=False, sort_keys=True
     ).encode("utf-8")
+    archive_files["runtime/capability-policy.json"] = json.dumps(
+        capability_policy_document,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    if skills_root is not None and skills_snapshot is not None:
+        raise WorkspaceError("custom Skills root and frozen snapshot cannot both be provided")
     if skills_root is not None:
-        for source in sorted(skills_root.rglob("*")):
-            if source.is_symlink():
-                raise WorkspaceError("memory Skills snapshot contains a symbolic link")
-            if source.is_dir() or not source.is_file():
-                continue
-            relative = source.relative_to(skills_root)
-            archive_files[f"runtime/skills/{relative.as_posix()}"] = source.read_bytes()
+        skills_snapshot = snapshot_custom_skills(skills_root)
+    if skills_snapshot is not None:
+        for relative, data in sorted(skills_snapshot.files.items()):
+            archive_files[f"runtime/skills/{relative}"] = data
     tls_certificate_sha256 = None
     if include_tls_test_support:
         support = tracefix_root / "docker" / "requests-test-tls"
@@ -100,15 +121,18 @@ def _make_trusted_executor_bundle(
             archive_files["request-test/test-key.pem"] = private_key.read_bytes()
 
     hashes = {
-        name: hashlib.sha256(data).hexdigest()
-        for name, data in sorted(archive_files.items())
+        name: hashlib.sha256(data).hexdigest() for name, data in sorted(archive_files.items())
     }
     canonical = json.dumps(hashes, sort_keys=True, separators=(",", ":")).encode("utf-8")
     bundle_sha256 = hashlib.sha256(canonical).hexdigest()
     manifest = json.dumps(
-        {"security_policy_version": SECURITY_POLICY_VERSION,
-         "bundle_sha256": bundle_sha256, "files": hashes},
-        sort_keys=True, separators=(",", ":"),
+        {
+            "security_policy_version": SECURITY_POLICY_VERSION,
+            "bundle_sha256": bundle_sha256,
+            "files": hashes,
+        },
+        sort_keys=True,
+        separators=(",", ":"),
     ).encode("utf-8")
     archive_files["runtime/executor-manifest.json"] = manifest
     output = io.BytesIO()
@@ -120,6 +144,8 @@ def _make_trusted_executor_bundle(
             member.mtime = 0
             archive.addfile(member, io.BytesIO(data))
     return output.getvalue(), bundle_sha256, tls_certificate_sha256
+
+
 _MAX_FRAME = 64 * 1024 * 1024
 
 
@@ -179,6 +205,8 @@ class _BridgeSession:
         *,
         skills_enabled: bool = False,
         artifacts_enabled: bool = False,
+        execution_profile: ExecutionProfile = ExecutionProfile.WORKSPACE_WRITE,
+        executor_policy_config_sha256: str | None = None,
     ) -> None:
         self.timeout = timeout
         self.journal_path = journal_path
@@ -233,6 +261,21 @@ class _BridgeSession:
         if len({spec.name for spec in specs}) != len(specs):
             self.close(force=True)
             raise WorkspaceError("Docker tool bridge contains duplicate tool names")
+        try:
+            capability_catalog = CapabilityCatalog.for_tool_names(spec.name for spec in specs)
+            capability_policy = CapabilityPolicy(capability_catalog, execution_profile)
+        except (CapabilityError, ValueError) as exc:
+            self.close(force=True)
+            raise WorkspaceError("Docker tool bridge capability catalog is invalid") from exc
+        if (
+            handshake.get("execution_profile") != capability_policy.profile.value
+            or handshake.get("capability_catalog_sha256") != capability_catalog.sha256
+            or handshake.get("capability_policy_sha256") != capability_policy.sha256
+            or handshake.get("executor_policy_config_sha256")
+            != executor_policy_config_sha256
+        ):
+            self.close(force=True)
+            raise WorkspaceError("Docker tool bridge capability policy negotiation failed")
         artifact_protocol = handshake.get("artifact_protocol")
         expected_artifact_protocol = {
             "version": 1,
@@ -250,10 +293,7 @@ class _BridgeSession:
         if skills_enabled:
             declared = (
                 set(
-                    load_specs[0]
-                    .input_schema.get("properties", {})
-                    .get("name", {})
-                    .get("enum", [])
+                    load_specs[0].input_schema.get("properties", {}).get("name", {}).get("enum", [])
                 )
                 if len(load_specs) == 1
                 else set()
@@ -269,6 +309,10 @@ class _BridgeSession:
             {"event": "handshake", "protocol": handshake.get("protocol"), "run_id": self.run_id}
         )
         self.tools = specs
+        self.execution_profile = capability_policy.profile
+        self.capability_catalog_sha256 = capability_catalog.sha256
+        self.capability_policy_sha256 = capability_policy.sha256
+        self.executor_policy_config_sha256 = executor_policy_config_sha256
         self.skill_catalog = catalog
         self.repo_map = (
             RepoMap.model_validate(handshake["repo_map"]) if handshake.get("repo_map") else None
@@ -417,7 +461,9 @@ class _BridgeSession:
 
 class _RemoteTool(BaseTool):
     def __init__(
-        self, spec: ToolSpec, backend: DockerToolBackend,
+        self,
+        spec: ToolSpec,
+        backend: DockerToolBackend,
         skill_catalog: tuple[SkillCatalogEntry, ...] = (),
     ) -> None:
         self._spec = spec
@@ -462,6 +508,7 @@ class DockerToolBackend:
         timeout_seconds: int = 120,
         profile: str = "frozen",
         image_id: str | None = None,
+        execution_profile: ExecutionProfile = ExecutionProfile.WORKSPACE_WRITE,
     ) -> None:
         if profile == "frozen" and (task_id not in _IMAGES or image_id is not None):
             raise RunConfigurationError("Docker backend supports only frozen pilot task IDs")
@@ -482,6 +529,8 @@ class DockerToolBackend:
         if profile not in {"frozen", "synthetic", "ordinary"}:
             raise RunConfigurationError("unknown Docker execution profile")
         self.profile = profile
+        self.execution_profile = ExecutionProfile(execution_profile)
+        self._host_control_policy = host_control_policy(self.execution_profile)
         self.requested_image_id = image_id
         self.task_id = task_id
         self.input_root = input_root.expanduser().resolve(strict=True)
@@ -497,9 +546,11 @@ class DockerToolBackend:
         self.source_commit: str | None = None
         self.input_manifest_sha256: str | None = None
         self.executor_bundle_sha256: str | None = None
+        self.executor_policy_config_sha256: str | None = None
         self.executor_write_probe = "not_run"
         self.artifacts_enabled = False
         self.artifact_environment_path: str | None = None
+        self.skills_bundle_sha256 = EMPTY_SKILL_BUNDLE_SHA256
 
     def prepare(
         self,
@@ -518,8 +569,24 @@ class DockerToolBackend:
         recovery_enabled: bool = False,
         artifacts_enabled: bool = False,
         environment_variables: dict[str, str] | None = None,
+        execution_profile: ExecutionProfile | str | None = None,
+        skills_snapshot: SkillBundleSnapshot | None = None,
     ) -> ToolRegistry:
         self.artifacts_enabled = artifacts_enabled
+        if skills_root is not None and skills_snapshot is not None:
+            raise WorkspaceError("custom Skills root and frozen snapshot cannot both be provided")
+        if skills_root is not None:
+            if not skills_enabled:
+                raise WorkspaceError("custom Skills require Skills to be enabled")
+            skills_snapshot = snapshot_custom_skills(skills_root, limits=skill_limits)
+        if skills_snapshot is not None and not skills_enabled:
+            raise WorkspaceError("custom Skills snapshot requires Skills to be enabled")
+        self.skills_bundle_sha256 = (
+            skills_snapshot.sha256 if skills_snapshot is not None else EMPTY_SKILL_BUNDLE_SHA256
+        )
+        if execution_profile is not None:
+            self.execution_profile = ExecutionProfile(execution_profile)
+            self._host_control_policy = host_control_policy(self.execution_profile)
         self.source_commit = source_commit
         if self.profile == "ordinary":
             if not source_import_probe:
@@ -558,9 +625,12 @@ class DockerToolBackend:
                         "frozen Docker input hash mismatch", context={"path": relative}
                     )
         if baseline_archive is not None:
-            if (self.profile != "ordinary" or baseline_archive.is_symlink()
-                    or not baseline_archive.resolve().is_relative_to(self.run_dir.resolve())
-                    or not baseline_archive.is_file()):
+            if (
+                self.profile != "ordinary"
+                or baseline_archive.is_symlink()
+                or not baseline_archive.resolve().is_relative_to(self.run_dir.resolve())
+                or not baseline_archive.is_file()
+            ):
                 raise WorkspaceError("invalid saved Docker source baseline")
             source = baseline_archive
         else:
@@ -612,12 +682,22 @@ class DockerToolBackend:
                 "2g" if self.profile == "ordinary" else "6g",
                 *(
                     [
-                        "--cpus", "1", "--read-only", "--user", "10001:10001",
-                        "--tmpfs", "/tmp:rw,nosuid,size=512m,uid=10001,gid=10001",
-                        "--tmpfs", "/input:rw,nosuid,size=256m,uid=10001,gid=10001",
-                        "--tmpfs", "/work:rw,nosuid,size=1g,uid=10001,gid=10001",
-                        "--tmpfs", "/opt/tracefix:rw,nosuid,size=128m,uid=0,gid=0,mode=0755",
-                    ] if self.profile == "ordinary" else []
+                        "--cpus",
+                        "1",
+                        "--read-only",
+                        "--user",
+                        "10001:10001",
+                        "--tmpfs",
+                        "/tmp:rw,nosuid,size=512m,uid=10001,gid=10001",
+                        "--tmpfs",
+                        "/input:rw,nosuid,size=256m,uid=10001,gid=10001",
+                        "--tmpfs",
+                        "/work:rw,nosuid,size=1g,uid=10001,gid=10001",
+                        "--tmpfs",
+                        "/opt/tracefix:rw,nosuid,size=128m,uid=0,gid=0,mode=0755",
+                    ]
+                    if self.profile == "ordinary"
+                    else []
                 ),
                 "--env",
                 "HTTP_PROXY=",
@@ -660,16 +740,27 @@ class DockerToolBackend:
                     [self.docker, "inspect", "--format", "{{json .Mounts}}", self.container_id]
                 ).stdout.decode("utf-8", "strict")
             )
-            host_config = json.loads(
-                _run(
-                    [self.docker, "inspect", "--format", "{{json .HostConfig}}", self.container_id]
-                ).stdout.decode("utf-8", "strict")
-            ) if self.profile == "ordinary" else None
+            host_config = (
+                json.loads(
+                    _run(
+                        [
+                            self.docker,
+                            "inspect",
+                            "--format",
+                            "{{json .HostConfig}}",
+                            self.container_id,
+                        ]
+                    ).stdout.decode("utf-8", "strict")
+                )
+                if self.profile == "ordinary"
+                else None
+            )
             container_user = (
-                _run(
-                    [self.docker, "inspect", "--format", "{{.Config.User}}", self.container_id]
-                ).stdout.decode("utf-8", "strict").strip()
-                if self.profile == "ordinary" else None
+                _run([self.docker, "inspect", "--format", "{{.Config.User}}", self.container_id])
+                .stdout.decode("utf-8", "strict")
+                .strip()
+                if self.profile == "ordinary"
+                else None
             )
         except (UnicodeDecodeError, json.JSONDecodeError) as exc:
             raise WorkspaceError(
@@ -704,11 +795,17 @@ class DockerToolBackend:
         _run([self.docker, "start", self.container_name])
         container_interpreter: dict[str, str] | None = None
         if self.profile == "ordinary":
-            probe_result = _run([
-                self.docker, "exec", self.container_name, self.python,
-                "-c", "import json,platform,pytest; print(json.dumps({"
-                "'python':platform.python_version(),'pytest':pytest.__version__}))",
-            ])
+            probe_result = _run(
+                [
+                    self.docker,
+                    "exec",
+                    self.container_name,
+                    self.python,
+                    "-c",
+                    "import json,platform,pytest; print(json.dumps({"
+                    "'python':platform.python_version(),'pytest':pytest.__version__}))",
+                ]
+            )
             container_interpreter = json.loads(probe_result.stdout.decode("utf-8"))
         _run(
             [
@@ -727,42 +824,75 @@ class DockerToolBackend:
         self._copy_file_into(source, "/input/source.tar")
         package_root = Path(__file__).resolve().parent
         if self.profile == "ordinary":
-            environment = validate_project_environment(
-                self.recipe.get("environment_variables", {})
+            environment = validate_project_environment(self.recipe.get("environment_variables", {}))
+            policy_document = executor_policy_document(
+                self.execution_profile,
+                artifacts_enabled=artifacts_enabled,
+                skills_enabled=skills_enabled,
             )
+            self.executor_policy_config_sha256 = hashlib.sha256(
+                json.dumps(
+                    policy_document, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+                ).encode("utf-8")
+            ).hexdigest()
             bundle, self.executor_bundle_sha256, tls_certificate_sha256 = (
                 _make_trusted_executor_bundle(
                     package_root,
                     tracefix_root,
                     environment,
                     include_tls_test_support=bool(self.recipe.get("test_pythonpath_entries")),
-                    skills_root=skills_root,
+                    capability_policy_document=policy_document,
+                    skills_snapshot=skills_snapshot,
                 )
             )
             self._install_trusted_executor(bundle, self.executor_bundle_sha256)
         else:
             _run([self.docker, "exec", self.container_name, "mkdir", "-p", "/opt/tracefix/src"])
             _run(
-                [self.docker, "cp", str(package_root),
-                 f"{self.container_name}:/opt/tracefix/src/tracefix"]
+                [
+                    self.docker,
+                    "cp",
+                    str(package_root),
+                    f"{self.container_name}:/opt/tracefix/src/tracefix",
+                ]
             )
             tls_certificate_sha256 = None
             if self.recipe.get("test_pythonpath_entries"):
-                _run([self.docker, "exec", self.container_name, "mkdir", "-p",
-                      "/opt/tracefix/request-test"])
+                _run(
+                    [
+                        self.docker,
+                        "exec",
+                        self.container_name,
+                        "mkdir",
+                        "-p",
+                        "/opt/tracefix/request-test",
+                    ]
+                )
                 for name in ("service.py", "sitecustomize.py"):
                     source_path = tracefix_root / "docker" / "requests-test-tls" / name
                     if source_path.is_file():
-                        _run([self.docker, "cp", str(source_path),
-                              f"{self.container_name}:/opt/tracefix/request-test/{name}"])
+                        _run(
+                            [
+                                self.docker,
+                                "cp",
+                                str(source_path),
+                                f"{self.container_name}:/opt/tracefix/request-test/{name}",
+                            ]
+                        )
                 with tempfile.TemporaryDirectory(prefix="tracefix-tls-") as tls_directory:
                     certificate = Path(tls_directory) / "test-ca.pem"
                     private_key = Path(tls_directory) / "test-key.pem"
                     write_test_tls_material(certificate, private_key)
                     tls_certificate_sha256 = hashlib.sha256(certificate.read_bytes()).hexdigest()
                     for path in (certificate, private_key):
-                        _run([self.docker, "cp", str(path),
-                              f"{self.container_name}:/opt/tracefix/request-test/{path.name}"])
+                        _run(
+                            [
+                                self.docker,
+                                "cp",
+                                str(path),
+                                f"{self.container_name}:/opt/tracefix/request-test/{path.name}",
+                            ]
+                        )
         sentinel = self.run_dir / "agent-only-sentinel.txt"
         sentinel.write_text(self.run_id, encoding="utf-8")
         _run(
@@ -790,9 +920,7 @@ class DockerToolBackend:
             ]
         )
         _run([self.docker, "exec", self.container_name, "mkdir", "/work/agent/.tracefix-build-tmp"])
-        self._copy_file_into(
-            sentinel, "/work/agent/.tracefix-build-tmp/agent-only-sentinel"
-        )
+        self._copy_file_into(sentinel, "/work/agent/.tracefix-build-tmp/agent-only-sentinel")
         _run(
             [
                 self.docker,
@@ -851,8 +979,16 @@ class DockerToolBackend:
                 raise WorkspaceError("Docker recovery requires the ordinary profile")
             # Private Git exclusions align generated caches with the snapshot product contract.
             # Tracked files remain visible to Git and are retained by the snapshot codec.
-            _run([self.docker, "exec", self.container_name, "sh", "-c",
-                  "printf '\\n__pycache__/\\n.pytest_cache/\\n' >> /work/agent/.git/info/exclude"])
+            _run(
+                [
+                    self.docker,
+                    "exec",
+                    self.container_name,
+                    "sh",
+                    "-c",
+                    "printf '\\n__pycache__/\\n.pytest_cache/\\n' >> /work/agent/.git/info/exclude",
+                ]
+            )
         for template in self.recipe.get("build_commands", []):
             command = [self.python if arg == "{python}" else arg for arg in template]
             started = time.monotonic()
@@ -999,35 +1135,48 @@ class DockerToolBackend:
             # Ordinary Skills were included in the root-owned trusted-executor bundle.
         command = [self.docker, "exec", "-i", self.container_name, "env"]
         if self.profile == "ordinary":
-            command.extend([
-                "-i",
-                "PATH=/usr/local/bin:/usr/bin:/bin",
-                "HOME=/tmp",
-                "PYTHONDONTWRITEBYTECODE=1",
-                "PYTHONPATH=/opt/tracefix/src",
-            ])
+            command.extend(
+                [
+                    "-i",
+                    "PATH=/usr/local/bin:/usr/bin:/bin",
+                    "HOME=/tmp",
+                    "PYTHONDONTWRITEBYTECODE=1",
+                    "PYTHONPATH=/opt/tracefix/src",
+                ]
+            )
             python_flags = ["-P", "-s"]
         else:
             command.append("PYTHONPATH=/opt/tracefix/src")
             python_flags = []
-        command.extend([
-            self.python,
-            *python_flags,
-            "-m",
-            "tracefix.agent_bridge",
-            "--workspace",
-            "/work/agent",
-            "--evidence",
-            "/work/evidence",
-            "--python",
-            self.python,
-            "--timeout",
-            str(self.timeout_seconds),
-            "--run-id",
-            self.run_id,
-            "--environment-json",
-            environment_path,
-        ])
+        command.extend(
+            [
+                self.python,
+                *python_flags,
+                "-m",
+                "tracefix.agent_bridge",
+                "--workspace",
+                "/work/agent",
+                "--evidence",
+                "/work/evidence",
+                "--python",
+                self.python,
+                "--timeout",
+                str(self.timeout_seconds),
+                "--run-id",
+                self.run_id,
+                "--execution-profile",
+                self.execution_profile.value,
+                "--environment-json",
+                environment_path,
+            ]
+        )
+        if self.profile == "ordinary":
+            command.extend(
+                [
+                    "--capability-policy-file",
+                    "/opt/tracefix/runtime/capability-policy.json",
+                ]
+            )
         if self.recipe.get("pytest_config"):
             command.extend(["--pytest-config", self.recipe["pytest_config"]])
         for path in self.recipe.get("test_pythonpath_entries", []):
@@ -1049,7 +1198,7 @@ class DockerToolBackend:
                     (skill_limits or SkillLimits()).model_dump_json(),
                 ]
             )
-            if skills_root is not None:
+            if skills_root is not None or skills_snapshot is not None:
                 command.extend(["--skills-root", "/opt/tracefix/runtime/skills"])
         if artifacts_enabled:
             command.extend(
@@ -1060,9 +1209,13 @@ class DockerToolBackend:
                 ]
             )
         self.session = _BridgeSession(
-            command, self.timeout_seconds + 60, self.run_dir / "tool-events.jsonl",
+            command,
+            self.timeout_seconds + 60,
+            self.run_dir / "tool-events.jsonl",
             skills_enabled=skills_enabled,
             artifacts_enabled=artifacts_enabled,
+            execution_profile=self.execution_profile,
+            executor_policy_config_sha256=self.executor_policy_config_sha256,
         )
         if self.session.run_id != self.run_id:
             raise WorkspaceError("Docker bridge run identity mismatch")
@@ -1072,6 +1225,13 @@ class DockerToolBackend:
             tool_sha = tool_identity(self.session.tools)
             if tool_sha != recovery_snapshot.get("tool_sha256"):
                 raise WorkspaceError("Docker recovery tool definitions changed")
+            if (
+                recovery_snapshot.get("capability_catalog_sha256")
+                != self.session.capability_catalog_sha256
+                or recovery_snapshot.get("capability_policy_sha256")
+                != self.session.capability_policy_sha256
+            ):
+                raise WorkspaceError("Docker recovery capability policy changed")
             if container_interpreter != recovery_snapshot.get("interpreter"):
                 raise WorkspaceError("Docker recovery interpreter identity changed")
             restored = self.session.call("__restore_state__", recovery_snapshot["bridge_state"])
@@ -1084,6 +1244,8 @@ class DockerToolBackend:
             "profile": self.profile,
             "security_policy_version": SECURITY_POLICY_VERSION,
             "trusted_executor_sha256": self.executor_bundle_sha256,
+            "executor_policy_config_sha256": self.executor_policy_config_sha256,
+            "skills_bundle_sha256": self.skills_bundle_sha256,
             "executor_write_probe": self.executor_write_probe,
             "image_id": actual_id,
             "container_id": self.container_id,
@@ -1096,12 +1258,15 @@ class DockerToolBackend:
                 "nano_cpus": host_config.get("NanoCpus"),
                 "read_only_root": host_config.get("ReadonlyRootfs"),
                 "tmpfs": host_config.get("Tmpfs"),
-            } if host_config else None,
+            }
+            if host_config
+            else None,
             "source_commit": source_commit,
             "source_version_tag": self.source_tag,
             "agent_only_sentinel_sha256": hashlib.sha256(sentinel.read_bytes()).hexdigest(),
             "recipe_fingerprint": self._recipe_fingerprint()
-            if self.profile != "ordinary" else None,
+            if self.profile != "ordinary"
+            else None,
             "test_target": self.recipe.get("test_target"),
             "build_steps": steps,
             "source_import_probe": probe_data,
@@ -1117,18 +1282,38 @@ class DockerToolBackend:
     def remove_previous_container(self, snapshot: dict[str, Any]) -> None:
         """Remove an abandoned container only after checking its exact owned identity."""
         previous = snapshot.get("container_id")
-        if (not isinstance(previous, str) or re.fullmatch(r"[0-9a-f]{64}", previous) is None
-                or previous == self.container_id):
+        if (
+            not isinstance(previous, str)
+            or re.fullmatch(r"[0-9a-f]{64}", previous) is None
+            or previous == self.container_id
+        ):
             raise WorkspaceError("invalid previous Docker container identity")
-        found = _run([self.docker, "ps", "-a", "--no-trunc", "--filter", f"id={previous}",
-                      "--format", "{{.ID}}"])
+        found = _run(
+            [
+                self.docker,
+                "ps",
+                "-a",
+                "--no-trunc",
+                "--filter",
+                f"id={previous}",
+                "--format",
+                "{{.ID}}",
+            ]
+        )
         identifiers = found.stdout.decode("utf-8").splitlines()
         if not identifiers:
             return
         if identifiers != [previous]:
             raise WorkspaceError("previous Docker container identity is ambiguous")
-        owned = _run([self.docker, "inspect", "--format",
-                      '{{index .Config.Labels "tracefix.run_id"}}', previous])
+        owned = _run(
+            [
+                self.docker,
+                "inspect",
+                "--format",
+                '{{index .Config.Labels "tracefix.run_id"}}',
+                previous,
+            ]
+        )
         if owned.stdout.decode("utf-8").strip() != self.run_id:
             raise WorkspaceError("previous Docker container ownership changed; removal refused")
         _run([self.docker, "rm", "-f", previous])
@@ -1141,6 +1326,14 @@ class DockerToolBackend:
 
         if self.profile != "ordinary" or self.session is None:
             raise WorkspaceError("only an active ordinary Docker bridge can save a snapshot")
+        decision = self._host_control_policy.authorize(
+            "checkpoint_commit", CallerOrigin.HOST_LIFECYCLE
+        )
+        if not decision.allowed:
+            raise WorkspaceError(
+                "Docker checkpoint commit denied by capability policy",
+                context={"reason_code": decision.reason_code},
+            )
         state = self.session.call("__recovery_state__", {})
         if not state.success or not isinstance(state.output, dict):
             raise WorkspaceError("could not save Docker bridge state")
@@ -1210,44 +1403,73 @@ class DockerToolBackend:
                 artifact_record = {
                     "artifacts_enabled": True,
                     "run_id": self.run_id,
-                    "artifact_archive": str(artifact_archive_path.relative_to(self.run_dir)),
+                    "artifact_archive": artifact_archive_path.relative_to(self.run_dir).as_posix(),
                     "artifact_archive_bytes": artifact_archive_path.stat().st_size,
                     "artifact_archive_sha256": artifact_archive_sha256,
                     "artifact_receipt": receipt,
                 }
             with temporary.open("xb") as output:
                 result = subprocess.run(
-                    [self.docker, "exec", self.container_name, "env",
-                     "PYTHONPATH=/opt/tracefix/src", self.python, "-m",
-                     "tracefix.workspace_snapshot", "export", "--workspace", "/work/agent"],
-                    stdout=output, stderr=subprocess.PIPE, timeout=self.timeout_seconds + 120,
+                    [
+                        self.docker,
+                        "exec",
+                        self.container_name,
+                        "env",
+                        "PYTHONPATH=/opt/tracefix/src",
+                        self.python,
+                        "-m",
+                        "tracefix.workspace_snapshot",
+                        "export",
+                        "--workspace",
+                        "/work/agent",
+                    ],
+                    stdout=output,
+                    stderr=subprocess.PIPE,
+                    timeout=self.timeout_seconds + 120,
                     check=False,
                 )
                 output.flush()
                 os.fsync(output.fileno())
             if result.returncode:
-                raise WorkspaceError("Docker product snapshot failed", context={
-                    "stderr": result.stderr.decode("utf-8", "replace")[-2000:],
-                })
+                raise WorkspaceError(
+                    "Docker product snapshot failed",
+                    context={
+                        "stderr": result.stderr.decode("utf-8", "replace")[-2000:],
+                    },
+                )
             metadata = json.loads(result.stderr.decode("utf-8"))
             validate_archive(temporary, metadata)
             os.replace(temporary, archive_path)
             self.export_evidence()
             journal = (self.run_dir / "tool-events.jsonl").read_bytes()
             record = {
-                "schema_version": 1, "sequence": sequence, "batch_id": identity,
-                "archive": str(archive_path.relative_to(self.run_dir)), "metadata": metadata,
-                "bridge_state": state.output, "bridge_state_sha256": digest(state.output),
-                "journal_size": len(journal), "journal_sha256": hashlib.sha256(journal).hexdigest(),
+                "schema_version": 1,
+                "sequence": sequence,
+                "batch_id": identity,
+                "archive": archive_path.relative_to(self.run_dir).as_posix(),
+                "metadata": metadata,
+                "bridge_state": state.output,
+                "bridge_state_sha256": digest(state.output),
+                "journal_size": len(journal),
+                "journal_sha256": hashlib.sha256(journal).hexdigest(),
                 "baseline_sha256": hashlib.sha256(
                     (self.run_dir / "agent-base.tar").read_bytes(),
                 ).hexdigest(),
-                "image_id": self.image_id, "container_id": self.container_id,
+                "image_id": self.image_id,
+                "container_id": self.container_id,
                 "interpreter": self.workspace_preparation["container_interpreter"],
                 "tool_sha256": tool_identity(self.session.tools),
-                "test_evidence": {path.name: hashlib.sha256(path.read_bytes()).hexdigest()
-                                  for path in (self.run_dir / "test-evidence").iterdir()
-                                  if path.is_file()},
+                "capability_catalog_sha256": self.session.capability_catalog_sha256,
+                "capability_policy_sha256": self.session.capability_policy_sha256,
+                "executor_policy_config_sha256": self.executor_policy_config_sha256,
+                "host_control_policy_sha256": self._host_control_policy.sha256,
+                "host_control_catalog_sha256": self._host_control_policy.catalog.sha256,
+                "checkpoint_commit_decision": decision.model_dump(mode="json"),
+                "test_evidence": {
+                    path.name: hashlib.sha256(path.read_bytes()).hexdigest()
+                    for path in (self.run_dir / "test-evidence").iterdir()
+                    if path.is_file()
+                },
                 **artifact_record,
             }
             if self.artifacts_enabled:
@@ -1266,12 +1488,55 @@ class DockerToolBackend:
             if artifact_published and not (directory / f"{identity}.json").is_file():
                 artifact_archive_path.unlink(missing_ok=True)
 
+    def source_snapshot_provider(self):
+        """Return a filtered exporter command without exposing the recovery archive."""
+        if self.profile != "ordinary" or self.container_id is None:
+            raise WorkspaceError("source export requires a prepared ordinary Docker workspace")
+        from tracefix.source_snapshot import CommandSourceSnapshotProvider
+
+        return CommandSourceSnapshotProvider(
+            (
+                self.docker,
+                "exec",
+                self.container_id,
+                "env",
+                "-i",
+                "PATH=/usr/local/bin:/usr/bin:/bin",
+                "HOME=/tmp",
+                "PYTHONPATH=/opt/tracefix/src",
+                self.python,
+                "-P",
+                "-s",
+                "-m",
+                "tracefix.source_snapshot",
+                "--export",
+                "/work/agent",
+            ),
+            timeout_seconds=45,
+        )
+
     def restore_snapshot(self, snapshot: dict[str, Any]) -> None:
         """Restore a validated archive before starting the new container's bridge."""
         from tracefix.docker_recovery import owned_file, validate_artifact_archive
         from tracefix.memory import atomic_json
         from tracefix.workspace_snapshot import validate_archive
 
+        decision = self._host_control_policy.authorize(
+            "checkpoint_restore", CallerOrigin.RECOVERY
+        )
+        if not decision.allowed:
+            raise WorkspaceError(
+                "Docker checkpoint restore denied by capability policy",
+                context={"reason_code": decision.reason_code},
+            )
+        if (
+            snapshot.get("host_control_policy_sha256") != self._host_control_policy.sha256
+            or snapshot.get("host_control_catalog_sha256")
+            != self._host_control_policy.catalog.sha256
+        ):
+            raise WorkspaceError("Docker checkpoint control policy identity changed")
+        if snapshot.get("executor_policy_config_sha256") != self.executor_policy_config_sha256:
+            raise WorkspaceError("Docker checkpoint executor policy bundle changed")
         if self.artifacts_enabled != (snapshot.get("artifacts_enabled") is True):
             raise WorkspaceError("Docker artifact capability differs from its recovery snapshot")
 
@@ -1283,18 +1548,35 @@ class DockerToolBackend:
         # Streaming stdin avoids a second 1 GiB host buffer and preserves container tmpfs space.
         with path.open("rb") as source:
             restored = subprocess.run(
-                [self.docker, "exec", "-i", self.container_name, "env",
-                 "PYTHONPATH=/opt/tracefix/src", self.python, "-m",
-                 "tracefix.workspace_snapshot", "restore-stream", "--workspace", "/work/agent",
-                 "--metadata", "/input/restore-metadata.json"], stdin=source, capture_output=True,
-                timeout=self.timeout_seconds + 120, check=False,
+                [
+                    self.docker,
+                    "exec",
+                    "-i",
+                    self.container_name,
+                    "env",
+                    "PYTHONPATH=/opt/tracefix/src",
+                    self.python,
+                    "-m",
+                    "tracefix.workspace_snapshot",
+                    "restore-stream",
+                    "--workspace",
+                    "/work/agent",
+                    "--metadata",
+                    "/input/restore-metadata.json",
+                ],
+                stdin=source,
+                capture_output=True,
+                timeout=self.timeout_seconds + 120,
+                check=False,
             )
         if restored.returncode:
-            raise WorkspaceError("could not restore Docker recovery archive", context={
-                "stderr": restored.stderr.decode("utf-8", "replace")[-2000:],
-            })
-        _run([self.docker, "exec", self.container_name, "rm", "-f",
-              "/input/restore-metadata.json"])
+            raise WorkspaceError(
+                "could not restore Docker recovery archive",
+                context={
+                    "stderr": restored.stderr.decode("utf-8", "replace")[-2000:],
+                },
+            )
+        _run([self.docker, "exec", self.container_name, "rm", "-f", "/input/restore-metadata.json"])
         if self.artifacts_enabled:
             if self.artifact_environment_path is None:
                 raise WorkspaceError("artifact restore environment identity is unavailable")
@@ -1343,7 +1625,11 @@ class DockerToolBackend:
             except (UnicodeDecodeError, json.JSONDecodeError) as exc:
                 raise WorkspaceError("Docker artifact restore receipt is invalid") from exc
             for field in (
-                "manifest_sha256", "artifact_count", "storage_bytes", "queries",
+                "manifest_sha256",
+                "artifact_count",
+                "artifact_ids",
+                "storage_bytes",
+                "queries",
                 "returned_chars",
             ):
                 if imported.get(field) != receipt.get(field):
@@ -1408,9 +1694,17 @@ class DockerToolBackend:
     def _copy_file_into(self, source: Path, destination: str) -> None:
         if self.profile == "ordinary":
             _run(
-                [self.docker, "exec", "-i", self.container_name,
-                 "sh", "-c", f"cat > {destination}"],
-                input_data=source.read_bytes(), timeout=120,
+                [
+                    self.docker,
+                    "exec",
+                    "-i",
+                    self.container_name,
+                    "sh",
+                    "-c",
+                    f"cat > {destination}",
+                ],
+                input_data=source.read_bytes(),
+                timeout=120,
             )
         else:
             _run([self.docker, "cp", str(source), f"{self.container_name}:{destination}"])
@@ -1418,18 +1712,33 @@ class DockerToolBackend:
     def _install_trusted_executor(self, bundle: bytes, expected_sha256: str) -> None:
         """Install the trusted bridge as root before any task code is executed."""
         root = [self.docker, "exec", "--user", "0:0", self.container_name]
-        _run([*root, "mkdir", "-p", "/opt/tracefix/src", "/opt/tracefix/runtime",
-              "/opt/tracefix/request-test"])
         _run(
-            [*root[:-1], "-i", self.container_name, "tar", "-xf", "-",
-             "--no-same-owner", "-C", "/opt/tracefix"],
+            [
+                *root,
+                "mkdir",
+                "-p",
+                "/opt/tracefix/src",
+                "/opt/tracefix/runtime",
+                "/opt/tracefix/request-test",
+            ]
+        )
+        _run(
+            [
+                *root[:-1],
+                "-i",
+                self.container_name,
+                "tar",
+                "-xf",
+                "-",
+                "--no-same-owner",
+                "-C",
+                "/opt/tracefix",
+            ],
             input_data=bundle,
             timeout=120,
         )
-        _run([*root, "find", "/opt/tracefix", "-type", "f", "-exec", "chmod",
-              "0444", "{}", "+"])
-        _run([*root, "find", "/opt/tracefix", "-type", "d", "-exec", "chmod",
-              "0555", "{}", "+"])
+        _run([*root, "find", "/opt/tracefix", "-type", "f", "-exec", "chmod", "0444", "{}", "+"])
+        _run([*root, "find", "/opt/tracefix", "-type", "d", "-exec", "chmod", "0555", "{}", "+"])
         verify = (
             "import hashlib,json,pathlib,stat,sys; "
             "root=pathlib.Path('/opt/tracefix'); "

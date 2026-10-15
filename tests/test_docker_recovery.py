@@ -7,6 +7,12 @@ import json
 import pytest
 
 from examples.replay_ordinary import _git
+from tracefix.capabilities import (
+    CallerOrigin,
+    ExecutionProfile,
+    executor_policy_document,
+    host_control_policy,
+)
 from tracefix.checkpoint import CheckpointError
 from tracefix.docker_recovery import owned_file, tool_identity, validate_batch
 from tracefix.memory import digest
@@ -64,10 +70,18 @@ def batch(tmp_path):
     (tmp_path / "agent-base.tar").write_bytes(b"saved baseline")
     journal = b'{"event":"handshake"}\n'
     (tmp_path / "tool-events.jsonl").write_bytes(journal)
+    host_policy = host_control_policy(ExecutionProfile.WORKSPACE_WRITE)
+    commit_decision = host_policy.authorize("checkpoint_commit", CallerOrigin.HOST_LIFECYCLE)
     snapshot = {"schema_version": 1, "sequence": 1, "batch_id": identity,
                 "archive": f"docker-checkpoints/{identity}.tar", "metadata": metadata,
                 "image_id": "pinned-image", "baseline_sha256": hashlib.sha256(
                     b"saved baseline").hexdigest(), "bridge_state": {},
+                "capability_catalog_sha256": "a" * 64,
+                "capability_policy_sha256": "b" * 64,
+                "host_control_policy_sha256": host_policy.sha256,
+                "host_control_catalog_sha256": host_policy.catalog.sha256,
+                "executor_policy_config_sha256": "e" * 64,
+                "checkpoint_commit_decision": commit_decision.model_dump(mode="json"),
                 "bridge_state_sha256": digest({}), "test_evidence": {},
                 "journal_size": len(journal), "journal_sha256": hashlib.sha256(journal).hexdigest()}
     (directory / f"{identity}.json").write_text(json.dumps(snapshot), encoding="utf-8")
@@ -220,7 +234,7 @@ def test_previous_container_removal_requires_full_identity(
 
 
 @pytest.fixture
-def inspected(batch, monkeypatch):
+def inspected(batch, monkeypatch, request):
     from types import SimpleNamespace
 
     from tracefix.agent import AgentState, MinimalAgent
@@ -240,8 +254,80 @@ def inspected(batch, monkeypatch):
                        docker_recovery_enabled=True)
     identity = {"implementation_sha256": "code", "config_sha256": "config",
                 "repo_map_sha256": hashlib.sha256(b"").hexdigest()}
-    registry = create_default_tool_registry(config.repo)
+    custom_skills = bool(getattr(request, "param", False))
+    skills_state = None
+    skills_bundle = None
+    skills_archive_sha256 = None
+    if custom_skills:
+        from tracefix.skill_snapshot import snapshot_custom_skills, write_skill_snapshot
+
+        config.skills_root = root / "approved-skills"
+        skill_root = config.skills_root / "test-skill"
+        skill_root.mkdir(parents=True)
+        (skill_root / "SKILL.md").write_text(
+            "---\nname: test-skill\ndescription: Recovery contract\n"
+            "metadata:\n  version: '1'\n---\n\nInspect current source.\n", encoding="utf-8",
+        )
+        config.agent_config.skills_enabled = True
+        skills_bundle = snapshot_custom_skills(config.skills_root)
+        skills_archive_sha256 = write_skill_snapshot(skills_bundle, root / "skills-snapshot.tar")
+    registry = create_default_tool_registry(
+        config.repo, skills_enabled=custom_skills, skills_root=config.skills_root
+    )
+    if custom_skills:
+        skills_state = registry.get("load_skill").recovery_state()
+        snapshot["bridge_state"]["skills"] = skills_state
+        snapshot["bridge_state_sha256"] = digest(snapshot["bridge_state"])
     identity["tool_sha256"] = tool_identity(registry.specs())
+    from tracefix.capabilities import CapabilityCatalog, CapabilityPolicy
+    from tracefix.skill_snapshot import EMPTY_SKILL_ARCHIVE_SHA256, EMPTY_SKILL_BUNDLE_SHA256
+
+    executor_catalog = CapabilityCatalog.for_tool_names(
+        spec.name for spec in registry.specs()
+    )
+    executor_policy = CapabilityPolicy(executor_catalog, config.execution_profile)
+    executor_document = executor_policy_document(
+        config.execution_profile,
+        artifacts_enabled=config.harness_foundations_enabled,
+        skills_enabled=config.agent_config.skills_enabled,
+    )
+    executor_document_sha256 = hashlib.sha256(
+        json.dumps(
+            executor_document,
+            sort_keys=True,
+            ensure_ascii=False,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+    identity.update({
+        "policy_sha256": "c" * 64,
+        "capability_catalog_sha256": "d" * 64,
+        "executor_tool_catalog_sha256": "e" * 64,
+        "agent_tool_catalog_sha256": "f" * 64,
+        "provider_tool_spec_sha256": "1" * 64,
+        "executor_policy_config_sha256": executor_document_sha256,
+        "host_control_policy_sha256": host_control_policy(
+            config.execution_profile
+        ).sha256,
+        "host_control_catalog_sha256": host_control_policy(
+            config.execution_profile
+        ).catalog.sha256,
+        "executor_capability_catalog_sha256": executor_catalog.sha256,
+        "executor_policy_sha256": executor_policy.sha256,
+        "skills_bundle_sha256": (
+            skills_bundle.sha256 if skills_bundle else EMPTY_SKILL_BUNDLE_SHA256
+        ),
+        "skills_archive_sha256": skills_archive_sha256 or EMPTY_SKILL_ARCHIVE_SHA256,
+    })
+    snapshot["capability_catalog_sha256"] = executor_catalog.sha256
+    snapshot["capability_policy_sha256"] = executor_policy.sha256
+    host_policy = host_control_policy(config.execution_profile)
+    snapshot["host_control_policy_sha256"] = host_policy.sha256
+    snapshot["host_control_catalog_sha256"] = host_policy.catalog.sha256
+    snapshot["executor_policy_config_sha256"] = executor_document_sha256
+    snapshot["checkpoint_commit_decision"] = host_policy.authorize(
+        "checkpoint_commit", CallerOrigin.HOST_LIFECYCLE
+    ).model_dump(mode="json")
     snapshot["tool_sha256"] = identity["tool_sha256"]
     (root / "docker-checkpoints" / f'{snapshot["batch_id"]}.json').write_text(
         json.dumps(snapshot), encoding="utf-8")
@@ -251,7 +337,7 @@ def inspected(batch, monkeypatch):
     state = AgentState(task="fix")
     CheckpointStore(root, identity).save({"docker_snapshot": snapshot,
         "agent": {"state": state.model_dump(mode="json"), "history": [],
-                  "memory": dict.fromkeys(MinimalAgent._RECOVERY_FIELDS)}, "skills": None,
+                  "memory": dict.fromkeys(MinimalAgent._RECOVERY_FIELDS)}, "skills": skills_state,
         "protected_dirs": [".tracefix-build-tmp"], "trace_size": 0,
         "trace_sha256": hashlib.sha256(b"").hexdigest(),
         "workspace_diff_sha256": hashlib.sha256(b"").hexdigest()}, sequence=1)
@@ -276,6 +362,89 @@ def test_inspect_docker_session_without_original_container(inspected):
     (root / "result.json").write_text('{"status":"completed"}', encoding="utf-8")
     assert "run is not interrupted" in inspect_session(
         root, manifest, config, implementation_sha256="code", config_sha256="config")["reasons"]
+
+
+@pytest.mark.parametrize("inspected", [True], indirect=True)
+def test_inspect_enabled_custom_skills_uses_snapshot_after_live_text_changes(inspected):
+    from tracefix.docker_recovery import inspect_session
+
+    root, manifest, config, _ = inspected
+    (config.skills_root / "test-skill/SKILL.md").write_text("changed live text", encoding="utf-8")
+    outcome = inspect_session(root, manifest, config, implementation_sha256="code",
+                              config_sha256="config")
+    assert outcome["resumable"] is True, outcome
+
+
+def _install_validation_baseline(root, manifest, config, *, fault=None):
+    from tracefix.checkpoint import CheckpointStore
+    from tracefix.validation import docker_validation_environment_sha256
+
+    payload = CheckpointStore(root, manifest["identity"]).load().payload
+    config.regression_targets = ("tests/test_compat.py",)
+    identity = manifest["identity"]
+    identity["source_commit"] = "saved-source-commit"
+    identity["image_id"] = config.docker_image_id
+    test_result = {"status": "passed", "target": "tests/test_compat.py"}
+    encoded_test = json.dumps(
+        test_result, sort_keys=True, ensure_ascii=False, separators=(",", ":")
+    ).encode("utf-8")
+    row = {
+        "target": "tests/test_compat.py",
+        "test": test_result,
+        "evidence_sha256": hashlib.sha256(encoded_test).hexdigest(),
+    }
+    if fault == "evidence":
+        row["evidence_sha256"] = "0" * 64
+    baseline = {
+        "complete": True,
+        "source_commit": "saved-source-commit",
+        "execution_backend": "docker",
+        "image_id": config.docker_image_id,
+        "test_environment_sha256": docker_validation_environment_sha256(
+            config.docker_image_id, {}
+        ),
+        "policy_sha256": identity["policy_sha256"],
+        "capability_catalog_sha256": identity["capability_catalog_sha256"],
+        "targets": [row],
+    }
+    if fault == "identity":
+        baseline["source_commit"] = "other-source-commit"
+    baseline_path = root / "validation-baseline.json"
+    if fault != "missing":
+        baseline_path.write_text(json.dumps(baseline), encoding="utf-8")
+        identity["validation_baseline_sha256"] = hashlib.sha256(
+            baseline_path.read_bytes()
+        ).hexdigest()
+    else:
+        identity["validation_baseline_sha256"] = "0" * 64
+    checkpoint_path = root / "checkpoint.json"
+    checkpoint_path.unlink()
+    CheckpointStore(root, manifest["identity"]).save(payload, sequence=1)
+
+
+@pytest.mark.parametrize(
+    "fault, expected_reason",
+    [
+        (None, None),
+        ("missing", "baseline is missing or invalid"),
+        ("identity", "baseline does not match the run"),
+        ("evidence", "baseline evidence changed"),
+    ],
+)
+def test_inspect_binds_regression_baseline_and_evidence(inspected, fault, expected_reason):
+    from tracefix.docker_recovery import inspect_session
+
+    root, manifest, config, _ = inspected
+    _install_validation_baseline(root, manifest, config, fault=fault)
+
+    outcome = inspect_session(
+        root, manifest, config, implementation_sha256="code", config_sha256="config"
+    )
+
+    if expected_reason is None:
+        assert outcome["resumable"] is True, outcome
+    else:
+        assert any(expected_reason in reason for reason in outcome["reasons"])
 
 
 @pytest.mark.parametrize("fault,reason", [

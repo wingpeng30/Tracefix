@@ -520,9 +520,7 @@ class ApplyPatchTool(_WorkspaceTool):
         """Compare actual file identity and scoped Git state, not diff declarations."""
         files: dict[str, tuple | None] = {}
         for name in names:
-            path = _resolve_path(
-                self.workspace, name, protected_dirs=self.protected_dirs
-            )
+            path = _resolve_path(self.workspace, name, protected_dirs=self.protected_dirs)
             if path.is_file():
                 digest = hashlib.sha256(path.read_bytes()).hexdigest()
                 files[name] = ("file", path.stat().st_mode, digest)
@@ -729,9 +727,7 @@ class ApplyPatchTool(_WorkspaceTool):
                 if token == "/dev/null":
                     continue
                 normalized = token[2:] if token.startswith(("a/", "b/")) else token
-                _resolve_path(
-                    self.workspace, normalized, protected_dirs=self.protected_dirs
-                )
+                _resolve_path(self.workspace, normalized, protected_dirs=self.protected_dirs)
                 if Path(normalized).parts and Path(normalized).parts[0] in self.protected_dirs:
                     raise ToolValidationError(
                         "patch targets a registered TraceFix internal directory"
@@ -1128,7 +1124,8 @@ class RunTestsTool(_WorkspaceTool):
     def _product_diff_sha(self) -> str:
         """Bind public test evidence to the product diff before and after pytest."""
         diff_tool = GetGitDiffTool(
-            self.workspace, max_output_chars=10_000_000,
+            self.workspace,
+            max_output_chars=10_000_000,
             protected_dirs=self.protected_dirs,
         )
         result = diff_tool.execute(ToolCall(id=uuid4().hex, name="get_git_diff"))
@@ -1185,11 +1182,35 @@ class RunTestsTool(_WorkspaceTool):
             )
         remaining = parts[3:] if module_pytest else parts[1:]
         accepted_flags = {
-            "-q", "-qq", "--quiet", "-v", "-vv", "-vvv", "--verbose", "-x", "--exitfirst", "-s",
-            "-l", "--showlocals", "--full-trace", "--no-header", "--no-summary",
-            "--disable-warnings", "--strict-markers", "--strict-config",
-            "--continue-on-collection-errors", "--collect-only", "--co", "--version",
-            "-V", "--help", "-h", "-ra", "-rA", "-rN", "--trace-config",
+            "-q",
+            "-qq",
+            "--quiet",
+            "-v",
+            "-vv",
+            "-vvv",
+            "--verbose",
+            "-x",
+            "--exitfirst",
+            "-s",
+            "-l",
+            "--showlocals",
+            "--full-trace",
+            "--no-header",
+            "--no-summary",
+            "--disable-warnings",
+            "--strict-markers",
+            "--strict-config",
+            "--continue-on-collection-errors",
+            "--collect-only",
+            "--co",
+            "--version",
+            "-V",
+            "--help",
+            "-h",
+            "-ra",
+            "-rA",
+            "-rN",
+            "--trace-config",
         }
         value_options = {"-k", "-m", "--deselect", "--tb", "--color", "--capture", "--maxfail"}
         safe_values = {
@@ -1432,9 +1453,7 @@ class GetGitDiffTool(_WorkspaceTool):
         assert isinstance(args, _GetGitDiffArgs)
 
         excludes = [f":(exclude){name}/" for name in sorted(self.protected_dirs)]
-        names = self._run_git(
-            ["diff", "--name-only", "-z", "HEAD", "--", ".", *excludes]
-        )
+        names = self._run_git(["diff", "--name-only", "-z", "HEAD", "--", ".", *excludes])
         untracked = self._run_git(["ls-files", "--others", "--exclude-standard", "-z"])
         if names.returncode != 0 or untracked.returncode != 0:
             return self._git_failure(call, names if names.returncode else untracked, started)
@@ -1462,8 +1481,13 @@ class GetGitDiffTool(_WorkspaceTool):
             if is_untracked:
                 generated = self._run_git(
                     [
-                        "diff", "--no-index", "--no-ext-diff",
-                        f"--unified={args.context_lines}", "--", os.devnull, relative,
+                        "diff",
+                        "--no-index",
+                        "--no-ext-diff",
+                        f"--unified={args.context_lines}",
+                        "--",
+                        os.devnull,
+                        relative,
                     ]
                 )
                 # git diff --no-index 用退出码 1 表示“确实存在差异”。
@@ -1472,8 +1496,12 @@ class GetGitDiffTool(_WorkspaceTool):
             else:
                 generated = self._run_git(
                     [
-                        "diff", "--no-ext-diff", f"--unified={args.context_lines}",
-                        "HEAD", "--", f":(literal){relative}",
+                        "diff",
+                        "--no-ext-diff",
+                        f"--unified={args.context_lines}",
+                        "HEAD",
+                        "--",
+                        f":(literal){relative}",
                     ]
                 )
                 if generated.returncode != 0:
@@ -1546,6 +1574,7 @@ def create_default_tool_registry(
     evidence_dir: Path | None = None,
     protected_dirs: set[str] | None = None,
     artifact_store: ArtifactStore | None = None,
+    task_state=None,
     skills_enabled: bool = False,
     skill_limits: SkillLimits | None = None,
     skills_root: Path | None = None,
@@ -1554,27 +1583,31 @@ def create_default_tool_registry(
     root = _resolve_workspace(workspace)
     internal = protected_dirs if protected_dirs is not None else set()
     tools = [
-            SearchCodeTool(root, max_output_chars=max_output_chars, protected_dirs=internal),
-            ReadFileTool(root, max_output_chars=max_output_chars, protected_dirs=internal),
-            ApplyPatchTool(root, max_output_chars=max_output_chars, protected_dirs=internal),
-            RunTestsTool(
-                root,
-                max_output_chars=max_output_chars,
-                default_timeout_seconds=test_timeout_seconds,
-                python_executable=test_python_executable,
-                pythonpath_entries=test_pythonpath_entries,
-                pytest_config=pytest_config,
-                environment_variables=test_environment_variables,
-                protected_dirs=internal,
-                evidence_dir=evidence_dir,
-                artifact_store=artifact_store,
-            ),
-            GetGitDiffTool(root, max_output_chars=max_output_chars, protected_dirs=internal),
-        ]
+        SearchCodeTool(root, max_output_chars=max_output_chars, protected_dirs=internal),
+        ReadFileTool(root, max_output_chars=max_output_chars, protected_dirs=internal),
+        ApplyPatchTool(root, max_output_chars=max_output_chars, protected_dirs=internal),
+        RunTestsTool(
+            root,
+            max_output_chars=max_output_chars,
+            default_timeout_seconds=test_timeout_seconds,
+            python_executable=test_python_executable,
+            pythonpath_entries=test_pythonpath_entries,
+            pytest_config=pytest_config,
+            environment_variables=test_environment_variables,
+            protected_dirs=internal,
+            evidence_dir=evidence_dir,
+            artifact_store=artifact_store,
+        ),
+        GetGitDiffTool(root, max_output_chars=max_output_chars, protected_dirs=internal),
+    ]
     if artifact_store is not None:
         from tracefix.tools.artifacts import ReadToolArtifactTool, SearchToolArtifactTool
 
         tools.extend((ReadToolArtifactTool(artifact_store), SearchToolArtifactTool(artifact_store)))
+    if task_state is not None:
+        from tracefix.tools.task_state import GetTaskStateTool, UpdateTaskStateTool
+
+        tools.extend((GetTaskStateTool(task_state), UpdateTaskStateTool(task_state)))
     if skills_enabled:
         from tracefix.tools.skills import SkillActivationTool
 

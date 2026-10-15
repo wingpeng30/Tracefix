@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import shlex
 import shutil
 import subprocess
 import tempfile
@@ -13,6 +14,7 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
+from tracefix.capabilities import CallerOrigin, independent_validation_dispatcher
 from tracefix.docker_backend import DockerToolBackend
 from tracefix.runtime import RunConfig, TraceFixRunner
 
@@ -85,12 +87,19 @@ def prepare_image(requirements: Path | None, output: Path) -> dict[str, Any]:
 
 def verify_docker_patch(run_dir: Path, config: RunConfig,
                         manifest: dict[str, Any], result: dict[str, Any],
-                        patch: bytes) -> dict[str, Any]:
+                        patch: bytes, *,
+                        regression_targets: tuple[str, ...] = ()) -> dict[str, Any]:
     """Reapply the recorded patch in a new container using the same image ID."""
     if config.docker_profile != "ordinary" or not config.docker_image_id:
         raise ValueError("Docker independent verification requires the ordinary profile")
     if not config.test_target or not config.source_import:
         raise ValueError("Docker verification requires a test target and import probe")
+    dispatcher = independent_validation_dispatcher(config.execution_profile)
+    from tracefix.tools.builtin import RunTestsTool
+
+    targets = tuple(dict.fromkeys((config.test_target, *regression_targets)))
+    for target in targets:
+        RunTestsTool._parse_command(f"pytest -q {shlex.quote(target)}")
     image_id = config.docker_image_id
     prep = result.get("workspace_preparation", {})
     if prep.get("profile") != "ordinary" or prep.get("image_id") != image_id:
@@ -113,33 +122,46 @@ def verify_docker_patch(run_dir: Path, config: RunConfig,
             task_id="tracefix-ordinary", input_root=verification_root,
             run_dir=verification_root, run_id=f"verify-{uuid4().hex}",
             timeout_seconds=min(120, int(config.agent_config.wall_time_seconds)),
-            profile="ordinary", image_id=image_id,
+            profile="ordinary", image_id=image_id, execution_profile=config.execution_profile,
         )
         try:
+            environment = (
+                dict(config.environment_recipe.environment_variables)
+                if config.environment_recipe is not None else {}
+            )
+            environment.update(config.test_environment_variables)
             registry = backend.prepare(
                 commit, source, Path(__file__).resolve().parents[2],
                 source_import_probe=config.source_import,
+                environment_variables=environment,
+                execution_profile=config.execution_profile,
             )
             from tracefix.messages import ToolCall
 
-            apply_result = registry.get("apply_patch").execute(ToolCall(
+            apply_result = dispatcher.invoke(registry.get("apply_patch"), ToolCall(
                 id="independent-patch", name="apply_patch",
                 arguments={"patch": patch.decode("utf-8")},
-            ))
+            ), CallerOrigin.INDEPENDENT_VALIDATION)
             if not apply_result.success:
                 raise ValueError(f"patch could not be applied: {apply_result.error}")
-            test_result = registry.get("run_tests").execute(ToolCall(
-                id="independent-test", name="run_tests",
-                arguments={"command": f"pytest -q {config.test_target}"},
-            ))
+            tests = []
+            for index, target in enumerate(targets):
+                test_result = dispatcher.invoke(registry.get("run_tests"), ToolCall(
+                    id=f"independent-test-{index}", name="run_tests",
+                    arguments={"command": f"pytest -q {shlex.quote(target)}"},
+                ), CallerOrigin.INDEPENDENT_VALIDATION)
+                tests.append({"target": target, "test": test_result.model_dump(mode="json"),
+                              "passed": test_result.success
+                              and isinstance(test_result.output, dict)
+                              and test_result.output.get("test_status") == "passed"})
             backend.export_evidence()
             record = {
                 "schema_version": 1,
                 "backend": "docker", "source_commit": commit,
                 "patch_sha256": patch_hash, "test_target": config.test_target,
                 "image_id": image_id, "preparation": backend.workspace_preparation,
-                "test": test_result.model_dump(mode="json"),
-                "passed": test_result.success and test_result.output.get("test_status") == "passed",
+                "test": tests[0]["test"], "targets": tests,
+                "passed": all(row["passed"] for row in tests),
             }
         finally:
             backend.close(remove=True)

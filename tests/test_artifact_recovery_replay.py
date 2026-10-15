@@ -51,6 +51,22 @@ def test_replay_adapter_marks_synthetic_usage_as_known_zero_cost() -> None:
     assert client.calls == 1
 
 
+def test_composite_seed_can_be_reopened_and_recalled_without_test_evidence(tmp_path) -> None:
+    from examples.replay_artifact_recovery import _seed_memory, _source
+    from tracefix.memory import ExperienceStore
+    from tracefix.memory_domain import EvidenceLevel
+
+    repo = _source(tmp_path, composite=True)
+    memory_dir = tmp_path / "memory"
+    _seed_memory(repo, memory_dir)
+    reopened = ExperienceStore(memory_dir, repo)
+    record = reopened.show("pagination-decision")
+    assert record["versions"][0]["evidence"]["latest_test"] is None
+    bundle = reopened.recall_bundle("分页 pagination")
+    assert len(bundle.items) == 1
+    assert bundle.items[0].evidence is EvidenceLevel.USER_STATED
+
+
 def test_recovery_replay_uses_search_locator_and_reads_before_patch() -> None:
     failed_test = _message("run_tests", {"test_status": "test_failure"}, success=False)
     search_result = _message(

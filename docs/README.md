@@ -13,6 +13,11 @@
 - [`maintenance/2026-10-14-harness-comparison-and-improvements.md`](maintenance/2026-10-14-harness-comparison-and-improvements.md)：DeepSeek Harness、Codex、Claude Code 的官方资料/源码比较，及记忆、沙盒、执行、上下文等候选改进与验收。
 - [`tasks/2026-10-14-harness-foundations-implementation.md`](tasks/2026-10-14-harness-foundations-implementation.md)：harness 前四项的阶段实施计划、工程门和逐阶段完成清单；阶段进度以当前状态入口为准。
 - [`experience-memory.md`](experience-memory.md)：候选分支有类型知识记忆的证据等级、checkout 失效、召回、管理命令和 v1→v2 迁移说明。
+- [`tool-artifacts.md`](tool-artifacts.md)：候选分支 G2 的 CLI/TOML/Python 启用方法、产物读取搜索、配额、脱敏和恢复规则。
+- [`task-state.md`](task-state.md)：候选分支 G3 TaskState 的字段、模型更新权限、压缩锚点、checkpoint 与恢复约束。
+- [`capability-policy.md`](capability-policy.md)：统一执行策略、功能准入、local/ordinary Docker矩阵、独立验收和零供应商组合入口；实际验收边界见当前状态。
+- [`tasks/2026-10-15-g4-local-completion.md`](tasks/2026-10-15-g4-local-completion.md)：用户要求不上传后的G4本地补齐、环境诊断、测试及安装包原始证据。
+- [`tasks/2026-10-15-g4-environment-acceptance.md`](tasks/2026-10-15-g4-environment-acceptance.md)：获准下载依赖/镜像后的G4环境补齐、真实Docker/Serena组合与双版本本地工程验收。
 - [`roadmap.md`](roadmap.md)与[`development-history.md`](development-history.md)：近期工作和具体证据。
 - [`experiments/2026-10-11-abc-full30-comparison.md`](experiments/2026-10-11-abc-full30-comparison.md)：最新A/B/修复后C同题30题横向比较。
 - [`handoffs/2026-09-29-agent-harness.md`](handoffs/2026-09-29-agent-harness.md)：历史交接日志，先按顶部当前入口阅读。

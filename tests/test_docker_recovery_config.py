@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+from tracefix.features import resolve_features
 from tracefix.runtime import RunConfig, config_identity_sha256
 
 
@@ -27,7 +28,9 @@ def test_recovery_rejects_unsupported_backends(backend, profile):
     if profile == "synthetic":
         values["docker_image_id"] = "sha256:" + "a" * 64
     with pytest.raises(ValueError, match="ordinary Docker backend"):
-        RunConfig(repo=Path("."), task="inspect", docker_recovery_enabled=True, **values)
+        resolve_features(RunConfig(
+            repo=Path("."), task="inspect", docker_recovery_enabled=True, **values
+        ))
 
 
 def test_recovery_accepts_explicit_ordinary_profile():

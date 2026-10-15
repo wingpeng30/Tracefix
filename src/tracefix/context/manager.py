@@ -467,11 +467,22 @@ class ContextManager:
             return self._head_tail(content, head, tail)
         if not isinstance(payload, dict):
             return self._head_tail(content, head, tail)
-        output_text = json.dumps(payload.get("output"), ensure_ascii=False, separators=(",", ":"))
+        output = payload.get("output")
+        controls = {}
+        if payload.get("tool_name") in {"get_task_state", "update_task_state"} and isinstance(
+            output, dict
+        ):
+            controls = {key: output[key] for key in ("revision", "evidence_role") if key in output}
+            ids = output.get("created_ids")
+            if isinstance(ids, list):
+                controls["created_ids"] = [value[:128] for value in ids[:16]
+                                           if isinstance(value, str)]
+        output_text = json.dumps(output, ensure_ascii=False, separators=(",", ":"))
         payload["output"] = {
             "_tracefix_pruned": True,
             "original_chars": len(output_text),
             "content": self._head_tail(output_text, head, tail),
+            **controls,
         }
         serialized = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
         if len(serialized) <= self.config.tool_result_threshold_chars:

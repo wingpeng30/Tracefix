@@ -1,3 +1,4 @@
+import hashlib
 import json
 from collections import deque
 
@@ -23,6 +24,7 @@ from tracefix import (
     ToolSpec,
     TraceEventType,
 )
+from tracefix.task_state import TaskReference, TaskStateRenderer, TaskStateSession
 
 
 def _tool_pair(number: int, output: str = "ok") -> tuple[Message, Message]:
@@ -86,6 +88,30 @@ def test_oversized_tool_result_is_pruned_as_valid_json() -> None:
     assert "A" * 700 in (messages[-1].content or "")
 
 
+@pytest.mark.parametrize("name", ["get_task_state", "update_task_state"])
+def test_task_state_revision_and_item_ids_survive_repeated_tool_pruning(name) -> None:
+    call = ToolCall(id="task-state-control", name=name)
+    result = ToolResult(call_id=call.id, tool_name=name, success=True, output={
+        "revision": 11, "created_ids": ["plan-1"], "evidence_role": "working_state_only",
+        "state": {"requirements": ["retained user text" * 1000]},
+    })
+    history = _history((
+        Message(role=MessageRole.ASSISTANT, tool_calls=(call,)),
+        Message(role=MessageRole.TOOL, tool_call_id=call.id, content=result.model_dump_json()),
+    ))
+    manager = ContextManager(ContextConfig(
+        compaction_trigger_tokens=9000, context_window_tokens=10000,
+        tool_result_threshold_chars=512, tool_result_head_chars=180, tool_result_tail_chars=80,
+    ))
+    for _ in range(2):
+        view = manager.prepare(history)
+        output = json.loads(view.messages[-1].content)["output"]
+        assert output["revision"] == 11
+        assert output["created_ids"] == ["plan-1"]
+        assert output["evidence_role"] == "working_state_only"
+        history = view.messages
+
+
 def test_pressure_compacts_whole_batches_into_deterministic_summary() -> None:
     messages = _history(
         _tool_pair(1, "first evidence" * 60),
@@ -129,8 +155,7 @@ def test_artifact_locators_survive_two_context_summary_generations() -> None:
         success=True,
         output={"artifact_refs": [{"artifact_id": artifact_id, "tool_name": "run_tests"}]},
     )
-    tool = Message(role=MessageRole.TOOL, content=result.model_dump_json(),
-                   tool_call_id=call.id)
+    tool = Message(role=MessageRole.TOOL, content=result.model_dump_json(), tool_call_id=call.id)
     manager = ContextManager(ContextConfig())
     first = manager._summarize_batches(((assistant, tool),))
     second = manager._summarize_batches(((first,),))
@@ -139,6 +164,85 @@ def test_artifact_locators_survive_two_context_summary_generations() -> None:
     assert second.content.count(artifact_id) >= 2
     assert '"stream":"stdout"' in second.content
     assert '"stream":"stderr"' in second.content
+
+
+def test_task_state_anchor_survives_two_threshold_compactions() -> None:
+    task = "Keep the parser behavior and preserve the original artifact reference."
+    proof = {
+        "issuer": "tracefix-host-v1",
+        "message_id": "user-task-state",
+        "turn": 1,
+        "content_sha256": hashlib.sha256(task.encode("utf-8")).hexdigest(),
+    }
+    session = TaskStateSession()
+    session.add_user_input(
+        message_id="user-task-state",
+        turn=1,
+        content=task,
+        receipt=proof,
+        receipt_verified=True,
+    )
+    state, _ = session.update(
+        session.snapshot().revision,
+        [{"action": "add", "collection": "plan", "text": "Inspect the parser."}],
+    )
+    session.add_reference(
+        TaskReference(
+            kind="artifact",
+            reference_id="a" * 32,
+            sha256="b" * 64,
+            source_message_id="user-task-state",
+        )
+    )
+    state = session.snapshot()
+
+    def anchor() -> Message:
+        return Message(
+            role=MessageRole.USER,
+            content=TaskStateRenderer.render(session.snapshot()),
+            metadata={"kind": "task_fact_anchor"},
+        )
+
+    first_history = (
+        *_history(*(_tool_pair(i, "old evidence " * 100) for i in range(4))),
+        anchor(),
+    )
+    manager = ContextManager(
+        ContextConfig(
+            context_window_tokens=20_000,
+            compaction_trigger_tokens=500,
+            retain_ratio=0.001,
+            output_reserve_tokens=1,
+            safety_margin_ratio=0,
+        )
+    )
+    projection = ContextSessionState()
+    first = manager.prepare(first_history, state=projection)
+    assert first.compacted and projection.epoch == 1
+    assert any(message.metadata.get("kind") == "task_fact_anchor" for message in first.messages)
+
+    state, _ = session.update(
+        state.revision,
+        [{"action": "add", "collection": "blockers", "text": "Check the regression fixture."}],
+    )
+    appended_pairs = tuple(_tool_pair(i, "new evidence " * 100) for i in range(5, 9))
+    second_history = (
+        *first_history,
+        *(message for pair in appended_pairs for message in pair),
+        anchor(),
+    )
+    second = manager.prepare(second_history, state=projection)
+    assert second.compacted and projection.epoch == 2
+    final_anchor = next(
+        message for message in second.messages if message.metadata.get("kind") == "task_fact_anchor"
+    )
+    rendered_state = json.loads(final_anchor.content or "{}")
+    assert [item["text"] for item in rendered_state["requirements"]] == [task]
+    assert [item["text"] for item in rendered_state["plan"]] == ["Inspect the parser."]
+    assert [item["reference_id"] for item in rendered_state["references"]] == ["a" * 32]
+    assert [item["text"] for item in rendered_state["blockers"]] == [
+        "Check the regression fixture."
+    ]
 
 
 def test_latest_failed_test_is_kept_verbatim_and_old_tools_are_summarized() -> None:
@@ -160,9 +264,7 @@ def test_latest_failed_test_is_kept_verbatim_and_old_tools_are_summarized() -> N
         )
         for call in old_calls
     )
-    test_call = ToolCall(
-        id="failed-test", name="run_tests", arguments={"command": "pytest -q"}
-    )
+    test_call = ToolCall(id="failed-test", name="run_tests", arguments={"command": "pytest -q"})
     failed_test = (
         Message(role=MessageRole.ASSISTANT, tool_calls=(test_call,)),
         Message(
@@ -210,19 +312,27 @@ def test_early_failed_test_stays_verbatim_without_pin_all_later_batches() -> Non
         Message(role=MessageRole.USER, content="fix"),
         Message(role=MessageRole.ASSISTANT, tool_calls=(test_call,)),
         Message(
-            role=MessageRole.TOOL, tool_call_id=test_call.id,
+            role=MessageRole.TOOL,
+            tool_call_id=test_call.id,
             content=ToolResult(
-                call_id=test_call.id, tool_name="run_tests", success=False,
-                error="assertion failed", output={"stderr": "early failure"},
+                call_id=test_call.id,
+                tool_name="run_tests",
+                success=False,
+                error="assertion failed",
+                output={"stderr": "early failure"},
             ).model_dump_json(),
         ),
         *_tool_pair(1, "old evidence " * 200),
         *_tool_pair(2, "latest evidence " * 200),
     )
-    view = ContextManager(ContextConfig(
-        compaction_trigger_tokens=300, context_window_tokens=10_000,
-        retain_ratio=0.1, tool_result_threshold_chars=10_000,
-    )).prepare(messages)
+    view = ContextManager(
+        ContextConfig(
+            compaction_trigger_tokens=300,
+            context_window_tokens=10_000,
+            retain_ratio=0.1,
+            tool_result_threshold_chars=10_000,
+        )
+    ).prepare(messages)
     assert view.compacted
     assert view.batches_compacted >= 1
     assert any(message.tool_call_id == "early-failure" for message in view.messages)
@@ -326,12 +436,9 @@ def test_agent_uses_compacted_view_while_full_history_and_trace_remain() -> None
     state = agent.run("修复")
     assert len(agent.history.snapshot()) == 7
     assert not any(
-        message.metadata.get("tracefix_context_summary")
-        for message in agent.history.snapshot()
+        message.metadata.get("tracefix_context_summary") for message in agent.history.snapshot()
     )
-    assert any(
-        message.metadata.get("tracefix_context_summary") for message in llm.requests[-1]
-    )
+    assert any(message.metadata.get("tracefix_context_summary") for message in llm.requests[-1])
     assert state.context_metrics.compaction_count >= 1
     event_types = [event.event_type for event in sink.events]
     assert TraceEventType.CONTEXT_PREPARED in event_types
@@ -342,6 +449,7 @@ def test_optional_request_view_records_actual_compacted_messages_and_redacts_sec
     monkeypatch,
 ) -> None:
     """请求视图应等于模型输入，同时不泄漏环境中的非 sk- 形式密钥。"""
+
     class Sink:
         def __init__(self):
             self.events = []
@@ -377,8 +485,7 @@ def test_optional_request_view_records_actual_compacted_messages_and_redacts_sec
     agent.run(f"修复问题；临时凭据为 {secret}")
 
     views = [
-        event for event in sink.events
-        if event.event_type is TraceEventType.MODEL_REQUEST_VIEW
+        event for event in sink.events if event.event_type is TraceEventType.MODEL_REQUEST_VIEW
     ]
     assert len(views) == len(llm.requests) == 3
     assert views[-1].payload["context"]["compacted"] is True
@@ -406,9 +513,7 @@ def test_request_view_is_disabled_by_default() -> None:
 
     sink = Sink()
     MinimalAgent(_ScriptedLLM([_response(content="完成")]), trace_sink=sink).run("修复")
-    assert not any(
-        event.event_type is TraceEventType.MODEL_REQUEST_VIEW for event in sink.events
-    )
+    assert not any(event.event_type is TraceEventType.MODEL_REQUEST_VIEW for event in sink.events)
 
 
 def test_ratio_threshold_uses_output_reserve_and_triggers_at_eighty_percent() -> None:
@@ -418,19 +523,25 @@ def test_ratio_threshold_uses_output_reserve_and_triggers_at_eighty_percent() ->
     manager = ContextManager(config)
     trigger = config.trigger_tokens(output_reserve_tokens=100)
     below = manager.prepare(
-        messages, state=state, output_reserve_tokens=100,
+        messages,
+        state=state,
+        output_reserve_tokens=100,
         token_counter=lambda _messages, _tools: trigger - 1,
     )
     assert below.compacted is False
     at_boundary = ContextManager(config).prepare(
-        messages, state=state, output_reserve_tokens=100,
+        messages,
+        state=state,
+        output_reserve_tokens=100,
         token_counter=lambda _messages, _tools: trigger,
     )
     assert at_boundary.compaction_no_op is True
     assert at_boundary.compaction_target_tokens == config.target_tokens(100)
     assert at_boundary.count_method == "official-tokenizer-estimate"
     changed_reserve = ContextManager(config).prepare(
-        messages, state=ContextSessionState(), output_reserve_tokens=200,
+        messages,
+        state=ContextSessionState(),
+        output_reserve_tokens=200,
         token_counter=lambda _messages, _tools: config.trigger_tokens(200),
     )
     assert changed_reserve.compaction_no_op is True
@@ -443,13 +554,18 @@ def test_minimum_safe_user_content_is_rejected_on_every_compaction_fallback() ->
         Message(role=MessageRole.SYSTEM, content="system"),
         Message(role=MessageRole.USER, content="must remain " * 100),
     )
-    manager = ContextManager(ContextConfig(
-        context_window_tokens=500, output_reserve_tokens=50, safety_margin_ratio=0.01,
-    ))
+    manager = ContextManager(
+        ContextConfig(
+            context_window_tokens=500,
+            output_reserve_tokens=50,
+            safety_margin_ratio=0.01,
+        )
+    )
     capacity = manager.config.available_input_tokens(50)
     with pytest.raises(ContextBudgetExceeded, match="minimum safe request"):
         manager.prepare(
-            messages, output_reserve_tokens=50,
+            messages,
+            output_reserve_tokens=50,
             token_counter=lambda _messages, _tools: capacity + 1,
         )
 
@@ -460,12 +576,17 @@ def test_projection_reuses_prefix_and_appends_dynamic_system_messages_in_order()
     manager = ContextManager(ContextConfig(compaction_trigger_tokens=100_000))
     schemas = (ToolSpec(name="read_file", description="read"),)
     first = manager.prepare(history, schemas, state=state)
-    skill = Message(role=MessageRole.USER, content="activated skill", metadata={
-        "kind": "skill_instructions", "trust_level": "untrusted_instruction_data",
-    })
+    skill = Message(
+        role=MessageRole.USER,
+        content="activated skill",
+        metadata={
+            "kind": "skill_instructions",
+            "trust_level": "untrusted_instruction_data",
+        },
+    )
     second = manager.prepare((*history, skill), schemas, state=state)
     assert second.projection_reused is True
-    assert second.messages[:len(first.messages)] == first.messages
+    assert second.messages[: len(first.messages)] == first.messages
     assert second.messages[-1] == skill
     assert second.messages[0].content == "system"
 
@@ -495,39 +616,57 @@ def test_three_user_corrections_and_dynamic_skill_survive_compaction_in_order() 
     for number, correction in enumerate(corrections, start=1):
         messages.extend(_tool_pair(number, f"evidence {number} " * 120))
         if number == 2:
-            messages.append(Message(
-                role=MessageRole.USER, content="skill instructions",
-                metadata={"kind": "skill_instructions", "version": "1",
-                          "trust_level": "untrusted_instruction_data"},
-            ))
-        messages.append(Message(role=MessageRole.USER, content=correction,
-                                metadata={"turn": number + 1}))
-    manager = ContextManager(ContextConfig(
-        compaction_trigger_tokens=300, context_window_tokens=100_000,
-        retain_ratio=0.1, tool_result_threshold_chars=10_000,
-    ))
+            messages.append(
+                Message(
+                    role=MessageRole.USER,
+                    content="skill instructions",
+                    metadata={
+                        "kind": "skill_instructions",
+                        "version": "1",
+                        "trust_level": "untrusted_instruction_data",
+                    },
+                )
+            )
+        messages.append(
+            Message(role=MessageRole.USER, content=correction, metadata={"turn": number + 1})
+        )
+    manager = ContextManager(
+        ContextConfig(
+            compaction_trigger_tokens=300,
+            context_window_tokens=100_000,
+            retain_ratio=0.1,
+            tool_result_threshold_chars=10_000,
+        )
+    )
     view = manager.prepare(tuple(messages))
-    visible_users = [m.content for m in view.messages if m.role is MessageRole.USER
-                     and m.metadata.get("kind") not in {"context_summary", "skill_instructions"}]
+    visible_users = [
+        m.content
+        for m in view.messages
+        if m.role is MessageRole.USER
+        and m.metadata.get("kind") not in {"context_summary", "skill_instructions"}
+    ]
     assert visible_users == [first, *corrections]
     assert [m.role for m in view.messages if m.content == "skill instructions"] == [
         MessageRole.USER,
     ]
     ordered = (first, corrections[0], "skill instructions", corrections[1], corrections[2])
-    positions = [next(i for i, message in enumerate(view.messages)
-                      if message.content == target) for target in ordered]
+    positions = [
+        next(i for i, message in enumerate(view.messages) if message.content == target)
+        for target in ordered
+    ]
     assert positions == sorted(positions)
 
 
 def test_compaction_commits_once_then_reuses_until_the_next_threshold() -> None:
-    history = _history(*(
-        _tool_pair(number, f"result {number} " + "x" * 1_500)
-        for number in range(1, 21)
-    ))
+    history = _history(
+        *(_tool_pair(number, f"result {number} " + "x" * 1_500) for number in range(1, 21))
+    )
     state = ContextSessionState()
     config = ContextConfig(
-        context_window_tokens=100_000, compaction_trigger_tokens=20_000,
-        retain_ratio=0.2, tool_result_threshold_chars=10_000,
+        context_window_tokens=100_000,
+        compaction_trigger_tokens=20_000,
+        retain_ratio=0.2,
+        tool_result_threshold_chars=10_000,
     )
     manager = ContextManager(config)
     first = manager.prepare(history, state=state, force=True)
@@ -537,7 +676,7 @@ def test_compaction_commits_once_then_reuses_until_the_next_threshold() -> None:
     reused = manager.prepare(appended, state=state)
     assert reused.projection_reused is True
     assert reused.compacted is False
-    assert reused.messages[:len(first.messages)] == first.messages
+    assert reused.messages[: len(first.messages)] == first.messages
     pressured = (*appended, Message(role=MessageRole.ASSISTANT, content="z" * 100_000))
     second_epoch = manager.prepare(pressured, state=state)
     assert second_epoch.compacted is True
@@ -552,14 +691,19 @@ def test_tokenizer_counter_method_and_partial_tool_visibility_are_explicit() -> 
         method = "deepseek-recipe-v41"
 
     view = ContextManager(ContextConfig(compaction_trigger_tokens=100_000)).prepare(
-        messages, token_counter=lambda _messages, _tools: Estimate(),
+        messages,
+        token_counter=lambda _messages, _tools: Estimate(),
     )
     assert view.estimated_tokens_after == 7
     assert view.count_method == "deepseek-recipe-v41"
-    pruned = ContextManager(ContextConfig(
-        compaction_trigger_tokens=100_000, tool_result_threshold_chars=512,
-        tool_result_head_chars=180, tool_result_tail_chars=80,
-    )).prepare(_history(_tool_pair(2, "x" * 800)))
+    pruned = ContextManager(
+        ContextConfig(
+            compaction_trigger_tokens=100_000,
+            tool_result_threshold_chars=512,
+            tool_result_head_chars=180,
+            tool_result_tail_chars=80,
+        )
+    ).prepare(_history(_tool_pair(2, "x" * 800)))
     tool_result = next(message for message in pruned.messages if message.role is MessageRole.TOOL)
     assert tool_result.metadata["context_pruned"] is True
     assert tool_result.tool_call_id in pruned.pruned_tool_call_ids
@@ -587,12 +731,16 @@ def test_tokenizer_identity_is_pinned_and_restored_with_context_state() -> None:
     history = _history(_tool_pair(1, "content"))
 
     def count(identity):
-        return lambda _messages, _tools: type("Bound", (), {
-            "tokens": 17,
-            "status": "estimate",
-            "method": "deepseek-recipe-v41",
-            "identity": identity,
-        })()
+        return lambda _messages, _tools: type(
+            "Bound",
+            (),
+            {
+                "tokens": 17,
+                "status": "estimate",
+                "method": "deepseek-recipe-v41",
+                "identity": identity,
+            },
+        )()
 
     state = ContextSessionState()
     config = ContextConfig(compaction_trigger_tokens=100_000)
@@ -618,17 +766,23 @@ def test_damaged_pinned_tokenizer_is_blocked_but_unavailable_estimates_fall_back
 
     with pytest.raises(ContextBudgetExceeded, match="identity could not be verified"):
         ContextManager(config).prepare(
-            history, state=state, token_counter=lambda _messages, _tools: Unavailable(),
+            history,
+            state=state,
+            token_counter=lambda _messages, _tools: Unavailable(),
         )
 
     fallback = ContextManager(config).prepare(
         history,
         state=ContextSessionState(),
-        token_counter=lambda _messages, _tools: type("Unavailable", (), {
-            "tokens": None,
-            "status": "unavailable",
-            "method": "deepseek-recipe-v41",
-            "identity": "unsupported request settings",
-        })(),
+        token_counter=lambda _messages, _tools: type(
+            "Unavailable",
+            (),
+            {
+                "tokens": None,
+                "status": "unavailable",
+                "method": "deepseek-recipe-v41",
+                "identity": "unsupported request settings",
+            },
+        )(),
     )
     assert fallback.count_method == "tracefix-json-estimate-fallback"

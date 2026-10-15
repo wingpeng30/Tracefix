@@ -74,9 +74,9 @@ def test_toml_approved_skills_directory_resolves_outside_repository(tmp_path):
     settings = _ordinary_settings(args)
     settings["test_python_executable"] = Path(sys.executable)
     settings["output_dir"] = tmp_path / "runs"
-    assert next(
-        item for item in doctor(settings)["checks"] if item["name"] == "skills_directory"
-    )["ok"]
+    checks = {item["name"]: item for item in doctor(settings)["checks"]}
+    assert checks["skills_directory"]["ok"]
+    assert checks["feature_combination"]["ok"]
     assert repo.is_dir()
 
 
