@@ -1,5 +1,7 @@
 # TraceFix
 
+2026-10-16 已将原工作区与G0—G4候选分别保存到GitHub；分支、验收边界与后续入口见[保存记录](docs/maintenance/2026-10-16-github-save.md)。
+
 新会话与项目进度先看[当前状态](docs/current-status.md)，这是固定交接入口。最新同题30题A/B/上下文修复后C
 主成功为11/30、11/30、19/30，详见[ABC报告](docs/experiments/2026-10-11-abc-full30-comparison.md)。
 该实验之后工作区已实现统一LLM网关及长驻tokenizer worker，定向离线验证通过；实际提速和完整发布门槛仍待验证。

@@ -8,6 +8,7 @@
 
 ## 新任务交接入口
 
+- [2026-10-16 GitHub保存记录](maintenance/2026-10-16-github-save.md)：原工作区与G4候选的远端提交、保存范围、验证边界与下一阶段入口。
 - [`current-status.md`](current-status.md)：当前代码身份、最新结果、验证边界与下一任务起点。
 - [`security.md`](security.md)：普通任务、文件工具、子进程、Docker 和提示注入的基础安全约定。
 - [`maintenance/2026-10-14-harness-comparison-and-improvements.md`](maintenance/2026-10-14-harness-comparison-and-improvements.md)：DeepSeek Harness、Codex、Claude Code 的官方资料/源码比较，及记忆、沙盒、执行、上下文等候选改进与验收。

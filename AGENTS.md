@@ -4,6 +4,13 @@
 [`docs/roadmap.md`](docs/roadmap.md)、[`docs/development-history.md`](docs/development-history.md)
 开头及当前状态引用的报告。不要以文件名日期、包版本号或旧交接末尾决定当前进度。
 
+## 2026-10-16 当前入口补充
+
+用户本轮已授权保存项目：原工作区0830b52、G0—G4候选2dfd759均已推送至各自分支。
+候选G4已有双Python及真实Docker/Serena本地验收；新提交CI需读实际结果，不借旧证据。
+没有合并main或发布。下一任务仅规划G5—G8，先读取固定状态及其引用的保存记录。
+下方旧日期的上传限制及实现状态保留历史归属。
+
 ## 当前状态提示（2026-10-15）
 
 - 候选分支 `codex/harness-foundations` 的 G0—G3阶段门已完成，远端最后核验G3提交为
