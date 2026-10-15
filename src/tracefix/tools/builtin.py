@@ -24,6 +24,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_valida
 
 from tracefix.artifacts import ArtifactStore
 from tracefix.exceptions import ToolExecutionError, ToolValidationError
+from tracefix.jobs.capture import LiveCaptureResult
 from tracefix.messages import ToolCall
 from tracefix.process_capture import ProcessCapture
 from tracefix.security import (
@@ -932,8 +933,6 @@ class RunTestsTool(_WorkspaceTool):
         command, timeout = list(prepared.command), prepared.timeout_seconds
         environment = dict(prepared.environment)
         started = prepared.started_monotonic
-        audit_path, audit_id = prepared.audit_path, prepared.audit_id
-        junit_path = prepared.junit_path
         source_sha_before = prepared.source_sha256_before
         try:
             artifact_refs: list[dict[str, object]] = []
@@ -1026,61 +1025,10 @@ class RunTestsTool(_WorkspaceTool):
                 completed = subprocess.CompletedProcess(
                     command, process.returncode, stdout_text, stderr_text
                 )
-            stdout, stdout_truncated = _truncate_text(completed.stdout, self.max_output_chars)
-            stderr, stderr_truncated = _truncate_text(completed.stderr, self.max_output_chars)
-            audit, audit_issue = self._read_agent_audit(audit_path, audit_id, completed.returncode)
-            test_stats, junit_issue = self._read_junit(junit_path)
-            phase_issue = self._validate_agent_phases(audit, test_stats)
-            source_sha_after = self._product_diff_sha()
-            outcome = judge_test_outcome(
-                returncode=completed.returncode, stdout=stdout, stderr=stderr,
-                audit=audit, counts=test_stats, audit_issue=audit_issue,
-                junit_issue=junit_issue, phase_issue=phase_issue,
-                source_before=source_sha_before, source_after=source_sha_after,
-            )
-            test_status, passed = outcome.test_status, outcome.passed
-            test_output = {
-                "command": command,
-                "returncode": completed.returncode,
-                "stdout": stdout,
-                "stderr": stderr,
-                "timed_out": False,
-                "test_status": test_status,
-                "test_counts": test_stats,
-                "audit_path": str(audit_path),
-                "junit_path": str(junit_path),
-                "audit": audit,
-                "diagnostic": audit_issue or junit_issue or phase_issue,
-                "source_sha256_before": source_sha_before,
-                "source_sha256_after": source_sha_after,
-            }
-            metadata: dict[str, object] = {
-                "truncated": stdout_truncated or stderr_truncated,
-                "process_started": True,
-            }
-            if self.artifact_store is not None:
-                # Keep the opaque locator before potentially large output fields so
-                # deterministic head/tail presentation preserves it.
-                test_output = {"artifact_refs": artifact_refs, **test_output}
-                metadata.update(
-                    {"artifact_incomplete": artifact_incomplete, "artifact_error": artifact_error}
-                )
-            return ToolResult(
-                call_id=call.id,
-                tool_name=self.spec.name,
-                success=passed,
-                output=test_output,
-                error=(
-                    None
-                    if passed
-                    else (
-                        f"pytest did not provide valid passing test evidence ({test_status})"
-                        if completed.returncode == 0
-                        else f"tests failed with exit code {completed.returncode}"
-                    )
-                ),
-                metadata=metadata,
-                duration_ms=(time.monotonic() - started) * 1000,
+            return self.evaluate_completed(
+                prepared, completed, artifact_refs=artifact_refs,
+                artifact_incomplete=artifact_incomplete, artifact_error=artifact_error,
+                artifacts_enabled=self.artifact_store is not None,
             )
         except subprocess.TimeoutExpired as exc:
             stdout, stdout_truncated = _truncate_text(
@@ -1111,6 +1059,112 @@ class RunTestsTool(_WorkspaceTool):
             raise ToolExecutionError(
                 f"cannot start test command: {exc}", context={"command": command}
             ) from exc
+
+    def evaluate_completed(
+        self, prepared: PreparedTest, completed: subprocess.CompletedProcess[str], *,
+        artifact_refs: list[dict[str, object]] | None = None,
+        artifact_incomplete: bool = False, artifact_error: str | None = None,
+        artifacts_enabled: bool = False,
+    ) -> ToolResult:
+        """One evidence/result assembler for immediate and scheduled pytest execution."""
+        call = ToolCall.model_validate_json(prepared.call_json)
+        command = list(prepared.command)
+        started = prepared.started_monotonic
+        audit_path, audit_id = prepared.audit_path, prepared.audit_id
+        junit_path = prepared.junit_path
+        source_sha_before = prepared.source_sha256_before
+        artifact_refs = artifact_refs or []
+        stdout, stdout_truncated = _truncate_text(completed.stdout, self.max_output_chars)
+        stderr, stderr_truncated = _truncate_text(completed.stderr, self.max_output_chars)
+        audit, audit_issue = self._read_agent_audit(audit_path, audit_id, completed.returncode)
+        test_stats, junit_issue = self._read_junit(junit_path)
+        phase_issue = self._validate_agent_phases(audit, test_stats)
+        source_sha_after = self._product_diff_sha()
+        outcome = judge_test_outcome(
+            returncode=completed.returncode, stdout=stdout, stderr=stderr,
+            audit=audit, counts=test_stats, audit_issue=audit_issue,
+            junit_issue=junit_issue, phase_issue=phase_issue,
+            source_before=source_sha_before, source_after=source_sha_after,
+        )
+        test_status, passed = outcome.test_status, outcome.passed
+        test_output = {
+            "command": command,
+            "returncode": completed.returncode,
+            "stdout": stdout,
+            "stderr": stderr,
+            "timed_out": False,
+            "test_status": test_status,
+            "test_counts": test_stats,
+            "audit_path": str(audit_path),
+            "junit_path": str(junit_path),
+            "audit": audit,
+            "diagnostic": audit_issue or junit_issue or phase_issue,
+            "source_sha256_before": source_sha_before,
+            "source_sha256_after": source_sha_after,
+        }
+        metadata: dict[str, object] = {
+            "truncated": stdout_truncated or stderr_truncated,
+            "process_started": True,
+        }
+        if artifacts_enabled:
+            # Keep the opaque locator before potentially large output fields so
+            # deterministic head/tail presentation preserves it.
+            test_output = {"artifact_refs": artifact_refs, **test_output}
+            metadata.update(
+                {"artifact_incomplete": artifact_incomplete, "artifact_error": artifact_error}
+            )
+        return ToolResult(
+            call_id=call.id,
+            tool_name=self.spec.name,
+            success=passed,
+            output=test_output,
+            error=(
+                None
+                if passed
+                else (
+                    f"pytest did not provide valid passing test evidence ({test_status})"
+                    if completed.returncode == 0
+                    else f"tests failed with exit code {completed.returncode}"
+                )
+            ),
+            metadata=metadata,
+            duration_ms=(time.monotonic() - started) * 1000,
+        )
+
+    def verify_prepared_source(self, prepared: PreparedTest) -> None:
+        if self._product_diff_sha() != prepared.source_sha256_before:
+            raise ToolValidationError("prepared test source changed before dispatch")
+
+    def evaluate_job_result(self, prepared: PreparedTest, capture: LiveCaptureResult) -> ToolResult:
+        """A cancelled/unknown process cannot qualify, regardless of text in its logs."""
+        refs = ([capture.artifact.model_dump(mode="json")]
+                if capture.artifact is not None else [])
+        if (capture.process_started is True and capture.tree_exit_confirmed
+                and capture.process_error is None and not capture.cancelled
+                and not capture.deadline_exceeded and capture.returncode is not None):
+            return self.evaluate_completed(
+                prepared, subprocess.CompletedProcess(list(prepared.command), capture.returncode,
+                                                      capture.stdout, capture.stderr),
+                artifact_refs=refs, artifact_incomplete=capture.incomplete,
+                artifact_error=capture.storage_error, artifacts_enabled=True,
+            )
+        status = ("timed_out" if capture.deadline_exceeded else "cancelled" if capture.cancelled
+                  else "failed_to_start" if capture.process_started is False else "outcome_unknown")
+        call = ToolCall.model_validate_json(prepared.call_json)
+        return ToolResult(
+            call_id=call.id, tool_name=self.spec.name, success=False,
+            output={"artifact_refs": refs, "command": list(prepared.command),
+                    "returncode": capture.returncode, "test_status": status,
+                    "stdout": capture.stdout, "stderr": capture.stderr,
+                    "timed_out": capture.deadline_exceeded},
+            error=f"test job did not produce eligible evidence ({status})",
+            metadata={"process_started": capture.process_started,
+                      "tree_exit_confirmed": capture.tree_exit_confirmed,
+                      "artifact_incomplete": capture.incomplete,
+                      "artifact_error": capture.storage_error,
+                      "process_error": capture.process_error},
+            duration_ms=(time.monotonic() - prepared.started_monotonic) * 1000,
+        )
 
     def prepare(self, call: ToolCall) -> tuple[list[str], float]:
         """Reject invalid calls and checkout configuration before consuming test quota."""
