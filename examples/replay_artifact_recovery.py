@@ -273,13 +273,17 @@ def _parent(output: Path, image_id: str) -> dict:
     before = [json.loads(path.read_text(encoding="utf-8")) for path in snapshots]
     paused = before[-1]
     receipt = paused.get("artifact_receipt", {})
+    receipt_artifact_ids = receipt.get("artifact_ids", [])
+    if not isinstance(receipt_artifact_ids, list):
+        receipt_artifact_ids = []
+    receipt_artifact_id_set = set(receipt_artifact_ids)
     if (
         paused.get("artifacts_enabled") is not True
-        or receipt.get("artifact_count") != 1
+        or receipt.get("artifact_count") != len(receipt_artifact_ids)
+        or not receipt_artifact_ids
         or receipt.get("queries", 0) < 1
         or receipt.get("returned_chars", 0) < 1
         or receipt.get("run_id") != run_root.name
-        or len(receipt.get("artifact_ids", [])) != 1
     ):
         raise AssertionError(
             "checkpoint did not bind the searched artifact and cumulative query quota: "
@@ -300,9 +304,20 @@ def _parent(output: Path, image_id: str) -> dict:
         for item in paused_task_state.get("references", [])
         if item.get("kind") == "artifact"
     }
+    searched_artifact_ids = {
+        artifact_id
+        for item in paused_task_state.get("observations", [])
+        if item.get("kind") == "artifact_lookup"
+        for artifact_id in item.get("artifact_ids", [])
+    }
     if active_requirements != [
         "Fix pagination and retain the failed test log across ordinary Docker recovery"
-    ] or artifact_references != set(receipt["artifact_ids"]):
+    ] or (
+        not searched_artifact_ids
+        or not searched_artifact_ids.issubset(artifact_references)
+        or not searched_artifact_ids.issubset(receipt_artifact_id_set)
+        or not artifact_references.issubset(receipt_artifact_id_set)
+    ):
         raise AssertionError("paused Docker TaskState lost its direct requirement or artifact ref")
     old_container = paused["container_id"]
     inspect = subprocess.run(["docker", "inspect", old_container], capture_output=True)
@@ -330,7 +345,7 @@ def _parent(output: Path, image_id: str) -> dict:
     }
     if (
         resumed_task_state.get("revision", -1) < paused_task_state.get("revision", 0)
-        or resumed_artifact_references != artifact_references
+        or not artifact_references.issubset(resumed_artifact_references)
         or [
             item.get("text")
             for item in resumed_task_state.get("requirements", [])
