@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import os
 import subprocess
 import sys
 from datetime import UTC, datetime
@@ -20,10 +21,13 @@ from tracefix.runtime import RunConfig, RunResult, TraceFixRunner
 
 
 @pytest.mark.parametrize("memory", [False, True])
+@pytest.mark.parametrize("jobs", [False, True])
 def test_restored_runner_retains_actual_tool_history_tests_and_cumulative_usage(
-    tmp_path, monkeypatch, memory,
+    tmp_path, monkeypatch, memory, jobs,
 ):
     """Host adapter supplements the separately required real Linux Docker matrix."""
+    if jobs and os.name != "nt":
+        pytest.skip("Windows host adapter uses Job Object; real Linux ordinary CI covers Docker")
     from examples.replay_ordinary import _git
     from tracefix.capabilities import CallerOrigin
     from tracefix.docker_recovery import tool_identity
@@ -51,6 +55,7 @@ def test_restored_runner_retains_actual_tool_history_tests_and_cumulative_usage(
         def __init__(self, **kwargs):
             self.root = kwargs["run_dir"]
             self.image_id = kwargs["image_id"]
+            self.timeout_seconds = kwargs["timeout_seconds"]
             self.container_id = uuid4().hex * 2
             self.repo_map = None
             self.protected = {".tracefix-build-tmp"}
@@ -65,11 +70,24 @@ def test_restored_runner_retains_actual_tool_history_tests_and_cumulative_usage(
                 self.protected.update(saved["bridge_state"]["protected_dirs"])
                 if ".tracefix-test-tmp" in self.protected:
                     (self.workspace / ".tracefix-test-tmp").mkdir()
+            artifacts = None
+            if jobs:
+                from tracefix.artifacts import ArtifactStore
+
+                self.job_settings = kwargs["job_settings"]
+                artifacts = ArtifactStore(self.root / ("adapter-artifacts-" + uuid4().hex),
+                    workspace=self.workspace, run_id=self.job_settings.logical_run_id,
+                    streaming_enabled=True)
+                if kwargs.get("recovery_snapshot"):
+                    with (self.root / saved["artifact_archive"]).open("rb") as stream:
+                        artifacts.import_archive(stream)
+            self.artifacts = artifacts
             self.tools = create_default_tool_registry(
                 self.workspace, evidence_dir=self.root / "test-evidence",
                 protected_dirs=self.protected, skills_enabled=kwargs["skills_enabled"],
                 skills_root=kwargs.get("skills_root"), skill_limits=kwargs["skill_limits"],
                 test_python_executable=sys.executable,
+                artifact_store=artifacts,
             )
             from tracefix.capabilities import (
                 CapabilityCatalog,
@@ -79,15 +97,20 @@ def test_restored_runner_retains_actual_tool_history_tests_and_cumulative_usage(
             )
             from tracefix.skill_snapshot import EMPTY_SKILL_BUNDLE_SHA256
 
-            executor_catalog = CapabilityCatalog.for_tool_names(
-                spec.name for spec in self.tools.specs()
-            )
+            self.executor_specs = self.tools.specs()
+            executor_names = list(self.tools.names)
+            if jobs:
+                from tracefix.jobs.constants import JOB_CONTROL_CAPABILITIES
+
+                executor_names.extend(JOB_CONTROL_CAPABILITIES)
+            executor_catalog = CapabilityCatalog.for_tool_names(executor_names)
             executor_policy = CapabilityPolicy(executor_catalog, kwargs["execution_profile"])
             control_policy = host_control_policy(kwargs["execution_profile"])
             policy_document = executor_policy_document(
                 kwargs["execution_profile"],
                 artifacts_enabled=kwargs["artifacts_enabled"],
                 skills_enabled=kwargs["skills_enabled"],
+                **({"jobs_enabled": True} if jobs else {}),
             )
             policy_bytes = json.dumps(
                 policy_document,
@@ -106,6 +129,37 @@ def test_restored_runner_retains_actual_tool_history_tests_and_cumulative_usage(
                 ToolCall(id=uuid4().hex, name=name, arguments=args)),
                 capability_catalog_sha256=self.capability_catalog_sha256,
                 capability_policy_sha256=self.capability_policy_sha256)
+            if jobs:
+                from tracefix.agent_bridge import _execute_job_control
+                from tracefix.jobs.process_tree import WindowsJobScope
+                from tracefix.jobs.protocol import WorkerTicketMirror
+                from tracefix.jobs.service import JobService
+                from tracefix.jobs.worker import JobWorkerController
+
+                settings, executor = self.job_settings, self.tools.get("run_tests")
+                tickets = WorkerTicketMirror(run_id=settings.logical_run_id,
+                    worker_epoch=settings.worker_epoch, host_owner_epoch=settings.host_owner_epoch)
+                service = JobService(self.root / ("adapter-worker-" + settings.worker_epoch),
+                    run_id=settings.logical_run_id, checkout_id="f" * 64, ledger=tickets,
+                    artifact_store=artifacts, test_tool=executor, authorize=lambda call: None,
+                    scope_factory=WindowsJobScope, evaluate=executor.evaluate_job_result,
+                    verify_source=executor.verify_prepared_source,
+                    session_deadline=settings.session_deadline)
+                self.worker = JobWorkerController(service=service, tickets=tickets,
+                                                    authorize=lambda capability: None)
+                original = self.session.call
+
+                def call(name, args):
+                    if name.startswith("__job_"):
+                        return _execute_job_control(self.worker,
+                            ToolCall(id=uuid4().hex, name=name, arguments=args))
+                    return original(name, args)
+
+                self.session.call = call
+                self.job_protocol = self.session.job_protocol = {
+                    "version": 1, "worker_epoch": settings.worker_epoch,
+                    "host_owner_epoch": settings.host_owner_epoch,
+                    "logical_run_id": settings.logical_run_id, "context_sha256": "f" * 64}
             self.workspace_preparation = {"container_id": self.container_id, "backend": "docker"}
             return self.tools
 
@@ -136,7 +190,17 @@ def test_restored_runner_retains_actual_tool_history_tests_and_cumulative_usage(
                         "journal_size": 0, "journal_sha256": hashlib.sha256(b"").hexdigest(),
                         "baseline_sha256": hashlib.sha256(b"fixed test baseline").hexdigest(),
                         "image_id": self.image_id, "container_id": self.container_id,
-                        "tool_sha256": tool_identity(self.tools.specs()), "test_evidence": {}}
+                        "tool_sha256": tool_identity(self.executor_specs), "test_evidence": {}}
+            if jobs:
+                artifact_path = directory / f"{batch}.artifacts.tar"
+                with artifact_path.open("wb") as stream:
+                    receipt = self.artifacts.export_archive(stream)
+                snapshot.update(artifacts_enabled=True, streaming_artifacts=True,
+                    artifact_run_id=self.job_settings.logical_run_id, run_id=self.root.name,
+                    artifact_archive=artifact_path.relative_to(self.root).as_posix(),
+                    artifact_archive_bytes=artifact_path.stat().st_size,
+                    artifact_archive_sha256=hashlib.sha256(artifact_path.read_bytes()).hexdigest(),
+                    artifact_receipt=receipt, job_protocol=self.job_protocol)
             atomic_json(directory / f"{batch}.json", snapshot)
             return snapshot
 
@@ -150,7 +214,12 @@ def test_restored_runner_retains_actual_tool_history_tests_and_cumulative_usage(
             assert snapshot["container_id"] != self.container_id
 
         def close(self, *, remove):
+            if jobs:
+                assert self.worker.shutdown(worker_epoch=self.job_settings.worker_epoch)["closed"]
             closed.append(self.container_id)
+
+        def bind_job_guard(self, guard):
+            self.guard = guard
 
     monkeypatch.setattr(runtime, "DockerToolBackend", HostBackend)
     original_run = subprocess.run
@@ -167,7 +236,7 @@ def test_restored_runner_retains_actual_tool_history_tests_and_cumulative_usage(
 
     def pause(store, payload, **kwargs):
         saved = original_save(store, payload, **kwargs)
-        if kwargs["sequence"] == 3:
+        if kwargs["sequence"] == 3 and "agent" in payload:
             raise KeyboardInterrupt()
         return saved
 
@@ -179,6 +248,7 @@ def test_restored_runner_retains_actual_tool_history_tests_and_cumulative_usage(
                        env_file=None, model_name="offline/recovery", execution_backend="docker",
                        docker_profile="ordinary", docker_image_id=image,
                        docker_recovery_enabled=True, memory_enabled=memory,
+                       harness_foundations_enabled=jobs, background_jobs_enabled=jobs,
                        test_target="tests/test_widget.py", source_import="widget")
     interrupted = runner.run(config)
     assert interrupted.status == "interrupted" and interrupted.step_count == 2

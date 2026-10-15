@@ -82,6 +82,7 @@ class RemoteJobService:
         self.historical_read, self.abort_executor = historical_read, abort_executor
         self._lock = threading.RLock()
         self._accepting, self._faulted = True, False
+        self._shutdown_result: bool | None = None
         self._sequence, self._jobs = 0, {}
         self._deadline = time.monotonic() + (
             settings.session_deadline - datetime.now(UTC)).total_seconds()
@@ -358,29 +359,44 @@ class RemoteJobService:
 
     def shutdown(self, timeout=20.0):
         with self._lock:
+            if self._shutdown_result is not None:
+                return self._shutdown_result
             self._accepting = False
             job_ids = tuple(self._jobs)
-        for job_id in job_ids:
-            self.cancel(job_id)
-        until = time.monotonic() + max(0, min(timeout, 20.0))
-        while self.active and not self.has_unknown and time.monotonic() < until:
-            for job_id in job_ids:
-                self.get(job_id)
-            if self.active:
-                time.sleep(0.02)
-        closed = False
         try:
-            response = self.channel.call("__job_shutdown__", {
-                "worker_epoch": self.settings.worker_epoch})
-            closed = (response.success and response.output == {
-                "closed": True, "active": False, "outcome_unknown": False})
-        except Exception:
-            pass
-        if not closed or self.active or self.has_unknown:
+            for job_id in job_ids:
+                self.cancel(job_id)
+            until = time.monotonic() + max(0, min(timeout, 20.0))
+            while self.active and not self.has_unknown and time.monotonic() < until:
+                for job_id in job_ids:
+                    self.get(job_id)
+                if self.active:
+                    time.sleep(0.02)
+            closed = False
+            try:
+                response = self.channel.call("__job_shutdown__", {
+                    "worker_epoch": self.settings.worker_epoch})
+                closed = (response.success and response.output == {
+                    "closed": True, "active": False, "outcome_unknown": False})
+            except Exception:
+                pass
+            if closed and not self.active and not self.has_unknown:
+                self._shutdown_result = True
+                return True
+            self._faulted = True
             with self._lock:
                 for entry in tuple(self._jobs.values()):
                     if entry.record.status not in TERMINAL_STATUSES:
                         self._unknown(entry)
-            self.abort_executor()
-            return False
-        return True
+        except BaseException as primary:
+            # Storage failure must not skip the final owned-container boundary.
+            self._faulted = True
+            self._shutdown_result = False
+            try:
+                self.abort_executor()
+            except Exception:
+                primary.add_note("owned executor abort also failed")
+            raise
+        self._shutdown_result = False
+        self.abort_executor()
+        return False

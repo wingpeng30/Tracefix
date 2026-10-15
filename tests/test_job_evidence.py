@@ -110,3 +110,43 @@ def test_export_rejects_hardlinks_and_special_metadata(tmp_path, monkeypatch):
     monkeypatch.setattr(Path, "lstat", linked)
     with pytest.raises(ValueError, match="shared file"):
         export(tmp_path)
+
+
+@pytest.mark.parametrize("failure", [None, "parent", "leaf"])
+def test_posix_directory_descriptors_are_anchored_and_closed_even_on_failure(
+    tmp_path, monkeypatch, failure,
+):
+    calls, closed = [], []
+
+    def opened(name, flags, *, dir_fd=None):
+        calls.append((name, flags, dir_fd))
+        if (failure == "parent" and name == "workers"
+                or failure == "leaf" and name == "receipt.json"):
+            raise OSError("untrusted link refused")
+        return len(calls) + 10
+
+    monkeypatch.setattr(evidence, "os", SimpleNamespace(name="posix", O_RDONLY=1,
+        O_DIRECTORY=2, O_NOFOLLOW=4, open=opened, close=closed.append))
+    if failure:
+        with pytest.raises(OSError, match="link refused"):
+            evidence._open_owned(tmp_path, "workers/epoch/receipt.json")
+    else:
+        assert evidence._open_owned(tmp_path, "workers/epoch/receipt.json") == 14
+        assert calls == [(tmp_path, 7, None), ("workers", 7, 11), ("epoch", 7, 12),
+                         ("receipt.json", 5, 13)]
+    assert closed == ([11] if failure == "parent" else [11, 12, 13])
+
+
+def test_missing_non_directory_and_excessive_directory_evidence_are_rejected(tmp_path, monkeypatch):
+    with pytest.raises(ValueError, match="root is missing"):
+        export(tmp_path / "missing")
+    file = tmp_path / "file"
+    file.write_bytes(b"not a directory")
+    with pytest.raises(ValueError, match="root is missing"):
+        export(file)
+    for name in ("one", "two", "three"):
+        (tmp_path / name).mkdir()
+    file.unlink()
+    monkeypatch.setattr(evidence, "MAX_FILES", 1)
+    with pytest.raises(ValueError, match="directory quota"):
+        export(tmp_path)

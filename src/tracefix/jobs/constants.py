@@ -1,5 +1,8 @@
 """Fixed names shared by policy metadata and the versioned job control protocol."""
 
+import hashlib
+
+ORDINARY_JOB_CHECKOUT_ID = hashlib.sha256(b"ordinary:/work/agent").hexdigest()
 JOB_PROTOCOL_VERSION = 1
 JOB_CONTROL_CAPABILITIES = (
     "job_start_control", "job_status_control", "job_read_control",

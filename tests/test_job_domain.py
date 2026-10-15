@@ -15,6 +15,21 @@ from tracefix.jobs.domain import (
 )
 
 
+@pytest.mark.parametrize("changes", [
+    {"created_at": datetime(2026, 10, 16)},
+    {"deadline": datetime(2026, 10, 15, tzinfo=UTC)},
+    {"tree_exit_confirmed": True},
+    {"status": "running", "process_started": False},
+    {"status": "starting", "process_started": None, "tree_exit_confirmed": True},
+    {"status": "running", "process_started": True, "outcome_sha256": "f" * 64},
+])
+def test_persisted_state_cannot_claim_impossible_observations(changes):
+    value = record().model_dump()
+    value.update(changes)
+    with pytest.raises(ValidationError):
+        JobRecord.model_validate(value)
+
+
 def record() -> JobRecord:
     now = datetime(2026, 10, 16, tzinfo=UTC)
     return JobRecord(

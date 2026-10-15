@@ -184,6 +184,8 @@ class MinimalAgent(BaseAgent):
                         or not committed_job_ticket(
                             tuple(message.model_dump(mode="json") for message in messages),
                             call_id=record.identity.call_id, job_id=job_id,
+                            run_id=record.identity.run_id,
+                            execution_id=record.identity.execution_id,
                             invocation_sha256=record.identity.invocation_sha256)):
                     raise AgentError("checkpoint job receipt reference is invalid")
                 receipt = next(message for message in history_receipts
@@ -2170,6 +2172,7 @@ class MinimalAgent(BaseAgent):
             if not committed_job_ticket(
                 tuple(message.model_dump(mode="json") for message in self.history.snapshot()),
                 call_id=record.identity.call_id, job_id=job_id,
+                run_id=record.identity.run_id, execution_id=record.identity.execution_id,
                 invocation_sha256=record.identity.invocation_sha256,
             ):
                 raise AgentError("job result does not reference a committed start ticket")
@@ -2200,7 +2203,9 @@ class MinimalAgent(BaseAgent):
                 ))
             self._consumed_job_outcomes[job_id] = digest
             changed = True
-        if changed or (self._last_test_evidence and self._last_test_evidence.get("valid")):
+        if not jobs.has_unknown and (
+            changed or (self._last_test_evidence and self._last_test_evidence.get("valid"))
+        ):
             source = jobs.source_state()
             self._diff_nonempty = source.nonempty_diff
             if self.task_state_session is not None:

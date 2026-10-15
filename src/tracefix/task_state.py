@@ -745,6 +745,8 @@ class TaskStateSession:
                         or not committed_job_ticket(
                             normalized_history, call_id=record.identity.call_id,
                             job_id=record.identity.job_id,
+                            run_id=record.identity.run_id,
+                            execution_id=record.identity.execution_id,
                             invocation_sha256=record.identity.invocation_sha256)):
                     raise TaskStateError("checkpoint job reference is not in the committed run")
         if self._acceptance_criteria != checkpoint.state.acceptance_criteria:

@@ -11,7 +11,7 @@ from tracefix.messages import ToolCall
 
 
 def committed_job_ticket(history: Sequence[Mapping], *, call_id: str, job_id: str,
-                         invocation_sha256: str) -> bool:
+                         invocation_sha256: str, run_id: str, execution_id: str) -> bool:
     source = None
     for message in history:
         if message.get("role") == "assistant":
@@ -42,6 +42,10 @@ def committed_job_ticket(history: Sequence[Mapping], *, call_id: str, job_id: st
         job = output.get("job") if isinstance(output, dict) else None
         identity = job.get("identity") if isinstance(job, dict) else None
         if (isinstance(identity, dict) and identity.get("job_id") == job_id
+                and identity.get("call_id") == call_id and payload.get("call_id") == call_id
+                and identity.get("invocation_sha256") == invocation_sha256
+                and identity.get("run_id") == run_id
+                and identity.get("execution_id") == execution_id
                 and payload.get("tool_name") == "start_test_job"
                 and payload.get("success") is True):
             return True

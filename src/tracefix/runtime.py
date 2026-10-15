@@ -330,6 +330,33 @@ def _defer_job_checkpoint(job_runtime, active: MinimalAgent, safe_sequence: int)
     return False
 
 
+def _bind_remote_jobs(config: RunConfig, job_runtime, tools, backend: DockerToolBackend):
+    from tracefix.jobs.constants import ORDINARY_JOB_CHECKOUT_ID
+    from tracefix.jobs.policy import JobActivityGuard
+    from tracefix.jobs.ports import JobSourceState
+
+    def source_state():
+        result = backend.session.call("get_git_diff", {"context_lines": 3})
+        if (not result.success or not isinstance(result.output, dict)
+                or result.output.get("truncated")
+                or not isinstance(result.output.get("diff"), str)):
+            raise WorkspaceError("cannot obtain a complete managed Docker source identity")
+        patch = result.output["diff"]
+        return JobSourceState(product_diff_sha256=hashlib.sha256(patch.encode()).hexdigest(),
+                              nonempty_diff=bool(patch.strip()))
+
+    extra = list(_HOST_CAPABILITY_NAMES)
+    if config.agent_config.context.enabled and config.agent_config.context.agent_tool_enabled:
+        extra.append("compact_context")
+    job_runtime.bind(tools=tools, channel=backend.session,
+        checkout_id=ORDINARY_JOB_CHECKOUT_ID,
+        source_identity=source_state, abort_executor=lambda: backend.close(remove=True),
+        profile=config.execution_profile, default_timeout=backend.timeout_seconds,
+        extra_capabilities=extra)
+    backend.bind_job_guard(JobActivityGuard(job_runtime.service))
+    return job_runtime.tools
+
+
 class RunResult(BaseModel):
     """一次隔离 Agent 运行的状态、费用、补丁和产物索引。"""
 
@@ -420,6 +447,10 @@ class TraceFixRunner:
         if config.agent_config.context.enabled and config.agent_config.context.agent_tool_enabled:
             names.append("compact_context")
         names.extend(_HOST_CAPABILITY_NAMES)
+        if config.background_jobs_enabled and config.execution_backend == "docker":
+            from tracefix.jobs.constants import JOB_CONTROL_CAPABILITIES
+
+            names.extend(JOB_CONTROL_CAPABILITIES)
         try:
             catalog = CapabilityCatalog.for_tool_names(names)
         except CapabilityError as exc:
@@ -442,6 +473,10 @@ class TraceFixRunner:
         if config.agent_config.context.enabled and config.agent_config.context.agent_tool_enabled:
             names.append("compact_context")
         names.extend(_HOST_CAPABILITY_NAMES)
+        if config.background_jobs_enabled and config.execution_backend == "docker":
+            from tracefix.jobs.constants import JOB_CONTROL_CAPABILITIES
+
+            names.extend(JOB_CONTROL_CAPABILITIES)
         try:
             catalog = CapabilityCatalog.for_tool_names(names)
         except CapabilityError as exc:
@@ -1692,7 +1727,16 @@ class TraceFixRunner:
             execution_profile=config.execution_profile,
         )
         mcp_manager: SerenaMCP | None = None
+        job_runtime = None
         try:
+            if config.background_jobs_enabled:
+                from tracefix.jobs.remote_runtime import RemoteJobRuntime
+
+                job_runtime = RemoteJobRuntime(run_dir=root, run_id=root.name,
+                    limit=config.agent_config.max_test_runs,
+                    deadline=datetime.now(UTC) + timedelta(seconds=max(
+                        0, config.agent_config.wall_time_seconds
+                        - saved.payload["agent"]["active_seconds"])))
             skills_snapshot = None
             if config.skills_root is not None:
                 from tracefix.skill_snapshot import read_skill_snapshot
@@ -1715,6 +1759,7 @@ class TraceFixRunner:
                 source_import_probe=config.source_import,
                 skills_snapshot=skills_snapshot,
                 execution_profile=config.execution_profile,
+                **({"job_settings": job_runtime.settings} if job_runtime is not None else {}),
             )
             task_state_session = _task_state_session_for_run(config)
             _register_task_state_tools(tools, task_state_session)
@@ -1726,7 +1771,11 @@ class TraceFixRunner:
                 for tool in mcp_manager.tools():
                     tools.register(tool)
             backend.workspace_preparation["test_target"] = config.test_target
-            capability_dispatcher = self._capability_dispatcher(config, tools)
+            if job_runtime is not None:
+                tools = _bind_remote_jobs(config, job_runtime, tools, backend)
+                job_runtime.checkpoints.verify_saved(saved.payload.get("job_state"))
+            capability_dispatcher = (job_runtime.dispatcher if job_runtime is not None
+                                     else self._capability_dispatcher(config, tools))
             self._bind_host_capability_policy(capability_dispatcher, mcp_manager)
             if not self._capability_identity_matches(
                 self._capability_identity(config, tools, capability_dispatcher),
@@ -1762,6 +1811,8 @@ class TraceFixRunner:
                     repository_candidates=repo_map.candidate_files if repo_map else (),
                 )
                 agent.tool_dispatcher = capability_dispatcher
+                if job_runtime is not None:
+                    agent.job_session = job_runtime.session
                 agent.task_state_session = task_state_session
                 if config.regression_targets:
                     baseline_path = root / "validation-baseline.json"
@@ -1796,6 +1847,8 @@ class TraceFixRunner:
 
                 def checkpoint(active: MinimalAgent) -> None:
                     nonlocal sequence
+                    if _defer_job_checkpoint(job_runtime, active, sequence):
+                        return
                     next_sequence = sequence + 1
                     snapshot = backend.save_snapshot(next_sequence)
                     patch_sha = hashlib.sha256(
@@ -1803,6 +1856,7 @@ class TraceFixRunner:
                     ).hexdigest()
                     active.verify_test_source(patch_sha)
                     trace = trace_path.read_bytes()
+                    sequence = next_sequence
                     store.save(
                         {
                             "agent": active.checkpoint_payload(),
@@ -1812,10 +1866,11 @@ class TraceFixRunner:
                             "trace_sha256": hashlib.sha256(trace).hexdigest(),
                             "skills": snapshot["bridge_state"]["skills"],
                             "protected_dirs": snapshot["bridge_state"]["protected_dirs"],
+                            **({"job_state": job_runtime.checkpoints.safe_identity()}
+                               if job_runtime is not None else {}),
                         },
                         sequence=next_sequence,
                     )
-                    sequence = next_sequence
 
                 agent.checkpoint_callback = checkpoint
                 agent.persist_terminal_checkpoint = True
@@ -1910,6 +1965,23 @@ class TraceFixRunner:
             )
             raise
         finally:
+            primary = sys.exception()
+            job_cleanup_error = None
+            if job_runtime is not None:
+                try:
+                    if not job_runtime.close():
+                        raise WorkspaceError("job cleanup or execution outcome remains unknown")
+                except Exception as exc:
+                    from tracefix.memory import atomic_json
+
+                    job_cleanup_error = exc
+                    atomic_json(root / f"recovery-failure-{saved.sequence}-{uuid4().hex}.json", {
+                        "schema_version": 1, "checkpoint_sequence": saved.sequence,
+                        "stage": "job_cleanup", "error": self._serialize_error(exc),
+                        "container_id": backend.container_id,
+                    })
+                    if primary is not None:
+                        primary.add_note("Docker job cleanup or outcome unconfirmed")
             try:
                 if mcp_manager is not None:
                     mcp_manager.close()
@@ -1944,6 +2016,8 @@ class TraceFixRunner:
                         },
                     )
                     raise
+            if job_cleanup_error is not None and primary is None:
+                raise job_cleanup_error
 
     @staticmethod
     def _preflight_execution(config: RunConfig, source: Path) -> None:
@@ -2156,6 +2230,14 @@ class TraceFixRunner:
                 assert config.docker_profile == "ordinary" or (
                     config.docker_task_id and config.docker_input_root
                 )
+                if config.background_jobs_enabled:
+                    from tracefix.jobs.remote_runtime import RemoteJobRuntime
+
+                    job_runtime = RemoteJobRuntime(run_dir=run_dir, run_id=run_id,
+                        limit=config.agent_config.max_test_runs,
+                        deadline=datetime.now(UTC) + timedelta(seconds=max(
+                            0, config.agent_config.wall_time_seconds
+                            - (time.monotonic() - started_monotonic))))
                 docker_backend = DockerToolBackend(
                     task_id=config.docker_task_id or "tracefix-ordinary",
                     input_root=config.docker_input_root or run_dir,
@@ -2183,6 +2265,8 @@ class TraceFixRunner:
                     if config.docker_profile == "ordinary"
                     else {}
                 )
+                if job_runtime is not None:
+                    docker_prepare_options["job_settings"] = job_runtime.settings
                 tools = docker_backend.prepare(
                     source_commit,
                     source,
@@ -2289,12 +2373,15 @@ class TraceFixRunner:
             regression_baseline: dict[str, str] = {}
             regression_baseline_seconds = 0.0
             if config.background_jobs_enabled:
-                assert workspace is not None and artifact_store is not None
-                job_runtime = _assemble_local_jobs(
-                    config, tools, artifact_store, run_id=run_id, run_dir=run_dir,
-                    workspace=workspace,
-                    collect_diff=lambda: self._collect_diff(workspace, internal_artifacts))
-                tools = job_runtime.tools
+                if docker_backend is not None:
+                    tools = _bind_remote_jobs(config, job_runtime, tools, docker_backend)
+                else:
+                    assert workspace is not None and artifact_store is not None
+                    job_runtime = _assemble_local_jobs(
+                        config, tools, artifact_store, run_id=run_id, run_dir=run_dir,
+                        workspace=workspace,
+                        collect_diff=lambda: self._collect_diff(workspace, internal_artifacts))
+                    tools = job_runtime.tools
             capability_dispatcher = (job_runtime.dispatcher if job_runtime is not None
                                      else self._capability_dispatcher(config, tools))
             self._bind_host_capability_policy(capability_dispatcher, mcp_manager)
@@ -2323,6 +2410,12 @@ class TraceFixRunner:
                     **({"job_runtime": job_runtime} if job_runtime is not None else {}),
                 )
                 regression_baseline_seconds = time.monotonic() - baseline_started
+                if docker_backend is not None and job_runtime is not None:
+                    seed = job_runtime.artifacts.seed
+                    if seed is None:
+                        raise WorkspaceError(
+                            "managed Docker baselines omitted their artifact quota")
+                    docker_backend.import_job_artifact_seed(seed)
             llm = self._llm_factory(llm_config)
             agent = MinimalAgent(
                 llm,
@@ -2491,12 +2584,15 @@ class TraceFixRunner:
 
                     def save_docker_checkpoint(active: MinimalAgent) -> None:
                         nonlocal docker_sequence
+                        if _defer_job_checkpoint(job_runtime, active, docker_sequence):
+                            return
                         next_sequence = docker_sequence + 1
                         snapshot = docker_backend.save_snapshot(next_sequence)
                         diff = snapshot["bridge_state"]["diff"]
                         current_sha = hashlib.sha256(diff["diff"].encode("utf-8")).hexdigest()
                         active.verify_test_source(current_sha)
                         trace_bytes = trace_path.read_bytes()
+                        docker_sequence = next_sequence
                         docker_store.save(
                             {
                                 "agent": active.checkpoint_payload(),
@@ -2506,10 +2602,11 @@ class TraceFixRunner:
                                 "trace_sha256": hashlib.sha256(trace_bytes).hexdigest(),
                                 "skills": snapshot["bridge_state"]["skills"],
                                 "protected_dirs": snapshot["bridge_state"]["protected_dirs"],
+                                **({"job_state": job_runtime.checkpoints.safe_identity()}
+                                   if job_runtime is not None else {}),
                             },
                             sequence=next_sequence,
                         )
-                        docker_sequence = next_sequence
 
                     agent.checkpoint_callback = save_docker_checkpoint
                     agent.persist_terminal_checkpoint = True
@@ -2931,7 +3028,8 @@ class TraceFixRunner:
             if config.execution_backend == "docker":
                 try:
                     result = cls._run_docker_regression_baseline(
-                        config, source, source_commit, run_dir, index, call
+                        config, source, source_commit, run_dir, index, call,
+                        **({"job_runtime": job_runtime} if job_runtime is not None else {}),
                     )
                 except Exception as exc:
                     result = {
@@ -3097,6 +3195,8 @@ class TraceFixRunner:
         run_dir: Path,
         index: int,
         call: ToolCall,
+        *,
+        job_runtime=None,
     ) -> dict[str, Any]:
         """Run one target in a disposable ordinary container on the fixed image."""
         if (
@@ -3119,6 +3219,8 @@ class TraceFixRunner:
         environment.update(config.test_environment_variables)
         from tracefix.validation import DockerValidationBackend
 
+        settings = job_runtime.validation_settings() if job_runtime is not None else None
+
         def create():
             baseline_root.mkdir(parents=True, exist_ok=False)
             return DockerToolBackend(
@@ -3137,12 +3239,37 @@ class TraceFixRunner:
                 source_import_probe=config.source_import,
                 environment_variables=environment,
                 execution_profile=config.execution_profile,
+                **({"job_settings": settings, "artifacts_enabled": True,
+                    "recovery_enabled": True, "artifact_seed": job_runtime.artifacts.seed}
+                   if job_runtime is not None else {}),
             )
         dispatcher = ToolDispatcher(CapabilityPolicy(
             CapabilityCatalog.for_tool_names(("run_tests", "validation_baseline")),
             config.execution_profile,
         ))
-        return DockerValidationBackend(create, prepare, dispatcher).execute(call)
+        if job_runtime is None:
+            return DockerValidationBackend(create, prepare, dispatcher).execute(call)
+
+        @contextmanager
+        def acquire(backend, tools):
+            from tracefix.jobs.policy import JobActivityGuard
+
+            with job_runtime.validation_executor(tools.get("run_tests"), channel=backend.session,
+                settings=settings, record_dir=baseline_root / "jobs",
+                checkout_id=hashlib.sha256(baseline_id.encode()).hexdigest(),
+                abort_executor=lambda: backend.close(remove=True),
+                default_timeout=backend.timeout_seconds) as managed:
+                backend.bind_job_guard(JobActivityGuard(managed.service))
+                yield managed
+
+        def finalize(backend):
+            from tracefix.jobs.artifact_seed import JobArtifactSeed
+
+            job_runtime.artifacts.advance(JobArtifactSeed.from_snapshot(
+                baseline_root, backend.save_snapshot(1)))
+
+        return DockerValidationBackend(create, prepare, dispatcher,
+                                       acquire=acquire, finalize=finalize).execute(call)
 
     @staticmethod
     def _prepare_workspace(

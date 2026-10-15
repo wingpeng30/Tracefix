@@ -66,9 +66,9 @@ def resolve_features(config: FeatureConfiguration) -> ResolvedFeatures:
             "background jobs require harness foundations")
     require(cgroup is None or jobs and not docker, "jobs_delegation_backend_invalid",
             "a delegated cgroup belongs only to enabled local background jobs")
-    # Fail closed while runtime adapters are being integrated, never silently use sync/local.
-    require(not jobs or not docker, "jobs_docker_integration_pending",
-            "background job Docker protocol integration is not yet available")
+    require(not jobs or not docker or ordinary and config.docker_recovery_enabled,
+            "jobs_ordinary_recovery_required",
+            "Docker background jobs require ordinary recovery")
     require(not jobs or docker or (
         getattr(config, "environment_recipe", None) is None
         and not getattr(config, "test_environment_variables", {})

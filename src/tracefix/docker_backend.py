@@ -36,6 +36,7 @@ from tracefix.capabilities import (
 )
 from tracefix.docker_tls import write_test_tls_material
 from tracefix.exceptions import RunConfigurationError, WorkspaceError
+from tracefix.jobs.artifact_seed import JobArtifactSeed
 from tracefix.jobs.protocol import JobWorkerSettings
 from tracefix.messages import ToolCall
 from tracefix.repository import RepoMap, RepoMapConfig
@@ -633,9 +634,13 @@ class DockerToolBackend:
         execution_profile: ExecutionProfile | str | None = None,
         skills_snapshot: SkillBundleSnapshot | None = None,
         job_settings: JobWorkerSettings | None = None,
+        artifact_seed: JobArtifactSeed | None = None,
     ) -> ToolRegistry:
         self.artifacts_enabled = artifacts_enabled
         self.background_jobs_enabled = job_settings is not None
+        if artifact_seed is not None and (not self.background_jobs_enabled
+                                          or recovery_snapshot is not None):
+            raise WorkspaceError("artifact seeding requires a fresh background job executor")
         if self.background_jobs_enabled:
             if self.profile != "ordinary" or not recovery_enabled or not artifacts_enabled:
                 raise WorkspaceError("Docker jobs require ordinary recovery and artifacts")
@@ -1205,6 +1210,8 @@ class DockerToolBackend:
         self.artifact_environment_path = environment_path
         if recovery_snapshot is not None:
             self.restore_snapshot(recovery_snapshot)
+        elif artifact_seed is not None:
+            self.import_job_artifact_seed(artifact_seed)
         if skills_root is not None:
             if self.profile != "ordinary" or not skills_enabled:
                 raise WorkspaceError("experience Skills require ordinary Docker with Skills")
@@ -1606,7 +1613,6 @@ class DockerToolBackend:
 
     def restore_snapshot(self, snapshot: dict[str, Any]) -> None:
         """Restore a validated archive before starting the new container's bridge."""
-        from tracefix.docker_recovery import owned_file, validate_artifact_archive
         from tracefix.memory import atomic_json
         from tracefix.workspace_snapshot import validate_archive
 
@@ -1677,16 +1683,34 @@ class DockerToolBackend:
                 },
             )
         _run([self.docker, "exec", self.container_name, "rm", "-f", "/input/restore-metadata.json"])
+        self._restore_artifacts(snapshot, snapshot_root=self.run_dir)
+
+    def import_job_artifact_seed(self, seed: JobArtifactSeed) -> None:
+        """A fresh executor imports the previous owner's entire quota, never a subset."""
+        if not self.background_jobs_enabled or not self.artifacts_enabled:
+            raise WorkspaceError("artifact seeding requires background job artifacts")
+        decision = self._control_decision("checkpoint_restore", CallerOrigin.RECOVERY)
+        if not decision.allowed:
+            raise WorkspaceError("artifact seeding denied", context={
+                "reason_code": decision.reason_code})
+        seed = JobArtifactSeed.model_validate_json(seed.model_dump_json())
+        self._restore_artifacts(seed.snapshot, snapshot_root=seed.root)
+
+    def _restore_artifacts(self, snapshot: dict, *, snapshot_root: Path) -> None:
+        from tracefix.docker_recovery import owned_file, validate_artifact_archive
+
+        jobs_enabled = getattr(self, "background_jobs_enabled", False)
+        artifact_run_id = self.job_settings.logical_run_id if jobs_enabled else self.run_id
         if self.artifacts_enabled:
             if self.artifact_environment_path is None:
                 raise WorkspaceError("artifact restore environment identity is unavailable")
             receipt = validate_artifact_archive(
-                self.run_dir,
+                snapshot_root,
                 snapshot,
                 expected_run_id=artifact_run_id,
                 streaming_enabled=jobs_enabled,
             )
-            artifact_archive = owned_file(self.run_dir, snapshot["artifact_archive"])
+            artifact_archive = owned_file(snapshot_root, snapshot["artifact_archive"])
             with artifact_archive.open("rb") as source:
                 restored_artifacts = subprocess.run(
                     [

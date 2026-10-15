@@ -6,10 +6,11 @@
 G5本地Runner/API/CLI、安全暂停、新Python进程恢复及共享baseline/finalgate已有定向通过。
 新增ordinary异步作业协议、宿主持久收据、root预算票据与流式产物恢复组件。
 真实组件回放已完成100KB中段读取、整树取消、删除旧容器后新Python进程/容器取回旧日志且不重跑、不重置配额。
-这仍是组件验证：**正式Docker Runner/inspect/resume、回归基线共享产物装配和完整G5工程门尚未完成。**
-公共Docker后台开关继续在模型前拒绝；G6—G8未开始。
+候选正式Docker Runner/inspect/resume和baseline交接现已接通并实测；1个baseline+2个最终目标恰好计3次。
+真实逃离组后代触发unknown、整容器中止和禁止重放/退款。**完整G5工程门尚未关闭**，G6—G8未开始。
 
-6b70e6c的CI165双版本覆盖率89.5279%/89.5209%，未过90%；其Docker/ordinary/Serena通过。
+ff7edb2的CI166双版本总计1895项/零失败错误/2平台skip，覆盖率89.0726%/89.0659%，未过90%；
+其Docker/ordinary作业组件wheel-editable/Serena通过。这不代表之后正式入口源码已通过CI。
 旧CI与本地组件不能证明新源码完整通过。曾在本地完整检查期间提交导致身份保护拒绝，已记录无效；
 后续完整检查固定提交及文件直到结束。无供应商调用，未合并或发布。
 进度、失败归因、镜像和原始日志见[G5实施记录](tasks/2026-10-16-g5-progress.md)。

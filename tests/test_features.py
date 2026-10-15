@@ -14,7 +14,7 @@ from tracefix.runtime import RunConfig, TraceFixRunner
     ({"background_jobs_enabled": True, "harness_foundations_enabled": True,
       "test_environment_variables": {"EXAMPLE_MODE": "fixture"}}, "jobs_local_recovery_required"),
     ({"background_jobs_enabled": True, "harness_foundations_enabled": True,
-      "execution_backend": "docker"}, "jobs_docker_integration_pending"),
+      "execution_backend": "docker"}, "jobs_ordinary_recovery_required"),
     ({"regression_targets": ("tests/a.py",)}, "validation_target_missing"),
     ({"regression_targets": ("tests/a.py",), "test_target": "tests/b.py"},
      "source_import_missing"),

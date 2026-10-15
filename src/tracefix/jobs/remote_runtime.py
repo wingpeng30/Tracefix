@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable
+from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 from uuid import uuid4
@@ -15,6 +16,7 @@ from tracefix.capabilities import (
     ToolDispatcher,
 )
 from tracefix.jobs.artifact_reader import RemoteJobArtifactReader
+from tracefix.jobs.artifact_seed import JobArtifactChain
 from tracefix.jobs.checkpoints import JobCheckpointCoordinator
 from tracefix.jobs.constants import JOB_CONTROL_CAPABILITIES
 from tracefix.jobs.domain import JobError
@@ -36,7 +38,9 @@ class RemoteJobRuntime:
         self.run_dir, self.run_id, self.deadline = run_dir, run_id, deadline
         self.ledger = TestExecutionLedger(run_dir, run_id=run_id, limit=limit)
         self.service = None
+        self.artifacts = JobArtifactChain(run_id)
         self._closed = False
+        self._close_result = False
         try:
             self.settings = JobWorkerSettings(logical_run_id=run_id, worker_epoch=uuid4().hex,
                 host_owner_epoch=self.ledger.owner_epoch, session_deadline=deadline)
@@ -87,13 +91,65 @@ class RemoteJobRuntime:
         self.checkpoints = JobCheckpointCoordinator(self.run_dir, run_id=self.run_id,
                                                     service=service, ledger=self.ledger)
 
+    def validation_settings(self) -> JobWorkerSettings:
+        if self._closed or self.ledger.has_unknown:
+            raise JobError("validation_root_stopped_or_unknown")
+        return self.settings.model_copy(update={"worker_epoch": uuid4().hex})
+
+    @contextmanager
+    def validation_executor(self, executor, *, channel: JobChannel, settings: JobWorkerSettings,
+                            record_dir: Path, checkout_id: str,
+                            abort_executor: Callable[[], None], default_timeout: float):
+        """A disposable checkout receives host tickets from the same root authority."""
+        for name in ("validation_baseline", "run_tests"):
+            decision = self.dispatcher.authorize(name, CallerOrigin.VALIDATION_GATE)
+            if not decision.allowed:
+                raise JobError(decision.reason_code)
+        hello = JobProtocolHello.model_validate(getattr(channel, "job_protocol", None))
+        if (hello.logical_run_id != self.run_id or hello.worker_epoch != settings.worker_epoch
+                or hello.host_owner_epoch != self.ledger.owner_epoch
+                or settings.host_owner_epoch != self.ledger.owner_epoch
+                or settings.logical_run_id != self.run_id
+                or settings.session_deadline > self.deadline):
+            raise JobError("validation_job_channel_identity_mismatch")
+
+        def authorize(call):
+            decision = self.dispatcher.authorize(call.name, CallerOrigin.VALIDATION_GATE)
+            if not decision.allowed:
+                raise JobError(decision.reason_code)
+
+        def prepare(call):
+            executor.prepare(call)
+            return call.arguments.get("timeout_seconds", default_timeout)
+
+        def no_history(*args, **kwargs):
+            raise JobError("validation_executor_has_no_historical_worker")
+
+        service = RemoteJobService(record_dir, settings=settings, checkout_id=checkout_id,
+            ledger=self.ledger, channel=channel, prepare=prepare, authorize=authorize,
+            historical_read=no_history, abort_executor=abort_executor)
+        primary = None
+        try:
+            yield ManagedRunTestsTool(executor, service)
+        except BaseException as exc:
+            primary = exc
+            raise
+        finally:
+            try:
+                if not service.shutdown():
+                    raise JobError("validation_job_cleanup_or_outcome_unknown")
+            except Exception:
+                if primary is None:
+                    raise
+                primary.add_note("validation_job_cleanup_or_outcome_unknown")
+
     def close(self) -> bool:
         if self._closed:
-            return not self.ledger.has_unknown and (self.service is None
-                                                    or not self.service.has_unknown)
+            return self._close_result
         try:
-            return (self.service.shutdown() if self.service is not None
-                    else not self.ledger.has_unknown and not self.ledger.pending)
+            self._close_result = (self.service.shutdown() if self.service is not None
+                                  else not self.ledger.has_unknown and not self.ledger.pending)
+            return self._close_result
         finally:
             self._closed = True
             self.ledger.close()

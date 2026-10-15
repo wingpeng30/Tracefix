@@ -9,6 +9,42 @@ from tracefix.jobs.domain import JobError
 from tracefix.jobs.test_budget import TestExecutionLedger as Ledger
 
 
+@pytest.mark.parametrize("limit", [0, -1, True, 1.5])
+def test_invalid_root_limits_do_not_acquire_ownership_or_create_a_budget(tmp_path, limit):
+    with pytest.raises(JobError, match="limit_invalid"):
+        Ledger(tmp_path, run_id="r1", limit=limit)
+    assert not (tmp_path / "test-executions").exists()
+
+
+def test_closed_and_stale_epoch_updates_cannot_refund_or_acknowledge_old_work(tmp_path):
+    first = Ledger(tmp_path, run_id="r1", limit=1)
+    ticket = first.reserve(call_id="call", invocation_sha256="a" * 64)
+    first.before_dispatch(ticket.execution_id)
+    first.acknowledge_started(ticket.execution_id)
+    first.settle(ticket.execution_id, process_started=True, tree_exit_confirmed=True)
+    first.close()
+    with pytest.raises(JobError, match="closed"):
+        first.get(ticket.execution_id)
+    with Ledger(tmp_path, run_id="r1", limit=1) as second:
+        before = second.checkpoint_identity()
+        with pytest.raises(JobError, match="epoch"):
+            second.acknowledge_started(ticket.execution_id)
+        assert second.charged == 1 and second.held == 0
+        assert second.checkpoint_identity() == before
+
+
+def test_duplicate_persisted_execution_is_rejected_before_ownership_is_reused(tmp_path):
+    with Ledger(tmp_path, run_id="r1", limit=2) as ledger:
+        ticket = ledger.reserve(call_id="call", invocation_sha256="a" * 64)
+        ledger.settle(ticket.execution_id, process_started=False, tree_exit_confirmed=True)
+        saved = ledger.store.load()
+        payload = dict(saved.payload)
+        payload["executions"] = [*payload["executions"], *payload["executions"]]
+        ledger.store.save(payload, sequence=saved.sequence + 1)
+    with pytest.raises(ValueError, match="duplicate"):
+        Ledger(tmp_path, run_id="r1", limit=2)
+
+
 def test_last_slot_is_reserved_atomically_and_rejection_cannot_dispatch(tmp_path):
     with Ledger(tmp_path, run_id="r1", limit=1) as ledger:
         def reserve(number):

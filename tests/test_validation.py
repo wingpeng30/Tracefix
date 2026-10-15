@@ -150,3 +150,55 @@ def test_docker_validation_identity_changes_with_each_input():
 
     assert docker_validation_environment_sha256("sha256:two", {"A": "1"}) != base
     assert docker_validation_environment_sha256("sha256:one", {"A": "2"}) != base
+
+
+@pytest.mark.parametrize("failure", [None, "acquire", "execute", "finalize"])
+def test_managed_validation_closes_job_scope_before_evidence_and_quota_handoff(failure):
+    from tracefix.messages import ToolCall
+    from tracefix.tools.base import ToolRegistry
+    from tracefix.validation import DockerValidationBackend
+
+    events = []
+
+    class Backend:
+        def export_evidence(self):
+            events.append("evidence")
+
+        def close(self, *, remove):
+            assert remove
+            events.append("container-close")
+
+    class Managed(_TestTool):
+        def execute(self, call):
+            events.append("managed-execution")
+            if failure == "execute":
+                raise OSError("controlled execution failure")
+            return super().execute(call)
+
+    @contextmanager
+    def acquire(backend, registry):
+        events.append("scope-acquire")
+        if failure == "acquire":
+            raise OSError("controlled acquisition failure")
+        try:
+            yield Managed()
+        finally:
+            events.append("scope-close")
+
+    def finalize(backend):
+        events.append("quota-handoff")
+        if failure == "finalize":
+            raise OSError("controlled handoff failure")
+
+    backend = DockerValidationBackend(Backend, lambda backend: ToolRegistry([_TestTool()]),
+        _dispatcher(), acquire=acquire, finalize=finalize)
+    if failure:
+        with pytest.raises(OSError, match="controlled"):
+            backend.execute(ToolCall(id="test", name="run_tests"))
+    else:
+        assert backend.execute(ToolCall(id="test", name="run_tests"))["success"]
+        assert events == ["scope-acquire", "managed-execution", "scope-close", "evidence",
+                          "quota-handoff", "container-close"]
+    assert events[-1] == "container-close"
+    if failure == "execute":
+        assert events[-2] == "scope-close" and "quota-handoff" not in events

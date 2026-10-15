@@ -1,8 +1,9 @@
 # 后台测试作业（G5 候选开发中）
 
 当前候选已接通本地 Runner/API/CLI 的后台 pytest、增量读取、取消和安全暂停恢复。
-**G5 尚未完成工程验收。** ordinary异步协议和新容器恢复组件已实测；正式Docker Runner/inspect/resume、baseline共享配额、安装包完整回放及覆盖率门仍待完成；
-目前请求 Docker 后台组合会在模型初始化前明确拒绝，不退回本地或同步执行。
+**G5 尚未完成工程验收。** 候选已接通ordinary Docker正式Runner/inspect/resume、基线产物交接和根预算。
+本地真实回放通过取消/自然完成、新进程恢复、最小3次baseline/finalgate及逃离组后代中止整个容器；
+完整双版本>=90%门和正式入口安装包/CI验证尚未通过，使用边界以当前状态和G5记录为准。
 
 ## 本地启用
 
@@ -56,3 +57,23 @@ Windows 用例会建立并清理自己的临时仓库与子进程；其他平台
 其中 Serena 组合只验证静态目录身份，明确使用 transport 替身，不是实际 MCP 调用。
 独立 wheel/editable 和完整 Docker 后台组合入口尚未交付。
 实际计数、源码身份和限制见[G5进度](tasks/2026-10-16-g5-progress.md)。
+
+## ordinary Docker候选组合
+
+使用已准备的固定镜像，设置`execution_backend="docker"`、`docker_profile="ordinary"`、
+`docker_image_id`、`docker_recovery_enabled=true`、`harness_foundations_enabled=true`、
+`background_jobs_enabled=true`，并填写`source_import`及`test_target`。
+CLI沿用ordinary参数并追加`--harness-foundations --background-jobs`；网络仍为none。
+每个回归baseline使用独立新容器，测试额度和产物/读取额度由根会话共享，不为容器复制额度。
+如果后代逃离进程组且无法确认清理，作业标为unknown并停止整个自有容器，不报告取消成功。
+
+零供应商正式入口回放（需要Docker及已准备的固定镜像）：
+
+```powershell
+python scripts/check_job_runner_docker.py --image-id $imageId --output ./runs/g5-runner-replay
+```
+
+该脚本使用本地脚本模型，覆盖长测试中段读取/取消、短测试自然结束、新Python进程恢复、
+一个baseline和两个最终目标，以及逃离组后代的unknown/整容器清理。输出目录须尚未存在。
+底层协议/固定身份/审计链接负向和产物配额恢复probe为`scripts/check_job_bridge_docker.py`。
+这两个入口的通过不能代替全量工程和真实供应商成绩。

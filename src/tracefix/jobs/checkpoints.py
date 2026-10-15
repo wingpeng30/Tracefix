@@ -62,9 +62,14 @@ class JobCheckpointCoordinator:
 
     @staticmethod
     def inspect_saved(run_dir: Path, *, run_id: str, checkout_id: str,
-                      limit: int, value: object) -> None:
+                      limit: int, value: object, remote: bool = False) -> None:
+        receipt_service = JobService
+        if remote:
+            from tracefix.jobs.remote import RemoteJobService
+
+            receipt_service = RemoteJobService
         current = {"schema_version": 1,
-                   "jobs": JobService.inspect_checkpoint_identity(
+                   "jobs": receipt_service.inspect_checkpoint_identity(
                        run_dir / "jobs", run_id=run_id, checkout_id=checkout_id),
                    "test_executions": TestExecutionLedger.inspect_checkpoint_identity(
                        run_dir, run_id=run_id, limit=limit)}

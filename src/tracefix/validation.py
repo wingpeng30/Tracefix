@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 from collections.abc import Callable, Mapping
-from contextlib import AbstractContextManager
+from contextlib import AbstractContextManager, nullcontext
 from typing import Any, Protocol
 
 from tracefix.capabilities import CallerOrigin, ToolDispatcher
@@ -58,18 +58,28 @@ class DockerValidationBackend:
         self, create: Callable[[], ValidationContainer],
         prepare: Callable[[ValidationContainer], ToolRegistry],
         dispatcher: ToolDispatcher,
+        *,
+        acquire: Callable[[ValidationContainer, ToolRegistry], AbstractContextManager[BaseTool]]
+        | None = None,
+        finalize: Callable[[ValidationContainer], None] | None = None,
     ) -> None:
         self.create = create
         self.prepare = prepare
         self.dispatcher = dispatcher
+        self.acquire, self.finalize = acquire, finalize
 
     def execute(self, call: ToolCall) -> dict[str, Any]:
         _authorize(self.dispatcher)
         backend = self.create()
         try:
-            tool = self.prepare(backend).get("run_tests")
-            result = PreparedInvocation(tool, call).execute().model_dump(mode="json")
+            tools = self.prepare(backend)
+            resource = (self.acquire(backend, tools) if self.acquire is not None
+                        else nullcontext(tools.get("run_tests")))
+            with resource as tool:
+                result = PreparedInvocation(tool, call).execute().model_dump(mode="json")
             backend.export_evidence()
+            if self.finalize is not None:
+                self.finalize(backend)
             return result
         finally:
             backend.close(remove=True)

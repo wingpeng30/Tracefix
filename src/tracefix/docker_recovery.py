@@ -351,6 +351,15 @@ def inspect_session(
         )
     if config.harness_foundations_enabled != (snapshot.get("artifacts_enabled") is True):
         raise CheckpointError("Docker checkpoint artifact capability changed")
+    if config.background_jobs_enabled:
+        from tracefix.jobs.checkpoints import JobCheckpointCoordinator
+        from tracefix.jobs.constants import ORDINARY_JOB_CHECKOUT_ID
+
+        JobCheckpointCoordinator.inspect_saved(root, run_id=root.name,
+            checkout_id=ORDINARY_JOB_CHECKOUT_ID, limit=config.agent_config.max_test_runs,
+            value=payload.get("job_state"), remote=True)
+    elif "job_state" in payload or "job_protocol" in snapshot:
+        raise CheckpointError("Docker checkpoint contains disabled job state")
     if config.regression_targets:
         baseline_path = root / "validation-baseline.json"
         try:
@@ -448,7 +457,12 @@ def inspect_session(
     if tool_sha != identity["tool_sha256"]:
         reasons.append("tool definitions changed")
     try:
-        executor_catalog = CapabilityCatalog.for_tool_names(spec.name for spec in definitions)
+        executor_names = [spec.name for spec in definitions]
+        if config.background_jobs_enabled:
+            from tracefix.jobs.constants import JOB_CONTROL_CAPABILITIES
+
+            executor_names.extend(JOB_CONTROL_CAPABILITIES)
+        executor_catalog = CapabilityCatalog.for_tool_names(executor_names)
         executor_policy = CapabilityPolicy(executor_catalog, config.execution_profile)
     except ValueError:
         reasons.append("executor capability catalog is invalid")

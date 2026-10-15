@@ -46,7 +46,12 @@ def _open_owned(root: Path, relative: str) -> int:
 
 def export(root: Path) -> bytes:
     rows, size, entries = [], 0, 0
-    if root.is_symlink() or not root.is_dir():
+    try:
+        root_state = root.lstat()
+    except FileNotFoundError as exc:
+        raise ValueError("audit evidence root is missing or linked") from exc
+    if (not stat.S_ISDIR(root_state.st_mode)
+            or getattr(root_state, "st_file_attributes", 0) & 0x400):
         raise ValueError("audit evidence root is missing or linked")
     for directory, dirs, files in os.walk(root, followlinks=False):
         for name in sorted((*dirs, *files)):
