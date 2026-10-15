@@ -8,6 +8,7 @@
 
 ## 新任务交接入口
 
+- [G5—G8起点验收](tasks/2026-10-16-harness-runtime-baseline.md)：ac64510精确CI159、本地工程、修复及原始证据。
 - [G5—G8实施计划](tasks/2026-10-16-harness-runtime-implementation.md)：已批准的逐阶段步骤、验收门和实际状态。
 - [2026-10-16 GitHub保存记录](maintenance/2026-10-16-github-save.md)：原工作区与G4候选的远端提交、保存范围、验证边界与下一阶段入口。
 - [`current-status.md`](current-status.md)：当前代码身份、最新结果、验证边界与下一任务起点。

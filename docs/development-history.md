@@ -1,5 +1,10 @@
 # TraceFix 开发历程与代码说明
 
+## 2026-10-16 起点修复已完成完整验收
+
+ac64510修复公开资格策略调用和Docker构建上下文，CI159双Python1694项各通过、精确综合覆盖率均>=90%，真实基础/ordinary/Serena及安装包资格通过。本机同源码两版完整门通过，唯一符号链接权限skip已由当前CI无跳过补证。已归档源码清单、原始日志及artifact ID/digest，无供应商调用。 证据及边界见[起点验收记录](tasks/2026-10-16-harness-runtime-baseline.md)。
+后续文档提交不借本结果宣称新HEAD重验；原工作区源码保持分离。
+
 ## 2026-10-16 G5—G8 起点核验及CI157缺陷复现
 
 读取真实CI157日志：两版工程步骤成功，资格入口漏传dispatcher，ordinary构建在RUNNER_TEMP查找相对docker目录失败。新增真实小仓库定向测试先重现两项TypeError；修复只限起点脚本/CI及对应测试，G5功能尚未开始。日志和源码清单保存在候选runs/harness-runtime-start，模型调用0。 计划及阶段状态见[实施清单](tasks/2026-10-16-harness-runtime-implementation.md)。
