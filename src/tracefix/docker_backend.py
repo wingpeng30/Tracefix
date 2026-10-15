@@ -285,7 +285,7 @@ class _BridgeSession:
                 if len(line) > _MAX_FRAME or not line.endswith(b"\n"):
                     self.frames.put(ValueError("bridge response exceeded frame limit"))
                     return
-                self.frames.put(line.rstrip(b"\n"))
+                self.frames.put(line.rstrip(b"\r\n"))
         except BaseException as exc:
             self.frames.put(exc)
 

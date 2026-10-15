@@ -4,6 +4,7 @@ import io
 import json
 import sys
 import tarfile
+import threading
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -26,6 +27,7 @@ from tracefix.artifacts import (
     ArtifactStore,
     _bounded_text_bytes,
     _original_character_offset,
+    _validate_relative,
 )
 from tracefix.process_capture import ProcessCapture, _Budget, _Preview
 from tracefix.tools.artifacts import (
@@ -732,6 +734,164 @@ def test_manifest_atomic_replace_failure_preserves_old_manifest_and_cleans_temp(
 @pytest.mark.parametrize(
     "fault",
     [
+        "top-level-identity", "too-many-artifacts", "key-mismatch", "wrong-run-ref",
+        "incomplete-files", "wrong-receipt-shape", "wrong-digest", "wrong-size-type",
+        "wrong-raw-byte-count", "wrong-view-byte-count", "wrong-redaction-id",
+        "too-much-storage", "too-many-queries", "too-many-returned-chars",
+        "extra-object", "missing-object",
+    ],
+)
+def test_manifest_inventory_rejects_tampered_receipts_and_quotas(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fault: str,
+) -> None:
+    import tracefix.artifacts as artifacts
+
+    store = make_store(tmp_path)
+    ref = store.publish_process(
+        call_id="inventory", tool_name="run_tests", source_identity={},
+        stdout=b"stdout", stderr=b"stderr", complete=True,
+    )
+    manifest = json.loads(store.manifest_path.read_text(encoding="utf-8"))
+    entry = manifest["artifacts"][ref.artifact_id]
+    receipt = entry["files"]["raw_stdout"]
+
+    if fault == "top-level-identity":
+        manifest["run_id"] = "another-run"
+    elif fault == "too-many-artifacts":
+        monkeypatch.setattr(artifacts, "MAX_RUN_ARTIFACTS", 0)
+    elif fault == "key-mismatch":
+        manifest["artifacts"] = {"f" * 32: entry}
+    elif fault == "wrong-run-ref":
+        entry["ref"]["run_id"] = "another-run"
+    elif fault == "incomplete-files":
+        entry["files"].pop("raw_stdout")
+    elif fault == "wrong-receipt-shape":
+        entry["files"]["raw_stdout"] = None
+    elif fault == "wrong-digest":
+        receipt[1] = "not-a-digest"
+    elif fault == "wrong-size-type":
+        receipt[2] = True
+    elif fault == "wrong-raw-byte-count":
+        entry["ref"]["raw_bytes"] += 1
+    elif fault == "wrong-view-byte-count":
+        entry["ref"]["view_bytes"] += 1
+    elif fault == "wrong-redaction-id":
+        entry["ref"]["redaction_policy_sha256"] = "0" * 64
+    elif fault == "too-much-storage":
+        monkeypatch.setattr(artifacts, "MAX_RUN_BYTES", 1)
+    elif fault == "too-many-queries":
+        manifest["query_count"] = MAX_SESSION_QUERIES + 1
+    elif fault == "too-many-returned-chars":
+        manifest["returned_chars"] = MAX_SESSION_RETURNED_CHARS + 1
+    elif fault == "extra-object":
+        (store.objects / "unindexed").mkdir()
+    else:
+        store._owned_file(entry["files"]["raw_stdout"][0]).unlink()
+
+    with pytest.raises(ArtifactError):
+        store._validate_inventory(manifest)
+
+
+@pytest.mark.parametrize("target", ["root", "objects", "manifest"])
+def test_artifact_store_refuses_symlinked_owned_paths(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, target: str,
+) -> None:
+    root = tmp_path / "artifact-store"
+    if target != "root":
+        ArtifactStore(root, run_id="run-a")
+    blocked = {
+        "root": root,
+        "objects": root / "objects",
+        "manifest": root / "manifest.json",
+    }[target]
+    original = Path.is_symlink
+    monkeypatch.setattr(
+        Path, "is_symlink", lambda path: path == blocked or original(path),
+    )
+
+    with pytest.raises(ArtifactError, match="symbolic link"):
+        ArtifactStore(root, run_id="run-a")
+
+
+@pytest.mark.parametrize(
+    "path",
+    ["../outside", "/absolute", "objects\\outside"],
+)
+def test_artifact_owned_file_rejects_nonportable_paths(tmp_path: Path, path: str) -> None:
+    store = make_store(tmp_path)
+    with pytest.raises(ArtifactError, match="unsafe"):
+        store._owned_file(path)
+
+
+def test_artifact_owned_file_rejects_missing_and_linked_objects(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = make_store(tmp_path)
+    ref = store.publish_process(
+        call_id="owned-file", tool_name="run_tests", source_identity={},
+        stdout=b"body", stderr=b"", complete=True,
+    )
+    with pytest.raises(ArtifactError, match="missing"):
+        store._owned_file("objects/missing/file.txt")
+
+    blocked = store.objects / ref.artifact_id
+    original = Path.is_symlink
+    monkeypatch.setattr(
+        Path, "is_symlink", lambda path: path == blocked or original(path),
+    )
+    with pytest.raises(ArtifactError, match="symbolic link"):
+        store._owned_file(f"objects/{ref.artifact_id}/raw-stdout.bin")
+
+
+@pytest.mark.parametrize(
+    "operation,fault",
+    [
+        ("read", "path"), ("read", "content"), ("read", "offset"),
+        ("search", "path"), ("search", "content"),
+    ],
+)
+def test_artifact_retrieval_rechecks_locator_integrity_and_bounds(
+    tmp_path: Path, operation: str, fault: str,
+) -> None:
+    store = make_store(tmp_path)
+    ref = store.publish_process(
+        call_id="retrieval-integrity", tool_name="run_tests", source_identity={},
+        stdout=b"searchable payload", stderr=b"", complete=True,
+    )
+    manifest = json.loads(store.manifest_path.read_text(encoding="utf-8"))
+    entry = manifest["artifacts"][ref.artifact_id]
+    if fault == "path":
+        entry["files"]["view_stdout"][0] = "objects/other/view-stdout.txt"
+        store.manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    elif fault == "content":
+        store._owned_file(entry["files"]["view_stdout"][0]).write_bytes(b"changed")
+
+    with pytest.raises(ArtifactError):
+        if operation == "search":
+            store.search("searchable")
+        elif fault == "offset":
+            store.read(ref.artifact_id, offset=100)
+        else:
+            store.read(ref.artifact_id)
+
+    assert store.quota().queries == 0
+
+
+def test_artifact_checkpoint_identity_and_archive_member_path_contract(
+    tmp_path: Path,
+) -> None:
+    store = make_store(tmp_path)
+    identity = store.checkpoint_identity()
+    store.verify_checkpoint_identity(identity)
+    with pytest.raises(ArtifactError, match="identity or cumulative quota"):
+        store.verify_checkpoint_identity({})
+    with pytest.raises(ArtifactError, match="not text"):
+        _validate_relative(None)
+
+
+@pytest.mark.parametrize(
+    "fault",
+    [
         "wrong-run", "wrong-redaction", "incomplete-inventory", "bad-file-receipt",
         "traversal-receipt", "inconsistent-byte-count", "missing-member", "extra-member",
         "duplicate-member", "symbolic-link", "changed-member",
@@ -1149,6 +1309,150 @@ def test_process_capture_preserves_nonzero_status_and_propagates_start_callback_
             cwd=tmp_path, env={}, timeout=10, call_id="callback-failure",
             tool_name="run_tests", source_identity={}, on_started=fail_callback,
         )
+
+
+@pytest.mark.parametrize("failure", ["oserror", "valueerror"])
+def test_process_capture_reports_pipe_reader_failures_without_losing_process_result(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: str,
+) -> None:
+    store = make_store(tmp_path)
+
+    class FailingPipe:
+        def read(self, _size: int) -> bytes:
+            if failure == "oserror":
+                raise OSError("pipe disconnected")
+            raise ValueError("pipe decoder failed")
+
+    class EmptyPipe:
+        def read(self, _size: int) -> bytes:
+            return b""
+
+    class FinishedProcess:
+        pid = 8123
+        stdout = FailingPipe()
+        stderr = EmptyPipe()
+        returncode = None
+
+        def wait(self, timeout: float | None = None) -> int:
+            self.returncode = 0
+            return 0
+
+        def poll(self) -> int | None:
+            return self.returncode
+
+        def kill(self) -> None:
+            self.returncode = -9
+
+    process = FinishedProcess()
+    monkeypatch.setattr("tracefix.process_capture.subprocess.Popen", lambda *_a, **_kw: process)
+
+    result = ProcessCapture(store).run(
+        ["fake-test-process"], cwd=tmp_path, env={}, timeout=5,
+        call_id=f"reader-{failure}", tool_name="run_tests", source_identity={},
+    )
+
+    assert result.returncode == 0
+    assert result.incomplete
+    assert result.artifact is not None and not result.artifact.complete
+    assert result.reader_error == (
+        "storage_write_failed" if failure == "oserror" else "ValueError"
+    )
+
+
+def test_process_capture_closes_pipes_after_a_drain_deadline(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = make_store(tmp_path)
+    started = threading.Event()
+    released = threading.Event()
+
+    class WaitingPipe:
+        def __init__(self, *, fail_close: bool = False) -> None:
+            self.fail_close = fail_close
+
+        def read(self, _size: int) -> bytes:
+            started.set()
+            released.wait(2)
+            return b""
+
+        def close(self) -> None:
+            released.set()
+            if self.fail_close:
+                raise OSError("already closed")
+
+    class FinishedProcess:
+        pid = 8124
+        stdout = WaitingPipe(fail_close=True)
+        stderr = WaitingPipe()
+        returncode = None
+
+        def wait(self, timeout: float | None = None) -> int:
+            assert started.wait(1)
+            self.returncode = 0
+            return 0
+
+        def poll(self) -> int | None:
+            return self.returncode
+
+        def kill(self) -> None:
+            self.returncode = -9
+
+    process = FinishedProcess()
+    monkeypatch.setattr("tracefix.process_capture.subprocess.Popen", lambda *_a, **_kw: process)
+    terminated: list[bool] = []
+
+    def terminate(_process, *, include_descendants: bool = False) -> None:
+        terminated.append(include_descendants)
+
+    monkeypatch.setattr(ProcessCapture, "_terminate", staticmethod(terminate))
+    result = ProcessCapture(store, drain_timeout_seconds=0.01).run(
+        ["fake-test-process"], cwd=tmp_path, env={}, timeout=5,
+        call_id="drain-deadline", tool_name="run_tests", source_identity={},
+    )
+
+    assert result.returncode == 0
+    assert result.incomplete
+    assert result.reader_error == "drain_timeout"
+    assert terminated == [True]
+    assert released.is_set()
+
+
+@pytest.mark.parametrize("kill_group_fails", [False, True])
+def test_process_capture_posix_termination_reaps_process_group(
+    monkeypatch: pytest.MonkeyPatch, kill_group_fails: bool,
+) -> None:
+    import tracefix.process_capture as process_capture
+
+    class RunningProcess:
+        pid = 8125
+        returncode = None
+
+        def poll(self) -> int | None:
+            return self.returncode
+
+        def kill(self) -> None:
+            self.returncode = -9
+
+        def wait(self, timeout: float | None = None) -> int:
+            return self.returncode or 0
+
+    process = RunningProcess()
+    calls: list[tuple[int, int]] = []
+
+    def killpg(pid: int, signal_number: int) -> None:
+        calls.append((pid, signal_number))
+        if kill_group_fails:
+            raise ProcessLookupError
+        process.returncode = 0
+
+    monkeypatch.setattr(
+        process_capture, "os", SimpleNamespace(name="posix", killpg=killpg),
+    )
+    monkeypatch.setattr(process_capture, "signal", SimpleNamespace(SIGKILL=9))
+    ProcessCapture._terminate(process)
+
+    assert calls == [(process.pid, 9)]
+    assert process.returncode in {0, -9}
 
 
 def test_process_capture_classifies_publish_quota_failure_without_rerunning(
