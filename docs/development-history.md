@@ -1,36 +1,40 @@
 # TraceFix 开发历程与代码说明
 
-## 2026-10-15 Harness Foundations G2 工具产物（阶段门未通过）
+## 2026-10-15 Harness Foundations G2 工具产物（阶段门通过）
 
-用户要求从 G1 继续完成 G2—G4。本节记录当前 G2 进度；G2 阶段门未过，不进入 G3。工作树位于
-`D:\Tracefix\runs\harness-foundations-worktree`，分支 `codex/harness-foundations`，G1 验收提交为父级。
-G2 主实现本地提交 `1d548f562dc4867cb94c3a5b7b86a0b0d6020708`，tree
-`bd05732ac832f62d44852b69a3e92d4c1e49ed76`；后续本地回归修复提交
-`cbe7d25918ec66be4b244fb5ae7938f4c213c096`，tree `932e8e0740fefe1401abe2038fa40e12e56b6128`。
-本地 branch 有两个提交尚未与远端提交图对齐。远端候选 `codex/harness-foundations` 当前仍为
-`ca96b2f64c157a156c0d360ec66c15f842acd0df`，其 tree 与主实现 `1d548f5` 相同；修复提交未上传。
+G2 最终验收身份为候选提交 `075bfae7d921b0d4ca7729b5a69f5c5218e89a10`，tree
+`2d37ed9dc063f1a819104c6a640b5d88c0acdac5`，CI #152（[run 38699965369](https://github.com/wingpeng30/Tracefix/actions/runs/38699965369)）。
+本阶段位于隔离 worktree 的候选分支 `codex/harness-foundations`；用户已授权更新公开候选分支并触发 CI。
+G2 实现之前经过 `1d548f5`、`cbe7d25`、`fc5cfad`、`a5824b1` 和
+`9a3d756` 的开发/恢复修订；正式验收提交以远端当前 SHA `075bfae` 为准，阶段记录不把不同本地提交图误写成远端身份。
 
-实现新增 run-owned `ArtifactStore`、`ProcessCapture` 二进制双流 drain、raw 与脱敏 UTF-8 view 分离、
-不可变 hash/完整性引用、8 MiB 单产物、64 MiB/run、128 项/run、4096 字符分页、每会话64次/累计128 KiB
-读取、字面搜索及20条结果上限。`read_tool_artifact` 与 `search_tool_artifact` 接入工具目录；工具结果和
-二次上下文裁剪保留 locator。Docker bridge 协商产物协议，将归档置于容器 evidence 域并通过有界传输导入/导出；
-恢复校验内容和配额，再允许请求模型。另有零供应商恢复回放入口和测试。
+实现新增 run-owned `ArtifactStore`、`ProcessCapture` 二进制双流 drain、raw 与脱敏 UTF-8 view 分离、不可变
+hash/完整性引用、8 MiB 单产物、64 MiB/run、128 项/run、4096 字符分页、每会话64次/累计128 KiB读取、字面搜索
+及20条结果上限。`read_tool_artifact` 与 `search_tool_artifact` 接入冻结工具目录；读取 locator 在二次上下文裁剪中保留。
+Docker bridge 明确协商产物协议，归档置于容器 evidence 域并通过有界传输导入/导出；checkpoint 校验来源、内容、配额，
+恢复验证产物后才允许调用模型。完整使用入口见[工具产物说明](tool-artifacts.md)。
 
-本地 G2 相关定向测试在 checkpoint bug 修复前 300 passed（121.64秒）；新增 runtime 回归验证 memory 与
-conversation 启用、Skills 关闭时能提交 terminal checkpoint，和 API 配置依赖，2 passed。改动文件 Ruff、
-compileall、git diff --check 通过。未完成本机完整工程链；一次筛选式 runtime 测试在 Windows 沙盒中因严格路径/
-子进程准备产生37个 setup errors，未以此判定产品回归。本机 Docker 按用户指示跳过。
+CI #151 先证明双 Python 全量测试为各1485 passed、0 failed/error/skip，但精确 combined line+branch 只有
+`21370/23812 = 89.74466655467832%` 与 `21368/23812 = 89.73626742818747%`，低于90%；diff-check 另因
+`docker_backend.py` 与 Docker transport test 的 CRLF 失败。补充了 manifest 清单/配额篡改、产物路径和完整性、读取偏移、
+管道 reader 失败、drain deadline 与回收等行为覆盖，并将 Windows API 上传文件规范为 LF，没有降低覆盖率或缩小测试范围。
+随后 G2 四个相关模块本地定向集合为179 passed（68.58秒），Ruff、compileall、git diff --check 均通过；本机未连接 Docker，
+按用户指示不在本机执行容器验收。
 
-候选 CI run `38614482340` 绑定远端 `ca96b2f64c157a156c0d360ec66c15f842acd0df`。基础 Docker、Serena MCP
-成功；ordinary Docker job 的 G2 artifact recovery replay 通过，但稍后的 editable memory-dialogue replay
-失败：memory+conversation checkpoint closure 查询未注册的 `load_skill`。根因是主实现把 memory 开关和 Skills
-注册状态混为一谈。提交 `cbe7d25` 将查找重新限定于 `skills_enabled` 并增加回归测试。该 run 的 Python 3.11 与
-3.12 quality job 在最后一次状态查询仍 in progress；修复尚未经过新的双 Python/真实 Docker CI。
+CI #152 的 Windows Python 3.11.9 与 3.12.10 各1519 passed、0 failed/error/skip；Coverage.py 精确 combined
+line+branch 分别 `21449/23812 = 90.07643205106669%`、`21447/23812 = 90.06803292457585%`。两版 Ruff、
+compileall、diff-check、editable smoke、公开任务资格 replay、独立 wheel/recovery smoke 均通过。质量 artifact：
+3.11 ID `11956153812`，digest `sha256:374f52c957782f59b8abe52cf32c94d80b34f011b397ae1771f68bb3ef4cbaa9`；
+3.12 ID `11956941922`，digest `sha256:25859b0f1294e16284e74d57e8ac454ab9a32f306d1d03cf0acddd677a1392f0`。
+真实容器 job：基础 Docker ID `11956720543` / `sha256:6080b0589ee8a24ae1f4e6e5d6d56e3ca4767b4417e04b81a017514935de2b45`；
+ordinary Docker ID `11956510642` / `sha256:db6b97feef6df5a9579faf3c61b2255389a4e57cedbc8bbd19d33cbef081a22e`；
+Serena MCP ID `11955846664` / `sha256:4b853944d0b667276cb507a065bf1d052fef165735fff0a0f50b88ddeaaf5bc9`。
+ordinary recovery/wheel 与 editable 回放、容器销毁重建、产物恢复和零供应商调用均成功。所有阶段回放均未发出供应商请求。
 
-上传修复提交前，GitHub 自动审查拒绝将完整 `src/tracefix/runtime.py` 上传到
-`wingpeng30/Tracefix`，说明可信内容未明确授权向此具体目的地发送该敏感源代码载荷，并要求不要改用间接方式
-绕过拒绝。故未再尝试该上传；当前修复仅在本地候选分支，无法触发精确远端验收。需要用户明确批准向该仓库候选分支
-发送本次完整运行时代码后，才能继续新的 G2 CI。没有付费调用、PR、合并或发布。
+CI #151 两版工程 artifact 的早期失败证据本机归档于候选 worktree 忽略目录 `runs/ci151-engineering-py311.zip`、
+`runs/ci151-engineering-py312.zip`；CI #152 原始工程 artifact 为 `runs/ci152-engineering-py311.zip` 与
+`runs/ci152-engineering-py312.zip`，容器原件保留在 GitHub run artifacts。文档状态同步晚于实现验收，只记录
+`075bfae`/tree 和 CI #152 的已验收功能，不声称文档提交的新 HEAD 重新通过工程门。没有 PR、合并、发布或付费请求。
 
 ## 2026-10-15 Harness Foundations G1 有类型与来源限定记忆
 

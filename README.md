@@ -8,6 +8,7 @@
 普通 Python 仓库的任务检查与恢复说明见 [docs/recovery.md](docs/recovery.md)。
 候选分支 `codex/harness-foundations` 增加了有类型、按 checkout 源码适用性召回的仓库知识记忆；
 配置、v1→v2 迁移、证据门与当前验收状态见[知识记忆说明](docs/experience-memory.md)和[当前状态](docs/current-status.md)。
+同一候选分支还提供可分页、可搜索且在 Docker recovery 中保留配额的工具产物；详见[工具产物说明](docs/tool-artifacts.md)。
 
 想在自己的受信任 Python/pytest 仓库运行？先看[普通仓库安装与使用指南](docs/ordinary-repository.md)：配置、零调用预检、隔离运行、HTML 报告和补丁导出均有可复制命令。[系统审查](docs/reviews/2026-09-28-system-review.md)列出首批能力边界。本地运行现提供确定边界的 `inspect`／`resume` 和独立公开测试复跑；[可选 Serena MCP 指南](docs/mcp-serena.md)说明隔离的只读符号查询。[普通仓库 Docker 指南](docs/ordinary-docker.md)提供预构建镜像与独立容器验证路径，其实测范围以最新 CI 证据为准；2026-09-29 已完成八次限定真实模型验收；最新结束前回归门仍以离线回放验证。范围见[证据索引](docs/evidence.md)。
 

@@ -13,6 +13,7 @@
 - [`maintenance/2026-10-14-harness-comparison-and-improvements.md`](maintenance/2026-10-14-harness-comparison-and-improvements.md)：DeepSeek Harness、Codex、Claude Code 的官方资料/源码比较，及记忆、沙盒、执行、上下文等候选改进与验收。
 - [`tasks/2026-10-14-harness-foundations-implementation.md`](tasks/2026-10-14-harness-foundations-implementation.md)：harness 前四项的阶段实施计划、工程门和逐阶段完成清单；阶段进度以当前状态入口为准。
 - [`experience-memory.md`](experience-memory.md)：候选分支有类型知识记忆的证据等级、checkout 失效、召回、管理命令和 v1→v2 迁移说明。
+- [`tool-artifacts.md`](tool-artifacts.md)：候选分支 G2 的 CLI/TOML/Python 启用方法、产物读取搜索、配额、脱敏和恢复规则。
 - [`roadmap.md`](roadmap.md)与[`development-history.md`](development-history.md)：近期工作和具体证据。
 - [`experiments/2026-10-11-abc-full30-comparison.md`](experiments/2026-10-11-abc-full30-comparison.md)：最新A/B/修复后C同题30题横向比较。
 - [`handoffs/2026-09-29-agent-harness.md`](handoffs/2026-09-29-agent-harness.md)：历史交接日志，先按顶部当前入口阅读。
