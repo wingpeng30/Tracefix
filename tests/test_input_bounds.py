@@ -8,7 +8,8 @@ from types import SimpleNamespace
 import pytest
 
 from tracefix.exceptions import BenchmarkError, LLMProviderError
-from tracefix.models.base import LLMConfig
+from tracefix.messages import Message, MessageRole
+from tracefix.models.base import LLMConfig, LLMResponse, TokenUsage
 from tracefix.models.input_bounds import (
     InputBound,
     count_deepseek_v41_request,
@@ -55,6 +56,9 @@ def _llm(
     )
 
     class Delegate:
+        def __init__(self):
+            self.config = config
+
         def count_input_bound(self, messages, tools=()):
             return InputBound(
                 tokens, status, "test-qualified-counter", "fixture", "a" * 64
@@ -93,11 +97,352 @@ def test_standard_budget_and_unqualified_count_stop_before_reservation(tmp_path)
     assert not (tmp_path / "estimate" / "ledger.json").exists()
 
 
+def test_output_budget_exhaustion_stops_before_reservation(tmp_path) -> None:
+    llm = _llm(tmp_path, 100)
+    llm._trial_output_used = llm._trial_output_budget
+
+    with pytest.raises(BenchmarkError, match="trial token budget"):
+        llm.complete(())
+
+    assert not (tmp_path / "ledger.json").exists()
+
+
+def test_total_cost_cap_rejects_reserved_request_before_send(tmp_path) -> None:
+    config = LLMConfig(
+        model_name="deepseek/deepseek-flash",
+        max_output_tokens=4096,
+        max_retries=0,
+        extra_kwargs={
+            "api_base": "https://api.deepseek.com",
+            "extra_body": {"thinking": {"type": "disabled"}},
+        },
+    )
+
+    class Delegate:
+        def __init__(self):
+            self.config = config
+
+        def count_input_tokens(self, _messages, _tools=()):
+            return 100
+
+        def complete(self, *_args):
+            raise AssertionError("cost cap must stop before provider invocation")
+
+    llm = P2BudgetedLLM(
+        config,
+        ledger_path=tmp_path / "ledger.json",
+        formal=_formal().model_copy(update={"total_cost_cap_usd": 0.000001}),
+        input_upper_bound=1000,
+        legacy_input_counting=True,
+        trial_output_budget=20_000,
+    )
+    llm._delegate = Delegate()
+    llm._trial_output_used = 19_950
+
+    with pytest.raises(BenchmarkError, match="total cost cap"):
+        llm.complete(())
+
+    ledger = json.loads((tmp_path / "ledger.json").read_text(encoding="utf-8"))
+    assert ledger["halt_reason"] == "cost_cap_would_be_exceeded"
+    assert ledger["request_count"] == 0
+    assert ledger["uncertain_request"] is False
+
+
 def test_reserved_request_ledger_records_final_request_hash(tmp_path) -> None:
     with pytest.raises(AssertionError, match="must not invoke provider"):
         _llm(tmp_path, 100).complete(())
     ledger = json.loads((tmp_path / "ledger.json").read_text(encoding="utf-8"))
     assert ledger["requests"][0]["request_sha256"] == "a" * 64
+
+
+def test_compatibility_send_uses_remaining_output_bound_and_restores_config(tmp_path) -> None:
+    config = LLMConfig(
+        model_name="deepseek/deepseek-flash",
+        max_output_tokens=4096,
+        max_retries=0,
+        extra_kwargs={
+            "api_base": "https://api.deepseek.com",
+            "extra_body": {"thinking": {"type": "disabled"}},
+        },
+    )
+    sent_bounds = []
+
+    class Delegate:
+        def __init__(self):
+            self.config = config
+
+        def count_input_tokens(self, _messages, _tools=()):
+            return 100
+
+        def complete(self, _messages, _tools=()):
+            sent_bounds.append(self.config.max_output_tokens)
+            return LLMResponse(
+                message=Message(role=MessageRole.ASSISTANT, content="ok"),
+                usage=TokenUsage(input_tokens=100, output_tokens=20, total_tokens=120),
+                model_name="deepseek/deepseek-flash",
+                raw_response={
+                    "model": "deepseek-flash",
+                    "usage": {
+                        "prompt_tokens": 100,
+                        "completion_tokens": 20,
+                        "total_tokens": 120,
+                        "prompt_cache_hit_tokens": 0,
+                        "prompt_cache_miss_tokens": 100,
+                    },
+                },
+            )
+
+    llm = P2BudgetedLLM(
+        config,
+        ledger_path=tmp_path / "ledger.json",
+        formal=_formal(),
+        input_upper_bound=1000,
+        legacy_input_counting=True,
+        trial_output_budget=20_000,
+    )
+    llm._delegate = Delegate()
+    llm._trial_output_used = 19_950
+    llm.complete(())
+    assert llm._delegate.config.max_output_tokens == 4096
+    llm.complete(())
+    assert sent_bounds == [50, 30]
+    assert llm._delegate.config.max_output_tokens == 4096
+    ledger = json.loads((tmp_path / "ledger.json").read_text(encoding="utf-8"))
+    assert [row["output_token_upper_bound"] for row in ledger["requests"]] == [50, 30]
+
+
+def test_prepared_request_binds_count_reservation_and_frozen_send(tmp_path) -> None:
+    config = LLMConfig(
+        model_name="deepseek/deepseek-flash",
+        max_output_tokens=4096,
+        max_retries=0,
+        extra_kwargs={
+            "api_base": "https://api.deepseek.com",
+            "extra_body": {"thinking": {"type": "disabled"}},
+        },
+    )
+    prepared = SimpleNamespace(request_sha256="b" * 64)
+    observed = []
+
+    def response():
+        return LLMResponse(
+            message=Message(role=MessageRole.ASSISTANT, content="ok"),
+            usage=TokenUsage(input_tokens=100, output_tokens=20, total_tokens=120),
+            model_name="deepseek/deepseek-flash",
+            raw_response={
+                "model": "deepseek-flash",
+                "usage": {
+                    "prompt_tokens": 100, "completion_tokens": 20, "total_tokens": 120,
+                    "prompt_cache_hit_tokens": 0, "prompt_cache_miss_tokens": 100,
+                },
+            },
+        )
+
+    class PreparedDelegate:
+        def __init__(self):
+            self.config = config
+
+        def count_input_bound(self, _messages, _tools=()):
+            return InputBound(100, "verified_upper_bound", "fixture", "fixture", "a" * 64)
+
+        def prepare_request(self, _messages, _tools=()):
+            observed.append(("prepare", self.config.max_output_tokens))
+            return prepared
+
+        def complete_prepared(self, request):
+            observed.append(("send", self.config.max_output_tokens, request is prepared))
+            return response()
+
+        def complete(self, *_args):
+            raise AssertionError("a frozen request must use complete_prepared")
+
+    llm = P2BudgetedLLM(
+        config,
+        ledger_path=tmp_path / "ledger.json",
+        formal=_formal(),
+        input_upper_bound=1000,
+        trial_output_budget=20_000,
+    )
+    llm._delegate = PreparedDelegate()
+    llm._trial_output_used = 19_950
+
+    llm.complete(())
+
+    ledger = json.loads((tmp_path / "ledger.json").read_text(encoding="utf-8"))
+    assert observed == [("prepare", 50), ("send", 4096, True)]
+    assert llm._delegate.config.max_output_tokens == 4096
+    assert ledger["requests"][0]["output_token_upper_bound"] == 50
+    assert ledger["requests"][0]["request_sha256"] == "b" * 64
+
+
+def test_preparation_failure_restores_config_before_any_reservation(tmp_path) -> None:
+    config = LLMConfig(
+        model_name="deepseek/deepseek-flash",
+        max_output_tokens=4096,
+        max_retries=0,
+        extra_kwargs={
+            "api_base": "https://api.deepseek.com",
+            "extra_body": {"thinking": {"type": "disabled"}},
+        },
+    )
+
+    class FailingPreparer:
+        def __init__(self):
+            self.config = config
+
+        def count_input_bound(self, _messages, _tools=()):
+            return InputBound(100, "verified_upper_bound", "fixture", "fixture", "a" * 64)
+
+        def prepare_request(self, _messages, _tools=()):
+            assert self.config.max_output_tokens == 50
+            raise RuntimeError("request preparation failed")
+
+        def complete(self, *_args):
+            raise AssertionError("failed preparation must not send")
+
+    llm = P2BudgetedLLM(
+        config,
+        ledger_path=tmp_path / "ledger.json",
+        formal=_formal(),
+        input_upper_bound=1000,
+        trial_output_budget=20_000,
+    )
+    llm._delegate = FailingPreparer()
+    llm._trial_output_used = 19_950
+
+    with pytest.raises(RuntimeError, match="preparation failed"):
+        llm.complete(())
+
+    assert llm._delegate.config.max_output_tokens == 4096
+    assert not (tmp_path / "ledger.json").exists()
+
+
+def test_compatibility_send_refuses_unbounded_delegate_before_reservation(tmp_path) -> None:
+    llm = P2BudgetedLLM(
+        LLMConfig(
+            model_name="deepseek/deepseek-flash", max_output_tokens=4096, max_retries=0,
+            extra_kwargs={
+                "api_base": "https://api.deepseek.com",
+                "extra_body": {"thinking": {"type": "disabled"}},
+            },
+        ),
+        ledger_path=tmp_path / "ledger.json",
+        formal=_formal(),
+        input_upper_bound=1000,
+        legacy_input_counting=True,
+    )
+
+    class UnconfigurableDelegate:
+        def count_input_tokens(self, _messages, _tools=()):
+            return 100
+
+        def complete(self, _messages, _tools=()):
+            raise AssertionError("unbounded provider call must be rejected")
+
+    llm._delegate = UnconfigurableDelegate()
+    with pytest.raises(BenchmarkError, match="cannot enforce"):
+        llm.complete(())
+    assert not (tmp_path / "ledger.json").exists()
+    # Legacy adapters may expose no cleanup hook.
+    llm.close()
+
+
+def test_compatibility_send_restores_config_after_unknown_outcome_without_retry(tmp_path):
+    config = LLMConfig(
+        model_name="deepseek/deepseek-flash",
+        max_output_tokens=4096,
+        max_retries=0,
+        extra_kwargs={
+            "api_base": "https://api.deepseek.com",
+            "extra_body": {"thinking": {"type": "disabled"}},
+        },
+    )
+    calls = []
+
+    class FailingDelegate:
+        def __init__(self):
+            self.config = config
+
+        def count_input_tokens(self, _messages, _tools=()):
+            return 100
+
+        def complete(self, _messages, _tools=()):
+            calls.append(self.config.max_output_tokens)
+            raise TimeoutError("provider result is unknown")
+
+    llm = P2BudgetedLLM(
+        config,
+        ledger_path=tmp_path / "ledger.json",
+        formal=_formal(),
+        input_upper_bound=1000,
+        legacy_input_counting=True,
+    )
+    llm._delegate = FailingDelegate()
+    llm._trial_output_used = 19_950
+    with pytest.raises(TimeoutError, match="unknown"):
+        llm.complete(())
+    assert calls == [50]
+    assert llm._delegate.config.max_output_tokens == 4096
+    with pytest.raises(BenchmarkError, match="uncertain request"):
+        llm.complete(())
+    assert calls == [50]
+
+
+def test_provider_response_above_reserved_output_cap_is_durable_and_halts(tmp_path):
+    config = LLMConfig(
+        model_name="deepseek/deepseek-flash",
+        max_output_tokens=4096,
+        max_retries=0,
+        extra_kwargs={
+            "api_base": "https://api.deepseek.com",
+            "extra_body": {"thinking": {"type": "disabled"}},
+        },
+    )
+
+    class Delegate:
+        def __init__(self):
+            self.config = config
+
+        def count_input_tokens(self, _messages, _tools=()):
+            return 100
+
+        def complete(self, _messages, _tools=()):
+            assert self.config.max_output_tokens == 50
+            return LLMResponse(
+                message=Message(role=MessageRole.ASSISTANT, content="too long"),
+                usage=TokenUsage(input_tokens=100, output_tokens=51, total_tokens=151),
+                model_name="deepseek/deepseek-flash",
+                raw_response={
+                    "model": "deepseek-flash",
+                    "usage": {
+                        "prompt_tokens": 100, "completion_tokens": 51,
+                        "total_tokens": 151, "prompt_cache_hit_tokens": 0,
+                        "prompt_cache_miss_tokens": 100,
+                    },
+                },
+            )
+
+    llm = P2BudgetedLLM(
+        config,
+        ledger_path=tmp_path / "ledger.json",
+        formal=_formal(),
+        input_upper_bound=1000,
+        legacy_input_counting=True,
+        trial_output_budget=20_000,
+    )
+    delegate = Delegate()
+    llm._delegate = delegate
+    llm._trial_output_used = 19_950
+
+    with pytest.raises(BenchmarkError, match="persisted request bound"):
+        llm.complete(())
+
+    ledger = json.loads((tmp_path / "ledger.json").read_text(encoding="utf-8"))
+    assert delegate.config.max_output_tokens == 4096
+    assert ledger["requests"][0]["status"] == "response_received_bound_exceeded"
+    assert ledger["requests"][0]["output_token_upper_bound"] == 50
+    assert ledger["requests"][0]["actual_output_tokens"] == 51
+    assert ledger["halt_reason"] == "provider_usage_exceeded_request_bound"
 
 
 def test_provider_identity_and_profiles() -> None:

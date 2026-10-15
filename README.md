@@ -5,6 +5,9 @@
 该实验之后工作区已实现统一LLM网关及长驻tokenizer worker，定向离线验证通过；实际提速和完整发布门槛仍待验证。
 旧实验、日期化交接和旧wheel不代表当前源码全部状态。
 
+本地harness候选已完成G0—G3 CI及G4本地验收，包含记忆、工具产物、任务状态、能力策略与Docker/Serena组合。
+候选代码与本目录源码分开保存，最新结果和使用入口见[环境与验收记录](runs/harness-foundations-worktree/docs/tasks/2026-10-15-g4-environment-acceptance.md)；本轮未上传或触发CI。
+
 普通 Python 仓库的任务检查与恢复说明见 [docs/recovery.md](docs/recovery.md)。
 
 想在自己的受信任 Python/pytest 仓库运行？先看[普通仓库安装与使用指南](docs/ordinary-repository.md)：配置、零调用预检、隔离运行、HTML 报告和补丁导出均有可复制命令。[系统审查](docs/reviews/2026-09-28-system-review.md)列出首批能力边界。本地运行现提供确定边界的 `inspect`／`resume` 和独立公开测试复跑；[可选 Serena MCP 指南](docs/mcp-serena.md)说明隔离的只读符号查询。[普通仓库 Docker 指南](docs/ordinary-docker.md)提供预构建镜像与独立容器验证路径，其实测范围以最新 CI 证据为准；2026-09-29 已完成八次限定真实模型验收；最新结束前回归门仍以离线回放验证。范围见[证据索引](docs/evidence.md)。

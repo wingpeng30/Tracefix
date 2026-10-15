@@ -15,36 +15,104 @@ from tracefix.docker_backend import DockerToolBackend
 from tracefix.exceptions import WorkspaceError
 from tracefix.onboarding import doctor
 from tracefix.ordinary_docker import prepare_image, verify_docker_patch
-from tracefix.runtime import RunConfig
+from tracefix.runtime import RunConfig, TraceFixRunner
 from tracefix.tools.base import ToolResult
 
 _IMAGE_ID = "sha256:" + "a" * 64
 
 
 def test_ordinary_docker_requires_explicit_image_source_and_test(tmp_path):
-    base = {
-        "repo": tmp_path, "task": "fix", "execution_backend": "docker",
-        "docker_profile": "ordinary", "env_file": None,
-    }
-    with pytest.raises(ValueError, match="image ID"):
-        RunConfig(**base)
-    valid = RunConfig(
-        **base, docker_image_id=_IMAGE_ID, test_target="tests/test_example.py",
-        source_import="sample",
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "widget.py").write_text("value = 1\n", encoding="utf-8")
+    (repo / "tests").mkdir()
+    (repo / "tests" / "test_widget.py").write_text("def test_ok(): pass\n", encoding="utf-8")
+    subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+    subprocess.run(["git", "add", "--all"], cwd=repo, check=True)
+    subprocess.run(
+        ["git", "-c", "user.name=Test", "-c", "user.email=test@invalid.local",
+         "commit", "-qm", "base"], cwd=repo, check=True,
     )
-    assert valid.docker_task_id is None
+    base = {
+        "repo": repo, "task": "fix", "execution_backend": "docker",
+        "docker_profile": "ordinary", "env_file": None,
+        "test_target": "tests/test_widget.py", "source_import": "widget",
+    }
+    llm_factory_calls = []
+    result = TraceFixRunner(lambda config: llm_factory_calls.append(config)).run(
+        RunConfig(**base, output_dir=tmp_path / "runs")
+    )
+    assert result.status.value == "failed"
+    assert "prebuilt image ID" in result.error["message"]
+    assert llm_factory_calls == []
     with pytest.raises(ValueError, match="frozen task ID"):
         RunConfig(**{
             **base, "docker_image_id": _IMAGE_ID,
-            "test_target": "tests/test_example.py", "source_import": "sample",
             "docker_task_id": "pytest-dev__pytest-10081",
         })
     with pytest.raises(ValueError, match="custom Skills"):
         RunConfig(**{
             **base, "docker_image_id": _IMAGE_ID,
-            "test_target": "tests/test_example.py", "source_import": "sample",
             "skills_root": tmp_path,
         })
+
+
+@pytest.mark.parametrize("failure", ["daemon", "image"])
+def test_ordinary_runner_rejects_unavailable_docker_before_model_initialization(
+    tmp_path, monkeypatch, failure,
+):
+    from tracefix import runtime
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "widget.py").write_text("value = 1\n", encoding="utf-8")
+    (repo / "tests").mkdir()
+    (repo / "tests" / "test_widget.py").write_text("def test_ok(): pass\n", encoding="utf-8")
+    for args in (
+        ("init", "-q"),
+        ("add", "--all"),
+        ("-c", "user.name=Test", "-c", "user.email=test@invalid.local", "commit", "-qm", "base"),
+    ):
+        subprocess.run(["git", *args], cwd=repo, check=True, capture_output=True)
+
+    calls = []
+    original_run = subprocess.run
+
+    def fake_run(command, **_kwargs):
+        if command[0] != "docker":
+            return original_run(command, **_kwargs)
+        calls.append(command)
+        if command[1:3] == ["version", "--format"]:
+            if failure == "daemon":
+                return SimpleNamespace(returncode=1, stdout="", stderr="daemon unavailable")
+            return SimpleNamespace(returncode=0, stdout="27.5.1\n", stderr="")
+        if command[1:3] == ["image", "inspect"]:
+            return SimpleNamespace(returncode=1, stdout="", stderr="image unavailable")
+        raise AssertionError(f"preflight allowed a later Docker command: {command}")
+
+    monkeypatch.setattr(runtime.subprocess, "run", fake_run)
+    factory_calls = []
+    config = RunConfig(
+        repo=repo,
+        task="fix widget",
+        output_dir=tmp_path / "runs",
+        env_file=None,
+        model_name="offline/preflight",
+        execution_backend="docker",
+        docker_profile="ordinary",
+        docker_image_id=_IMAGE_ID,
+        test_target="tests/test_widget.py",
+        source_import="widget",
+    )
+    result = TraceFixRunner(lambda parameters: factory_calls.append(parameters)).run(config)
+
+    expected = "daemon is unavailable" if failure == "daemon" else "image is unavailable"
+    assert result.status.value == "failed"
+    assert expected in result.error["message"]
+    assert factory_calls == []
+    assert [command[1] for command in calls] == (
+        ["version"] if failure == "daemon" else ["version", "image"]
+    )
 
 
 def test_ordinary_docker_toml_and_cli_image_precedence(tmp_path):
@@ -329,18 +397,24 @@ def test_ordinary_backend_prepares_isolated_bridge_and_source_probe(tmp_path, mo
                 value = "[]\n"
             elif ".HostConfig" in format_string:
                 value = json.dumps({"ReadonlyRootfs": True, "PidsLimit": 256,
-                                    "Memory": 2 * 1024**3, "NanoCpus": 1_000_000_000})
+                                    "Memory": 2 * 1024**3, "NanoCpus": 1_000_000_000,
+                                    "Tmpfs": {"/opt/tracefix":
+                                              "rw,uid=0,gid=0,mode=755"}})
             elif format_string == "{{.Config.User}}":
                 value = "10001:10001\n"
             else:
                 value = "ordinary-run\n"
             return SimpleNamespace(stdout=value.encode())
         if command[:2] == ["docker", "exec"] and "-c" in command:
-            script = command[-1]
+            script = command[command.index("-c") + 1]
             if "platform.python_version" in script:
                 return SimpleNamespace(stdout=b'{"python":"3.11.16","pytest":"8.4.2"}')
             if "importlib.import_module" in script:
                 return SimpleNamespace(stdout=b'"/work/agent/widget.py"')
+            if "manifest=json.loads" in script:
+                return SimpleNamespace(stdout=command[-1].encode())
+            if "p.write_text('probe')" in script:
+                return SimpleNamespace(stdout=b"blocked")
         return SimpleNamespace(stdout=b"")
 
     class Bridge:

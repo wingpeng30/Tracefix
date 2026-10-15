@@ -70,11 +70,7 @@ class RecordedMemoryClient:
             ).model_dump_json()
         else:
             if self.recall and self.calls > 1:
-                self.recalled = any(
-                    "<tracefix_skill_instructions>" in str(message.get("content"))
-                    and "Read the current implementation before editing." in
-                    str(message.get("content")) for message in messages
-                )
+                self.recalled = _has_recorded_experience(messages)
                 if not self.recalled:
                     raise AssertionError("saved experience did not reach the model request")
             call = self.sequence[self.calls - 1]
@@ -90,6 +86,34 @@ class RecordedMemoryClient:
                                      "tool_calls": calls},
                          "finish_reason": "tool_calls" if calls else "stop"}],
         }
+
+
+def _has_recorded_experience(messages: list[dict]) -> bool:
+    """Recognize the current low-trust skill JSON and verify its actual steps."""
+    expected = "Read the current implementation before editing."
+    for message in messages:
+        if message.get("role") != "user" or not isinstance(message.get("content"), str):
+            continue
+        try:
+            payload = json.loads(message["content"])
+        except (TypeError, json.JSONDecodeError):
+            continue
+        if not isinstance(payload, dict):
+            continue
+        source = payload.get("source")
+        if not isinstance(source, str):
+            continue
+        source_parts = source.replace("\\", "/").rstrip("/").split("/")
+        instructions = payload.get("instructions_as_data")
+        if (
+            payload.get("trust") == "untrusted_reference_data"
+            and payload.get("skill_name") == "experience-pagination"
+            and source_parts[-2:] == ["experience-pagination", "SKILL.md"]
+            and isinstance(instructions, str)
+            and expected in instructions
+        ):
+            return True
+    return False
 
 
 def worker(output: Path, phase: str) -> dict:

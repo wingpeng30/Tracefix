@@ -927,7 +927,7 @@ def test_runner_records_keyboard_interrupt_and_diff_collection_failure(
     monkeypatch.setattr(
         runner,
         "_collect_diff",
-        lambda workspace: (_ for _ in ()).throw(RuntimeError("diff broke")),
+        lambda workspace, *_protected: (_ for _ in ()).throw(RuntimeError("diff broke")),
     )
     failed = runner.run(
         _local_run_config(repo=repo, task="fix", output_dir=tmp_path / "diff", env_file=None)
@@ -935,11 +935,47 @@ def test_runner_records_keyboard_interrupt_and_diff_collection_failure(
     assert failed.status is AgentStatus.FAILED
     assert failed.error["code"] == "unexpected_run_error"
 
+    class CloseFailingLLM(ScriptedLLM):
+        def close(self) -> None:
+            raise RuntimeError("secondary close failure")
+
+    close_failing_runner = TraceFixRunner(
+        lambda config: CloseFailingLLM(config, [_response("done")])
+    )
+    monkeypatch.setattr(close_failing_runner, "_collect_diff", runner._collect_diff)
+    with_close_failure = close_failing_runner.run(
+        _local_run_config(
+            repo=repo, task="preserve primary failure", output_dir=tmp_path / "close-failure",
+            env_file=None,
+        )
+    )
+    assert with_close_failure.status is AgentStatus.FAILED
+    assert with_close_failure.error["message"] == "diff broke"
+    assert with_close_failure.error["cleanup_errors"][0]["message"] == (
+        "secondary close failure"
+    )
+
+    cleanup_only = TraceFixRunner(
+        lambda config: CloseFailingLLM(config, [_response("done")])
+    ).run(
+        _local_run_config(
+            repo=repo, task="report cleanup failure", output_dir=tmp_path / "cleanup-only",
+            env_file=None,
+        )
+    )
+    assert cleanup_only.status is AgentStatus.FAILED
+    assert cleanup_only.stop_reason == "llm_cleanup_error"
+    assert cleanup_only.error["message"] == "secondary close failure"
+
 
 def test_docker_runner_persists_result_before_terminal_phase(tmp_path, monkeypatch) -> None:
     """A terminal container phase must never outrun its durable host result."""
     from tracefix import runtime
     from tracefix.tools.base import ToolRegistry, ToolResult
+
+    monkeypatch.setattr(
+        TraceFixRunner, "_preflight_execution", staticmethod(lambda *_args: None)
+    )
 
     repo = _make_repo(tmp_path)
     input_root = tmp_path / "frozen-input"
@@ -970,7 +1006,7 @@ def test_docker_runner_persists_result_before_terminal_phase(tmp_path, monkeypat
 
         def prepare(
             self, source_commit, source_repo, tracefix_root, *, repo_map_task=None,
-            repo_map_config=None, skills_enabled=False, skill_limits=None,
+            repo_map_config=None, skills_enabled=False, skill_limits=None, **_kwargs,
         ):
             assert source_commit and source_repo == repo
             assert tracefix_root.is_dir()
@@ -1018,6 +1054,10 @@ def test_docker_runner_persists_export_failure_and_preserves_first_error(
     """Final container export failures must be durable and fail closed."""
     from tracefix import runtime
     from tracefix.tools.base import ToolRegistry, ToolResult
+
+    monkeypatch.setattr(
+        TraceFixRunner, "_preflight_execution", staticmethod(lambda *_args: None)
+    )
 
     repo = _make_repo(tmp_path)
     input_root = tmp_path / "frozen-input"
@@ -1104,6 +1144,10 @@ def test_docker_runner_preserves_prepare_error_when_export_also_fails(
     """A secondary finalization failure must not replace the original prepare error."""
     from tracefix import runtime
 
+    monkeypatch.setattr(
+        TraceFixRunner, "_preflight_execution", staticmethod(lambda *_args: None)
+    )
+
     repo = _make_repo(tmp_path)
     input_root = tmp_path / "frozen-input"
     input_root.mkdir()
@@ -1162,6 +1206,95 @@ def test_docker_runner_preserves_prepare_error_when_export_also_fails(
     assert phases == ["failed"]
     assert len(export_attempts) == 1
     assert llm_factory_calls == []
+
+
+@pytest.mark.parametrize("primary_failure", [False, True])
+def test_docker_cleanup_failure_preserves_primary_error_and_is_durable(
+    tmp_path, monkeypatch, primary_failure,
+) -> None:
+    from tracefix import runtime
+    from tracefix.tools.base import ToolRegistry, ToolResult
+
+    monkeypatch.setattr(
+        TraceFixRunner, "_preflight_execution", staticmethod(lambda *_args: None)
+    )
+    repo = _make_repo(tmp_path)
+    input_root = tmp_path / "frozen-input"
+    input_root.mkdir()
+    phases: list[str] = []
+
+    class FakeSession:
+        def call(self, tool_name, arguments):
+            assert tool_name == "get_git_diff"
+            if primary_failure:
+                return ToolResult(
+                    call_id="final-diff", tool_name=tool_name, success=False,
+                    error="bridge unavailable",
+                )
+            return ToolResult(
+                call_id="final-diff", tool_name=tool_name, success=True,
+                output={"diff": "", "changed_files": [], "truncated": False},
+            )
+
+    class FakeDockerBackend:
+        def __init__(self, *, run_dir, **kwargs):
+            self.run_dir = run_dir
+            self.container_id = "qualification-container"
+            self.session = FakeSession()
+            self.repo_map = None
+            self.workspace_preparation = {"success": True, "backend": "docker"}
+
+        def prepare(self, *args, **kwargs):
+            return ToolRegistry()
+
+        def set_phase(self, phase):
+            phases.append(phase)
+            if phase in {"completed", "failed", "interrupted"}:
+                result_path = self.run_dir / "result.json"
+                assert result_path.is_file()
+                assert json.loads(result_path.read_text(encoding="utf-8"))["status"] == phase
+
+        def export_evidence(self):
+            return None
+
+        def close(self, *, remove):
+            assert remove is False
+            raise WorkspaceError("secondary container cleanup failure")
+
+    monkeypatch.setattr(runtime, "DockerToolBackend", FakeDockerBackend)
+    result = TraceFixRunner(
+        lambda config: ScriptedLLM(config, [_response("done")])
+    ).run(
+        _local_run_config(
+            repo=repo,
+            task="preserve the run error across container cleanup",
+            model_name="offline/scripted",
+            output_dir=tmp_path / "runs",
+            env_file=None,
+            execution_backend="docker",
+            docker_task_id="pytest-dev__pytest-10081",
+            docker_input_root=input_root,
+            agent_config=AgentConfig(require_tested_completion=False),
+        )
+    )
+
+    assert result.status is AgentStatus.FAILED
+    assert phases == ["agent_running", "completed" if not primary_failure else "failed",
+                      "cleanup_failed"]
+    if primary_failure:
+        assert result.stop_reason == "workspace_error"
+        assert result.error["message"] == "cannot collect final container product diff"
+        assert result.error["cleanup_errors"][0]["message"] == (
+            "secondary container cleanup failure"
+        )
+    else:
+        assert result.stop_reason == "container_cleanup_failed"
+        assert result.error["message"] == "secondary container cleanup failure"
+
+    persisted = json.loads(Path(result.result_path).read_text(encoding="utf-8"))
+    assert persisted["status"] == "failed"
+    assert persisted["stop_reason"] == result.stop_reason
+    assert persisted["error"] == result.error
 
 
 def test_runtime_validation_errors_are_explicit(tmp_path) -> None:

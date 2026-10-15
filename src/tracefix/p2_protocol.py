@@ -682,26 +682,39 @@ class P2BudgetedLLM(BaseLLM):
                 "P2 request exceeds the official model context window"
             )
         prepare_request = getattr(self._delegate, "prepare_request", None)
+        complete_prepared = getattr(self._delegate, "complete_prepared", None)
+        original_delegate_config = getattr(self._delegate, "config", None)
+        copy_config = getattr(original_delegate_config, "model_copy", None)
+        if original_delegate_config is None or not callable(copy_config):
+            raise BenchmarkError(
+                "P2 provider cannot enforce the reserved output-token bound"
+            )
+        bounded_delegate_config = copy_config(
+            update={"max_output_tokens": output_upper_bound}
+        )
         prepared = None
-        if callable(prepare_request):
-            original_delegate_config = getattr(self._delegate, "config", None)
-            if original_delegate_config is not None:
-                try:
-                    self._delegate.config = original_delegate_config.model_copy(
-                        update={"max_output_tokens": output_upper_bound}
-                    )
-                    prepared = prepare_request(messages, tools)
-                finally:
-                    self._delegate.config = original_delegate_config
-            else:
+        try:
+            # Check that the delegate actually accepts the bounded config before
+            # persisting a reservation. The compatibility complete() path uses
+            # this same config while it constructs and sends the request.
+            self._delegate.config = bounded_delegate_config
+        except (AttributeError, TypeError) as exc:
+            raise BenchmarkError(
+                "P2 provider cannot enforce the reserved output-token bound"
+            ) from exc
+        try:
+            if callable(prepare_request):
                 prepared = prepare_request(messages, tools)
+        finally:
+            self._delegate.config = original_delegate_config
+        uses_prepared_request = prepared is not None and callable(complete_prepared)
         if not self._legacy_input_counting:
             qualified = InputBound(
                 qualified.tokens,
                 qualified.status,
                 qualified.method,
                 qualified.identity,
-                prepared.request_sha256 if prepared is not None else qualified.request_sha256,
+                prepared.request_sha256 if uses_prepared_request else qualified.request_sha256,
             )
         reservation = estimated_request_reservation(
             self._formal,
@@ -751,15 +764,15 @@ class P2BudgetedLLM(BaseLLM):
             }
         )
         _write_cost_ledger(self._ledger_path, ledger)
-        if prepared is not None and hasattr(self._delegate, "config"):
-            self._delegate.config = self._delegate.config.model_copy(
-                update={"max_output_tokens": output_upper_bound}
-            )
-        complete_prepared = getattr(self._delegate, "complete_prepared", None)
-        if prepared is not None and callable(complete_prepared):
+        if uses_prepared_request:
+            assert prepared is not None and callable(complete_prepared)
             response = complete_prepared(prepared)
         else:
-            response = self._delegate.complete(messages, tools)
+            try:
+                self._delegate.config = bounded_delegate_config
+                response = self._delegate.complete(messages, tools)
+            finally:
+                self._delegate.config = original_delegate_config
         evidence_path, evidence_sha256 = _write_response_evidence(
             self._ledger_path, request_id, response
         )
@@ -878,7 +891,9 @@ class P2BudgetedLLM(BaseLLM):
         )
 
     def close(self) -> None:
-        self._delegate.close()
+        close = getattr(self._delegate, "close", None)
+        if callable(close):
+            close()
 
 
 def _write_response_evidence(

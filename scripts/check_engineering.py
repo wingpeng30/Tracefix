@@ -21,6 +21,13 @@ from pathlib import Path
 from typing import Any
 
 
+def _utf8_environment(base: dict[str, str] | None = None) -> dict[str, str]:
+    environment = dict(base if base is not None else os.environ)
+    environment["PYTHONUTF8"] = "1"
+    environment["PYTHONIOENCODING"] = "utf-8:strict"
+    return environment
+
+
 def _pytest_acceptance(
     coverage: dict[str, Any], junit_path: Path, process_code: int
 ) -> dict[str, Any]:
@@ -82,21 +89,26 @@ def _run(
     env: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     started = time.time()
+    child_environment = _utf8_environment(env)
     completed = subprocess.run(
         command,
         cwd=cwd,
-        env=env or os.environ.copy(),
-        text=True,
+        env=child_environment,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         check=False,
     )
-    (output / f"{name}.log").write_text(completed.stdout, encoding="utf-8")
+    raw_log = output / f"{name}.raw.bin"
+    raw_log.write_bytes(completed.stdout)
+    (output / f"{name}.log").write_text(
+        completed.stdout.decode("utf-8", errors="replace"), encoding="utf-8"
+    )
     return {
         "command": command,
         "process_return_code": completed.returncode,
         "duration_seconds": time.time() - started,
         "log": f"{name}.log",
+        "raw_log": raw_log.name,
     }
 
 
@@ -105,7 +117,9 @@ def _resolve_diff_base(root: Path, requested: str) -> tuple[str | None, str | No
     completed = subprocess.run(
         ["git", "rev-parse", "--verify", "--end-of-options", f"{requested}^{{commit}}"],
         cwd=root,
+        env=_utf8_environment(),
         text=True,
+        encoding="utf-8",
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         check=False,
@@ -162,7 +176,9 @@ def _python_files(root: Path) -> list[str]:
     tracked = subprocess.check_output(
         ["git", "ls-files", "--cached", "--", "src", "tests", "scripts"],
         cwd=root,
+        env=_utf8_environment(),
         text=True,
+        encoding="utf-8",
     ).splitlines()
     expected_new = {
         "scripts/audit_docker_smoke.py",
@@ -201,16 +217,19 @@ def run(output: Path, root: Path, python: str, diff_base: str = "HEAD^") -> dict
     checks: dict[str, Any] = {
         "python_executable": python,
         "python_version": subprocess.check_output(
-            [python, "--version"], text=True, stderr=subprocess.STDOUT
+            [python, "--version"], env=_utf8_environment(), text=True,
+            encoding="utf-8", stderr=subprocess.STDOUT,
         ).strip(),
         "platform": platform.platform(),
         "working_tree": str(root),
         "source_commit": subprocess.check_output(
-            ["git", "rev-parse", "HEAD"], cwd=root, text=True
+            ["git", "rev-parse", "HEAD"], cwd=root, env=_utf8_environment(),
+            text=True, encoding="utf-8",
         ).strip(),
         "tracked_working_tree_dirty": bool(
             subprocess.check_output(
-                ["git", "status", "--porcelain", "--untracked-files=no"], cwd=root, text=True
+                ["git", "status", "--porcelain", "--untracked-files=no"], cwd=root,
+                env=_utf8_environment(), text=True, encoding="utf-8",
             ).strip()
         ),
         "started_at_utc": started_at.isoformat(),

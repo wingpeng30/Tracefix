@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import subprocess
+import sys
 import xml.etree.ElementTree as ET
 
 from scripts.check_engineering import (
@@ -8,6 +9,7 @@ from scripts.check_engineering import (
     _coverage_gaps,
     _pytest_acceptance,
     _resolve_diff_base,
+    _run,
 )
 
 
@@ -133,3 +135,18 @@ def test_coverage_gap_summary_ranks_largest_uncovered_files():
             "missing_branches": [[4, 5]],
         }
     ]
+
+
+def test_run_keeps_utf8_raw_output_readable_log_and_child_exit_code(tmp_path):
+    output = tmp_path / "checks"
+    output.mkdir()
+    command = [
+        sys.executable,
+        "-c",
+        "import os,sys; os.write(1, '中文'.encode()); os.write(1, bytes([255])); sys.exit(7)",
+    ]
+    result = _run("unicode", command, tmp_path, output)
+    assert result["process_return_code"] == 7
+    assert (output / "unicode.raw.bin").read_bytes() == "中文".encode() + bytes([255])
+    assert "中文" in (output / "unicode.log").read_text(encoding="utf-8")
+    assert "\ufffd" in (output / "unicode.log").read_text(encoding="utf-8")

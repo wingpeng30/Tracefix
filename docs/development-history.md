@@ -1,5 +1,99 @@
 # TraceFix 开发历程与代码说明
 
+## 2026-10-15 G4 环境补齐与本地验收完成
+
+按用户授权启动Docker，下载锁定依赖/镜像并在独立环境验收，未上传项目。候选修复TaskState裁剪控制字段、
+固定Skills恢复误判及回放/3.11兼容问题；Windows入口改LF、补Windows MCP锁，并用短目录避开长TEMP导致的venv启动超时。
+Python3.11.16/3.12.5各1691 passed、0失败/错误、1项Windows符号链接权限skip，Linux同用例实际补证通过。
+精确综合覆盖率90.11607728201766%/90.10836450580386%，两版Ruff、编译、diff及当前工作树diff-check通过。
+editable/wheel真实ordinary＋Serena完整组合、最必要容器故障回放及双版本仓库外安装检查通过，供应商调用为0。
+实现仍在隔离候选工作树，未创建新提交、合并、发布或触发CI。验收绑定258文件清单
+`ce7618dbd4ac0828e17a91ecc93529f0a07aa84d28e14ecfb90697c9c89ea6ce`；完整工程原件`runs/g4e311`/`runs/g4e312`。
+详细结果见[候选环境与验收记录](../runs/harness-foundations-worktree/docs/tasks/2026-10-15-g4-environment-acceptance.md)，
+本轮本地验收完成不表示某个新提交通过远端CI；原工作区源码保持原状。
+
+## 2026-10-15 G4 仅本地补齐续做
+
+用户要求继续补完第四项、只在本地修改和测试、环境限制如实记录、不上传。隔离候选工作树已补齐此前四个接口/组合缺口，
+并修复Docker独立验收追加目标、doctor预检及Serena缺环境的错误分类。3.12全量1683项通过、0失败/错误、1项因真实符号链接权限跳过；
+最终80项补测通过，重测发生变化模块后的精确综合覆盖率23318/25908=90.00308784931295%。原始全量summary仍为未通过，保留原件。
+最终wheel/editable仓库外各五组本地回放通过；3.11相关核心339项及最终MCP19项通过（集合重叠），完整依赖不足。
+完整记录位于 `D:\Tracefix\runs\harness-foundations-worktree\docs/tasks/2026-10-15-g4-local-completion.md`。
+本机沙盒外异步循环正常；Docker服务未运行、缺MCP SDK、3.11完整工程依赖不齐。G4完整阶段门仍未关闭。
+没有上传、触发CI、合并、发布或供应商调用；候选代码没有合入原工作区源码。
+
+## 2026-10-15 Harness Foundations 对话总结与状态复核
+
+用户要求详细总结本轮对话。只读复核比较报告、隔离候选工作树、阶段记录、G4源码和本机原始工程产物后，
+在本机同步状态入口；没有运行新测试、修改运行源码、上传或触发CI。候选进度保存在
+`D:\Tracefix\runs\harness-foundations-worktree\docs/current-status.md` 与同目录开发历程：G0至G3已通过精确候选CI，
+G4已有核心代码及513项定向通过，但仍有架构与完整验收待办。修正此前“G4本地实现已完成”和“新增ValidationBackend”过强表述，
+并补记早期完整工程1562 passed/10 failed/1 skipped、89.0482855%覆盖率以及后续最终重跑挂起的证据。
+G4的47路径旧清单包含G3同步内容，不能等同G4净新增文件数。本目录原代码与候选worktree保持分离；用户停止上传指令继续生效。
+
+## 2026-10-14 harness 能力比较与改进建议
+
+按用户要求参考 DeepSeek Harness、Codex、Claude Code 官方说明和公开代码，与当前工作区比较，
+整理[报告](maintenance/2026-10-14-harness-comparison-and-improvements.md)。
+DeepSeek 固定 `d743267388641bc76f17c45ce8b4c231aed1d32c`，Codex 固定
+`95273b84fbff40f9df7d71d50f1ca52c6489b25d`，Anthropic sandbox-runtime Linux 固定
+`c392e6cf9f8df957c66d9ab1461e2cfa99b1ab5d`，Windows 参照 v0.0.76。
+Claude CLI 核心与公开 sandbox-runtime 分开表述；产品文档不当作固定源码的全部保证。
+
+结论区分已有实现、能力组合限制和新增建议。已有证据记忆/版本回滚、Docker隔离、稳定投影、共享计数、
+长驻worker和恢复均保留。主要增量为记忆知识类型与失效、产物取回、TaskState、统一能力策略与作业协议；
+路径规则、Skills/MCP生命周期、Docker组合和子代理另列依赖与最小验收。收益是待验证假设，
+不把19/30归因于关闭的机制，也不把后续网关改动归因于之前实验。
+
+当前未提交源码已包含CI139若干归因项修复，本轮只读识别、不宣称新验收通过。
+配置亦已支持Docker recovery模式的经验记忆/连续对话，仍有custom Skills、MCP及regression_targets限制，
+避免用旧文档概括为全部local-only。没有修改源码、测试、配置或原始实验；无产品测试、供应商调用、
+依赖安装、第三方代码执行、提交或推送。使用OpenAI Docs核对官方资料，write-page检查报告写作，
+通过GitHub connector读取固定ref；本地urllib因DNS失败，未取得网络文件。
+
+任务身份：cwd `D:\Tracefix`，分支 `codex/ac-30-180s`，HEAD
+`bc8b224d0419c5acab4a0a4d2abfb92e0ff4c67e` 加既有未提交修改；
+本机默认解释器 `D:\anaconda3\python.exe`，显式src路径导入
+`D:\Tracefix\src\tracefix\__init__.py`，未用此导入代替wheel/editable验收。
+工作区80文件哈希、外部源码缓存、固定来源收据和文档验证在
+`runs/harness-review-20261014`。本轮只验证文档diff、本地链接和审阅源码哈希，
+同步固定状态、路线图与索引，并修正本文件一处既有历史报告相对链接；正式工程门槛与新付费效果另按用户后续明确任务执行。
+
+## 2026-10-13 最新 CI 原始产物完整归因
+
+按用户要求检查失败原因，下载bc8b224的CI #139 Python3.12与ordinary Docker两份产物并核对ZIP
+SHA-256和GitHub digest一致。全量结果27 failed/1272 passed，精确覆盖率88.91113653699466%，
+不是此前123项定向验证的口径。JUnit分组、静态源码归因与两项本地离线复现见
+[完整报告](maintenance/2026-10-13-ci139-diagnosis.md)。确认预算delegate的close兼容错误会覆盖停止原因；
+无prepared的兼容发送未收紧输出上限应优先修。技能内容实际存在，旧XML标签检查造成memory和Docker
+pause回放误判；default/Docker夹具、A/C用户消息识别、长上下文辅助阈值均未同步新实现。
+工程日志cp1252解码崩溃掩盖原始pytest/lint汇总；本地跟踪文件lint另确认74项历史驱动诊断。
+本轮没有修运行代码、付费调用、全量重跑或推送；状态入口已同步失败事实，原始证据保存在
+`runs/ci139-diagnosis-20261013`。结束前Python3.11完成，补取原始产物并核验哈希：
+同为27 failed/1272 passed、覆盖率88.9206712433257%，JUnit失败集合与3.12完全一致，
+工程日志解码和memory smoke亦相同。CI最终两项成功、三项失败。
+
+## 2026-10-13 GitHub CI 失败通知核查
+
+用户询问收到的 CI 失败邮件。核查 Actions API：push 会自动触发 .github/workflows/ci.yml，
+`41a5912` 的 #137（38354579122）和 `b6898c2` 的 #138（38354818810）已整体 failure；
+编码修复 `bc8b224` 的 #139（38355799150）核查时仍在运行，但 ordinary Docker job
+115158271537 已 failure，日志在 integration_replay.py 报 `integrated pause worker failed`，
+需读取该 job 的 pause.stderr 产物进一步定根因。基础 Docker 和 MCP job success。
+旧 #138 的 quality 3.12 job 115155123904：check_engineering.py/_run 读取 Ruff stdout 时
+使用 cp1252 并发生 UnicodeDecodeError；editable/wheel smoke 的 memory_replay 报
+`saved experience did not reach the model request`。两个 Windows quality job 均 failure。
+最新 #139 的 Windows quality 核查时尚未结束，不能借旧日志断言其最终测试或覆盖率结论。
+最后一次步骤快照中，#139 的 3.12 工程检查与 editable smoke 已标记 failure，job 仍 in_progress；
+3.11 尚在工程检查步骤。待对应 job 完成后才能取得完整最新日志。
+
+本地编码修复的123项定向测试通过与这些完整CI检查分开记录；未声称已通过全量工程验收。
+本次无运行代码更改、测试重跑、workflow rerun 或供应商调用，仅更新固定状态与本记录；
+文档先保留本地，不为这次解释再触发一次 push CI。执行 cwd D:\Tracefix、HEAD
+`bc8b224d0419c5acab4a0a4d2abfb92e0ff4c67e`；远端原始日志/产物保存在对应 Actions run/job：
+[旧 #138](https://github.com/wingpeng30/Tracefix/actions/runs/38354818810)、
+[修复 #139](https://github.com/wingpeng30/Tracefix/actions/runs/38355799150)。
+
 ## 2026-10-13 计数器 UTF-8 进程协议修复
 
 按用户要求修复编码、运行相关测试并上传 GitHub。`OfficialCounter` 一次性 subprocess.run 和
@@ -794,7 +888,7 @@ SWE-bench Verified 固定在 `78f471bf655a3137b2e8a75af1501690ec009ec3`，69 道
 
 当前轨迹未证明可复现实现缺陷。改进决策为不改优化实现；仅提出开发集单变量假设：单独启用工具输出呈现缩短，关闭行动引导和读取缓存，检验输入变化及诊断标记保留。配置、题目、提示、评分和预算固定，预先声明指标；20 题冻结留出集继续不触碰。
 
-验证：全量 pytest `401 passed`。Coverage.py 合并全量测试及对冻结真实轨迹执行一次离线详细诊断的覆盖数据后为综合 `90.22915340547422%`，语句 `92.5399889685604%`、分支 `82.52069917203312%`。Ruff 和 compileall 均退出 0。全量测试单独运行曾得到 `86.60%`，未达到门槛；随后真实离线诊断覆盖路径并重新跑全量后，才得到合并覆盖门槛结果。首轮临时 Git 元数据访问失败和覆盖率不足记录保留在本机，不伪称通过。详见 [`../experiments/v0.8.12-offline-detailed-ablation-diagnostic.md`](../experiments/v0.8.12-offline-detailed-ablation-diagnostic.md)。
+验证：全量 pytest `401 passed`。Coverage.py 合并全量测试及对冻结真实轨迹执行一次离线详细诊断的覆盖数据后为综合 `90.22915340547422%`，语句 `92.5399889685604%`、分支 `82.52069917203312%`。Ruff 和 compileall 均退出 0。全量测试单独运行曾得到 `86.60%`，未达到门槛；随后真实离线诊断覆盖路径并重新跑全量后，才得到合并覆盖门槛结果。首轮临时 Git 元数据访问失败和覆盖率不足记录保留在本机，不伪称通过。详见 [`../experiments/v0.8.12-offline-detailed-ablation-diagnostic.md`](experiments/v0.8.12-offline-detailed-ablation-diagnostic.md)。
 
 
 ### 2026-09-24 V0.8.13 更正诊断并冻结单变量预检

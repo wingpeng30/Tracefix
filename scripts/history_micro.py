@@ -172,6 +172,7 @@ def run_micro(output: Path, python: Path, variant: str) -> dict:
                 task="Fix next_page; preserve negative sentinel. Do not modify tests.",
                 model_name="offline/micro",
                 env_file=None,
+                execution_backend="local",
                 output_dir=output / "runs",
                 test_python_executable=python,
                 source_import="widget",

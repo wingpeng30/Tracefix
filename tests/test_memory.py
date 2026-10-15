@@ -19,6 +19,7 @@ from tracefix.memory import (
     digest,
     validate_proposal,
 )
+from tracefix.memory_replay import _has_recorded_experience
 from tracefix.messages import Message, MessageRole
 from tracefix.models.base import BaseLLM, LLMResponse, TokenUsage
 from tracefix.models.litellm_adapter import LiteLLMAdapter
@@ -286,8 +287,7 @@ class MemoryClient(ReplayClient):
                 "prompt_tokens": 100, "completion_tokens": 10, "total_tokens": 110,
             }, "choices": [{"message": {"role": "assistant", "content": content},
                             "finish_reason": "stop"}]}
-        if any("<tracefix_skill_instructions>" in str(item) and "Read the current implementation" in
-               str(item) for item in kwargs["messages"]):
+        if _has_recorded_experience(kwargs["messages"]):
             self.recalled = True
         return super().completion(**kwargs)
 
@@ -298,7 +298,8 @@ def run_memory(root, client, **updates):
         source_repo(repo)
     runner = TraceFixRunner(llm_factory=lambda config: LiteLLMAdapter(config, client=client))
     config = RunConfig(repo=repo, task="Fix pagination", model_name="offline/replay",
-                       output_dir=root / "runs", env_file=None, memory_enabled=True,
+                       output_dir=root / "runs", env_file=None, execution_backend="local",
+                       memory_enabled=True,
                        test_python_executable=Path(sys.executable),
                        test_target="tests/test_widget.py", source_import="widget")
     for key, value in updates.items():
@@ -347,7 +348,7 @@ def test_extraction_budget_skip_and_legacy_config_identity(tmp_path):
     assert result.status == "completed"
     assert result.step_count == 6
     assert result.memory_status["status"] == "skipped"
-    config = RunConfig(repo=tmp_path, task="task")
+    config = RunConfig(repo=tmp_path, task="task", execution_backend="local")
     old = config.model_dump(mode="json", exclude={"memory_enabled", "memory_dir"})
     import hashlib
 
@@ -386,7 +387,7 @@ def test_no_verified_patch_skips_without_extraction(tmp_path):
 
     result = TraceFixRunner(llm_factory=FinalOnly).run(RunConfig(
         repo=tmp_path / "source", task="pagination", output_dir=tmp_path / "runs",
-        model_name="offline", env_file=None, memory_enabled=True,
+        model_name="offline", env_file=None, execution_backend="local", memory_enabled=True,
     ))
     assert result.step_count == 1
     assert result.memory_status["status"] == "skipped"
@@ -412,6 +413,134 @@ def test_installed_package_shape_replay_separate_processes(tmp_path):
     assert result["recall"]["recalled"] is True
 
 
+@pytest.mark.parametrize(
+    "mode,match",
+    [
+        ("child_failure", "learn failed"),
+        ("same_process", "cross-process recall was not proven"),
+        ("missing_recall", "cross-process recall was not proven"),
+        ("disabled_still_selected", "disabled memory was still selected"),
+        ("rollback_inactive", "verified rollback did not reactivate memory"),
+    ],
+)
+def test_memory_replay_fails_closed_when_recovery_evidence_is_invalid(
+    tmp_path, monkeypatch, mode, match
+):
+    from types import SimpleNamespace
+
+    import tracefix.memory_replay as replay
+
+    def run_child(command, *, cwd, **_kwargs):
+        if mode == "child_failure":
+            return SimpleNamespace(returncode=4, stdout="partial output", stderr="child failed")
+        phase = command[command.index("--phase") + 1]
+        if phase == "learn":
+            result = {"pid": 10, "recalled": False, "run": "learn-run"}
+        else:
+            result = {
+                "pid": 10 if mode == "same_process" else 11,
+                "recalled": mode != "missing_recall",
+                "run": "recall-run",
+            }
+        (Path(cwd) / f"{phase}.json").write_text(json.dumps(result), encoding="utf-8")
+        return SimpleNamespace(returncode=0, stdout="ok", stderr="")
+
+    monkeypatch.setattr(replay.subprocess, "run", run_child)
+
+    class FakeStore:
+        def __init__(self, *_args):
+            self.phase = "active"
+
+        def disable(self, _key):
+            self.phase = "disabled"
+
+        def rollback(self, _key, _version):
+            self.phase = "rolled_back"
+
+        def select(self, _key):
+            if mode == "disabled_still_selected" and self.phase == "disabled":
+                return [("pagination", 1)]
+            if mode == "rollback_inactive" and self.phase == "rolled_back":
+                return []
+            return [] if self.phase == "disabled" else [("pagination", 1)]
+
+    monkeypatch.setattr(replay, "ExperienceStore", FakeStore)
+    monkeypatch.setattr("tracefix.report.render_report", lambda _path: None)
+    with pytest.raises((RuntimeError, AssertionError), match=match):
+        replay.run_memory_replay(tmp_path / "replay")
+    if mode == "child_failure":
+        assert (tmp_path / "replay/learn.stdout.txt").read_text(
+            encoding="utf-8"
+        ) == "partial output"
+        assert (tmp_path / "replay/learn.stderr.txt").read_text(
+            encoding="utf-8"
+        ) == "child failed"
+
+
+@pytest.mark.parametrize(
+    "failure",
+    ["agent_status", "memory_status", "accounting", "independent_patch", "dirty_source"],
+)
+def test_memory_worker_rejects_unverified_replay_evidence(tmp_path, monkeypatch, failure):
+    from contextlib import nullcontext
+    from types import SimpleNamespace
+
+    import tracefix.memory_replay as replay
+
+    output = tmp_path / "worker"
+    output.mkdir()
+    (output / "source").mkdir()
+    class FakeResult(SimpleNamespace):
+        def model_dump(self, **_kwargs):
+            return vars(self)
+
+    result = FakeResult(
+        status="failed" if failure == "agent_status" else "completed",
+        agent_validation_status="verified",
+        memory_status={"status": "skipped" if failure == "memory_status" else "verified"},
+        step_count=1 if failure == "accounting" else 0,
+        input_tokens=0,
+        result_path=str(output / "runs/run-1/result.json"),
+    )
+
+    class FakeRunner:
+        def __init__(self, **_kwargs):
+            pass
+
+        def run(self, _config):
+            return result
+
+    monkeypatch.setattr(replay, "TraceFixRunner", FakeRunner)
+    monkeypatch.setattr(replay, "forbid_live_access", lambda: nullcontext())
+    monkeypatch.setattr(
+        replay, "verify_patch", lambda _path: {"passed": failure != "independent_patch"}
+    )
+    monkeypatch.setattr(
+        replay.subprocess,
+        "run",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            stdout=" M widget.py\n" if failure == "dirty_source" else ""
+        ),
+    )
+    with pytest.raises(AssertionError):
+        replay.worker(output, "recall")
+
+
+def test_memory_replay_cli_delegates_to_requested_phase(monkeypatch, capsys):
+    import tracefix.memory_replay as replay
+
+    monkeypatch.setattr(replay.sys, "argv", [
+        "memory_replay", "--output", "replay-output", "--phase", "recall",
+    ])
+    monkeypatch.setattr(replay, "worker", lambda output, phase: {
+        "output": str(output), "phase": phase, "provider_calls": 0,
+    })
+    assert replay.main() == 0
+    assert json.loads(capsys.readouterr().out) == {
+        "output": "replay-output", "phase": "recall", "provider_calls": 0,
+    }
+
+
 def test_recorded_worker_uses_production_adapter_and_independent_verifier(tmp_path):
     from tracefix.memory_replay import worker
 
@@ -425,6 +554,57 @@ def test_recorded_worker_uses_production_adapter_and_independent_verifier(tmp_pa
     assert second["recalled"]
     assert first["memory"]["status"] == "verified"
     assert second["memory"]["status"] == "duplicate"
+
+
+@pytest.mark.parametrize(
+    "payload,expected",
+    [
+        ({"source": "skills/experience-pagination/SKILL.md",
+          "skill_name": "experience-pagination", "trust": "untrusted_reference_data",
+          "instructions_as_data": "Read the current implementation before editing."}, True),
+        ({"source": r"skills\experience-pagination\SKILL.md/",
+          "skill_name": "experience-pagination", "trust": "untrusted_reference_data",
+          "instructions_as_data": "Read the current implementation before editing."}, True),
+        ({"source": "skills/other-skill/SKILL.md",
+          "skill_name": "experience-pagination", "trust": "untrusted_reference_data",
+          "instructions_as_data": "Read the current implementation before editing."}, False),
+        ({"source": "skills/experience-pagination/SKILL.md",
+          "skill_name": "other-skill", "trust": "untrusted_reference_data",
+          "instructions_as_data": "Read the current implementation before editing."}, False),
+        ({"source": "skills/experience-pagination/SKILL.md",
+          "skill_name": "experience-pagination", "trust": "trusted_instruction",
+          "instructions_as_data": "Read the current implementation before editing."}, False),
+        ({"source": 7, "skill_name": "experience-pagination",
+          "trust": "untrusted_reference_data",
+          "instructions_as_data": "Read the current implementation before editing."}, False),
+        (None, False),
+        ({"source": "skills/experience-pagination/SKILL.md",
+          "skill_name": "experience-pagination", "trust": "untrusted_reference_data"}, False),
+        ({"source": "skills/experience-pagination/SKILL.md",
+          "skill_name": "experience-pagination", "trust": "untrusted_reference_data",
+          "instructions_as_data": "Use a different unrelated procedure."}, False),
+        ("Read the current implementation before editing.", False),
+    ],
+)
+def test_memory_replay_requires_real_low_trust_skill_payload(payload, expected):
+    content = payload if isinstance(payload, str) else json.dumps(payload)
+    assert _has_recorded_experience([{"role": "user", "content": content}]) is expected
+
+
+def test_memory_replay_ignores_non_user_and_non_text_messages():
+    assert not _has_recorded_experience([
+        {"role": "assistant", "content": '{"source":"skills/experience-pagination/SKILL.md"}'},
+        {"role": "user", "content": None},
+    ])
+
+
+def test_recorded_memory_client_rejects_missing_recalled_skill():
+    from tracefix.memory_replay import RecordedMemoryClient
+
+    client = RecordedMemoryClient(recall=True)
+    client.calls = 1
+    with pytest.raises(AssertionError, match="did not reach the model request"):
+        client.completion(messages=[{"role": "user", "content": "ordinary text"}], tools=[{}])
 
 
 @pytest.mark.parametrize("mode,expected", [

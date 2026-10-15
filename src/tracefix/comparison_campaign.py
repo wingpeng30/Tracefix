@@ -1017,10 +1017,9 @@ def audit_first_block(root: Path, protocol: dict, identifiers: list[str]) -> dic
             body = read_json(root / "provider" / f"{arm_requests[0]['id']}-request.json")
             if arm == "A" and body.get("tools"):
                 raise ValueError("bare model must not receive tools")
-            users = [m["content"] for m in body["messages"] if m["role"] == "user"]
             task = next(r["task_id"] for r in records if r["arm"] == arm)
             prompt = Path(protocol["tasks"][task]["prompt_path"]).read_text(encoding="utf-8")
-            if not users or users[0].rstrip("\n") != prompt.rstrip("\n"):
+            if not _public_task_messages_match(body, arm, prompt):
                 raise ValueError("A/C initial public material differs")
     return {
         "protocol_sha256": digest(protocol),
@@ -1033,6 +1032,44 @@ def audit_first_block(root: Path, protocol: dict, identifiers: list[str]) -> dic
             for identifier in identifiers
         },
     }
+
+
+def _allowed_initial_reference(message: dict) -> bool:
+    """Accept only known structured low-trust reference messages before the task."""
+    if message.get("role") != "user" or not isinstance(message.get("content"), str):
+        return False
+    try:
+        payload = json.loads(message["content"])
+    except (TypeError, json.JSONDecodeError):
+        return False
+    if not isinstance(payload, dict) or payload.get("trust") != "untrusted_reference_data":
+        return False
+    source = payload.get("source")
+    if source == "deterministic repository index":
+        return isinstance(payload.get("content"), str)
+    if source == "TraceFix skill catalog":
+        return isinstance(payload.get("items"), list)
+    if isinstance(source, str):
+        parts = source.replace("\\", "/").rstrip("/").split("/")
+        return (
+            parts[-1:] == ["SKILL.md"]
+            and len(parts) >= 2
+            and parts[-2] == payload.get("skill_name")
+            and isinstance(payload.get("instructions_as_data"), str)
+        )
+    return False
+
+
+def _public_task_messages_match(body: dict, arm: str, prompt: str) -> bool:
+    users = [message for message in body.get("messages", ()) if message.get("role") == "user"]
+    if arm == "A":
+        return (
+            len(users) == 1
+            and users[0].get("content", "").rstrip("\n") == prompt.rstrip("\n")
+        )
+    if not users or users[-1].get("content", "").rstrip("\n") != prompt.rstrip("\n"):
+        return False
+    return all(_allowed_initial_reference(message) for message in users[:-1])
 
 
 def run(root: Path, env_file: Path | None = None, *, max_trials: int = 180) -> list[dict]:

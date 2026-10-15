@@ -9,7 +9,9 @@
 ## 新任务交接入口
 
 - [`current-status.md`](current-status.md)：当前代码身份、最新结果、验证边界与下一任务起点。
+- [G4候选环境与本地验收](../runs/harness-foundations-worktree/docs/tasks/2026-10-15-g4-environment-acceptance.md)：环境补齐、真实Docker/Serena组合、双Python工程结果及本地使用入口；候选源码尚未合入本目录。
 - [`security.md`](security.md)：普通任务、文件工具、子进程、Docker 和提示注入的基础安全约定。
+- [`maintenance/2026-10-14-harness-comparison-and-improvements.md`](maintenance/2026-10-14-harness-comparison-and-improvements.md)：DeepSeek Harness、Codex、Claude Code 的官方资料/源码比较，及记忆、沙盒、执行、上下文等候选改进与验收。
 - [`roadmap.md`](roadmap.md)与[`development-history.md`](development-history.md)：近期工作和具体证据。
 - [`experiments/2026-10-11-abc-full30-comparison.md`](experiments/2026-10-11-abc-full30-comparison.md)：最新A/B/修复后C同题30题横向比较。
 - [`handoffs/2026-09-29-agent-harness.md`](handoffs/2026-09-29-agent-harness.md)：历史交接日志，先按顶部当前入口阅读。

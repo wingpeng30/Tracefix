@@ -9,10 +9,9 @@ import json
 import os
 import shutil
 import sys
-import time
 import uuid
 import zipfile
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from urllib.request import ProxyHandler, Request, build_opener
 
@@ -68,7 +67,7 @@ def read_json(path: Path):
 
 
 def now() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 def load_engine():
@@ -143,9 +142,7 @@ def api_json(url: str, key: str) -> dict:
 
 def wallet_snapshot(root: Path, index: int) -> dict:
     balance = api_json(BALANCE_URL, os.environ["DEEPSEEK_API_KEY"])
-    row = next(
-        (r for r in balance.get("balance_infos", []) if r.get("currency") == "CNY"), None
-    )
+    row = next((r for r in balance.get("balance_infos", []) if r.get("currency") == "CNY"), None)
     if row is None:
         raise ValueError("provider balance response has no CNY balance")
     balance["available_cny"] = float(row["total_balance"])
@@ -178,8 +175,10 @@ def old_pilot_baseline(previous: dict) -> dict:
     # DictReader exposes the first header as ``arm`` on Windows.
     with OLD_CACHE_CSV.open(encoding="utf-8-sig", newline="") as stream:
         fact_rows = [
-            r for r in csv.DictReader(stream)
-            if r["arm"] == "C" and r["task_id"] == PILOT_TASK
+            r
+            for r in csv.DictReader(stream)
+            if r["arm"] == "C"
+            and r["task_id"] == PILOT_TASK
             and r["transition"] in {"fact_anchor_inserted", "fact_anchor_updated"}
         ]
     fact_input = sum(int(r["input_tokens"]) for r in fact_rows)
@@ -210,7 +209,11 @@ def verify_inputs(previous: dict, task_ids: list[str]) -> tuple[dict, dict]:
     materials = {}
     for task_id in task_ids:
         spec = previous["tasks"][task_id]
-        prompt, source, python = Path(spec["prompt_path"]), Path(spec["source"]), Path(spec["python"])
+        prompt, source, python = (
+            Path(spec["prompt_path"]),
+            Path(spec["source"]),
+            Path(spec["python"]),
+        )
         if not prompt.is_file() or file_sha(prompt) != spec["prompt_sha256"]:
             raise ValueError(f"frozen prompt changed: {task_id}")
         if not source.is_dir() or not python.is_file():
@@ -229,12 +232,16 @@ def verify_inputs(previous: dict, task_ids: list[str]) -> tuple[dict, dict]:
         raise ValueError("pinned official tokenizer file changed")
     if runtime.get("identity", {}).get("tokenizer_sha256") != ENGINE["tokenizer_sha"]:
         raise ValueError("official counter tokenizer identity changed")
-    probe = ENGINE["OfficialCounter"](runtime).invoke([{
-        "model": "deepseek-flash",
-        "messages": [{"role": "user", "content": "TraceFix context cache probe"}],
-        "tools": [],
-        "thinking": {"type": "disabled"},
-    }])
+    probe = ENGINE["OfficialCounter"](runtime).invoke(
+        [
+            {
+                "model": "deepseek-flash",
+                "messages": [{"role": "user", "content": "TraceFix context cache probe"}],
+                "tools": [],
+                "thinking": {"type": "disabled"},
+            }
+        ]
+    )
     if probe.get("identity") != runtime.get("identity"):
         raise ValueError("official tokenizer probe identity mismatch")
     return materials, {
@@ -343,7 +350,10 @@ def prepare(root: Path) -> dict:
         "limit_cny": TOTAL_CNY,
         "authorization_id": "20261010-c-context-30-" + uuid.uuid4().hex,
         "authorization_path": str(auth_path),
-        "user_instruction": "User authorized one paid C retest, then the same C thirty-task run if the pilot gate passes; one independent ¥300 limit.",
+        "user_instruction": (
+            "User authorized one paid C retest, then the same C thirty-task run if the pilot gate "
+            "passes; one independent ¥300 limit."
+        ),
         "created_at": now(),
     }
     write_json(auth_path, auth)
@@ -403,7 +413,10 @@ def prepare(root: Path) -> dict:
         "schedule": schedule,
         "tasks": tasks,
         "qualification_reused": True,
-        "qualification_note": "Reuses previous task qualification and frozen materials; no offline repair tests or CI were run.",
+        "qualification_note": (
+            "Reuses previous task qualification and frozen materials; no offline repair tests or "
+            "CI were run."
+        ),
         "frozen_at": now(),
     }
     write_json(root / "prices.json", prices)
@@ -411,31 +424,46 @@ def prepare(root: Path) -> dict:
     write_json(root / "source-manifest.json", manifest)
     write_json(root / "protocol.json", protocol)
     write_json(root / "protocol.sha256.json", {"sha256": digest(protocol)})
-    write_json(root / "storage-owner.json", {
-        "owner": "TraceFix 2026-10-10 post-context-fix C retest",
-        "campaign": str(root),
-        "contains": "Provider requests/responses, wallet snapshots, workspaces, patches, test and verification evidence.",
-        "cleanup_after_review": True,
-        "cleanup_command": f"Remove-Item -LiteralPath '{root}' -Recurse -Force",
-        "created_at": now(),
-    })
-    write_json(root / "progress.json", {
-        "started": 0, "planned": 30, "known_peak_cny": 0.0,
-        "unknown_reserved_cny": 0.0, "gate": "pilot_pending",
-        "initial_available_cny": balance["available_cny"],
-    })
-    write_json(root / "startup-gate.json", {
-        "accepted": True,
-        "paid_calls_before_gate": 0,
-        "available_cny": balance["available_cny"],
-        "model_alias": "deepseek-flash",
-        "model_version": provider["model_version"],
-        "context_tokens": DEEPSEEK_FLASH_CONTEXT,
-        "provider_models_sha256": file_sha(root / "provider-models.json"),
-        "tokenizer_probe_sha256": calibration["counter_probe_sha256"],
-        "old_pilot_baseline": calibration["old_pilot"],
-        "created_at": now(),
-    })
+    write_json(
+        root / "storage-owner.json",
+        {
+            "owner": "TraceFix 2026-10-10 post-context-fix C retest",
+            "campaign": str(root),
+            "contains": (
+                "Provider requests/responses, wallet snapshots, workspaces, patches, test and "
+                "verification evidence."
+            ),
+            "cleanup_after_review": True,
+            "cleanup_command": f"Remove-Item -LiteralPath '{root}' -Recurse -Force",
+            "created_at": now(),
+        },
+    )
+    write_json(
+        root / "progress.json",
+        {
+            "started": 0,
+            "planned": 30,
+            "known_peak_cny": 0.0,
+            "unknown_reserved_cny": 0.0,
+            "gate": "pilot_pending",
+            "initial_available_cny": balance["available_cny"],
+        },
+    )
+    write_json(
+        root / "startup-gate.json",
+        {
+            "accepted": True,
+            "paid_calls_before_gate": 0,
+            "available_cny": balance["available_cny"],
+            "model_alias": "deepseek-flash",
+            "model_version": provider["model_version"],
+            "context_tokens": DEEPSEEK_FLASH_CONTEXT,
+            "provider_models_sha256": file_sha(root / "provider-models.json"),
+            "tokenizer_probe_sha256": calibration["counter_probe_sha256"],
+            "old_pilot_baseline": calibration["old_pilot"],
+            "created_at": now(),
+        },
+    )
     return protocol
 
 
@@ -450,26 +478,6 @@ def check_frozen(root: Path) -> dict:
     if file_sha(Path(protocol["source_snapshot_path"])) != protocol["source_snapshot_sha256"]:
         raise ValueError("source snapshot archive changed")
     return protocol
-
-
-def liability(root: Path) -> tuple[float, float]:
-    known = unknown = 0.0
-    for path in sorted((root / "segments").glob("[0-9][0-9][0-9]/requests.json")):
-        for row in read_json(path).get("requests", []):
-            if "peak_cost_cny" in row:
-                known += float(row["peak_cost_cny"])
-            elif row.get("status") != "completed":
-                unknown += float(row.get("reserved_peak_cny", 0.0))
-    return known, unknown
-
-
-def read_all_requests(root: Path) -> list[dict]:
-    rows = []
-    for path in sorted((root / "segments").glob("[0-9][0-9][0-9]/requests.json")):
-        segment = path.parent
-        local = read_json(segment / "protocol.json")
-        rows.extend(ENGINE["validate_requests"](segment, local))
-    return rows
 
 
 def prefix_audit(root: Path, row: dict, record: dict, requests: list[dict]) -> dict:
@@ -489,11 +497,14 @@ def prefix_audit(root: Path, row: dict, record: dict, requests: list[dict]) -> d
     if not trajectory.is_file():
         raise ValueError("agent trace missing for prefix audit")
     events = [json.loads(line) for line in trajectory.read_text(encoding="utf-8").splitlines()]
-    model_events = [i for i, event in enumerate(events) if event.get("event_type") == "model_requested"]
+    model_events = [
+        i for i, event in enumerate(events) if event.get("event_type") == "model_requested"
+    ]
     if len(model_events) < len(bodies):
         raise ValueError("model request trace is incomplete")
     compact_events = {
-        i for i, event in enumerate(events)
+        i
+        for i, event in enumerate(events)
         if event.get("event_type") == "context_compacted"
         and (
             event.get("payload", {}).get("compacted") is True
@@ -508,9 +519,11 @@ def prefix_audit(root: Path, row: dict, record: dict, requests: list[dict]) -> d
             continue
         previous = bodies[index - 1]
         old_messages = previous.get("messages", [])
-        prefix_ok = len(messages) >= len(old_messages) and messages[:len(old_messages)] == old_messages
+        prefix_ok = (
+            len(messages) >= len(old_messages) and messages[: len(old_messages)] == old_messages
+        )
         tools_same = tools == previous.get("tools", [])
-        suffix = messages[len(old_messages):] if prefix_ok else []
+        suffix = messages[len(old_messages) :] if prefix_ok else []
         fact = any(
             isinstance(message.get("content"), str)
             and "[TraceFix 已核验任务事实]" in message["content"]
@@ -526,9 +539,13 @@ def prefix_audit(root: Path, row: dict, record: dict, requests: list[dict]) -> d
             kind = "context_compaction_boundary"
         else:
             kind = "unexpected_prefix_or_tool_change"
-            anomalies.append({"request": ordered[index]["id"], "prefix_ok": prefix_ok, "tools_same": tools_same})
+            anomalies.append(
+                {"request": ordered[index]["id"], "prefix_ok": prefix_ok, "tools_same": tools_same}
+            )
         transitions.append({"request": ordered[index]["id"], "kind": kind})
-    hits = sum(int(r.get("supplier_raw_usage", {}).get("prompt_cache_hit_tokens", 0)) for r in ordered)
+    hits = sum(
+        int(r.get("supplier_raw_usage", {}).get("prompt_cache_hit_tokens", 0)) for r in ordered
+    )
     inputs = sum(int(r.get("usage", {}).get("input_tokens", 0)) for r in ordered)
     fact_ids = set(facts)
     fact_rows = [r for r in ordered if r["id"] in fact_ids]
@@ -545,7 +562,9 @@ def prefix_audit(root: Path, row: dict, record: dict, requests: list[dict]) -> d
         "fact_input_tokens": fact_inputs,
         "fact_hit_tokens": fact_hits,
         "fact_hit_rate": fact_hits / fact_inputs if fact_inputs else None,
-        "compression_boundaries": sum(t["kind"] == "context_compaction_boundary" for t in transitions),
+        "compression_boundaries": sum(
+            t["kind"] == "context_compaction_boundary" for t in transitions
+        ),
         "prefix_anomalies": anomalies,
         "transitions": transitions,
         "trace_sha256": file_sha(trajectory),
@@ -572,10 +591,14 @@ def evaluate_pilot(root: Path, protocol: dict) -> dict:
     overall = audit["overall_hit_rate"] or 0.0
     fact_rate = audit["fact_hit_rate"]
     conditions = {
-        "overall_at_least_34_57_percent": overall >= protocol["improvement_gate"]["overall_hit_rate_minimum"],
-        "two_fact_requests_at_least_90_percent": len(audit["fact_request_ids"]) >= MIN_FACT_REQUESTS and fact_rate is not None and fact_rate >= FACT_HIT_FLOOR,
+        "overall_at_least_34_57_percent": overall
+        >= protocol["improvement_gate"]["overall_hit_rate_minimum"],
+        "two_fact_requests_at_least_90_percent": len(audit["fact_request_ids"]) >= MIN_FACT_REQUESTS
+        and fact_rate is not None
+        and fact_rate >= FACT_HIT_FLOOR,
         "no_unexpected_prefix_change": not audit["prefix_anomalies"],
-        "complete_usage_evidence": bool(requests) and all(r.get("status") == "completed" for r in requests),
+        "complete_usage_evidence": bool(requests)
+        and all(r.get("status") == "completed" for r in requests),
     }
     result = {
         "passed": all(conditions.values()),
@@ -603,7 +626,9 @@ def finish_unknown(segment: Path, row: dict, local: dict) -> dict:
     record_path = segment / "trials" / row["id"] / "record.json"
     record = read_json(record_path)
     requests = ENGINE["validate_requests"](segment, local)
-    if record.get("status") != "unknown_request" or not any(r.get("status") != "completed" for r in requests):
+    if record.get("status") != "unknown_request" or not any(
+        r.get("status") != "completed" for r in requests
+    ):
         raise ValueError("unknown response is not durably recorded")
     copy_path = record_path.parent / "agent-unknown.json"
     if not copy_path.exists():
@@ -652,7 +677,9 @@ def update_progress(root: Path, protocol: dict) -> dict:
     known, unknown = liability(root)
     requests = read_all_requests(root)
     inputs = sum(int(r.get("usage", {}).get("input_tokens", 0)) for r in requests)
-    hits = sum(int(r.get("supplier_raw_usage", {}).get("prompt_cache_hit_tokens", 0)) for r in requests)
+    hits = sum(
+        int(r.get("supplier_raw_usage", {}).get("prompt_cache_hit_tokens", 0)) for r in requests
+    )
     main = sum(r.get("status") == "completed" and bool(r.get("passed")) for r in run_records)
     data = {
         "started": len(run_records),
@@ -700,7 +727,9 @@ def verify_task(spec: dict, service_identity_file: Path) -> None:
         mutable = {"pid", "started_at", "startup_nonce", "identity_url"}
         if any(identity.get(k) != current.get(k) for k in identity if k not in mutable):
             raise ValueError("controlled service build or environment changed")
-        if current.get("port") != identity.get("port") or current.get("health_url") != identity.get("health_url"):
+        if current.get("port") != identity.get("port") or current.get("health_url") != identity.get(
+            "health_url"
+        ):
             raise ValueError("controlled service endpoint changed")
         req = Request(current["identity_url"])
         with build_opener(ProxyHandler({})).open(req, timeout=8) as response:
@@ -754,7 +783,9 @@ def run(root: Path, max_trials: int = 30) -> list[dict]:
                         raise ValueError("incomplete non-provider run; refusing replay")
                 ENGINE["validate_record"](existing, record_path.parent, row)
                 result_rows.append(existing)
-                previous_segment = segment if (segment / "requests.json").is_file() else previous_segment
+                previous_segment = (
+                    segment if (segment / "requests.json").is_file() else previous_segment
+                )
                 if row["id"] == pilot["id"] and gate is None:
                     gate = evaluate_pilot(root, protocol)
                     if not gate["passed"]:
@@ -767,15 +798,26 @@ def run(root: Path, max_trials: int = 30) -> list[dict]:
             verify_task(spec, root / "httpbin-identity.json")
             known_before, unknown_before = liability(root)
             if known_before + unknown_before >= TOTAL_CNY:
-                write_json(root / "budget-stop.json", {"sent": False, "reason": "authorization liability exhausted"})
+                write_json(
+                    root / "budget-stop.json",
+                    {"sent": False, "reason": "authorization liability exhausted"},
+                )
                 break
             balance = wallet_snapshot(root, row["block"])
-            wallet_cap = min(TASK_CNY, TOTAL_CNY - known_before - unknown_before, balance["available_cny"] - unknown_before)
+            wallet_cap = min(
+                TASK_CNY,
+                TOTAL_CNY - known_before - unknown_before,
+                balance["available_cny"] - unknown_before,
+            )
             if wallet_cap <= 0:
-                write_json(root / "wallet-stop.json", {
-                    "sent": False, "balance_cny": balance["available_cny"],
-                    "unknown_reserve_cny": unknown_before,
-                })
+                write_json(
+                    root / "wallet-stop.json",
+                    {
+                        "sent": False,
+                        "balance_cny": balance["available_cny"],
+                        "unknown_reserve_cny": unknown_before,
+                    },
+                )
                 break
             segment.mkdir(parents=True, exist_ok=False)
             if previous_segment is None:
@@ -802,10 +844,15 @@ def run(root: Path, max_trials: int = 30) -> list[dict]:
             }
             write_json(local_path, local)
             write_json(segment / "protocol.sha256.json", {"sha256": digest(local)})
-            write_json(segment / "requests.json", {
-                "schema_version": 1, "protocol_sha256": digest(local),
-                "limit_cny": TOTAL_CNY, "requests": [],
-            })
+            write_json(
+                segment / "requests.json",
+                {
+                    "schema_version": 1,
+                    "protocol_sha256": digest(local),
+                    "limit_cny": TOTAL_CNY,
+                    "requests": [],
+                },
+            )
             try:
                 result = ENGINE["campaign"].execute_trial(segment, local, row, ENV_FILE)
             except ValueError as exc:
@@ -813,16 +860,34 @@ def run(root: Path, max_trials: int = 30) -> list[dict]:
                     raise
                 result = finish_unknown(segment, row, local)
             request_rows = ENGINE["validate_requests"](segment, local)
-            if any(r.get("official_count_delta") != 0 for r in request_rows if r.get("status") == "completed"):
-                write_json(root / "halt.json", {"reason": "official tokenizer count differs from supplier usage", "trial_id": row["id"]})
+            if any(
+                r.get("official_count_delta") != 0
+                for r in request_rows
+                if r.get("status") == "completed"
+            ):
+                write_json(
+                    root / "halt.json",
+                    {
+                        "reason": "official tokenizer count differs from supplier usage",
+                        "trial_id": row["id"],
+                    },
+                )
                 raise ValueError("tokenizer count discrepancy; campaign halted")
             ledger = read_json(segment / "requests.json")
             if ledger.get("halt_reason"):
-                write_json(root / "halt.json", {"reason": ledger["halt_reason"], "trial_id": row["id"]})
+                write_json(
+                    root / "halt.json", {"reason": ledger["halt_reason"], "trial_id": row["id"]}
+                )
                 raise ValueError("provider identity or usage anomaly; campaign halted")
             ENGINE["validate_record"](result, record_path.parent, row)
             if result.get("infrastructure_failure") and not result.get("terminal_provider_unknown"):
-                write_json(root / "halt.json", {"reason": "independent verification infrastructure failure", "trial_id": row["id"]})
+                write_json(
+                    root / "halt.json",
+                    {
+                        "reason": "independent verification infrastructure failure",
+                        "trial_id": row["id"],
+                    },
+                )
                 raise ValueError("verification infrastructure failure; campaign halted")
             all_requests = read_all_requests(root)
             fingerprints = {
@@ -831,31 +896,60 @@ def run(root: Path, max_trials: int = 30) -> list[dict]:
                 if r.get("status") == "completed" and r.get("supplier_system_fingerprint")
             }
             if len(fingerprints) > 1:
-                write_json(root / "halt.json", {"reason": "supplier system fingerprint changed", "fingerprints": sorted(fingerprints), "trial_id": row["id"]})
+                write_json(
+                    root / "halt.json",
+                    {
+                        "reason": "supplier system fingerprint changed",
+                        "fingerprints": sorted(fingerprints),
+                        "trial_id": row["id"],
+                    },
+                )
                 raise ValueError("provider fingerprint changed; campaign halted")
             trial_requests = [r for r in all_requests if r.get("trial_id") == row["id"]]
             audit = prefix_audit(root, row, result, trial_requests)
             if audit["prefix_anomalies"]:
-                write_json(root / "halt.json", {"reason": "request prefix changed outside compaction", "trial_id": row["id"], "anomalies": audit["prefix_anomalies"]})
+                write_json(
+                    root / "halt.json",
+                    {
+                        "reason": "request prefix changed outside compaction",
+                        "trial_id": row["id"],
+                        "anomalies": audit["prefix_anomalies"],
+                    },
+                )
                 raise ValueError("unexpected prefix change; campaign halted")
             result_rows.append(result)
             previous_segment = segment
             progress = update_progress(root, protocol)
-            print(json.dumps({
-                "completed": progress["finished"], "planned": 30,
-                "task": row["task_id"], "status": result.get("status"),
-                "main_success": result.get("status") == "completed" and bool(result.get("passed")),
-                "patch_pass": bool(result.get("passed")),
-                "cache_hit_rate": progress["cache_hit_rate"],
-                "known_peak_cny": progress["known_peak_cny"],
-                "unknown_reserved_cny": progress["unknown_reserved_cny"],
-                "fact_hit_rate": audit["fact_hit_rate"],
-                "fact_requests": len(audit["fact_request_ids"]),
-            }, ensure_ascii=False), flush=True)
+            print(
+                json.dumps(
+                    {
+                        "completed": progress["finished"],
+                        "planned": 30,
+                        "task": row["task_id"],
+                        "status": result.get("status"),
+                        "main_success": result.get("status") == "completed"
+                        and bool(result.get("passed")),
+                        "patch_pass": bool(result.get("passed")),
+                        "cache_hit_rate": progress["cache_hit_rate"],
+                        "known_peak_cny": progress["known_peak_cny"],
+                        "unknown_reserved_cny": progress["unknown_reserved_cny"],
+                        "fact_hit_rate": audit["fact_hit_rate"],
+                        "fact_requests": len(audit["fact_request_ids"]),
+                    },
+                    ensure_ascii=False,
+                ),
+                flush=True,
+            )
             if row["id"] == pilot["id"]:
                 gate = evaluate_pilot(root, protocol)
                 update_progress(root, protocol)
-                print(json.dumps({"pilot_gate": "passed" if gate["passed"] else "not_met", **gate}, ensure_ascii=False), flush=True)
+                print(
+                    json.dumps(
+                        {"pilot_gate": "passed" if gate["passed"] else "not_met", **gate},
+                        ensure_ascii=False,
+                    ),
+                    flush=True,
+                )
                 if not gate["passed"]:
                     break
         return result_rows
@@ -872,8 +966,12 @@ def report(root: Path) -> dict:
         per_trial.setdefault(request["trial_id"], []).append(request)
     inputs = sum(int(r.get("usage", {}).get("input_tokens", 0)) for r in requests)
     outputs = sum(int(r.get("usage", {}).get("output_tokens", 0)) for r in requests)
-    hits = sum(int(r.get("supplier_raw_usage", {}).get("prompt_cache_hit_tokens", 0)) for r in requests)
-    misses = sum(int(r.get("supplier_raw_usage", {}).get("prompt_cache_miss_tokens", 0)) for r in requests)
+    hits = sum(
+        int(r.get("supplier_raw_usage", {}).get("prompt_cache_hit_tokens", 0)) for r in requests
+    )
+    misses = sum(
+        int(r.get("supplier_raw_usage", {}).get("prompt_cache_miss_tokens", 0)) for r in requests
+    )
     known, unknown = liability(root)
     summary = {
         "protocol_sha256": digest(protocol),
@@ -883,17 +981,31 @@ def report(root: Path) -> dict:
         "main_successes": sum(bool(main_success(r)) for r in run_records),
         "independent_patch_passes": sum(bool(r.get("passed")) for r in run_records),
         "normal_completions": sum(r.get("status") == "completed" for r in run_records),
-        "input_tokens": inputs, "output_tokens": outputs,
-        "cache_hit_tokens": hits, "cache_miss_tokens": misses,
+        "input_tokens": inputs,
+        "output_tokens": outputs,
+        "cache_hit_tokens": hits,
+        "cache_miss_tokens": misses,
         "cache_hit_rate": hits / inputs if inputs else None,
-        "known_peak_cny": known, "unknown_reserved_cny": unknown,
+        "known_peak_cny": known,
+        "unknown_reserved_cny": unknown,
         "total_conservative_liability_cny": known + unknown,
         "cache_adjusted_peak_estimate_cny": (hits * 0.04 + misses * 2 + outputs * 8) / 1_000_000,
-        "all_started_cost_per_main_success_cny": (known + unknown) / sum(bool(main_success(r)) for r in run_records) if any(main_success(r) for r in run_records) else None,
-        "seconds": sum(float(r.get("timings", {}).get("delivery_seconds", r.get("seconds", 0))) for r in run_records),
-        "pilot_gate": read_json(root / "pilot-gate.json") if (root / "pilot-gate.json").is_file() else None,
+        "all_started_cost_per_main_success_cny": (known + unknown)
+        / sum(bool(main_success(r)) for r in run_records)
+        if any(main_success(r) for r in run_records)
+        else None,
+        "seconds": sum(
+            float(r.get("timings", {}).get("delivery_seconds", r.get("seconds", 0)))
+            for r in run_records
+        ),
+        "pilot_gate": read_json(root / "pilot-gate.json")
+        if (root / "pilot-gate.json").is_file()
+        else None,
         "unknown_requests": [r["id"] for r in requests if r.get("status") != "completed"],
-        "interpretation": "Post-context-fix C-only historical comparison; nonconcurrent exploratory run. Cache-adjusted estimate uses published peak prices and is not a provider invoice.",
+        "interpretation": (
+            "Post-context-fix C-only historical comparison; nonconcurrent exploratory run. "
+            "Cache-adjusted estimate uses published peak prices and is not a provider invoice."
+        ),
     }
     old = {}
     with OLD_CSV.open(encoding="utf-8-sig", newline="") as stream:
@@ -910,16 +1022,28 @@ def report(root: Path) -> dict:
             "new_c_status": record.get("status") if record else "unstarted",
             "new_c_main_success": main_success(record) if record else False,
             "new_c_patch_pass": record.get("passed", False) if record else False,
-            "new_c_seconds": record.get("timings", {}).get("delivery_seconds", record.get("seconds")) if record else None,
+            "new_c_seconds": record.get("timings", {}).get(
+                "delivery_seconds", record.get("seconds")
+            )
+            if record
+            else None,
             "new_c_requests": len(sent),
             "new_c_input_tokens": sum(int(x.get("usage", {}).get("input_tokens", 0)) for x in sent),
-            "new_c_cache_hit_tokens": sum(int(x.get("supplier_raw_usage", {}).get("prompt_cache_hit_tokens", 0)) for x in sent),
+            "new_c_cache_hit_tokens": sum(
+                int(x.get("supplier_raw_usage", {}).get("prompt_cache_hit_tokens", 0)) for x in sent
+            ),
             "old_c_main_success": old_c.get("main_success"),
             "old_c_seconds": old_c.get("seconds"),
-            "old_c_cache_hit_rate": (float(old_c["cache_hit_tokens"]) / float(old_c["input_tokens"])) if old_c.get("cache_hit_tokens") and old_c.get("input_tokens") else None,
+            "old_c_cache_hit_rate": (
+                float(old_c["cache_hit_tokens"]) / float(old_c["input_tokens"])
+            )
+            if old_c.get("cache_hit_tokens") and old_c.get("input_tokens")
+            else None,
             "b_main_success": old_b.get("main_success"),
             "b_seconds": old_b.get("seconds"),
-            "b_cache_hit_rate": (float(old_b["cache_hit_tokens"]) / float(old_b["input_tokens"])) if old_b.get("cache_hit_tokens") and old_b.get("input_tokens") else None,
+            "b_cache_hit_rate": (float(old_b["cache_hit_tokens"]) / float(old_b["input_tokens"]))
+            if old_b.get("cache_hit_tokens") and old_b.get("input_tokens")
+            else None,
         }
         table.append(row)
     write_json(root / "summary.json", summary)
@@ -929,22 +1053,43 @@ def report(root: Path) -> dict:
             writer.writeheader()
             writer.writerows(table)
     lines = [
-        "# Post-context-fix C cache retest", "",
-        f"Started {summary['started']}/{summary['planned']}; main success {summary['main_successes']}; patch pass {summary['independent_patch_passes']}; normal completion {summary['normal_completions']}.",
+        "# Post-context-fix C cache retest",
+        "",
+        (
+            f"Started {summary['started']}/{summary['planned']}; "
+            f"main success {summary['main_successes']}; "
+            f"patch pass {summary['independent_patch_passes']}; "
+            f"normal completion {summary['normal_completions']}."
+        ),
         f"Cache hit: {hits}/{inputs} = {summary['cache_hit_rate']:.2%}.",
-        f"Known conservative peak cost ¥{known:.6f}; unknown reserved ¥{unknown:.6f}; cache-adjusted peak estimate ¥{summary['cache_adjusted_peak_estimate_cny']:.6f}.",
-        f"Time {summary['seconds']:.2f}s. {summary['interpretation']}", "",
+        (
+            f"Known conservative peak cost ¥{known:.6f}; unknown reserved ¥{unknown:.6f}; "
+            f"cache-adjusted peak estimate ¥{summary['cache_adjusted_peak_estimate_cny']:.6f}."
+        ),
+        f"Time {summary['seconds']:.2f}s. {summary['interpretation']}",
+        "",
         "| Task | New C status | New C success | Old C success | B success | New C hit/input |",
         "|---|---|---:|---:|---:|---:|",
     ]
     for row in table:
-        hit = f"{row['new_c_cache_hit_tokens']}/{row['new_c_input_tokens']}" if row["new_c_input_tokens"] else "—"
-        lines.append(f"| {row['task_id']} | {row['new_c_status']} | {row['new_c_main_success']} | {row['old_c_main_success']} | {row['b_main_success']} | {hit} |")
+        hit = (
+            f"{row['new_c_cache_hit_tokens']}/{row['new_c_input_tokens']}"
+            if row["new_c_input_tokens"]
+            else "—"
+        )
+        lines.append(
+            f"| {row['task_id']} | {row['new_c_status']} | {row['new_c_main_success']} | "
+            f"{row['old_c_main_success']} | {row['b_main_success']} | {hit} |"
+        )
     (root / "report.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
-    write_json(root / "evidence-index.json", {
-        str(p.relative_to(root)): file_sha(p)
-        for p in root.rglob("*") if p.is_file() and p.name not in {"evidence-index.json", ".tracefix.lock"}
-    })
+    write_json(
+        root / "evidence-index.json",
+        {
+            str(p.relative_to(root)): file_sha(p)
+            for p in root.rglob("*")
+            if p.is_file() and p.name not in {"evidence-index.json", ".tracefix.lock"}
+        },
+    )
     return summary
 
 

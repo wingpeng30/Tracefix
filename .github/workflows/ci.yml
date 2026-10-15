@@ -189,6 +189,7 @@ jobs:
           path: |
             ${{ runner.temp }}/tracefix-engineering/summary.json
             ${{ runner.temp }}/tracefix-engineering/*.log
+            ${{ runner.temp }}/tracefix-engineering/*.raw.bin
             ${{ runner.temp }}/tracefix-engineering/pytest.junit.xml
             ${{ runner.temp }}/tracefix-engineering/coverage.json
             ${{ runner.temp }}/tracefix-engineering/coverage.xml
