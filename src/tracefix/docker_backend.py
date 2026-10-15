@@ -30,11 +30,13 @@ from tracefix.capabilities import (
     CapabilityError,
     CapabilityPolicy,
     ExecutionProfile,
+    ToolDispatcher,
     executor_policy_document,
     host_control_policy,
 )
 from tracefix.docker_tls import write_test_tls_material
 from tracefix.exceptions import RunConfigurationError, WorkspaceError
+from tracefix.jobs.protocol import JobWorkerSettings
 from tracefix.messages import ToolCall
 from tracefix.repository import RepoMap, RepoMapConfig
 from tracefix.security import SECURITY_POLICY_VERSION, validate_project_environment
@@ -207,7 +209,18 @@ class _BridgeSession:
         artifacts_enabled: bool = False,
         execution_profile: ExecutionProfile = ExecutionProfile.WORKSPACE_WRITE,
         executor_policy_config_sha256: str | None = None,
+        job_protocol: dict[str, Any] | None = None,
     ) -> None:
+        expected_jobs = None
+        if job_protocol is not None:
+            from tracefix.jobs.protocol import JobProtocolHello
+
+            try:
+                expected_jobs = JobProtocolHello.model_validate(job_protocol)
+            except ValidationError as exc:
+                raise WorkspaceError("invalid expected Docker job protocol") from exc
+            if not artifacts_enabled:
+                raise WorkspaceError("Docker jobs require bounded artifacts")
         self.timeout = timeout
         self.journal_path = journal_path
         self.process = subprocess.Popen(
@@ -262,7 +275,16 @@ class _BridgeSession:
             self.close(force=True)
             raise WorkspaceError("Docker tool bridge contains duplicate tool names")
         try:
-            capability_catalog = CapabilityCatalog.for_tool_names(spec.name for spec in specs)
+            from tracefix.jobs.constants import JOB_CONTROL_CAPABILITIES
+
+            raw_names = tuple(spec.name for spec in specs)
+            if any(name in JOB_CONTROL_CAPABILITIES or name.startswith("__") for name in raw_names):
+                raise CapabilityError("executor directory contains private controls")
+            capability_catalog = CapabilityCatalog.for_tool_names((
+                *raw_names, *(JOB_CONTROL_CAPABILITIES if expected_jobs is not None else ())))
+            if any(capability_catalog.get(name).execution_location in {"host", "mcp"}
+                   for name in raw_names):
+                raise CapabilityError("executor directory contains host or MCP tools")
             capability_policy = CapabilityPolicy(capability_catalog, execution_profile)
         except (CapabilityError, ValueError) as exc:
             self.close(force=True)
@@ -276,6 +298,23 @@ class _BridgeSession:
         ):
             self.close(force=True)
             raise WorkspaceError("Docker tool bridge capability policy negotiation failed")
+        actual_jobs = handshake.get("job_protocol")
+        if expected_jobs is None:
+            if actual_jobs is not None:
+                self.close(force=True)
+                raise WorkspaceError("Docker bridge exposed jobs while disabled")
+        else:
+            from tracefix.jobs.protocol import JobProtocolHello
+
+            try:
+                actual_jobs = JobProtocolHello.model_validate(actual_jobs)
+                if actual_jobs != expected_jobs:
+                    raise ValueError("job worker identity drift")
+            except (ValidationError, ValueError) as exc:
+                self.close(force=True)
+                raise WorkspaceError("Docker job protocol negotiation failed") from exc
+        self.job_protocol = (expected_jobs.model_dump(mode="json")
+                             if expected_jobs is not None else None)
         artifact_protocol = handshake.get("artifact_protocol")
         expected_artifact_protocol = {
             "version": 1,
@@ -539,6 +578,7 @@ class DockerToolBackend:
         self.docker = os.environ.get("DOCKER", "docker")
         self.container_name = f"tracefix-{run_id.lower().replace('_', '-')[:40]}"
         self.container_id: str | None = None
+        self._container_removed = False
         self.session: _BridgeSession | None = None
         self.timeout_seconds = timeout_seconds
         self.recipe: dict[str, Any] = {}
@@ -551,6 +591,27 @@ class DockerToolBackend:
         self.artifacts_enabled = False
         self.artifact_environment_path: str | None = None
         self.skills_bundle_sha256 = EMPTY_SKILL_BUNDLE_SHA256
+        self.background_jobs_enabled = False
+        self.job_settings: JobWorkerSettings | None = None
+        self.job_context = None
+        self.job_protocol: dict[str, Any] | None = None
+        self._job_execution_guard = None
+
+    def bind_job_guard(self, guard) -> None:
+        """Host assembly may add a denying guard; policy grants never change."""
+        if not self.background_jobs_enabled or self._job_execution_guard is not None:
+            raise WorkspaceError("Docker job execution guard cannot be replaced")
+        self._job_execution_guard = guard
+
+    def _control_decision(self, name: str, origin: CallerOrigin):
+        return ToolDispatcher(self._host_control_policy, execution_guard=getattr(
+            self, "_job_execution_guard", None)).authorize(name, origin)
+
+    def _authorize_source_export(self):
+        decision = self._control_decision("source_snapshot_export", CallerOrigin.HOST_LIFECYCLE)
+        if not decision.allowed:
+            raise WorkspaceError("Docker source export denied",
+                                 context={"reason_code": decision.reason_code})
 
     def prepare(
         self,
@@ -571,8 +632,15 @@ class DockerToolBackend:
         environment_variables: dict[str, str] | None = None,
         execution_profile: ExecutionProfile | str | None = None,
         skills_snapshot: SkillBundleSnapshot | None = None,
+        job_settings: JobWorkerSettings | None = None,
     ) -> ToolRegistry:
         self.artifacts_enabled = artifacts_enabled
+        self.background_jobs_enabled = job_settings is not None
+        if self.background_jobs_enabled:
+            if self.profile != "ordinary" or not recovery_enabled or not artifacts_enabled:
+                raise WorkspaceError("Docker jobs require ordinary recovery and artifacts")
+            self.job_settings = JobWorkerSettings.model_validate_json(
+                job_settings.model_dump_json())
         if skills_root is not None and skills_snapshot is not None:
             raise WorkspaceError("custom Skills root and frozen snapshot cannot both be provided")
         if skills_root is not None:
@@ -668,6 +736,7 @@ class DockerToolBackend:
                 "create",
                 "--name",
                 self.container_name,
+                *(["--init"] if self.background_jobs_enabled else []),
                 "--label",
                 f"tracefix.run_id={self.run_id}",
                 "--network",
@@ -716,9 +785,9 @@ class DockerToolBackend:
                     if self.recipe.get("test_pythonpath_entries")
                     else []
                 ),
+                *(["--entrypoint", "sleep"] if self.background_jobs_enabled else []),
                 self.image_id,
-                "sleep",
-                "infinity",
+                *(["infinity"] if self.background_jobs_enabled else ["sleep", "infinity"]),
             ]
         )
         inspect = _run([self.docker, "inspect", "--format", "{{.Id}}", self.container_name])
@@ -785,6 +854,8 @@ class DockerToolBackend:
             or host_config.get("NanoCpus") != 1_000_000_000
         ):
             raise WorkspaceError("ordinary Docker resource or user contract changed")
+        if self.background_jobs_enabled and host_config.get("Init") is not True:
+            raise WorkspaceError("Docker background jobs require a verified init process")
         if self.profile == "ordinary":
             tmpfs = host_config.get("Tmpfs") if isinstance(host_config, dict) else None
             opt_mount = tmpfs.get("/opt/tracefix", "") if isinstance(tmpfs, dict) else ""
@@ -793,6 +864,8 @@ class DockerToolBackend:
                 raise WorkspaceError("ordinary Docker executor directory is not root-owned")
         self._write_run_state("container_created")
         _run([self.docker, "start", self.container_name])
+        if self.background_jobs_enabled:
+            self._capture_job_context()
         container_interpreter: dict[str, str] | None = None
         if self.profile == "ordinary":
             probe_result = _run(
@@ -829,6 +902,7 @@ class DockerToolBackend:
                 self.execution_profile,
                 artifacts_enabled=artifacts_enabled,
                 skills_enabled=skills_enabled,
+                **({"jobs_enabled": True} if self.background_jobs_enabled else {}),
             )
             self.executor_policy_config_sha256 = hashlib.sha256(
                 json.dumps(
@@ -846,6 +920,8 @@ class DockerToolBackend:
                 )
             )
             self._install_trusted_executor(bundle, self.executor_bundle_sha256)
+            if self.background_jobs_enabled:
+                self._install_job_context()
         else:
             _run([self.docker, "exec", self.container_name, "mkdir", "-p", "/opt/tracefix/src"])
             _run(
@@ -1208,6 +1284,8 @@ class DockerToolBackend:
                     "/work/artifact-evidence/tool-artifacts",
                 ]
             )
+        if self.background_jobs_enabled:
+            command.extend(["--jobs-context-file", "/opt/tracefix/runtime/job-context.json"])
         self.session = _BridgeSession(
             command,
             self.timeout_seconds + 60,
@@ -1216,6 +1294,7 @@ class DockerToolBackend:
             artifacts_enabled=artifacts_enabled,
             execution_profile=self.execution_profile,
             executor_policy_config_sha256=self.executor_policy_config_sha256,
+            **({"job_protocol": self.job_protocol} if self.background_jobs_enabled else {}),
         )
         if self.session.run_id != self.run_id:
             raise WorkspaceError("Docker bridge run identity mismatch")
@@ -1326,7 +1405,7 @@ class DockerToolBackend:
 
         if self.profile != "ordinary" or self.session is None:
             raise WorkspaceError("only an active ordinary Docker bridge can save a snapshot")
-        decision = self._host_control_policy.authorize(
+        decision = self._control_decision(
             "checkpoint_commit", CallerOrigin.HOST_LIFECYCLE
         )
         if not decision.allowed:
@@ -1346,6 +1425,8 @@ class DockerToolBackend:
         artifact_temporary = directory / f"{identity}.artifacts.partial"
         artifact_record: dict[str, Any] = {}
         artifact_published = False
+        jobs_enabled = getattr(self, "background_jobs_enabled", False)
+        artifact_run_id = self.job_settings.logical_run_id if jobs_enabled else self.run_id
         try:
             if self.artifacts_enabled:
                 if self.artifact_environment_path is None:
@@ -1369,7 +1450,8 @@ class DockerToolBackend:
                             "--environment-json",
                             self.artifact_environment_path,
                             "--run-id",
-                            self.run_id,
+                            artifact_run_id,
+                            *(["--streaming-enabled"] if jobs_enabled else []),
                         ],
                         stdout=output,
                         stderr=subprocess.PIPE,
@@ -1389,7 +1471,7 @@ class DockerToolBackend:
                     raise WorkspaceError("Docker artifact export receipt is invalid") from exc
                 if (
                     not isinstance(receipt, dict)
-                    or receipt.get("run_id") != self.run_id
+                    or receipt.get("run_id") != artifact_run_id
                     or receipt.get("schema_version") != 1
                     or artifact_temporary.stat().st_size > 68 * 1024 * 1024
                 ):
@@ -1407,6 +1489,8 @@ class DockerToolBackend:
                     "artifact_archive_bytes": artifact_archive_path.stat().st_size,
                     "artifact_archive_sha256": artifact_archive_sha256,
                     "artifact_receipt": receipt,
+                    **({"streaming_artifacts": True, "artifact_run_id": artifact_run_id,
+                        "job_protocol": self.job_protocol} if jobs_enabled else {}),
                 }
             with temporary.open("xb") as output:
                 result = subprocess.run(
@@ -1466,8 +1550,10 @@ class DockerToolBackend:
                 "host_control_catalog_sha256": self._host_control_policy.catalog.sha256,
                 "checkpoint_commit_decision": decision.model_dump(mode="json"),
                 "test_evidence": {
-                    path.name: hashlib.sha256(path.read_bytes()).hexdigest()
-                    for path in (self.run_dir / "test-evidence").iterdir()
+                    path.relative_to(self.run_dir / "test-evidence").as_posix():
+                    hashlib.sha256(path.read_bytes()).hexdigest()
+                    for path in ((self.run_dir / "test-evidence").rglob("*") if jobs_enabled
+                                 else (self.run_dir / "test-evidence").iterdir())
                     if path.is_file()
                 },
                 **artifact_record,
@@ -1476,7 +1562,8 @@ class DockerToolBackend:
                 validate_artifact_archive(
                     self.run_dir,
                     record,
-                    expected_run_id=self.run_id,
+                    expected_run_id=artifact_run_id,
+                    streaming_enabled=jobs_enabled,
                 )
             else:
                 record["artifacts_enabled"] = False
@@ -1513,6 +1600,8 @@ class DockerToolBackend:
                 "/work/agent",
             ),
             timeout_seconds=45,
+            **({"authorize": self._authorize_source_export}
+               if getattr(self, "background_jobs_enabled", False) else {}),
         )
 
     def restore_snapshot(self, snapshot: dict[str, Any]) -> None:
@@ -1521,7 +1610,18 @@ class DockerToolBackend:
         from tracefix.memory import atomic_json
         from tracefix.workspace_snapshot import validate_archive
 
-        decision = self._host_control_policy.authorize(
+        jobs_enabled = getattr(self, "background_jobs_enabled", False)
+        artifact_run_id = self.job_settings.logical_run_id if jobs_enabled else self.run_id
+        if jobs_enabled:
+            from tracefix.jobs.protocol import JobProtocolHello
+
+            prior = JobProtocolHello.model_validate(snapshot.get("job_protocol"))
+            if prior.logical_run_id != artifact_run_id:
+                raise WorkspaceError("Docker job recovery logical identity changed")
+        elif "job_protocol" in snapshot:
+            raise WorkspaceError("Docker job recovery requires its original execution mode")
+
+        decision = self._control_decision(
             "checkpoint_restore", CallerOrigin.RECOVERY
         )
         if not decision.allowed:
@@ -1583,7 +1683,8 @@ class DockerToolBackend:
             receipt = validate_artifact_archive(
                 self.run_dir,
                 snapshot,
-                expected_run_id=self.run_id,
+                expected_run_id=artifact_run_id,
+                streaming_enabled=jobs_enabled,
             )
             artifact_archive = owned_file(self.run_dir, snapshot["artifact_archive"])
             with artifact_archive.open("rb") as source:
@@ -1606,7 +1707,8 @@ class DockerToolBackend:
                         "--environment-json",
                         self.artifact_environment_path,
                         "--run-id",
-                        self.run_id,
+                        artifact_run_id,
+                        *(["--streaming-enabled"] if jobs_enabled else []),
                     ],
                     stdin=source,
                     capture_output=True,
@@ -1690,6 +1792,60 @@ class DockerToolBackend:
                     "frozen source conflicts with reserved TraceFix evidence paths"
                 )
         return temporary
+
+    def _capture_job_context(self) -> None:
+        """Capture only known startup roles, before importing any project code."""
+        from tracefix.jobs.protocol import JobWorkerContext
+
+        assert self.job_settings is not None
+        helper = Path(__file__).resolve().parent / "jobs" / "docker_context.py"
+        if (helper.is_symlink() or helper.parent.is_symlink() or not helper.is_file()
+                or helper.stat().st_size > 16 * 1024):
+            raise WorkspaceError("trusted Docker job bootstrap is unavailable")
+        captured = _run([
+            self.docker, "exec", self.container_name, self.python, "-I", "-S", "-c",
+            helper.read_text(encoding="utf-8"),
+        ])
+        try:
+            payload = json.loads(captured.stdout.decode("utf-8"))
+            if set(payload) != {"contract", "tokens"}:
+                raise ValueError("unexpected bootstrap fields")
+            self.job_context = JobWorkerContext(
+                **self.job_settings.model_dump(), contract=payload["contract"],
+                physical_run_id=self.run_id, fixed_control_tokens=payload["tokens"])
+        except (ValueError, KeyError, TypeError) as exc:
+            raise WorkspaceError("Docker job control identity capture failed") from exc
+
+    def _install_job_context(self) -> None:
+        """Install fixed ownership data as root, never in the task workspace."""
+        from tracefix.jobs.protocol import JobProtocolHello
+
+        assert self.job_context is not None
+        raw = json.dumps(self.job_context.model_dump(mode="json"), sort_keys=True,
+                         ensure_ascii=False, separators=(",", ":"))
+        program = (
+            "import os,stat,sys\n"
+            "directory='/opt/tracefix/runtime'\n"
+            "s=os.lstat(directory)\n"
+            "if not stat.S_ISDIR(s.st_mode) or s.st_uid!=0 or "
+            "stat.S_IMODE(s.st_mode)!=0o555: raise RuntimeError('invalid runtime directory')\n"
+            "os.chmod(directory,0o755)\n"
+            "try:\n"
+            "    fd=os.open(directory+'/job-context.json',"
+            "os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW,0o444)\n"
+            "    with os.fdopen(fd,'wb') as f:\n"
+            "        f.write(sys.argv[1].encode('utf-8')); f.flush(); os.fsync(f.fileno())\n"
+            "finally:\n"
+            "    os.chmod(directory,0o555)\n"
+        )
+        _run([self.docker, "exec", "--user", "0:0", self.container_name, self.python,
+              "-I", "-S", "-c", program, raw])
+        self.job_protocol = JobProtocolHello(
+            version=1, worker_epoch=self.job_context.worker_epoch,
+            logical_run_id=self.job_context.logical_run_id,
+            host_owner_epoch=self.job_context.host_owner_epoch,
+            context_sha256=hashlib.sha256(raw.encode("utf-8")).hexdigest(),
+        ).model_dump(mode="json")
 
     def _copy_file_into(self, source: Path, destination: str) -> None:
         if self.profile == "ordinary":
@@ -1832,6 +1988,9 @@ class DockerToolBackend:
     def export_evidence(self) -> None:
         if not self.container_id:
             return
+        if getattr(self, "background_jobs_enabled", False):
+            self._export_job_evidence()
+            return
         target = self.run_dir / "test-evidence"
         target.mkdir(exist_ok=True)
         completed = subprocess.run(
@@ -1853,6 +2012,49 @@ class DockerToolBackend:
             if service_log.returncode == 0:
                 (self.run_dir / "httpbin-service.log").write_bytes(service_log.stdout)
 
+    def _export_job_evidence(self) -> None:
+        """Read tmpfs through the owned container, with a validated, bounded manifest."""
+        from tracefix.jobs.evidence import validate
+
+        if self.session is None:
+            raise WorkspaceError("job evidence export requires a live verified bridge")
+        state = self.session.call("__recovery_state__", {})
+        if not state.success:
+            raise WorkspaceError("job evidence cannot export active or unknown executions")
+        completed = _run([
+            self.docker, "exec", self.container_id, "env", "-i",
+            "PATH=/usr/local/bin:/usr/bin:/bin", "HOME=/tmp",
+            self.python, "-I", "-S", "/opt/tracefix/src/tracefix/jobs/evidence.py",
+            "/work/evidence",
+        ])
+        try:
+            files = validate(completed.stdout)
+        except (ValueError, TypeError, KeyError) as exc:
+            raise WorkspaceError("job audit evidence transfer failed validation") from exc
+        target = self.run_dir / "test-evidence"
+        # Never reuse an extraction directory that project-controlled data could poison.
+        with tempfile.TemporaryDirectory(prefix="job-audit-", dir=self.run_dir) as temporary:
+            staging = Path(temporary) / "files"
+            staging.mkdir()
+            for name, data in files.items():
+                path = staging / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(data)
+            if target.exists() or target.is_symlink():
+                if (target.is_symlink() or not target.is_dir()
+                        or getattr(target.lstat(), "st_file_attributes", 0) & 0x400):
+                    raise WorkspaceError("job audit evidence destination is unsafe")
+                # Snapshots retain the previous copy until a fully verified replacement exists.
+                previous = Path(temporary) / "previous"
+                os.replace(target, previous)
+                try:
+                    os.replace(staging, target)
+                except BaseException:
+                    os.replace(previous, target)
+                    raise
+            else:
+                os.replace(staging, target)
+
     def close(self, *, remove: bool = True) -> None:
         errors: list[str] = []
         if self.session is not None:
@@ -1861,7 +2063,7 @@ class DockerToolBackend:
             except Exception as exc:
                 errors.append(f"bridge close: {exc}")
             self.session = None
-        if remove and self.container_id:
+        if remove and self.container_id and not getattr(self, "_container_removed", False):
             try:
                 inspected = _run(
                     [
@@ -1874,6 +2076,7 @@ class DockerToolBackend:
                 )
                 if inspected.stdout.decode().strip() == self.run_id:
                     _run([self.docker, "rm", "-f", self.container_id])
+                    self._container_removed = True
                 else:
                     errors.append("container ownership label changed; removal refused")
             except Exception as exc:

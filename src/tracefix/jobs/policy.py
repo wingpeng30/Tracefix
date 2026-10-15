@@ -21,7 +21,7 @@ class JobActivityGuard:
 
     def check(self, descriptor: CapabilityDescriptor, origin: CallerOrigin) -> str | None:
         name = descriptor.tool_name
-        if name == "cancel_job":
+        if name in {"cancel_job", "job_cancel_control", "job_shutdown_control"}:
             return None
         control_process = name in {"get_git_diff", "source_snapshot_export"}
         if self.jobs.has_unknown and (

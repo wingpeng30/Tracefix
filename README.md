@@ -8,7 +8,7 @@
 旧实验、日期化交接和旧wheel不代表当前源码全部状态。
 
 普通 Python 仓库的任务检查与恢复说明见 [docs/recovery.md](docs/recovery.md)。
-G5后台作业候选已接本地Runner/API/CLI及安全恢复；Docker后台和完整工程门尚未交付，见[后台作业说明](docs/background-jobs.md)与[G5记录](docs/tasks/2026-10-16-g5-progress.md)。G6—G8尚未开始。
+G5后台作业候选已接本地Runner/API/CLI及安全恢复，ordinary异步/新容器恢复组件已实测；正式Docker入口和完整工程门尚未交付，见[后台作业说明](docs/background-jobs.md)与[G5记录](docs/tasks/2026-10-16-g5-progress.md)。G6—G8尚未开始。
 候选分支 `codex/harness-foundations` 增加了有类型、按 checkout 源码适用性召回的仓库知识记忆；
 配置、v1→v2 迁移、证据门与当前验收状态见[知识记忆说明](docs/experience-memory.md)和[当前状态](docs/current-status.md)。
 同一候选分支还提供可分页、可搜索且在 Docker recovery 中保留配额的工具产物；详见[工具产物说明](docs/tool-artifacts.md)。

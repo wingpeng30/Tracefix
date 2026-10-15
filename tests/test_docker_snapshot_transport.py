@@ -3,6 +3,7 @@
 import hashlib
 import json
 import subprocess
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
 import pytest
@@ -13,6 +14,8 @@ from tracefix.checkpoint import CheckpointError
 from tracefix.docker_backend import DockerToolBackend
 from tracefix.docker_recovery import validate_artifact_archive, validate_batch
 from tracefix.exceptions import WorkspaceError
+from tracefix.jobs.policy import JobActivityGuard
+from tracefix.jobs.protocol import JobWorkerSettings
 from tracefix.tools import ToolResult
 from tracefix.workspace_snapshot import export_workspace, restore_stream
 
@@ -101,6 +104,120 @@ def test_snapshot_publication_and_streamed_transport_bind_real_products(transpor
     expected_evidence = hashlib.sha256(b"verified evidence").hexdigest()
     assert snapshot["test_evidence"]["test.json"] == expected_evidence
     assert not list((backend.run_dir / "docker-checkpoints").glob("*.partial"))
+
+
+def test_live_job_guard_blocks_host_helpers_before_process_or_source_access(transport):
+    backend, _, _ = transport
+    backend.background_jobs_enabled = True
+    activity = SimpleNamespace(active=False, has_unknown=False)
+    backend.bind_job_guard(JobActivityGuard(activity))
+    provider = backend.source_snapshot_provider()
+    activity.active = True
+    target = backend.run_dir / "should-not-exist"
+    with pytest.raises(WorkspaceError, match="source export denied"):
+        provider.materialize(target)
+    assert not target.exists()
+    with pytest.raises(WorkspaceError, match="checkpoint commit denied"):
+        backend.save_snapshot(1)
+    assert not (backend.run_dir / "docker-checkpoints").exists()
+    with pytest.raises(WorkspaceError, match="cannot be replaced"):
+        backend.bind_job_guard(JobActivityGuard(activity))
+    activity.active, activity.has_unknown = False, True
+    with pytest.raises(WorkspaceError, match="source export denied"):
+        provider.materialize(target)
+    assert not target.exists()
+
+
+def test_job_audit_transfer_verifies_before_replacing_prior_evidence(transport, monkeypatch):
+    from tracefix.jobs.evidence import export
+
+    backend, _, _ = transport
+    backend.background_jobs_enabled = True
+    incoming = backend.run_dir / "incoming"
+    (incoming / "workers/epoch").mkdir(parents=True)
+    (incoming / "workers/epoch/result.json").write_bytes(b"final receipt")
+    raw = export(incoming)
+    monkeypatch.setattr("tracefix.docker_backend._run",
+                        lambda *args, **kwargs: SimpleNamespace(stdout=raw))
+    original = (backend.run_dir / "test-evidence/test.json").read_bytes()
+    corrupted = json.loads(raw)
+    corrupted["files"][0]["sha256"] = "0" * 64
+    raw = json.dumps(corrupted).encode()
+    with pytest.raises(WorkspaceError, match="failed validation"):
+        backend._export_job_evidence()
+    assert (backend.run_dir / "test-evidence/test.json").read_bytes() == original
+    raw = export(incoming)
+    backend._export_job_evidence()
+    assert (backend.run_dir / "test-evidence/workers/epoch/result.json").read_bytes() == (
+        b"final receipt")
+    assert not (backend.run_dir / "test-evidence/test.json").exists()
+
+
+def test_owned_container_removal_is_idempotent_after_abort(transport, monkeypatch):
+    backend, _, _ = transport
+    backend.session = None
+    calls = []
+
+    def run(command, **kwargs):
+        calls.append(command)
+        return SimpleNamespace(stdout=b"run\n")
+
+    monkeypatch.setattr("tracefix.docker_backend._run", run)
+    backend.close()
+    backend.close()
+    assert len([command for command in calls if command[1:3] == ["rm", "-f"]]) == 1
+
+
+def test_streaming_job_snapshot_preserves_nested_audits_and_rejects_downgrade(
+    transport, monkeypatch,
+):
+    backend, source, target = transport
+    backend.background_jobs_enabled = True
+    backend.job_settings = JobWorkerSettings(
+        logical_run_id=backend.run_id, worker_epoch="a" * 32, host_owner_epoch="b" * 32,
+        session_deadline=datetime.now(UTC) + timedelta(seconds=20))
+    backend.job_protocol = {
+        "version": 1, "worker_epoch": "a" * 32, "host_owner_epoch": "b" * 32,
+        "logical_run_id": backend.run_id, "context_sha256": "c" * 64,
+    }
+    backend.artifacts_enabled = True
+    backend.artifact_environment_path = "/input/environment.json"
+    nested = backend.run_dir / "test-evidence/job-workers/epoch/checkpoint.json"
+    nested.parent.mkdir(parents=True)
+    nested.write_bytes(b"committed job receipt")
+    stores = [ArtifactStore(backend.run_dir / name, run_id=backend.run_id, workspace=workspace,
+                            streaming_enabled=True)
+              for name, workspace in (("container-artifacts", source), ("new-artifacts", target))]
+    ref = stores[0].publish_process(call_id="old-job", tool_name="run_tests", source_identity={},
+                                   stdout=b"old middle", stderr=b"", complete=True)
+    stores[0].read(ref.artifact_id, limit=3)
+    original = subprocess.run
+
+    def transfer(command, **kwargs):
+        if "tracefix.artifact_transport" in command:
+            assert "--streaming-enabled" in command
+            assert command[command.index("--run-id") + 1] == backend.run_id
+            if "export" in command:
+                receipt = stores[0].export_archive(kwargs["stdout"])
+                return SimpleNamespace(returncode=0, stderr=json.dumps(receipt).encode())
+            receipt = stores[1].import_archive(kwargs["stdin"])
+            return SimpleNamespace(returncode=0, stdout=json.dumps(receipt).encode())
+        return original(command, **kwargs)
+
+    monkeypatch.setattr(subprocess, "run", transfer)
+    saved = backend.save_snapshot(1)
+    validate_batch(backend.run_dir, saved, sequence=1, image_id=backend.image_id, jobs_enabled=True)
+    assert saved["test_evidence"]["job-workers/epoch/checkpoint.json"] == hashlib.sha256(
+        b"committed job receipt").hexdigest()
+    with pytest.raises(CheckpointError, match="original execution mode"):
+        validate_batch(backend.run_dir, saved, sequence=1, image_id=backend.image_id)
+    with pytest.raises(CheckpointError, match="streaming or logical"):
+        validate_artifact_archive(backend.run_dir, saved, expected_run_id=backend.run_id)
+    # A new worker does not take over the old epoch; only fixed artifacts are imported.
+    backend.job_settings = backend.job_settings.model_copy(update={"worker_epoch": "d" * 32})
+    backend.restore_snapshot(saved)
+    assert stores[1].quota().queries == 1 and stores[1].quota().returned_chars == 3
+    assert stores[1].read(ref.artifact_id, offset=3, limit=20).content == " middle"
 
 
 @pytest.mark.parametrize("failure", ["export", "metadata", "publish", "evidence"])

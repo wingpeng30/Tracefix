@@ -61,12 +61,16 @@ def validate_artifact_archive(
     *,
     expected_run_id: str,
     workspace: Path | None = None,
+    streaming_enabled: bool = False,
 ) -> dict:
     """Stream-validate a Docker artifact archive and all run/quota bindings."""
     from tracefix.artifacts import MAX_ARTIFACT_ARCHIVE_BYTES, ArtifactStore
 
     if snapshot.get("artifacts_enabled") is not True:
         raise CheckpointError("Docker artifact archive was not enabled for this snapshot")
+    if (snapshot.get("streaming_artifacts", False) is not streaming_enabled
+            or streaming_enabled and snapshot.get("artifact_run_id") != expected_run_id):
+        raise CheckpointError("Docker artifact streaming or logical identity changed")
     batch = snapshot.get("batch_id")
     expected_path = f"docker-checkpoints/{batch}.artifacts.tar"
     if snapshot.get("artifact_archive") != expected_path:
@@ -98,6 +102,7 @@ def validate_artifact_archive(
             Path(temporary) / "store",
             run_id=expected_run_id,
             workspace=workspace,
+            streaming_enabled=streaming_enabled,
         )
         try:
             with archive.open("rb") as stream:
@@ -117,7 +122,8 @@ def validate_artifact_archive(
     return imported
 
 
-def validate_batch(root: Path, snapshot: dict, *, sequence: int, image_id: str) -> None:
+def validate_batch(root: Path, snapshot: dict, *, sequence: int, image_id: str,
+                   jobs_enabled: bool = False) -> None:
     """Verify all batch bindings without starting a container or constructing a model."""
     if snapshot.get("schema_version") != 1 or snapshot.get("sequence") != sequence:
         raise CheckpointError("Docker checkpoint batch sequence changed")
@@ -169,14 +175,26 @@ def validate_batch(root: Path, snapshot: dict, *, sequence: int, image_id: str) 
     if snapshot.get("artifacts_enabled") is True:
         if snapshot.get("run_id") != root.name:
             raise CheckpointError("Docker artifact run identity differs from its checkpoint")
-        validate_artifact_archive(root, snapshot, expected_run_id=root.name)
+        if jobs_enabled:
+            from tracefix.jobs.protocol import JobProtocolHello
+
+            protocol = JobProtocolHello.model_validate(snapshot.get("job_protocol"))
+            if protocol.logical_run_id != root.name:
+                raise CheckpointError("Docker job checkpoint belongs to another logical run")
+        elif "job_protocol" in snapshot:
+            raise CheckpointError("Docker job checkpoint requires its original execution mode")
+        validate_artifact_archive(root, snapshot, expected_run_id=root.name,
+                                  streaming_enabled=jobs_enabled)
     elif any(
         field in snapshot
         for field in ("artifact_archive", "artifact_archive_sha256", "artifact_receipt")
     ):
         raise CheckpointError("disabled Docker snapshot contains artifact archive state")
     for name, expected_sha in snapshot["test_evidence"].items():
-        if Path(name).name != name or "\\" in name:
+        from tracefix.jobs.evidence import safe_evidence_name
+
+        if (not safe_evidence_name(name) if jobs_enabled
+                else Path(name).name != name or "\\" in name):
             raise CheckpointError("invalid Docker test evidence path")
         evidence = owned_file(root, f"test-evidence/{name}")
         if hashlib.sha256(evidence.read_bytes()).hexdigest() != expected_sha:
@@ -265,6 +283,7 @@ def inspect_session(
         config.execution_profile,
         artifacts_enabled=config.harness_foundations_enabled,
         skills_enabled=config.agent_config.skills_enabled,
+        **({"jobs_enabled": True} if config.background_jobs_enabled else {}),
     )
     expected_executor_policy_sha256 = hashlib.sha256(
         json.dumps(
@@ -319,7 +338,8 @@ def inspect_session(
         != identity.get("executor_policy_config_sha256")
     ):
         raise CheckpointError("Docker batch capability identity disagrees with session")
-    validate_batch(root, snapshot, sequence=checkpoint.sequence, image_id=config.docker_image_id)
+    validate_batch(root, snapshot, sequence=checkpoint.sequence, image_id=config.docker_image_id,
+                   **({"jobs_enabled": True} if config.background_jobs_enabled else {}))
     skills_snapshot = None
     if config.skills_root is not None:
         from tracefix.skill_snapshot import read_skill_snapshot

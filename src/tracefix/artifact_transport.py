@@ -59,6 +59,7 @@ def _store(args: argparse.Namespace) -> ArtifactStore:
         run_id=args.run_id,
         workspace=args.workspace,
         secret_values=tuple(environment.values()),
+        streaming_enabled=getattr(args, "streaming_enabled", False),
     )
 
 
@@ -69,6 +70,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--workspace", type=Path, required=True)
     parser.add_argument("--environment-json", type=Path, required=True)
     parser.add_argument("--run-id", required=True)
+    parser.add_argument("--streaming-enabled", action="store_true")
     args = parser.parse_args(argv)
     store = _store(args)
     if args.operation == "export":

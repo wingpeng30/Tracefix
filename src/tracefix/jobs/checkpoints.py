@@ -3,14 +3,25 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Protocol
 
 from tracefix.checkpoint import CheckpointError, CheckpointStore
+from tracefix.jobs.domain import JobRecord
 from tracefix.jobs.service import JobService
 from tracefix.jobs.test_budget import TestExecutionLedger
 
 
+class JobCheckpointService(Protocol):
+    @property
+    def active(self) -> bool: ...
+    @property
+    def has_unknown(self) -> bool: ...
+    def progress_receipts(self) -> tuple[JobRecord, ...]: ...
+    def checkpoint_identity(self) -> dict[str, object]: ...
+
+
 class JobCheckpointCoordinator:
-    def __init__(self, run_dir: Path, *, run_id: str, service: JobService,
+    def __init__(self, run_dir: Path, *, run_id: str, service: JobCheckpointService,
                  ledger: TestExecutionLedger) -> None:
         self.service, self.ledger = service, ledger
         self.progress = CheckpointStore(run_dir / "job-progress", {

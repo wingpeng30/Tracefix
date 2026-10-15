@@ -74,6 +74,42 @@ def restore_state(tools, protected: set[str], workspace: Path, state: dict) -> N
     protected.update(names)
 
 
+def _job_controller(context, tools, artifact_store, evidence: Path, workspace: Path, policy):
+    from tracefix.jobs.docker_context import bind_controller_tokens
+    from tracefix.jobs.domain import JobError
+    from tracefix.jobs.policy import JobActivityGuard
+    from tracefix.jobs.process_tree import DockerProcessScope
+    from tracefix.jobs.protocol import WorkerTicketMirror
+    from tracefix.jobs.service import JobService
+    from tracefix.jobs.worker import JobWorkerController
+
+    controls = bind_controller_tokens(context.fixed_control_tokens)
+    probe = DockerProcessScope(controls)
+    if not probe.close():
+        raise JobError("docker_job_scope_preflight_failed")
+    tickets = WorkerTicketMirror(run_id=context.logical_run_id, worker_epoch=context.worker_epoch,
+                                  host_owner_epoch=context.host_owner_epoch)
+    executor = tools.get("run_tests")
+    dispatcher = ToolDispatcher(policy)
+
+    def authorize(name):
+        decision = dispatcher.authorize(name, CallerOrigin.JOB_COORDINATOR)
+        if not decision.allowed:
+            raise JobError(decision.reason_code)
+
+    service = JobService(
+        evidence / "job-workers" / context.worker_epoch,
+        run_id=context.logical_run_id,
+        checkout_id=hashlib.sha256(str(workspace).encode()).hexdigest(),
+        ledger=tickets, artifact_store=artifact_store, test_tool=executor,
+        authorize=lambda call: authorize(call.name),
+        scope_factory=lambda: DockerProcessScope(controls),
+        evaluate=executor.evaluate_job_result, verify_source=executor.verify_prepared_source,
+        session_deadline=context.session_deadline)
+    dispatcher = ToolDispatcher(policy, execution_guard=JobActivityGuard(service))
+    return JobWorkerController(service=service, tickets=tickets, authorize=authorize), dispatcher
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--workspace", type=Path, required=True)
@@ -97,7 +133,21 @@ def main() -> int:
     parser.add_argument("--skill-limits-json")
     parser.add_argument("--skills-root", type=Path)
     parser.add_argument("--capability-policy-file", type=Path)
+    parser.add_argument("--jobs-context-file", type=Path)
     args = parser.parse_args()
+    job_context = None
+    context_sha256 = None
+    if args.jobs_context_file is not None:
+        from tracefix.jobs.docker_context import read_root_context
+        from tracefix.jobs.protocol import JobWorkerContext
+
+        if not args.artifacts_enabled or args.capability_policy_file is None:
+            raise ValueError("job bridges require artifacts and a fixed capability policy bundle")
+        payload, raw = read_root_context(args.jobs_context_file)
+        job_context = JobWorkerContext.model_validate(payload)
+        if job_context.physical_run_id != args.run_id:
+            raise ValueError("job context belongs to a different container run")
+        context_sha256 = hashlib.sha256(raw).hexdigest()
     environment = (
         json.loads(args.environment_json.read_text(encoding="utf-8"))
         if args.environment_json
@@ -118,9 +168,10 @@ def main() -> int:
             raise ValueError("artifact-enabled bridges require a dedicated evidence root")
         artifact_store = ArtifactStore(
             args.artifact_root,
-            run_id=args.run_id,
+            run_id=job_context.logical_run_id if job_context is not None else args.run_id,
             workspace=args.workspace,
             secret_values=tuple(environment.values()),
+            streaming_enabled=job_context is not None,
         )
     tools = create_default_tool_registry(
         args.workspace,
@@ -141,9 +192,14 @@ def main() -> int:
             else None
         ),
     )
+    capability_names = _tool_names(tools)
+    if job_context is not None:
+        from tracefix.jobs.constants import JOB_CONTROL_CAPABILITIES
+
+        capability_names += JOB_CONTROL_CAPABILITIES
     dispatcher = ToolDispatcher(
         CapabilityPolicy(
-            CapabilityCatalog.for_tool_names(_tool_names(tools)),
+            CapabilityCatalog.for_tool_names(capability_names),
             ExecutionProfile(args.execution_profile),
         )
     )
@@ -167,9 +223,14 @@ def main() -> int:
             "capabilities": [
                 item.model_dump(mode="json") for item in dispatcher.policy.catalog.descriptors
             ],
+            **({"job_protocol_version": 1} if job_context is not None else {}),
         }
         if policy_config != expected_policy_config:
             raise ValueError("executor capability policy bundle does not match tool catalog")
+    job_controller = None
+    if job_context is not None:
+        job_controller, dispatcher = _job_controller(
+            job_context, tools, artifact_store, args.evidence, args.workspace, dispatcher.policy)
     repo_map = None
     if args.repo_map_task is not None:
         from tracefix.repository import RepoMapConfig, RepositoryIndexer
@@ -198,8 +259,66 @@ def main() -> int:
             "max_run_bytes": 64 * 1024 * 1024,
             "max_run_artifacts": 128,
         }
+    if job_context is not None:
+        hello["job_protocol"] = {
+            "version": 1, "worker_epoch": job_context.worker_epoch,
+            "logical_run_id": job_context.logical_run_id,
+            "host_owner_epoch": job_context.host_owner_epoch,
+            "context_sha256": context_sha256,
+        }
     sys.stdout.write(json.dumps(hello) + "\n")
     sys.stdout.flush()
+    primary = None
+    try:
+        return serve_requests(tools, dispatcher, protected, args.workspace, job_controller)
+    except BaseException as exc:
+        primary = exc
+        raise
+    finally:
+        if job_controller is not None:
+            try:
+                closed = job_controller.shutdown(worker_epoch=job_context.worker_epoch)
+                if not closed["closed"]:
+                    sys.stderr.write(
+                        "job cleanup or outcome unconfirmed; owned container must stop\n")
+            except Exception:
+                if primary is None:
+                    raise
+                primary.add_note("job_worker_cleanup_unconfirmed")
+
+
+def _execute_job_control(controller, call: ToolCall):
+    from tracefix.jobs.protocol import (
+        WorkerJobQuery,
+        WorkerReadQuery,
+        WorkerShutdownRequest,
+        WorkerStartRequest,
+    )
+    from tracefix.tools import ToolResult
+
+    if call.name == "__job_start__":
+        output = controller.start(WorkerStartRequest.model_validate(call.arguments)).model_dump(
+            mode="json")
+    elif call.name == "__job_read__":
+        query = WorkerReadQuery.model_validate(call.arguments)
+        target = WorkerJobQuery(worker_epoch=query.worker_epoch, job_id=query.job_id)
+        output = controller.read(target, stream=query.stream,
+                                 offset=query.offset, limit=query.limit)
+    elif call.name == "__job_shutdown__":
+        query = WorkerShutdownRequest.model_validate(call.arguments)
+        output = controller.shutdown(worker_epoch=query.worker_epoch)
+    elif call.name in {"__job_status__", "__job_cancel__"}:
+        query = WorkerJobQuery.model_validate(call.arguments)
+        method = controller.status if call.name == "__job_status__" else controller.cancel
+        output = method(query).model_dump(mode="json")
+    else:
+        raise ValueError("unsupported job control operation")
+    return ToolResult(call_id=call.id, tool_name=call.name, success=True, output=output)
+
+
+def serve_requests(tools, dispatcher, protected: set[str], workspace: Path,
+                   job_controller=None) -> int:
+    """A worker returns tickets; only this main loop writes one paired RPC result."""
     for line in sys.stdin:
         call = None
         try:
@@ -207,14 +326,23 @@ def main() -> int:
             if call.name in {"__recovery_state__", "__restore_state__"}:
                 from tracefix.tools import ToolResult
 
+                if job_controller is not None and (
+                    job_controller.service.active or job_controller.service.has_unknown
+                ):
+                    raise ValueError("cannot snapshot or restore active/unknown job state")
                 if call.name == "__restore_state__":
-                    restore_state(tools, protected, args.workspace, call.arguments)
+                    restore_state(tools, protected, workspace, call.arguments)
                 result = ToolResult(
                     call_id=call.id,
                     tool_name=call.name,
                     success=True,
                     output=recovery_state(tools, protected),
                 )
+            elif job_controller is not None and call.name in {
+                "__job_start__", "__job_status__", "__job_read__", "__job_cancel__",
+                "__job_shutdown__",
+            }:
+                result = _execute_job_control(job_controller, call)
             elif call.name == "__prepare__":
                 target = ToolCall.model_validate(call.arguments)
                 decision = dispatcher.authorize(target.name, CallerOrigin.MODEL)
@@ -264,6 +392,8 @@ def main() -> int:
                 else:
                     tool = tools.get(call.name)
                     if call.name == "run_tests":
+                        if job_controller is not None:
+                            raise ValueError("managed tests require a host execution ticket")
 
                         def started(call_id: str = call.id) -> None:
                             sys.stdout.write(

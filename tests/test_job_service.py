@@ -335,7 +335,10 @@ def test_failed_launch_and_lost_ack_have_different_budget_outcomes(
                                                          success=False, error="injected failure"),
             session_deadline=datetime.now(UTC) + timedelta(seconds=10),
         )
-        job = service.start(ToolCall(id="call1", name="run_tests", arguments={}))
+        root_deadline = datetime.now(UTC) + timedelta(seconds=3)
+        job = service.start(ToolCall(id="call1", name="run_tests", arguments={}),
+                            host_deadline=root_deadline, assigned_job_id="job_" + "f" * 32)
+        assert job.deadline == root_deadline and job.identity.job_id == "job_" + "f" * 32
         if cancel_before_start or cancel_during_start:
             try:
                 assert ready.wait(timeout=3)
@@ -353,6 +356,12 @@ def test_failed_launch_and_lost_ack_have_different_budget_outcomes(
         assert service.get(job.identity.job_id).status == expected
         assert ledger.charged == 0 and ledger.held == (observed_start is None)
         assert bool(dispatched) is not cancel_before_start
+        if observed_start is False:
+            before = ledger.checkpoint_identity()
+            with pytest.raises(JobError, match="job_id_replay"):
+                service.start(ToolCall(id="new-call", name="run_tests", arguments={}),
+                              assigned_job_id=job.identity.job_id)
+            assert ledger.checkpoint_identity() == before
         assert service.shutdown() is (observed_start is False)
 
 

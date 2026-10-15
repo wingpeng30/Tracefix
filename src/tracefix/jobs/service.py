@@ -26,8 +26,8 @@ from tracefix.jobs.domain import (
     select_deadline,
     transition,
 )
+from tracefix.jobs.executions import TestExecution
 from tracefix.jobs.process_tree import ProcessTreeScope
-from tracefix.jobs.test_budget import TestExecution
 from tracefix.messages import ToolCall
 from tracefix.test_execution import PreparedTest
 from tracefix.tools.base import ToolResult
@@ -166,7 +166,9 @@ class JobService:
             return self._faulted or self.ledger.has_unknown or any(
                 row.record.status == JobStatus.OUTCOME_UNKNOWN for row in self._jobs.values())
 
-    def start(self, call: ToolCall, *, mode: str = "background") -> JobRecord:
+    def start(self, call: ToolCall, *, mode: str = "background",
+              host_deadline: datetime | None = None,
+              assigned_job_id: str | None = None) -> JobRecord:
         with self._lock:
             if mode not in {"background", "synchronous"}:
                 raise JobError("job_execution_mode_invalid")
@@ -174,6 +176,8 @@ class JobService:
                 raise JobError("job_session_stopped_or_unknown")
             if self.active:
                 raise JobError("checkout_test_already_active")
+            if assigned_job_id is not None and assigned_job_id in self._jobs:
+                raise JobError("job_id_replay_refused")
             # Direct Python calls have the same mandatory authorization as model calls.
             self.authorize(call)
             if call.name != "run_tests":
@@ -183,10 +187,15 @@ class JobService:
             now = datetime.now(UTC)
             deadline = select_deadline(now=now, timeout_seconds=timeout,
                                        default_timeout_seconds=timeout,
-                                       session_deadline=self.session_deadline)
+                                       session_deadline=self.session_deadline,
+                                       host_deadline=host_deadline)
             monotonic_deadline = min(self._root_deadline, time.monotonic() + timeout)
+            if host_deadline is not None:
+                monotonic_deadline = min(monotonic_deadline, time.monotonic() + max(
+                    0, (deadline - datetime.now(UTC)).total_seconds()))
             identity = JobIdentity(
-                job_id="job_" + uuid4().hex, run_id=self.run_id, call_id=call.id,
+                job_id=assigned_job_id or "job_" + uuid4().hex,
+                run_id=self.run_id, call_id=call.id,
                 execution_id="0" * 32,
                 invocation_sha256=hashlib.sha256(call.model_dump_json().encode()).hexdigest(),
             )
@@ -343,6 +352,13 @@ class JobService:
         with self._lock:
             result = self._entry(job_id).result
             return result.model_copy(deep=True) if result is not None else None
+
+    def receipt(self, job_id: str) -> tuple[JobRecord, ToolResult | None]:
+        """Return one atomic observation, even when a worker settles during polling."""
+        with self._lock:
+            entry = self._entry(job_id)
+            return (entry.record, entry.result.model_copy(deep=True)
+                    if entry.result is not None else None)
 
     def background_completions(self) -> tuple[tuple[JobRecord, ToolResult], ...]:
         with self._lock:

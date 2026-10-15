@@ -3,16 +3,27 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from typing import Protocol
 
+from tracefix.jobs.domain import JobRecord
 from tracefix.jobs.ports import JobCompletion, JobSourceState
-from tracefix.jobs.service import JobService
 from tracefix.jobs.test_budget import TestExecutionLedger
+from tracefix.tools.base import ToolResult
 
 
-class LocalAgentJobSession:
-    """Adapter for local execution; the core consumes only AgentJobSession."""
+class JobSessionService(Protocol):
+    @property
+    def active(self) -> bool: ...
+    @property
+    def has_unknown(self) -> bool: ...
+    def background_completions(self) -> tuple[tuple[JobRecord, ToolResult], ...]: ...
+    def shutdown(self) -> bool: ...
 
-    def __init__(self, service: JobService, ledger: TestExecutionLedger,
+
+class ManagedAgentJobSession:
+    """Consume host-owned receipts; local and remote workers never mutate history."""
+
+    def __init__(self, service: JobSessionService, ledger: TestExecutionLedger,
                  source_identity: Callable[[], JobSourceState]) -> None:
         self.service, self.ledger = service, ledger
         self._source_identity = source_identity
@@ -38,3 +49,7 @@ class LocalAgentJobSession:
 
     def shutdown(self) -> bool:
         return self.service.shutdown()
+
+
+class LocalAgentJobSession(ManagedAgentJobSession):
+    """Compatibility name for the existing local assembly."""

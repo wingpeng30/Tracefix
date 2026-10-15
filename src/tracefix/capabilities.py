@@ -15,6 +15,8 @@ from typing import Protocol
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from tracefix.jobs.constants import JOB_CONTROL_CAPABILITIES
+
 
 class CapabilityError(ValueError):
     """A tool has no trusted capability description or the policy is invalid."""
@@ -31,6 +33,7 @@ class CallerOrigin(StrEnum):
     RECOVERY = "recovery"
     HOST_LIFECYCLE = "host_lifecycle"
     INDEPENDENT_VALIDATION = "independent_validation"
+    JOB_COORDINATOR = "job_coordinator"
 
 
 class CapabilityDescriptor(BaseModel):
@@ -100,6 +103,16 @@ _register("read_job_output", "job.output", "artifact", "read",
           idempotent=True, location="host")
 _register("cancel_job", "job.cancel", "checkpoint", "session_write",
           idempotent=True, location="host")
+for _control, _capability, _domain, _effect in (
+    ("job_start_control", "job.control.start", "workspace", "execute"),
+    ("job_status_control", "job.control.status", "checkpoint", "read"),
+    ("job_read_control", "job.control.read", "artifact", "read"),
+    ("job_cancel_control", "job.control.cancel", "checkpoint", "session_write"),
+    ("job_shutdown_control", "job.control.shutdown", "checkpoint", "session_write"),
+):
+    _register(_control, _capability, _domain, _effect,
+              idempotent=_control != "job_start_control", location="container",
+              model_callable=False)
 _register("read_tool_artifact", "artifact.read", "artifact", "read", idempotent=True)
 _register("search_tool_artifact", "artifact.search", "artifact", "read", idempotent=True)
 _register(
@@ -231,6 +244,12 @@ class CapabilityPolicy:
     def __init__(self, catalog: CapabilityCatalog, profile: ExecutionProfile) -> None:
         self.catalog = catalog
         self.profile = ExecutionProfile(profile)
+        controls = tuple(name for name in JOB_CONTROL_CAPABILITIES if catalog.get(name) is not None)
+        if controls and len(controls) != len(JOB_CONTROL_CAPABILITIES):
+            raise CapabilityError("job control capability catalog is incomplete")
+        self._job_controls_enabled = bool(controls)
+        if self._job_controls_enabled:
+            self.VERSION = "tracefix-capability-policy-v4-jobs"
         policy_identity = json.dumps(
             {
                 "version": self.VERSION,
@@ -242,6 +261,8 @@ class CapabilityPolicy:
                 "recovery_tools": ["checkpoint_restore"],
                 "host_lifecycle_tools": ["checkpoint_commit", "source_snapshot_export"],
                 "independent_validation_tools": ["apply_patch", "get_git_diff", "run_tests"],
+                **({"job_coordinator_tools": [*JOB_CONTROL_CAPABILITIES, "run_tests"]}
+                   if self._job_controls_enabled else {}),
             },
             sort_keys=True,
             separators=(",", ":"),
@@ -258,6 +279,15 @@ class CapabilityPolicy:
         elif descriptor is None:
             allowed, reason = False, "unknown_capability"
         elif trusted_origin is CallerOrigin.MODEL and not descriptor.model_callable:
+            allowed, reason = False, "origin_not_allowed"
+        elif trusted_origin is CallerOrigin.JOB_COORDINATOR and (
+            not self._job_controls_enabled
+            or tool_name not in {*JOB_CONTROL_CAPABILITIES, "run_tests"}
+        ):
+            allowed, reason = False, "origin_not_allowed"
+        elif trusted_origin is not CallerOrigin.JOB_COORDINATOR and tool_name in (
+            JOB_CONTROL_CAPABILITIES
+        ):
             allowed, reason = False, "origin_not_allowed"
         elif trusted_origin is CallerOrigin.VALIDATION_GATE and tool_name not in {
             "run_tests", "validation_baseline"
@@ -277,6 +307,7 @@ class CapabilityPolicy:
             trusted_origin in {
                 CallerOrigin.MODEL, CallerOrigin.VALIDATION_GATE,
                 CallerOrigin.INDEPENDENT_VALIDATION,
+                CallerOrigin.JOB_COORDINATOR,
             }
             and self.profile is ExecutionProfile.INSPECT
             and descriptor.effect in {
@@ -354,6 +385,7 @@ def executor_policy_document(
     *,
     artifacts_enabled: bool,
     skills_enabled: bool,
+    jobs_enabled: bool = False,
 ) -> dict[str, object]:
     """Build the exact ordinary-container policy file from frozen feature flags."""
     names = ["search_code", "read_file", "apply_patch", "run_tests", "get_git_diff"]
@@ -361,6 +393,8 @@ def executor_policy_document(
         names.extend(("read_tool_artifact", "search_tool_artifact"))
     if skills_enabled:
         names.append("load_skill")
+    if jobs_enabled:
+        names.extend(JOB_CONTROL_CAPABILITIES)
     catalog = CapabilityCatalog.for_tool_names(names)
     policy = CapabilityPolicy(catalog, ExecutionProfile(profile))
     return {
@@ -370,4 +404,5 @@ def executor_policy_document(
         "capability_catalog_sha256": catalog.sha256,
         "capability_policy_sha256": policy.sha256,
         "capabilities": [item.model_dump(mode="json") for item in catalog.descriptors],
+        **({"job_protocol_version": 1} if jobs_enabled else {}),
     }

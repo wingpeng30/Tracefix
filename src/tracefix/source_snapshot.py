@@ -12,6 +12,7 @@ import sys
 import tarfile
 import tempfile
 import threading
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import BinaryIO, Protocol
@@ -276,13 +277,17 @@ class WorkspaceSourceSnapshotProvider:
 class CommandSourceSnapshotProvider:
     """Stream a fixed executor command's tar output into a validated host snapshot."""
 
-    def __init__(self, command: tuple[str, ...], *, timeout_seconds: float = 45) -> None:
+    def __init__(self, command: tuple[str, ...], *, timeout_seconds: float = 45,
+                 authorize: Callable[[], None] | None = None) -> None:
         if not command or any(not isinstance(part, str) or not part for part in command):
             raise ValueError("source export command must be a fixed non-empty argument vector")
         self.command = command
         self.timeout_seconds = timeout_seconds
+        self.authorize = authorize
 
     def materialize(self, destination: Path) -> SourceSnapshotIdentity:
+        if self.authorize is not None:
+            self.authorize()
         destination.mkdir(parents=True, exist_ok=True)
         stderr_tail = bytearray()
         descriptor, name = tempfile.mkstemp(prefix="tracefix-source-", suffix=".tar")

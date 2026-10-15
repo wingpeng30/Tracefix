@@ -1,7 +1,7 @@
 # 后台测试作业（G5 候选开发中）
 
 当前候选已接通本地 Runner/API/CLI 的后台 pytest、增量读取、取消和安全暂停恢复。
-**G5 尚未完成工程验收。** ordinary Docker 后台协议、安装包完整回放与覆盖率门仍待完成；
+**G5 尚未完成工程验收。** ordinary异步协议和新容器恢复组件已实测；正式Docker Runner/inspect/resume、baseline共享配额、安装包完整回放及覆盖率门仍待完成；
 目前请求 Docker 后台组合会在模型初始化前明确拒绝，不退回本地或同步执行。
 
 ## 本地启用

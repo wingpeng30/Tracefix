@@ -271,9 +271,11 @@ def test_stream_transport_exact_limit_and_short_write_are_fail_closed() -> None:
         _BoundedWriter(ShortWriter(), 8).write(b"payload")
 
 
+@pytest.mark.parametrize("streaming", [False, True])
 def test_artifact_transport_cli_roundtrips_a_bounded_receipt(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    streaming: bool,
 ) -> None:
     from tracefix import artifact_transport
 
@@ -290,6 +292,7 @@ def test_artifact_transport_cli_roundtrips_a_bounded_receipt(
         run_id=run_id,
         workspace=workspace,
         secret_values=("safe",),
+        streaming_enabled=streaming,
     )
     ref = source.publish_process(
         call_id="cli-export",
@@ -308,6 +311,7 @@ def test_artifact_transport_cli_roundtrips_a_bounded_receipt(
         str(environment_path),
         "--run-id",
         run_id,
+        *(["--streaming-enabled"] if streaming else []),
     ]
 
     archive = io.BytesIO()
@@ -349,6 +353,7 @@ def test_artifact_transport_cli_roundtrips_a_bounded_receipt(
         run_id=run_id,
         workspace=workspace,
         secret_values=("safe",),
+        streaming_enabled=streaming,
     )
     assert target.refs()[0].artifact_id == ref.artifact_id
     assert target.read(ref.artifact_id).content == "[REDACTED]"
