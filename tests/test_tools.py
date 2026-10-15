@@ -50,6 +50,8 @@ def test_reserved_tool_names_are_stable() -> None:
         "get_git_diff",
         "read_tool_artifact",
         "search_tool_artifact",
+        "get_task_state",
+        "update_task_state",
     }
 
 
@@ -81,4 +83,3 @@ def test_tool_models_validate_schema_and_result_state() -> None:
 
     result = ToolResult(call_id="1", tool_name="ok", success=True, output={"matches": 2})
     assert result.model_dump(mode="json")["output"] == {"matches": 2}
-
