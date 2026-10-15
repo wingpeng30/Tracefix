@@ -1,5 +1,6 @@
 import json
 import subprocess
+from dataclasses import FrozenInstanceError
 from pathlib import Path
 
 import pytest
@@ -1404,3 +1405,59 @@ def test_get_git_diff_truncates_long_output(git_workspace: Path) -> None:
     assert result.success is True
     assert result.output["truncated"] is True
     assert len(result.output["diff"]) == 100
+
+
+@pytest.mark.parametrize("artifact_enabled", [False, True])
+def test_prepared_test_freezes_call_and_uses_only_its_explicit_callback(
+    git_workspace, artifact_enabled,
+):
+    from tracefix.artifacts import ArtifactStore
+
+    observed = []
+    store = ArtifactStore(
+        git_workspace.parent / (git_workspace.name + "-artifacts"),
+        run_id="prepared-tests", workspace=git_workspace,
+    ) if artifact_enabled else None
+    tool = RunTestsTool(
+        git_workspace, on_process_started=lambda: observed.append("legacy"),
+        evidence_dir=git_workspace.parent / (git_workspace.name + "-recipe-evidence"),
+        artifact_store=store,
+    )
+    call = ToolCall(id="prepared-test", name="run_tests", arguments={"command": "pytest -q"})
+    prepared = tool.prepare_test(call)
+    with pytest.raises(FrozenInstanceError):
+        prepared.command = ("unsafe",)
+    call.arguments["command"] = "not a test command"
+    result = tool.execute_prepared(prepared, on_process_started=lambda: observed.append("owned"))
+    assert result.call_id == "prepared-test"
+    assert result.output["test_status"] == "test_failure"
+    assert observed == ["owned"]
+    if store is not None:
+        assert len(result.output["artifact_refs"]) == 1
+        ref = result.output["artifact_refs"][0]
+        assert store.read(ref["artifact_id"]).content
+    with pytest.raises(ToolValidationError, match="already dispatched"):
+        tool.execute_prepared(prepared)
+    assert observed == ["owned"]
+
+
+def test_prepared_test_rejects_source_change_before_spawn(git_workspace):
+    tool = RunTestsTool(
+        git_workspace,
+        evidence_dir=git_workspace.parent / (git_workspace.name + "-stale-evidence"),
+    )
+    prepared = tool.prepare_test(ToolCall(id="stale-test", name="run_tests", arguments={}))
+    (git_workspace / "sample.py").write_text("def add(a, b): return a + b\n", encoding="utf-8")
+    observed = []
+    with pytest.raises(ToolValidationError, match="source changed"):
+        tool.execute_prepared(prepared, on_process_started=lambda: observed.append(True))
+    assert not observed
+
+
+def test_prepared_test_validation_has_no_evidence_side_effect(git_workspace, tmp_path):
+    evidence = tmp_path.parent / (tmp_path.name + "-prepared-evidence")
+    tool = RunTestsTool(git_workspace, evidence_dir=evidence)
+    with pytest.raises(ToolValidationError):
+        tool.prepare_test(ToolCall(id="invalid-test", name="run_tests",
+                                   arguments={"command": "pytest -q && echo secret"}))
+    assert not evidence.exists()

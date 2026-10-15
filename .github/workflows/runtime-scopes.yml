@@ -1,0 +1,66 @@
+name: Runtime process scope contracts
+
+on:
+  push:
+    branches: ['codex/harness-runtime']
+    paths:
+      - 'src/tracefix/jobs/**'
+      - 'tests/test_process_tree_scope.py'
+      - '.github/workflows/runtime-scopes.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  linux-cgroup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install locked test dependencies
+        run: |
+          python -m pip install --require-hashes -r requirements/locks/build-tools.txt
+          python -m pip install --require-hashes -r requirements/locks/engineering-py311.txt
+          python -m pip install --no-deps --no-build-isolation -e .
+      - name: Delegate a fresh host cgroup and run real process contracts
+        shell: bash
+        run: |
+          set -euo pipefail
+          scope_root="/sys/fs/cgroup/tracefix-ci-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          test -f /sys/fs/cgroup/cgroup.controllers
+          sudo mkdir "$scope_root"
+          cleanup() {
+            sudo sh -c 'echo 1 > "$1/cgroup.kill"' sh "$scope_root"
+            sudo find "$scope_root" -mindepth 1 -type d -depth -exec rmdir {} \;
+            sudo rmdir "$scope_root"
+          }
+          trap cleanup EXIT
+          sudo chown "$(id -u):$(id -g)" "$scope_root" "$scope_root/cgroup.procs" "$scope_root/cgroup.subtree_control"
+          export TRACEFIX_TEST_CGROUP_ROOT="$scope_root"
+          # Move only this dedicated test driver, then drop privilege before pytest.
+          # Its descendants can now migrate within the delegated common ancestor.
+          sudo --preserve-env=TRACEFIX_TEST_CGROUP_ROOT "$(command -v python)" - \
+            "$(id -u)" "$(id -g)" "$(command -v python)" <<'PY'
+          import os
+          import sys
+          from pathlib import Path
+          root = Path(os.environ['TRACEFIX_TEST_CGROUP_ROOT'])
+          (root / 'cgroup.procs').write_text(str(os.getpid()))
+          os.setgroups([])
+          os.setgid(int(sys.argv[2]))
+          os.setuid(int(sys.argv[1]))
+          os.execv(sys.argv[3], [sys.argv[3], '-m', 'pytest',
+                   'tests/test_process_tree_scope.py', '-v', '-o', 'addopts=',
+                   '--junitxml=scope-results.xml'])
+          PY
+      - name: Preserve exact platform results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: runtime-linux-cgroup
+          path: scope-results.xml
+          if-no-files-found: error

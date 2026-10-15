@@ -1,5 +1,9 @@
 # TraceFix 开发历程与代码说明
 
+## 2026-10-16 G5.1—G5.3 实现与定向验证
+
+抽出不可变作业/测试模型和共用判定，新增Windows Job Object/Linux cgroup/Docker域控制及可信启动门。两版domain/scope定向各31通过、2平台skip；完整阶段工程门尚未执行。 详见[G5实施记录](tasks/2026-10-16-g5-progress.md)。
+
 ## 2026-10-16 起点修复已完成完整验收
 
 ac64510修复公开资格策略调用和Docker构建上下文，CI159双Python1694项各通过、精确综合覆盖率均>=90%，真实基础/ordinary/Serena及安装包资格通过。本机同源码两版完整门通过，唯一符号链接权限skip已由当前CI无跳过补证。已归档源码清单、原始日志及artifact ID/digest，无供应商调用。 证据及边界见[起点验收记录](tasks/2026-10-16-harness-runtime-baseline.md)。

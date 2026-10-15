@@ -16,6 +16,7 @@ import time
 import xml.etree.ElementTree as element_tree
 from collections.abc import Callable
 from pathlib import Path
+from threading import Lock
 from typing import Any, ClassVar
 from uuid import uuid4
 
@@ -32,6 +33,7 @@ from tracefix.security import (
     resolve_workspace_path,
     validate_project_environment,
 )
+from tracefix.test_execution import PreparedTest, judge_test_outcome
 from tracefix.tools.base import BaseTool, ReservedToolName, ToolRegistry, ToolResult, ToolSpec
 from tracefix.tools.skills import SkillLimits
 
@@ -832,12 +834,20 @@ class RunTestsTool(_WorkspaceTool):
             raise ToolValidationError("test evidence directory must be outside the checkout")
         self.on_process_started = on_process_started
         self.artifact_store = artifact_store
+        self._prepared_lock = Lock()
+        self._dispatched_preparations: set[str] = set()
 
     def execute(self, call: ToolCall) -> ToolResult:
-        """执行 pytest，并把失败和超时作为模型可以继续处理的结果返回。"""
+        """Keep the synchronous tool contract; scheduling uses the explicit callback API."""
+        return self.execute_prepared(
+            self.prepare_test(call), on_process_started=self.on_process_started,
+            verify_source=False,
+        )
+
+    def prepare_test(self, call: ToolCall) -> PreparedTest:
+        """Freeze a validated recipe; no subprocess starts during preparation."""
         started = time.monotonic()
         command, timeout = self.prepare(call)
-
         try:
             environment = _sanitized_subprocess_env()
             environment.update(self.environment_variables)
@@ -894,6 +904,38 @@ class RunTestsTool(_WorkspaceTool):
                 ]
             )
             source_sha_before = self._product_diff_sha()
+        except OSError as exc:
+            raise ToolExecutionError(
+                f"cannot start test command: {exc}", context={"command": command}
+            ) from exc
+        return PreparedTest(
+            call.model_dump_json(), tuple(command), timeout,
+            tuple(sorted(environment.items())), self.workspace, self.evidence_dir,
+            audit_id, audit_path, junit_path, source_sha_before, started,
+        )
+
+    def execute_prepared(
+        self, prepared: PreparedTest, *,
+        on_process_started: Callable[[], None] | None = None,
+        verify_source: bool = True,
+    ) -> ToolResult:
+        """Dispatch once, using only this invocation's callback and frozen arguments."""
+        if prepared.workspace != self.workspace or prepared.evidence_dir != self.evidence_dir:
+            raise ToolValidationError("prepared test belongs to a different execution scope")
+        with self._prepared_lock:
+            if prepared.audit_id in self._dispatched_preparations:
+                raise ToolValidationError("prepared test has already dispatched")
+            self._dispatched_preparations.add(prepared.audit_id)
+        if verify_source and self._product_diff_sha() != prepared.source_sha256_before:
+            raise ToolValidationError("prepared test source changed before dispatch")
+        call = ToolCall.model_validate_json(prepared.call_json)
+        command, timeout = list(prepared.command), prepared.timeout_seconds
+        environment = dict(prepared.environment)
+        started = prepared.started_monotonic
+        audit_path, audit_id = prepared.audit_path, prepared.audit_id
+        junit_path = prepared.junit_path
+        source_sha_before = prepared.source_sha256_before
+        try:
             artifact_refs: list[dict[str, object]] = []
             artifact_incomplete = False
             artifact_error = None
@@ -906,7 +948,7 @@ class RunTestsTool(_WorkspaceTool):
                     call_id=call.id,
                     tool_name=self.spec.name,
                     source_identity={"product_diff_sha256_before": source_sha_before},
-                    on_started=self.on_process_started,
+                    on_started=on_process_started,
                 )
                 stdout_text = capture.stdout
                 stderr_text = capture.stderr
@@ -955,8 +997,8 @@ class RunTestsTool(_WorkspaceTool):
                     start_new_session=(os.name != "nt"),
                 )
                 try:
-                    if self.on_process_started is not None:
-                        self.on_process_started()
+                    if on_process_started is not None:
+                        on_process_started()
                     try:
                         stdout_text, stderr_text = process.communicate(timeout=timeout)
                     except subprocess.TimeoutExpired:
@@ -989,45 +1031,14 @@ class RunTestsTool(_WorkspaceTool):
             audit, audit_issue = self._read_agent_audit(audit_path, audit_id, completed.returncode)
             test_stats, junit_issue = self._read_junit(junit_path)
             phase_issue = self._validate_agent_phases(audit, test_stats)
-            if completed.returncode is None:
-                test_status = "timed_out"
-            elif (
-                any(
-                    token in f"{stdout}\n{stderr}".casefold()
-                    for token in (
-                        "modulenotfounderror",
-                        "no module named",
-                        "importerror",
-                        "cannot import name",
-                    )
-                )
-                and not audit
-            ):
-                test_status = "environment_error"
-            elif audit_issue or junit_issue or phase_issue or not audit:
-                test_status = "invalid_test_run"
-            elif (
-                test_stats["tests"] > 0
-                and test_stats["passed"] == 0
-                and test_stats["failures"] == 0
-                and test_stats["errors"] == 0
-            ):
-                test_status = "invalid_test_run"
-            elif completed.returncode != 0:
-                test_status = "test_failure"
-            elif (
-                test_stats["tests"] == 0
-                or test_stats["passed"] == 0
-                or test_stats["failures"]
-                or test_stats["errors"]
-            ):
-                test_status = "invalid_test_run"
-            else:
-                test_status = "passed"
             source_sha_after = self._product_diff_sha()
-            if test_status == "passed" and source_sha_before != source_sha_after:
-                test_status = "invalid_test_run"
-            passed = test_status == "passed"
+            outcome = judge_test_outcome(
+                returncode=completed.returncode, stdout=stdout, stderr=stderr,
+                audit=audit, counts=test_stats, audit_issue=audit_issue,
+                junit_issue=junit_issue, phase_issue=phase_issue,
+                source_before=source_sha_before, source_after=source_sha_after,
+            )
+            test_status, passed = outcome.test_status, outcome.passed
             test_output = {
                 "command": command,
                 "returncode": completed.returncode,
