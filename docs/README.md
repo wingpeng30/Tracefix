@@ -8,6 +8,7 @@
 
 ## 新任务交接入口
 
+- [后台作业候选说明](background-jobs.md)：本地启用、四工具、配额和恢复，以及尚未完成的Docker/安装包验收边界。
 - [G5实施与验证记录](tasks/2026-10-16-g5-progress.md)：后台作业组件、Agent适配的实际检查，以及尚未完成的Runner/Docker/恢复和覆盖率门。
 - [G5—G8起点验收](tasks/2026-10-16-harness-runtime-baseline.md)：ac64510精确CI159、本地工程、修复及原始证据。
 - [G5—G8实施计划](tasks/2026-10-16-harness-runtime-implementation.md)：已批准的逐阶段步骤、验收门和实际状态。

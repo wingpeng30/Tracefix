@@ -77,11 +77,13 @@ def test_run_cli_flag_enables_harness_foundations(tmp_path, monkeypatch, capsys)
                 "--execution-backend",
                 "local",
                 "--harness-foundations",
+                "--background-jobs",
             ]
         )
         == 0
     )
     assert seen[0].harness_foundations_enabled is True
+    assert seen[0].background_jobs_enabled is True
     capsys.readouterr()
 
 

@@ -372,6 +372,31 @@ class JobService:
         with self._lock:
             return tuple(row.record for row in self._jobs.values())
 
+    @staticmethod
+    def inspect_checkpoint_identity(record_dir: Path, *, run_id: str,
+                                    checkout_id: str) -> dict[str, object]:
+        """Read only: an inspect command never adopts or repairs an old worker."""
+        store = CheckpointStore(record_dir, {
+            "kind": "job-receipts-v1", "run_id": run_id, "checkout_id": checkout_id,
+        })
+        if not store.path.exists():
+            return {"sequence": 0, "payload_sha256": None}
+        if store.path.stat().st_size > 8 * 1024 * 1024:
+            raise JobError("job_receipt_limit_exceeded")
+        saved = store.load(current_identity=store.identity)
+        if set(saved.payload) != {"jobs"} or not isinstance(saved.payload["jobs"], dict):
+            raise JobError("job_receipt_invalid")
+        for job_id, value in saved.payload["jobs"].items():
+            entry = _Entry.model_validate(value)
+            entry.record.require_owner(run_id)
+            if (job_id != entry.record.identity.job_id
+                    or entry.record.status not in TERMINAL_STATUSES
+                    or entry.record.status == JobStatus.OUTCOME_UNKNOWN
+                    or entry.record.outcome_sha256 != (
+                        _result_sha(entry.result) if entry.result is not None else None)):
+                raise JobError("job_receipt_pending_unknown_or_invalid")
+        return {"sequence": saved.sequence, "payload_sha256": saved.payload_sha256}
+
     def run_synchronously(self, call: ToolCall) -> ToolResult:
         """The legacy tool shape, backed by the same preparation/accounting/worker engine."""
         record = self.start(call, mode="synchronous")

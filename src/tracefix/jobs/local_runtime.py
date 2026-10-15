@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import os
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Iterator
+from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 
@@ -56,6 +57,7 @@ class LocalJobRuntime:
             raise JobError("background_job_tool_collision")
         if not artifacts.streaming_enabled:
             raise JobError("background_jobs_require_streaming_artifacts")
+        self.artifacts, self.deadline = artifacts, deadline
         self.policy = CapabilityPolicy(CapabilityCatalog.for_tool_names(
             (*tools.names, *JOB_TOOL_NAMES, *extra_capabilities)), ExecutionProfile(profile))
         self.scope_factory = scope_factory or local_scope_factory(delegated_cgroup)
@@ -89,6 +91,39 @@ class LocalJobRuntime:
         decision = self.policy.authorize(call.name, CallerOrigin.MODEL)
         if not decision.allowed:
             raise JobError(decision.reason_code)
+
+    @contextmanager
+    def validation_executor(self, executor: RunTestsTool, *, record_dir: Path,
+                            checkout_id: str) -> Iterator[ManagedRunTestsTool]:
+        """A fresh validation checkout uses the root ledger and artifact quotas."""
+        decision = self.dispatcher.authorize("validation_baseline", CallerOrigin.VALIDATION_GATE)
+        if not decision.allowed:
+            raise JobError(decision.reason_code)
+
+        def authorize(call):
+            decision = self.dispatcher.authorize(call.name, CallerOrigin.VALIDATION_GATE)
+            if not decision.allowed:
+                raise JobError(decision.reason_code)
+
+        service = JobService(
+            record_dir, run_id=self.service.run_id, checkout_id=checkout_id, ledger=self.ledger,
+            artifact_store=self.artifacts, test_tool=executor, authorize=authorize,
+            scope_factory=self.scope_factory, evaluate=executor.evaluate_job_result,
+            verify_source=executor.verify_prepared_source, session_deadline=self.deadline)
+        primary = None
+        try:
+            yield ManagedRunTestsTool(executor, service)
+        except BaseException as exc:
+            primary = exc
+            raise
+        finally:
+            try:
+                if not service.shutdown():
+                    raise JobError("validation_job_cleanup_or_outcome_unknown")
+            except Exception:
+                if primary is None:
+                    raise
+                primary.add_note("validation_job_cleanup_or_outcome_unknown")
 
     def close(self) -> bool:
         try:

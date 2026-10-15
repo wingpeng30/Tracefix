@@ -119,6 +119,10 @@ class TestExecutionLedger:
     def has_unknown(self) -> bool:
         return self._faulted or any(row.phase == "unknown" for row in self._state.executions)
 
+    @property
+    def pending(self) -> bool:
+        return any(row.phase in {"reserved", "dispatched"} for row in self._state.executions)
+
     def _require_open(self) -> None:
         if self._closed:
             raise JobError("test_execution_ledger_closed")
@@ -210,6 +214,22 @@ class TestExecutionLedger:
                     or snapshot.payload != self._state.model_dump(mode="json")):
                 raise CheckpointError("test execution ledger changed outside owner")
             return {"sequence": snapshot.sequence, "payload_sha256": snapshot.payload_sha256}
+
+    @staticmethod
+    def inspect_checkpoint_identity(run_dir: Path, *, run_id: str, limit: int) -> dict[str, object]:
+        """Read-only inspection must never recover, reserve, refund or acquire ownership."""
+        store = CheckpointStore(run_dir / "test-executions", {
+            "kind": "test-execution-ledger-v1", "run_id": run_id, "limit": limit,
+        })
+        if store.path.stat().st_size > 2 * 1024 * 1024:
+            raise CheckpointError("test execution ledger exceeds its size limit")
+        saved = store.load(current_identity=store.identity)
+        state = _BudgetState.model_validate(saved.payload)
+        if (state.charged + state.held > limit or any(
+            row.phase in {"reserved", "dispatched", "unknown"} for row in state.executions
+        )):
+            raise CheckpointError("test execution is pending or unknown; replay refused")
+        return {"sequence": saved.sequence, "payload_sha256": saved.payload_sha256}
 
     def close(self) -> None:
         with self._lock:

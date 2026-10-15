@@ -89,7 +89,7 @@ JOB_TOOL_NAMES = tuple(_TOOLS)
 
 
 class _JobTool(BaseTool):
-    def __init__(self, name: str, service: JobAccess) -> None:
+    def __init__(self, name: str, service: JobAccess | None) -> None:
         self.service = service
         self.args_type, description = _TOOLS[name]
         self._spec = ToolSpec(name=name, description=description,
@@ -101,6 +101,8 @@ class _JobTool(BaseTool):
 
     def execute(self, call: ToolCall) -> ToolResult:
         try:
+            if self.service is None:
+                raise JobError("job_catalog_is_inspection_only")
             if call.name != self._spec.name:
                 raise JobError("job_tool_name_mismatch")
             args = self.args_type.model_validate(call.arguments)
@@ -139,6 +141,12 @@ def register_job_tools(registry: ToolRegistry, service: JobAccess) -> None:
     """Explicit runtime assembly only; the default tool registry remains unchanged."""
     for name in _TOOLS:
         registry.register(_JobTool(name, service))
+
+
+def register_job_catalog_for_inspection(registry: ToolRegistry) -> None:
+    """Describe the frozen schemas without creating workers, ledgers or OS handles."""
+    for name in JOB_TOOL_NAMES:
+        registry.register(_JobTool(name, None))
 
 
 class ManagedTestAccess(Protocol):

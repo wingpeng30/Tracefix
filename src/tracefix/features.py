@@ -21,6 +21,8 @@ class FeatureConfiguration(Protocol):
     docker_image_id: str | None
     docker_recovery_enabled: bool
     harness_foundations_enabled: bool
+    background_jobs_enabled: bool
+    job_cgroup_root: Path | None
     memory_enabled: bool
     conversation_enabled: bool
     mcp_serena_image_id: str | None
@@ -50,6 +52,8 @@ def resolve_features(config: FeatureConfiguration) -> ResolvedFeatures:
     """
     docker = config.execution_backend == "docker"
     ordinary = docker and config.docker_profile == "ordinary"
+    jobs = bool(getattr(config, "background_jobs_enabled", False))
+    cgroup = getattr(config, "job_cgroup_root", None)
 
     def require(condition: bool, reason: str, message: str) -> None:
         if not condition:
@@ -58,6 +62,18 @@ def resolve_features(config: FeatureConfiguration) -> ResolvedFeatures:
                 "profile": config.docker_profile,
             })
 
+    require(not jobs or config.harness_foundations_enabled, "jobs_foundations_required",
+            "background jobs require harness foundations")
+    require(cgroup is None or jobs and not docker, "jobs_delegation_backend_invalid",
+            "a delegated cgroup belongs only to enabled local background jobs")
+    # Fail closed while runtime adapters are being integrated, never silently use sync/local.
+    require(not jobs or not docker, "jobs_docker_integration_pending",
+            "background job Docker protocol integration is not yet available")
+    require(not jobs or docker or (
+        getattr(config, "environment_recipe", None) is None
+        and not getattr(config, "test_environment_variables", {})
+    ), "jobs_local_recovery_required",
+        "local background jobs require a checkpoint-supported environment")
     if config.regression_targets:
         require(bool(config.test_target), "validation_target_missing",
                 "regression_targets require a test target")
@@ -98,6 +114,7 @@ def resolve_features(config: FeatureConfiguration) -> ResolvedFeatures:
     enabled = tuple(name for name, value in (
         ("memory", config.memory_enabled), ("dialogue", config.conversation_enabled),
         ("foundations", config.harness_foundations_enabled),
+        ("background_jobs", jobs),
         ("skills", config.agent_config.skills_enabled),
         ("serena", config.mcp_serena_image_id is not None),
         ("regression", bool(config.regression_targets)),

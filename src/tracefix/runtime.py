@@ -12,8 +12,8 @@ import sys
 import tempfile
 import time
 from collections.abc import Callable
-from contextlib import contextmanager
-from datetime import UTC, datetime
+from contextlib import ExitStack, contextmanager
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, Literal
 from uuid import uuid4
@@ -132,6 +132,8 @@ def config_identity_sha256(
                 "conversation_enabled",
                 "docker_recovery_enabled",
                 "harness_foundations_enabled",
+                "background_jobs_enabled",
+                "job_cgroup_root",
                 "execution_profile",
             )
             if name not in manifest_config
@@ -164,6 +166,8 @@ class RunConfig(BaseModel):
     conversation_enabled: bool = False
     docker_recovery_enabled: bool = False
     harness_foundations_enabled: bool = False
+    background_jobs_enabled: bool = False
+    job_cgroup_root: Path | None = None
     execution_profile: ExecutionProfile = ExecutionProfile.WORKSPACE_WRITE
     mcp_serena_image_id: str | None = None
     environment_recipe: EnvironmentRecipe | None = None
@@ -253,6 +257,7 @@ def _artifact_store_for_run(
         run_id=run_id,
         workspace=workspace,
         secret_values=tuple(environment.values()),
+        streaming_enabled=config.background_jobs_enabled,
     )
 
 
@@ -286,6 +291,43 @@ def _register_task_state_tools(tools, task_state_session) -> None:
 
     tools.register(GetTaskStateTool(task_state_session))
     tools.register(UpdateTaskStateTool(task_state_session))
+
+
+def _assemble_local_jobs(config: RunConfig, tools, artifacts: ArtifactStore, *,
+                         run_id: str, run_dir: Path, workspace: Path,
+                         collect_diff: Callable[[], tuple[str, tuple[str, ...]]],
+                         active_seconds: float = 0.0):
+    """Runtime-only wiring; core services receive no Runner or RunConfig dependency."""
+    from tracefix.jobs.local_runtime import LocalJobRuntime
+    from tracefix.jobs.ports import JobSourceState
+    from tracefix.memory_sources import GitRepositoryIdentityResolver
+
+    def source_state():
+        patch, _ = collect_diff()
+        return JobSourceState(product_diff_sha256=hashlib.sha256(patch.encode()).hexdigest(),
+                              nonempty_diff=bool(patch.strip()))
+
+    extra = list(_HOST_CAPABILITY_NAMES)
+    if config.agent_config.context.enabled and config.agent_config.context.agent_tool_enabled:
+        extra.append("compact_context")
+    return LocalJobRuntime(
+        tools=tools, artifacts=artifacts, run_dir=run_dir, run_id=run_id,
+        checkout_id=GitRepositoryIdentityResolver().resolve(workspace).checkout_id,
+        limit=config.agent_config.max_test_runs,
+        deadline=datetime.now(UTC) + timedelta(
+            seconds=max(0, config.agent_config.wall_time_seconds - active_seconds)),
+        source_identity=source_state, profile=config.execution_profile,
+        extra_capabilities=extra, delegated_cgroup=config.job_cgroup_root,
+    )
+
+
+def _defer_job_checkpoint(job_runtime, active: MinimalAgent, safe_sequence: int) -> bool:
+    if job_runtime is None:
+        return False
+    if job_runtime.checkpoints.defer_if_unsafe(safe_sequence=safe_sequence):
+        return True
+    active.synchronize_job_results()
+    return False
 
 
 class RunResult(BaseModel):
@@ -898,6 +940,23 @@ class TraceFixRunner:
                     test_environment_variables=config.test_environment_variables,
                 )
                 _register_task_state_tools(registry, _task_state_session_for_run(config))
+                if config.mcp_serena_image_id is not None:
+                    # Metadata only: inspecting a checkpoint must not start MCP or Docker.
+                    for tool in SerenaMCP(workspace, root, config.mcp_serena_image_id).tools():
+                        registry.register(tool)
+                if config.background_jobs_enabled:
+                    from tracefix.jobs.checkpoints import JobCheckpointCoordinator
+                    from tracefix.memory_sources import GitRepositoryIdentityResolver
+                    from tracefix.tools.jobs import register_job_catalog_for_inspection
+
+                    register_job_catalog_for_inspection(registry)
+                    JobCheckpointCoordinator.inspect_saved(
+                        root, run_id=root.name,
+                        checkout_id=GitRepositoryIdentityResolver().resolve(workspace).checkout_id,
+                        limit=config.agent_config.max_test_runs,
+                        value=snapshot.payload.get("job_state"))
+                elif "job_state" in snapshot.payload:
+                    reasons.append("checkpoint contains disabled job state")
                 tool_sha = hashlib.sha256(
                     json.dumps(
                         [spec.model_dump(mode="json") for spec in registry.specs()],
@@ -1301,7 +1360,7 @@ class TraceFixRunner:
         manifest_path = root / "session.json"
         if not manifest_path.is_file():
             raise CheckpointError("session manifest is missing")
-        with ProcessLock(root):
+        with ProcessLock(root), ExitStack() as resources:
             inspection = self.inspect(root, _for_continue=message is not None)
             if not inspection["resumable"]:
                 raise CheckpointError(
@@ -1383,6 +1442,17 @@ class TraceFixRunner:
                 mcp_manager.preflight()
                 for tool in mcp_manager.tools():
                     tools.register(tool)
+            job_runtime = None
+            if config.background_jobs_enabled:
+                assert artifact_store is not None
+                job_runtime = _assemble_local_jobs(
+                    config, tools, artifact_store, run_id=root.name, run_dir=root,
+                    workspace=workspace,
+                    collect_diff=lambda: self._collect_diff(workspace, protected_dirs),
+                    active_seconds=float(snapshot.payload["agent"]["active_seconds"]))
+                resources.callback(job_runtime.close)
+                job_runtime.checkpoints.verify_saved(snapshot.payload.get("job_state"))
+                tools = job_runtime.tools
             tool_hash = hashlib.sha256(
                 json.dumps(
                     [spec.model_dump(mode="json") for spec in tools.specs()],
@@ -1392,7 +1462,8 @@ class TraceFixRunner:
             ).hexdigest()
             if tool_hash != manifest["identity"]["tool_sha256"]:
                 raise CheckpointError("tool definitions changed since checkpoint")
-            capability_dispatcher = self._capability_dispatcher(config, tools)
+            capability_dispatcher = (job_runtime.dispatcher if job_runtime is not None
+                                     else self._capability_dispatcher(config, tools))
             self._bind_host_capability_policy(capability_dispatcher, mcp_manager)
             if not self._capability_identity_matches(
                 self._capability_identity(config, tools, capability_dispatcher),
@@ -1440,6 +1511,8 @@ class TraceFixRunner:
                     repository_candidates=repo_map.candidate_files if repo_map else (),
                 )
                 agent.tool_dispatcher = capability_dispatcher
+                if job_runtime is not None:
+                    agent.job_session = job_runtime.session
                 agent.task_state_session = task_state_session
                 if task_state_session is not None:
                     agent.task_state_source_identity = lambda: hashlib.sha256(
@@ -1471,6 +1544,8 @@ class TraceFixRunner:
 
                 def save_checkpoint(active: MinimalAgent) -> None:
                     nonlocal sequence
+                    if _defer_job_checkpoint(job_runtime, active, sequence):
+                        return
                     patch, _ = self._collect_diff(workspace, protected_dirs)
                     patch_sha = hashlib.sha256(patch.encode("utf-8")).hexdigest()
                     active.verify_test_source(patch_sha)
@@ -1486,6 +1561,8 @@ class TraceFixRunner:
                     }
                     if artifact_store is not None:
                         payload["artifact_store"] = artifact_store.checkpoint_identity()
+                    if job_runtime is not None:
+                        payload["job_state"] = job_runtime.checkpoints.safe_identity()
                     store.save(payload, sequence=sequence)
 
                 agent.checkpoint_callback = save_checkpoint
@@ -1873,6 +1950,19 @@ class TraceFixRunner:
         """Check Docker and ordinary-task inputs before credentials or model setup."""
         resolve_features(config)
         if config.execution_backend != "docker":
+            if config.background_jobs_enabled:
+                from tracefix.jobs.domain import JobError
+                from tracefix.jobs.local_runtime import local_scope_factory
+
+                try:
+                    probe = local_scope_factory(config.job_cgroup_root)()
+                    if not probe.close():
+                        raise JobError("process_tree_scope_preflight_failed")
+                except JobError as exc:
+                    raise RunConfigurationError(
+                        "strict process-tree ownership is unavailable for background jobs",
+                        context={"reason_code": exc.reason_code},
+                    ) from exc
             return
         if config.docker_profile == "ordinary":
             if not config.docker_image_id:
@@ -1962,6 +2052,7 @@ class TraceFixRunner:
         docker_backend: DockerToolBackend | None = None
         mcp_manager: SerenaMCP | None = None
         tools = None
+        job_runtime = None
         artifact_store: ArtifactStore | None = None
         workspace_preparation: dict[str, JsonValue] = {}
         state = AgentState(
@@ -2197,7 +2288,15 @@ class TraceFixRunner:
 
             regression_baseline: dict[str, str] = {}
             regression_baseline_seconds = 0.0
-            capability_dispatcher = self._capability_dispatcher(config, tools)
+            if config.background_jobs_enabled:
+                assert workspace is not None and artifact_store is not None
+                job_runtime = _assemble_local_jobs(
+                    config, tools, artifact_store, run_id=run_id, run_dir=run_dir,
+                    workspace=workspace,
+                    collect_diff=lambda: self._collect_diff(workspace, internal_artifacts))
+                tools = job_runtime.tools
+            capability_dispatcher = (job_runtime.dispatcher if job_runtime is not None
+                                     else self._capability_dispatcher(config, tools))
             self._bind_host_capability_policy(capability_dispatcher, mcp_manager)
             if config.regression_targets:
                 if (workspace is None and docker_backend is None) or config.test_target is None:
@@ -2221,6 +2320,7 @@ class TraceFixRunner:
                     sink,
                     run_id,
                     capability_dispatcher=capability_dispatcher,
+                    **({"job_runtime": job_runtime} if job_runtime is not None else {}),
                 )
                 regression_baseline_seconds = time.monotonic() - baseline_started
             llm = self._llm_factory(llm_config)
@@ -2233,6 +2333,8 @@ class TraceFixRunner:
                 repository_candidates=(repository_map.candidate_files if repository_map else ()),
             )
             agent.tool_dispatcher = capability_dispatcher
+            if job_runtime is not None:
+                agent.job_session = job_runtime.session
             agent.task_state_session = task_state_session
             if task_state_session is not None:
                 if config.execution_backend == "local":
@@ -2461,6 +2563,8 @@ class TraceFixRunner:
                 def save_checkpoint(active: MinimalAgent) -> None:
                     nonlocal sequence
                     assert workspace is not None
+                    if _defer_job_checkpoint(job_runtime, active, sequence):
+                        return
                     current_diff, _ = self._collect_diff(workspace, internal_artifacts)
                     current_sha = hashlib.sha256(current_diff.encode("utf-8")).hexdigest()
                     active.verify_test_source(current_sha)
@@ -2479,6 +2583,8 @@ class TraceFixRunner:
                     }
                     if artifact_store is not None:
                         payload["artifact_store"] = artifact_store.checkpoint_identity()
+                    if job_runtime is not None:
+                        payload["job_state"] = job_runtime.checkpoints.safe_identity()
                     store.save(payload, sequence=sequence)
 
                 agent.checkpoint_callback = save_checkpoint
@@ -2505,6 +2611,12 @@ class TraceFixRunner:
             error = self._serialize_error(exc)
             self._write_runner_error(sink, run_id, error)
         finally:
+            if job_runtime is not None:
+                try:
+                    if not job_runtime.close():
+                        raise WorkspaceError("job cleanup or execution outcome remains unknown")
+                except Exception as exc:
+                    cleanup_errors.append((self._serialize_error(exc), "job_cleanup_error"))
             if mcp_manager is not None:
                 try:
                     mcp_manager.close()
@@ -2736,6 +2848,7 @@ class TraceFixRunner:
         run_id: str,
         *,
         capability_dispatcher: ToolDispatcher | None = None,
+        job_runtime=None,
     ) -> dict[str, str]:
         """Record each target in a clean checkout or a fresh ordinary Docker container."""
         from tracefix.messages import ToolCall
@@ -2830,7 +2943,8 @@ class TraceFixRunner:
                     }
             else:
                 backend = cls._local_validation_backend(
-                    config, source, evidence_root / str(index), capability_dispatcher
+                    config, source, evidence_root / str(index), capability_dispatcher,
+                    **({"job_runtime": job_runtime} if job_runtime is not None else {}),
                 )
                 result = backend.execute(call)
             output = result.get("output") if isinstance(result.get("output"), dict) else {}
@@ -2934,7 +3048,7 @@ class TraceFixRunner:
     @classmethod
     def _local_validation_backend(
         cls, config: RunConfig, source: Path, evidence_dir: Path,
-        dispatcher: ToolDispatcher,
+        dispatcher: ToolDispatcher, *, job_runtime=None,
     ):
         from tracefix.validation import LocalValidationBackend
 
@@ -2949,7 +3063,7 @@ class TraceFixRunner:
                         "regression baseline checkout preparation failed",
                         context={"preparation": preparation},
                     )
-                yield RunTestsTool(
+                executor = RunTestsTool(
                     checkout,
                     default_timeout_seconds=min(120.0, config.agent_config.wall_time_seconds),
                     python_executable=config.test_python_executable,
@@ -2958,7 +3072,19 @@ class TraceFixRunner:
                                    if config.environment_recipe is not None else None),
                     environment_variables=config.test_environment_variables,
                     evidence_dir=evidence_dir,
+                    **({"artifact_store": job_runtime.artifacts}
+                       if job_runtime is not None else {}),
                 )
+                if job_runtime is None:
+                    yield executor
+                else:
+                    from tracefix.memory_sources import GitRepositoryIdentityResolver
+
+                    with job_runtime.validation_executor(
+                        executor, record_dir=evidence_dir / "jobs",
+                        checkout_id=GitRepositoryIdentityResolver().resolve(checkout).checkout_id,
+                    ) as managed:
+                        yield managed
 
         return LocalValidationBackend(acquire, dispatcher)
 

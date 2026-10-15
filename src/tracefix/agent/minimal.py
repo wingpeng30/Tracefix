@@ -2132,14 +2132,22 @@ class MinimalAgent(BaseAgent):
         if status is AgentStatus.COMPLETED and self.experience_callback is not None:
             self.experience_callback(self)
             self.state.finished_at = datetime.now(UTC)
-        if (
-            status is AgentStatus.COMPLETED
-            and self.checkpoint_callback is not None
+        job_checkpoint = (self.job_session is not None and clean
+                          and not self.history.pending_tool_call_ids
+                          and status in {AgentStatus.COMPLETED, AgentStatus.INTERRUPTED})
+        if self.checkpoint_callback is not None and (
+            job_checkpoint or status is AgentStatus.COMPLETED
             and (self.experience_callback is not None or self.persist_terminal_checkpoint)
         ):
             self.checkpoint_callback(self)
         self._emit_state()
         self._emit(TraceEventType.TASK_FINISHED, {"state": self.state.model_dump(mode="json")})
+
+    def synchronize_job_results(self) -> None:
+        """Host lifecycle hook: consume outcomes only at a closed batch boundary."""
+        if self.history.pending_tool_call_ids:
+            raise AgentError("cannot synchronize jobs during an open tool batch")
+        self._consume_job_completions()
 
     def _consume_job_completions(self) -> None:
         """Project trusted receipts only after all call/result pairs have closed."""

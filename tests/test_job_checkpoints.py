@@ -63,6 +63,11 @@ def test_active_batch_preserves_last_safe_checkpoint_and_records_nonresumable_pr
             coordinator.verify_saved(identity)
         assert coordinator.progress.load(current_identity=coordinator.progress.identity).payload[
             "reason_code"] == "job_outcome_unknown"
+    before_ledger = recovered.store.path.read_bytes()
+    with pytest.raises(CheckpointError, match="pending or unknown"):
+        JobCheckpointCoordinator.inspect_saved(tmp_path, run_id="r1", checkout_id="a" * 64,
+                                               limit=1, value=identity)
+    assert recovered.store.path.read_bytes() == before_ledger
 
 
 def test_new_known_execution_still_prevents_replay_from_older_safe_checkpoint(tmp_path):
@@ -82,3 +87,8 @@ def test_new_known_execution_still_prevents_replay_from_older_safe_checkpoint(tm
     with TestExecutionLedger(tmp_path, run_id="r1", limit=1) as restored:
         JobCheckpointCoordinator(tmp_path, run_id="r1", service=Receipts(), ledger=restored
                                  ).verify_saved(current)
+    JobCheckpointCoordinator.inspect_saved(tmp_path, run_id="r1", checkout_id="a" * 64,
+                                           limit=1, value=current)
+    with pytest.raises(CheckpointError, match="changed after"):
+        JobCheckpointCoordinator.inspect_saved(tmp_path, run_id="r1", checkout_id="a" * 64,
+                                               limit=1, value=None)
