@@ -5,6 +5,8 @@ import io
 import json
 import os
 import sys
+import time
+import venv
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -112,6 +114,33 @@ def test_windows_launch_gate_assigns_membership_before_test_code(tmp_path):
             scope.start([sys.executable], cwd=tmp_path, env={})
     finally:
         assert scope.close()
+        assert scope.close()
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows gate must exclude environment startup hooks")
+def test_windows_gate_does_not_execute_site_extensions_before_assignment(tmp_path):
+    environment = tmp_path / "venv"
+    venv.EnvBuilder(with_pip=False).create(environment)
+    marker = tmp_path / "environment-hook-ran"
+    site = environment / "Lib" / "site-packages"
+    site.mkdir(parents=True, exist_ok=True)
+    (site / "startup.pth").write_text(
+        f"import pathlib; pathlib.Path({str(marker)!r}).touch()\n", encoding="utf-8")
+
+    class DelayedAssignment(WindowsJobScope):
+        def _attach(self, process):
+            # Give the trusted gate time to initialize; environment hooks must stay dormant.
+            time.sleep(0.3)
+            assert not marker.exists()
+            super()._attach(process)
+
+    scope = DelayedAssignment()
+    try:
+        process = scope.start([str(environment / "Scripts" / "python.exe"), "-c", "pass"],
+                              cwd=tmp_path, env=minimal_subprocess_environment())
+        process.communicate(timeout=5)
+        assert process.returncode == 0 and marker.exists()
+    finally:
         assert scope.close()
 
 

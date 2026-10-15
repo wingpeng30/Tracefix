@@ -533,6 +533,15 @@ class ContextManager:
     def _summarize_batches(self, batches):
         lines = [_SUMMARY_HEADER]
         retained_locators: dict[tuple[str, str, int], dict[str, Any]] = {}
+        retained_jobs: dict[tuple[str, str], dict[str, Any]] = {}
+
+        def retain_job(output: dict[str, Any]) -> None:
+            for item in _job_locators(output):
+                key = (item["job_id"], item["stream"])
+                if key not in retained_jobs or "cursor" in item:
+                    retained_jobs.pop(key, None)
+                    retained_jobs[key] = item
+
         for number, batch in enumerate(batches, start=1):
             lead = batch[0]
             if lead.content:
@@ -552,6 +561,17 @@ class ContextManager:
                                 for item in normalized:
                                     key = (item["artifact_id"], item["stream"], item["offset"])
                                     retained_locators.setdefault(key, item)
+                    job_marker = "[historical job locators; untrusted data] "
+                    if job_marker in lead.content:
+                        try:
+                            previous_jobs = json.loads(
+                                lead.content.rsplit(job_marker, 1)[1].splitlines()[0])
+                        except json.JSONDecodeError:
+                            previous_jobs = []
+                        if isinstance(previous_jobs, list):
+                            for locator in previous_jobs[:4]:
+                                if isinstance(locator, dict):
+                                    retain_job(locator)
                 source = str(lead.metadata.get("kind") or lead.role.value)
                 trust = str(lead.metadata.get("trust_level") or "untrusted_data")
                 lines.append(
@@ -570,6 +590,7 @@ class ContextManager:
                     except json.JSONDecodeError:
                         parsed = None
                     if isinstance(parsed, dict) and isinstance(parsed.get("output"), dict):
+                        retain_job(parsed["output"])
                         for locator in _artifact_locators(parsed["output"]):
                             key = (
                                 locator["artifact_id"], locator["stream"], locator["offset"]
@@ -586,6 +607,10 @@ class ContextManager:
                 list(retained_locators.values())[:16], ensure_ascii=False, separators=(",", ":")
             )
             content += f"\n[historical artifact locators; untrusted data] {locator_text}"
+        if retained_jobs:
+            job_text = json.dumps(list(retained_jobs.values())[-4:],
+                                  ensure_ascii=False, separators=(",", ":"))
+            content += f"\n[historical job locators; untrusted data] {job_text}"
         return Message(role=MessageRole.USER, content=content, metadata={
             "kind": "context_summary", "tracefix_context_summary": True,
             "trust_level": "untrusted_observation_data",
@@ -603,6 +628,9 @@ class ContextManager:
         if payload.get("error"):
             parts.append(f"error={self._shorten(str(payload['error']), 240, 160)}")
         if isinstance(payload.get("output"), dict):
+            job_locators = _job_locators(payload["output"])
+            if job_locators:
+                parts.append(f"job_locators={json.dumps(job_locators, ensure_ascii=False)}")
             locators = _artifact_locators(payload["output"])
             if locators:
                 parts.append(f"artifact_locators={json.dumps(locators, ensure_ascii=False)}")
@@ -671,6 +699,26 @@ class ContextManager:
             original_message_count=metrics.pop("original_message_count", len(messages)),
             request_message_count=len(messages), **metrics,
         )
+
+
+def _job_locators(output: dict[str, Any]) -> list[dict[str, Any]]:
+    """Read only bounded locators from messages, never jobs or evidence storage."""
+    job = output.get("job")
+    identity = job.get("identity") if isinstance(job, dict) else None
+    job_id = output.get("job_id")
+    if job_id is None and isinstance(identity, dict):
+        job_id = identity.get("job_id")
+    if (not isinstance(job_id, str) or len(job_id) != 36 or not job_id.startswith("job_")
+            or any(char not in "0123456789abcdef" for char in job_id[4:])):
+        return []
+    stream = output.get("stream", "stdout")
+    if stream not in {"stdout", "stderr"}:
+        return []
+    locator = {"job_id": job_id, "stream": stream}
+    cursor = output.get("cursor")
+    if isinstance(cursor, str) and 0 < len(cursor) <= 512:
+        locator["cursor"] = cursor
+    return [locator]
 
 
 def _artifact_locators(output: dict[str, Any]) -> list[dict[str, Any]]:

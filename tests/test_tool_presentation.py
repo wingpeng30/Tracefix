@@ -88,3 +88,18 @@ def test_artifact_search_presentation_keeps_bounded_opaque_locators() -> None:
     assert payload["output"]["hits"][0]["artifact_id"] == "0" * 32
     assert payload["output"]["hits"][0]["stream"] == "stderr"
     assert len(payload["output"]["hits"][0]["excerpt"]) <= 4000
+
+
+def test_job_output_projection_preserves_cursor_even_when_content_is_clipped():
+    result = ToolResult(
+        call_id="job-read", tool_name="read_job_output", success=True,
+        output={"job_id": "job_" + "a" * 32, "cursor": "opaque-next-cursor",
+                "stream": "stderr", "content": "x" * 5000, "next_offset": 5000,
+                "final": False, "evidence_role": "historical_job_output_only"},
+    )
+    presenter = ToolResultPresenter(ToolPresentationConfig(max_read_chars=256))
+    output = json.loads(presenter.present(result))["output"]
+    assert isinstance(output, dict)
+    assert output["job_id"] == "job_" + "a" * 32
+    assert output["cursor"] == "opaque-next-cursor"
+    assert len(output["content"]) < 400

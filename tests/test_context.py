@@ -166,6 +166,24 @@ def test_artifact_locators_survive_two_context_summary_generations() -> None:
     assert '"stream":"stderr"' in second.content
 
 
+def test_job_locators_survive_two_summary_generations_without_store_access():
+    job_id = "job_" + "a" * 32
+    cursor = "opaque-cursor-" + "b" * 200
+    call = ToolCall(id="job-read", name="read_job_output", arguments={"job_id": job_id})
+    assistant = Message(role=MessageRole.ASSISTANT, tool_calls=(call,))
+    result = ToolResult(
+        call_id=call.id, tool_name=call.name, success=True,
+        output={"content": "x" * 5000, "job_id": job_id, "cursor": cursor,
+                "stream": "stderr", "padding": "y" * 5000},
+    )
+    tool = Message(role=MessageRole.TOOL, tool_call_id=call.id, content=result.model_dump_json())
+    manager = ContextManager(ContextConfig())
+    first = manager._summarize_batches(((assistant, tool),))
+    second = manager._summarize_batches(((first,),))
+    assert job_id in second.content and cursor in second.content
+    assert '"stream":"stderr"' in second.content
+
+
 def test_task_state_anchor_survives_two_threshold_compactions() -> None:
     task = "Keep the parser behavior and preserve the original artifact reference."
     proof = {

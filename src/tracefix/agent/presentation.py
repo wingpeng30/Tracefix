@@ -102,8 +102,11 @@ class ToolResultPresenter:
             )
         if tool_name == "get_git_diff":
             return self._shorten_fields(value, ("diff",), self.config.max_diff_chars)
-        if tool_name == "read_tool_artifact":
+        if tool_name in {"read_tool_artifact", "read_job_output"}:
             return self._shorten_fields(value, ("content",), self.config.max_read_chars)
+        if tool_name in {"start_test_job", "get_job_status", "cancel_job"}:
+            # Fixed DTOs only; preserve job identity and cancellation observations.
+            return value
         if tool_name == "search_tool_artifact":
             return self._present_artifact_search(value)
         if tool_name in {"get_task_state", "update_task_state"}:

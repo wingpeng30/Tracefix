@@ -27,7 +27,7 @@ from tracefix.jobs.domain import (
     transition,
 )
 from tracefix.jobs.process_tree import ProcessTreeScope
-from tracefix.jobs.test_budget import TestExecutionLedger
+from tracefix.jobs.test_budget import TestExecution
 from tracefix.messages import ToolCall
 from tracefix.test_execution import PreparedTest
 from tracefix.tools.base import ToolResult
@@ -36,6 +36,18 @@ from tracefix.tools.base import ToolResult
 class TestPreparation(Protocol):
     def prepare(self, call: ToolCall) -> tuple[list[str], float]: ...
     def prepare_test(self, call: ToolCall) -> PreparedTest: ...
+
+
+class TestExecutionAccounting(Protocol):
+    @property
+    def has_unknown(self) -> bool: ...
+
+    def reserve(self, *, call_id: str, invocation_sha256: str) -> TestExecution: ...
+    def get(self, execution_id: str) -> TestExecution: ...
+    def before_dispatch(self, execution_id: str) -> TestExecution: ...
+    def acknowledge_started(self, execution_id: str) -> TestExecution: ...
+    def settle(self, execution_id: str, *, process_started: bool | None,
+               tree_exit_confirmed: bool, outcome_known: bool = True) -> TestExecution: ...
 
 
 class _Entry(BaseModel):
@@ -56,7 +68,7 @@ class JobService:
 
     def __init__(
         self, record_dir: Path, *, run_id: str, checkout_id: str,
-        ledger: TestExecutionLedger, artifact_store: ArtifactStore,
+        ledger: TestExecutionAccounting, artifact_store: ArtifactStore,
         test_tool: TestPreparation, authorize: Callable[[ToolCall], None],
         scope_factory: Callable[[], ProcessTreeScope],
         evaluate: Callable[[PreparedTest, LiveCaptureResult], ToolResult],
@@ -149,8 +161,8 @@ class JobService:
     @property
     def has_unknown(self) -> bool:
         with self._lock:
-            return self._faulted or any(row.record.status == JobStatus.OUTCOME_UNKNOWN
-                                        for row in self._jobs.values())
+            return self._faulted or self.ledger.has_unknown or any(
+                row.record.status == JobStatus.OUTCOME_UNKNOWN for row in self._jobs.values())
 
     def start(self, call: ToolCall) -> JobRecord:
         with self._lock:

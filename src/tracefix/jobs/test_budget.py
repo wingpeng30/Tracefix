@@ -115,6 +115,10 @@ class TestExecutionLedger:
     def held(self) -> int:
         return self._state.held
 
+    @property
+    def has_unknown(self) -> bool:
+        return self._faulted or any(row.phase == "unknown" for row in self._state.executions)
+
     def _require_open(self) -> None:
         if self._closed:
             raise JobError("test_execution_ledger_closed")

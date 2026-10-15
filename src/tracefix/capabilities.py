@@ -11,6 +11,7 @@ import hashlib
 import json
 from collections.abc import Iterable
 from enum import StrEnum
+from typing import Protocol
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -91,6 +92,14 @@ _register("read_file", "workspace.read_file", "workspace", "read", idempotent=Tr
 _register("apply_patch", "workspace.apply_patch", "workspace", "workspace_write", idempotent=False)
 _register("run_tests", "workspace.run_tests", "workspace", "execute", idempotent=False)
 _register("get_git_diff", "workspace.get_diff", "workspace", "read", idempotent=True)
+_register("start_test_job", "job.start_test", "workspace", "execute",
+          idempotent=False, location="host")
+_register("get_job_status", "job.status", "checkpoint", "read",
+          idempotent=True, location="host")
+_register("read_job_output", "job.output", "artifact", "read",
+          idempotent=True, location="host")
+_register("cancel_job", "job.cancel", "checkpoint", "session_write",
+          idempotent=True, location="host")
 _register("read_tool_artifact", "artifact.read", "artifact", "read", idempotent=True)
 _register("search_tool_artifact", "artifact.search", "artifact", "read", idempotent=True)
 _register(
@@ -288,14 +297,28 @@ class CapabilityPolicy:
         )
 
 
+class RuntimeInvocationGuard(Protocol):
+    def check(self, descriptor: CapabilityDescriptor, origin: CallerOrigin) -> str | None: ...
+
+
 class ToolDispatcher:
     """Policy gate shared by all model-originated tool execution paths."""
 
-    def __init__(self, policy: CapabilityPolicy) -> None:
+    def __init__(self, policy: CapabilityPolicy, *,
+                 execution_guard: RuntimeInvocationGuard | None = None) -> None:
         self.policy = policy
+        self._execution_guard = execution_guard
 
     def authorize(self, tool_name: str, origin: CallerOrigin) -> CapabilityDecision:
-        return self.policy.authorize(tool_name, origin)
+        decision = self.policy.authorize(tool_name, origin)
+        descriptor = self.policy.catalog.get(tool_name)
+        if decision.allowed and self._execution_guard is not None and descriptor is not None:
+            reason = self._execution_guard.check(descriptor, CallerOrigin(origin))
+            if reason is not None:
+                return CapabilityDecision.model_validate({
+                    **decision.model_dump(), "allowed": False, "reason_code": reason,
+                })
+        return decision
 
     def prepare_invocation(self, tool, call, origin: CallerOrigin):
         """No validation, callback binding or process work precedes authorization."""

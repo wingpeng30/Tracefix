@@ -53,7 +53,7 @@ class ProcessTreeScope(ABC):
         gate_released = False
         try:
             self.process = subprocess.Popen(
-                [argv[0], "-I", str(gate)], cwd=gate.parent, env=dict(env),
+                [argv[0], "-I", "-S", str(gate)], cwd=gate.parent, env=dict(env),
                 stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                 shell=False, start_new_session=os.name != "nt",
                 creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0,

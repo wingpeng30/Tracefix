@@ -1,4 +1,4 @@
-"""Trusted launch gate. Run by absolute path with Python -I, never as workspace code."""
+"""Trusted launch gate. Run by absolute path with Python -I -S, never as workspace code."""
 
 from __future__ import annotations
 
