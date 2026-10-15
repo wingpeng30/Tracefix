@@ -37,7 +37,7 @@ class Service:
 
     def read(self, job_id, *, stream, offset, limit):
         self.reads += 1
-        text = "中文🙂 output"
+        text = getattr(self, "text", "中文🙂 output")
         page = text[offset:offset + limit]
         return {"content": page, "next_offset": offset + len(page), "final": False,
                 "complete": True, "stream": stream, "at_committed_end": False}
@@ -90,3 +90,29 @@ def test_start_tool_cannot_accept_origin_pid_or_host_path():
     result = tool.execute(ToolCall(id="bad", name=tool.spec.name,
                                   arguments={"command": "pytest -q", "origin": "host_lifecycle"}))
     assert not result.success and service.starts == 0
+
+
+def test_clipped_page_can_be_retried_with_smaller_pages_using_preserved_start_cursor():
+    import json
+
+    from tracefix import ToolPresentationConfig, ToolResultPresenter
+
+    service = Service()
+    service.text = "x" * 500 + "NEEDLE" + "y" * 500
+    registry = ToolRegistry()
+    register_job_tools(registry, service)
+    tool = registry.get("read_job_output")
+    args = {"job_id": service.record.identity.job_id}
+    first = tool.execute(ToolCall(id="first", name=tool.spec.name, arguments=args))
+    visible = json.loads(ToolResultPresenter(
+        ToolPresentationConfig(max_read_chars=256)).present(first))["output"]
+    assert "NEEDLE" not in visible["content"]
+    cursor = visible["start_cursor"]
+    collected = ""
+    for index in range(8):
+        page = tool.execute(ToolCall(id=f"retry-{index}", name=tool.spec.name,
+                                    arguments={**args, "cursor": cursor, "limit": 128}))
+        assert page.success
+        collected += page.output["content"]
+        cursor = page.output["cursor"]
+    assert collected == service.text

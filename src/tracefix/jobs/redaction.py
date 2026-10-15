@@ -1,28 +1,28 @@
-"""Bounded streaming redaction: publish complete safe records, withhold uncertain tails."""
+"""Bounded append-only redaction; uncertain sensitive tails never become public prefixes."""
 
 from __future__ import annotations
 
 import codecs
 import re
 
+_BEGIN_LABELS = tuple(f"-----BEGIN {kind}PRIVATE KEY-----"
+                      for kind in ("", "RSA ", "EC ", "OPENSSH "))
 _BEGIN = re.compile(r"-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----", re.IGNORECASE)
 _END = re.compile(r"-----END (?:RSA |EC |OPENSSH )?PRIVATE KEY-----", re.IGNORECASE)
 _CREDENTIAL = re.compile(
     r"(?im)(authorization\s*:\s*bearer\s+|bearer\s+|"
     r"(?:api[_-]?key|access[_-]?token|secret|password)\s*[=:]\s*)[^\s,;\"']*"
 )
-_AWS = re.compile(r"AKIA[0-9A-Z]{16}", re.IGNORECASE)
-_OPEN_CREDENTIAL = re.compile(
-    r"(?im)(authorization\s*:\s*bearer|bearer|"
-    r"(?:api[_-]?key|access[_-]?token|secret|password)[ \t]*[=:])[ \t\r\n]*\Z"
+_OPEN_FIELD = re.compile(
+    r"(?im)(?:authorization|bearer|api[_-]?key|access[_-]?token|secret|password)"
+    r"[ \t\r\n]*(?:[=:][ \t\r\n]*(?:bearer[ \t\r\n]*)?)?\Z"
 )
-_KEY = re.compile(r"-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----.*?"
-                  r"-----END (?:RSA |EC |OPENSSH )?PRIVATE KEY-----", re.DOTALL | re.IGNORECASE)
+_AWS = re.compile(r"AKIA[0-9A-Z]{16}", re.IGNORECASE)
 _MARKER = "[REDACTED]"
 
 
 class StreamingRedactor:
-    """Append-only UTF-8 view; long uncertain records are hidden instead of clipped."""
+    """Literal/fixed-pattern span union avoids masking a label before its value is found."""
 
     maximum_pending_chars = 16 * 1024
 
@@ -31,6 +31,9 @@ class StreamingRedactor:
         if (len(self._secrets) > 128 or sum(map(len, self._secrets)) > 64 * 1024
                 or any(len(value) > 4096 for value in self._secrets)):
             raise ValueError("streaming secret exceeds bounded redaction contract")
+        self._literal = (re.compile("(?=(" + "|".join(re.escape(value)
+                                                     for value in self._secrets) + "))")
+                         if self._secrets else None)
         self._tail = max((len(value) - 1 for value in self._secrets), default=0)
         self._decoder = codecs.getincrementaldecoder("utf-8")("replace")
         self._pending = ""
@@ -43,71 +46,125 @@ class StreamingRedactor:
     def pending_chars(self) -> int:
         return len(self._pending)
 
-    def _redact(self, text: str, *, final: bool = False) -> str:
+    @staticmethod
+    def _paint(mask: bytearray, start: int, end: int) -> None:
+        mask[start:end] = b"\1" * (end - start)
+
+    def _masks(self, text: str, *, final: bool) -> tuple[bytearray, bytearray, int | None]:
+        output, safety = bytearray(len(text)), bytearray(len(text))
+        unfinished = None
+
+        def span(start: int, end: int) -> None:
+            self._paint(output, start, end)
+            self._paint(safety, start, end)
+
+        if self._literal is not None:
+            for match in self._literal.finditer(text):
+                span(match.start(), match.start() + len(match.group(1)))
         if final:
-            longest = 0
             for value in self._secrets:
                 for length in range(min(len(value) - 1, len(text)), 0, -1):
                     if text.endswith(value[:length]):
-                        longest = max(longest, length)
+                        span(len(text) - length, len(text))
                         break
-            if longest:
-                text = text[:-longest] + _MARKER
-        for value in self._secrets:
-            text = text.replace(value, _MARKER)
-        text = _KEY.sub(_MARKER, text)
-        # A final unterminated key is never exposed as an ordinary line.
-        opening = _BEGIN.search(text)
-        if opening:
-            text = text[:opening.start()] + _MARKER
-        text = _CREDENTIAL.sub(lambda match: match.group(1) + _MARKER, text)
-        return _AWS.sub(_MARKER, text)
+        for match in _CREDENTIAL.finditer(text):
+            self._paint(output, match.end(1), match.end())
+            self._paint(safety, match.start(), match.end())
+            if match.end() == len(text):
+                unfinished = (min(unfinished, match.start()) if unfinished is not None
+                              else match.start())
+        for match in _AWS.finditer(text):
+            span(match.start(), match.end())
+        cursor = 0
+        while opening := _BEGIN.search(text, cursor):
+            end = _END.search(text, opening.end())
+            span(opening.start(), end.end() if end else len(text))
+            if end is None:
+                unfinished = (min(unfinished, opening.start()) if unfinished is not None
+                              else opening.start())
+                break
+            cursor = end.end()
+        open_field = _OPEN_FIELD.search(text)
+        if open_field:
+            unfinished = (min(unfinished, open_field.start()) if unfinished is not None
+                          else open_field.start())
+        return output, safety, unfinished
 
-    def _advance(self, *, final: bool = False) -> str:
-        if self._suppressed:
-            if self._suppressed == "key":
-                end = _END.search(self._pending)
-                if end is None:
-                    self._pending = self._pending[-128:]
-                    return ""
-                self._pending = self._pending[end.end():]
+    @staticmethod
+    def _safe_cut(safety: bytearray, cut: int) -> int:
+        if 0 < cut < len(safety) and safety[cut - 1] and safety[cut]:
+            while cut and safety[cut - 1]:
+                cut -= 1
+        return cut
+
+    @staticmethod
+    def _render(text: str, mask: bytearray, cut: int) -> str:
+        parts, cursor = [], 0
+        while cursor < cut:
+            start = mask.find(b"\1", cursor, cut)
+            if start < 0:
+                parts.append(text[cursor:cut])
+                break
+            parts.extend((text[cursor:start], _MARKER))
+            cursor = start + 1
+            while cursor < cut and mask[cursor]:
+                cursor += 1
+        return "".join(parts)
+
+    def _discard_suppressed(self) -> bool:
+        if self._suppressed == "credential":
+            self._pending = self._pending.lstrip()
+            if not self._pending:
+                return False
+            if _BEGIN.match(self._pending):
+                self._suppressed = "key"
+            elif any(label.casefold().startswith(self._pending.casefold())
+                     for label in _BEGIN_LABELS):
+                return False
             else:
-                end_line = self._pending.find("\n")
-                if end_line < 0:
-                    self._pending = ""
-                    return ""
-                self._pending = self._pending[end_line + 1:]
-                # A secret may straddle a hidden line boundary; hide its possible suffix too.
-                self._skip = self._tail
+                self._suppressed = "line"
+        if self._suppressed == "key":
+            end = _END.search(self._pending)
+            if end is None:
+                self._pending = self._pending[-128:]
+                return False
+            self._pending = self._pending[end.end():]
+        elif self._suppressed == "line":
+            at = self._pending.find("\n")
+            if at < 0:
+                self._pending = ""
+                return False
+            self._pending = self._pending[at + 1:]
+        if self._suppressed:
+            self._skip = self._tail
             self._suppressed = None
         if self._skip:
             consumed = min(self._skip, len(self._pending))
             self._pending = self._pending[consumed:]
             self._skip -= consumed
+        return True
+
+    def _advance(self, *, final: bool = False) -> str:
+        if not self._discard_suppressed():
+            return ""
+        output, safety, unfinished = self._masks(self._pending, final=final)
         cut = len(self._pending) if final else self._pending.rfind(
-            "\n", 0, max(0, len(self._pending) - self._tail)
-        ) + 1
+            "\n", 0, max(0, len(self._pending) - self._tail)) + 1
         if not final:
-            for value in self._secrets:
-                at = self._pending.find(value)
-                while 0 <= at < cut:
-                    if at + len(value) > cut:
-                        cut = self._pending.rfind("\n", 0, at) + 1
-                        break
-                    at = self._pending.find(value, at + len(value))
-            opening = _BEGIN.search(self._pending)
-            if opening and opening.start() < cut:
-                end = _END.search(self._pending, opening.end())
-                if end is None or end.end() > cut:
-                    cut = self._pending.rfind("\n", 0, opening.start()) + 1
-            open_credential = _OPEN_CREDENTIAL.search(self._pending[:cut])
-            if open_credential:
-                cut = self._pending.rfind("\n", 0, open_credential.start()) + 1
-        result = self._redact(self._pending[:cut], final=final)
+            if unfinished is not None:
+                cut = min(cut, unfinished)
+            cut = self._safe_cut(safety, cut)
+            if len(self._pending) - cut > self.maximum_pending_chars:
+                candidate = max(cut, len(self._pending) - max(self._tail, 128))
+                if unfinished is not None:
+                    candidate = min(candidate, unfinished)
+                cut = max(cut, self._safe_cut(safety, candidate))
+        result = self._render(self._pending, output, cut)
         self._pending = self._pending[cut:]
         if len(self._pending) > self.maximum_pending_chars:
             self.incomplete = True
-            self._suppressed = "key" if _BEGIN.search(self._pending) else "line"
+            self._suppressed = ("key" if _BEGIN.search(self._pending) else "credential"
+                                if _OPEN_FIELD.search(self._pending) else "line")
             self._pending = self._pending[-128:] if self._suppressed == "key" else ""
             result += _MARKER
         return result

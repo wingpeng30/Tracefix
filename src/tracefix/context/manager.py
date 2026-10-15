@@ -718,6 +718,9 @@ def _job_locators(output: dict[str, Any]) -> list[dict[str, Any]]:
     cursor = output.get("cursor")
     if isinstance(cursor, str) and 0 < len(cursor) <= 512:
         locator["cursor"] = cursor
+    start_cursor = output.get("start_cursor")
+    if isinstance(start_cursor, str) and 0 < len(start_cursor) <= 512:
+        locator["start_cursor"] = start_cursor
     return [locator]
 
 

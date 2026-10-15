@@ -9,7 +9,7 @@ import time
 from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Protocol
+from typing import Literal, Protocol
 from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -56,6 +56,7 @@ class _Entry(BaseModel):
     record: JobRecord
     capture_id: str = Field(pattern=r"^[a-f0-9]{32}$")
     result: ToolResult | None = None
+    mode: Literal["background", "synchronous"] = "background"
 
 
 def _result_sha(result: ToolResult) -> str:
@@ -87,6 +88,7 @@ class JobService:
         self._workers: dict[str, threading.Thread] = {}
         self._cancels: dict[str, threading.Event] = {}
         self._captures: dict[str, LiveProcessCapture] = {}
+        self._deadlines: dict[str, float] = {}
         self.store = CheckpointStore(record_dir, {
             "kind": "job-receipts-v1", "run_id": run_id, "checkout_id": checkout_id,
         })
@@ -164,8 +166,10 @@ class JobService:
             return self._faulted or self.ledger.has_unknown or any(
                 row.record.status == JobStatus.OUTCOME_UNKNOWN for row in self._jobs.values())
 
-    def start(self, call: ToolCall) -> JobRecord:
+    def start(self, call: ToolCall, *, mode: str = "background") -> JobRecord:
         with self._lock:
+            if mode not in {"background", "synchronous"}:
+                raise JobError("job_execution_mode_invalid")
             if not self._accepting or self.has_unknown:
                 raise JobError("job_session_stopped_or_unknown")
             if self.active:
@@ -188,7 +192,7 @@ class JobService:
             )
             ticket = self.ledger.reserve(call_id=call.id,
                                          invocation_sha256=identity.invocation_sha256)
-            scope = None
+            scope = capture = None
             try:
                 prepared = self.test_tool.prepare_test(call)
                 scope = self.scope_factory()
@@ -199,19 +203,41 @@ class JobService:
                 identity = identity.model_copy(update={"execution_id": ticket.execution_id})
                 record = JobRecord(identity=identity, created_at=now, deadline=deadline)
                 record = transition(record, JobStatus.STARTING, process_started=None)
-                self._persist(_Entry(record=record, capture_id=capture.reservation.capture_id))
+                self._persist(_Entry(record=record, capture_id=capture.reservation.capture_id,
+                                     mode=mode))
                 self._captures[identity.job_id] = capture
                 self._cancels[identity.job_id] = threading.Event()
+                self._deadlines[identity.job_id] = monotonic_deadline
                 self.ledger.before_dispatch(ticket.execution_id)
-            except BaseException:
+            except BaseException as exc:
+                cleaned = True
                 if scope is not None:
-                    scope.close()
+                    try:
+                        cleaned = scope.close()
+                    except Exception:
+                        cleaned = False
                 # No worker exists yet. Even if the dispatch-intent write failed, no test ran.
                 try:
                     self.ledger.settle(ticket.execution_id, process_started=False,
-                                       tree_exit_confirmed=True)
+                                       tree_exit_confirmed=cleaned)
                 except Exception:
                     self._faulted = True
+                if capture is not None:
+                    empty = capture.seal_unstarted(tree_exit_confirmed=cleaned,
+                                                  reason=type(exc).__name__)
+                    if identity.job_id in self._jobs:
+                        try:
+                            outcome = self.evaluate(prepared, empty)
+                            status = (JobStatus.FAILED_TO_START if cleaned
+                                      else JobStatus.OUTCOME_UNKNOWN)
+                            entry = self._entry(identity.job_id)
+                            record = transition(entry.record, status, process_started=False,
+                                                tree_exit_confirmed=cleaned,
+                                                outcome_sha256=_result_sha(outcome))
+                            self._persist(entry.model_copy(update={"record": record,
+                                                                   "result": outcome}))
+                        except Exception:
+                            self._faulted = True
                 raise
             worker = threading.Thread(target=self._run,
                                       args=(identity.job_id, prepared, scope, monotonic_deadline),
@@ -239,29 +265,49 @@ class JobService:
                 self._persist(entry.model_copy(update={"record": record}))
 
         try:
-            self.verify_source(prepared)
-            result = self._captures[job_id].run(
-                prepared.command, cwd=prepared.workspace, env=dict(prepared.environment),
-                scope=scope, cancel=self._cancels[job_id], deadline=deadline, on_started=started,
-            )
+            try:
+                self.verify_source(prepared)
+            except Exception as exc:
+                cleaned = scope.close()
+                result = self._captures[job_id].seal_unstarted(
+                    tree_exit_confirmed=cleaned, reason=type(exc).__name__)
+            else:
+                result = self._captures[job_id].run(
+                    prepared.command, cwd=prepared.workspace, env=dict(prepared.environment),
+                    scope=scope, cancel=self._cancels[job_id], deadline=deadline,
+                    on_started=started,
+                )
             outcome = self.evaluate(prepared, result)
+            current = self._entry(job_id)
+            if current.mode == "synchronous":
+                outcome = outcome.model_copy(deep=True)
+                outcome.metadata.update({
+                    "managed_job_id": job_id,
+                    "execution_id": current.record.identity.execution_id,
+                    "process_started": result.process_started,
+                    "tree_exit_confirmed": result.tree_exit_confirmed,
+                })
             known = result.tree_exit_confirmed and (
                 result.process_started is False or result.process_error is None)
             self.ledger.settle(self._entry(job_id).record.identity.execution_id,
                                process_started=result.process_started,
                                tree_exit_confirmed=result.tree_exit_confirmed, outcome_known=known)
-            if not known or result.process_started is None:
-                status = JobStatus.OUTCOME_UNKNOWN
-            elif result.deadline_exceeded:
-                status = JobStatus.DEADLINE_EXCEEDED
-            elif result.cancelled:
-                status = JobStatus.CANCELLED
-            elif result.process_started is False:
-                status = JobStatus.FAILED_TO_START
-            else:
-                status = JobStatus.COMPLETED
             with self._lock:
                 entry = self._entry(job_id)
+                if not known or result.process_started is None:
+                    status = JobStatus.OUTCOME_UNKNOWN
+                elif result.deadline_exceeded or (
+                    result.process_started is False and time.monotonic() >= deadline
+                ):
+                    status = JobStatus.DEADLINE_EXCEEDED
+                elif result.cancelled or (
+                    result.process_started is False and self._cancels[job_id].is_set()
+                ):
+                    status = JobStatus.CANCELLED
+                elif result.process_started is False:
+                    status = JobStatus.FAILED_TO_START
+                else:
+                    status = JobStatus.COMPLETED
                 record = transition(entry.record, status, process_started=result.process_started,
                                     tree_exit_confirmed=result.tree_exit_confirmed,
                                     outcome_sha256=_result_sha(outcome))
@@ -297,6 +343,48 @@ class JobService:
         with self._lock:
             result = self._entry(job_id).result
             return result.model_copy(deep=True) if result is not None else None
+
+    def background_completions(self) -> tuple[tuple[JobRecord, ToolResult], ...]:
+        with self._lock:
+            return tuple((entry.record, entry.result.model_copy(deep=True))
+                         for entry in self._jobs.values()
+                         if entry.mode == "background" and entry.result is not None
+                         and entry.record.status in TERMINAL_STATUSES)
+
+    def checkpoint_identity(self) -> dict[str, object]:
+        """Only a quiescent, known receipt set can belong to a safe checkpoint."""
+        with self._lock:
+            if self.active or self.has_unknown:
+                raise JobError("job_checkpoint_requires_known_quiescence")
+            if not self.store.path.exists():
+                if self._jobs or self._sequence:
+                    raise JobError("job_receipt_checkpoint_missing")
+                return {"sequence": 0, "payload_sha256": None}
+            snapshot = self.store.load(current_identity=self.store.identity)
+            expected = {"jobs": {key: row.model_dump(mode="json")
+                                 for key, row in self._jobs.items()}}
+            if snapshot.sequence != self._sequence or snapshot.payload != expected:
+                raise JobError("job_receipt_changed_outside_owner")
+            return {"sequence": snapshot.sequence, "payload_sha256": snapshot.payload_sha256}
+
+    def progress_receipts(self) -> tuple[JobRecord, ...]:
+        """Bounded state only; no source inspection or worker takeover authority."""
+        with self._lock:
+            return tuple(row.record for row in self._jobs.values())
+
+    def run_synchronously(self, call: ToolCall) -> ToolResult:
+        """The legacy tool shape, backed by the same preparation/accounting/worker engine."""
+        record = self.start(call, mode="synchronous")
+        job_id = record.identity.job_id
+        until = self._deadlines[job_id] + 20
+        self._workers[job_id].join(max(0, until - time.monotonic()))
+        with self._lock:
+            current = self._entry(job_id)
+            if self._workers[job_id].is_alive() or current.result is None:
+                self._cancels[job_id].set()
+                self._faulted = True
+                raise JobError("synchronous_test_outcome_unknown")
+            return current.result.model_copy(deep=True)
 
     def cancel(self, job_id: str) -> JobRecord:
         with self._lock:

@@ -71,12 +71,31 @@ class LiveProcessCapture:
                 self._storage_error = type(exc).__name__
                 return
             self._incomplete |= not accepted
+            if not accepted:
+                self._drop_writes = True
             # A preview never includes bytes rejected by the committed view quota.
             if accepted:
                 preview = self._previews[name] + view
                 if len(preview) > 4096:
                     preview = preview[:2048] + "\n[preview clipped]\n" + preview[-2000:]
                 self._previews[name] = preview
+
+    def seal_unstarted(self, *, tree_exit_confirmed: bool, reason: str) -> LiveCaptureResult:
+        """Seal a reservation only when this capture has never attempted process launch."""
+        with self._lock:
+            if self._started:
+                raise ValueError("capture has already attempted launch")
+            self._started = self._drop_writes = True
+            try:
+                self._artifact = self.store.publish_capture(
+                    self.reservation.capture_id, call_id=self.call_id, tool_name="run_tests",
+                    source_identity=self.source_identity, complete=True,
+                )
+            except (OSError, ArtifactError) as exc:
+                self._incomplete = True
+                self._storage_error = type(exc).__name__
+            return LiveCaptureResult("", "", None, False, tree_exit_confirmed, False, False,
+                                     self._incomplete, self._artifact, self._storage_error, reason)
 
     def run(self, command: Sequence[str], *, cwd: Path, env: Mapping[str, str],
             scope: ProcessTreeScope, cancel: threading.Event, deadline: float,
@@ -101,6 +120,9 @@ class LiveProcessCapture:
                     chunk = pipe.read1(64 * 1024)
                     if not chunk:
                         break
+                    with self._lock:
+                        if self._drop_writes:
+                            continue
                     self._append(name, chunk, redactor.feed(chunk))
                 self._append(name, b"", redactor.finish())
                 with self._lock:

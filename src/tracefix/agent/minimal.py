@@ -32,6 +32,8 @@ from tracefix.exceptions import (
     TraceProtocolError,
     sanitize_payload,
 )
+from tracefix.jobs.ports import AgentJobSession
+from tracefix.jobs.references import committed_job_ticket
 from tracefix.messages import Message, MessageRole, ToolCall
 from tracefix.models.base import LLMResponse, TokenUsage
 from tracefix.task_state import TaskReference, TaskStateError, TaskStateRenderer, TaskStateSession
@@ -49,6 +51,7 @@ class MinimalAgent(BaseAgent):
     task_state_session: TaskStateSession | None = None
     task_state_source_identity: Callable[[], str | None] | None = None
     tool_dispatcher: ToolDispatcher | None = None
+    job_session: AgentJobSession | None = None
 
     _RECOVERY_FIELDS = (
         "_failed_apply_calls",
@@ -81,6 +84,12 @@ class MinimalAgent(BaseAgent):
         """Capture only deterministic state at a complete message boundary."""
         if self.history.pending_tool_call_ids:
             raise AgentError("cannot checkpoint with pending tool calls")
+        if self.job_session is not None:
+            if self.job_session.active or self.job_session.has_unknown:
+                raise AgentError("cannot checkpoint with active or unknown test jobs")
+            if any(self._consumed_job_outcomes.get(item.record.identity.job_id)
+                   != item.record.outcome_sha256 for item in self.job_session.completions()):
+                raise AgentError("job completion must be consumed before checkpoint")
         memory = {name: getattr(self, name) for name in self._RECOVERY_FIELDS}
         memory["_context_session_state"] = self._context_session_state.model_dump(mode="json")
         memory["_repo_map_candidate_reads"] = sorted(self._repo_map_candidate_reads)
@@ -94,6 +103,8 @@ class MinimalAgent(BaseAgent):
         }
         if self.task_state_session is not None:
             payload["task_state"] = self.task_state_session.checkpoint(self.history.snapshot())
+        if self.job_session is not None:
+            payload["jobs"] = {"schema_version": 1, "consumed": dict(self._consumed_job_outcomes)}
         return payload
 
     def verify_test_source(self, source_sha256: str) -> None:
@@ -141,6 +152,53 @@ class MinimalAgent(BaseAgent):
         self._successful_tool_cache = {}
         self._visible_tool_result_ids = set()
         self._task_id = str(payload["task_id"])
+        self._consumed_job_outcomes = {}
+        if self.job_session is None:
+            if "jobs" in payload:
+                raise AgentError("checkpoint contains disabled job state")
+        else:
+            jobs = payload.get("jobs")
+            if (not isinstance(jobs, dict) or set(jobs) != {"schema_version", "consumed"}
+                    or type(jobs["schema_version"]) is not int or jobs["schema_version"] != 1
+                    or not isinstance(jobs["consumed"], dict)):
+                raise AgentError("checkpoint job consumption state is malformed")
+            completions = {item.record.identity.job_id: item
+                           for item in self.job_session.completions()}
+            messages = self.history.snapshot()
+            history_receipts = [message for message in messages
+                                if message.metadata.get("kind") == "job_completion"]
+            if (len(history_receipts) != len(jobs["consumed"])
+                    or {message.metadata.get("job_id") for message in history_receipts}
+                    != set(jobs["consumed"])):
+                raise AgentError("checkpoint job consumption does not match history receipts")
+            for job_id, digest in jobs["consumed"].items():
+                completion = completions.get(job_id)
+                record = completion.record if completion is not None else None
+                if (record is None or record.outcome_sha256 != digest or not isinstance(digest, str)
+                        or re.fullmatch(r"[a-f0-9]{64}", digest) is None
+                        or not any(message.role is MessageRole.USER
+                                   and message.metadata.get("kind") == "job_completion"
+                                   and message.metadata.get("job_id") == job_id
+                                   and message.metadata.get("job_outcome_sha256") == digest
+                                   for message in messages)
+                        or not committed_job_ticket(
+                            tuple(message.model_dump(mode="json") for message in messages),
+                            call_id=record.identity.call_id, job_id=job_id,
+                            invocation_sha256=record.identity.invocation_sha256)):
+                    raise AgentError("checkpoint job receipt reference is invalid")
+                receipt = next(message for message in history_receipts
+                               if message.metadata.get("job_id") == job_id)
+                details = (completion.result.output
+                           if isinstance(completion.result.output, dict) else {})
+                try:
+                    body = json.loads(receipt.content or "null")
+                except ValueError as exc:
+                    raise AgentError("checkpoint job receipt body is invalid") from exc
+                if body != {"job": record.model_dump(mode="json"),
+                            "test_status": details.get("test_status"),
+                            "artifact_refs": details.get("artifact_refs", [])}:
+                    raise AgentError("checkpoint job receipt body differs from canonical outcome")
+            self._consumed_job_outcomes = dict(jobs["consumed"])
         self._started_monotonic = time.monotonic() - float(payload["active_seconds"])
         self._presenter = ToolResultPresenter(
             self.config.presentation.model_copy(
@@ -157,6 +215,9 @@ class MinimalAgent(BaseAgent):
                     self.history.snapshot(),
                     trusted_receipts=trusted_user_receipts,
                     artifact_ids=artifact_ids,
+                    job_records=({item.record.identity.job_id: item.record
+                                  for item in self.job_session.completions()}
+                                 if self.job_session is not None else None),
                 )
             except TaskStateError as exc:
                 raise AgentError(f"checkpoint TaskState is invalid: {exc}") from exc
@@ -248,6 +309,8 @@ class MinimalAgent(BaseAgent):
         self._context_session_state = ContextSessionState()
         self._force_context_compaction = False
         self._last_task_fact_digest: str | None = None
+        if not hasattr(self, "_consumed_job_outcomes"):
+            self._consumed_job_outcomes: dict[str, str] = {}
 
     def run(self, task: str) -> AgentState:
         """初始化消息历史并运行，正常完成或预算终止时返回最终状态。"""
@@ -261,6 +324,7 @@ class MinimalAgent(BaseAgent):
         baseline_runs = getattr(self, "validation_baseline_runs", 0)
         baseline_seconds = getattr(self, "validation_baseline_seconds", 0.0)
         self.reset()
+        self._consumed_job_outcomes = {}
         self._reset_turn_runtime()
         if self.task_state_session is not None:
             self.task_state_session.reset()
@@ -453,6 +517,16 @@ class MinimalAgent(BaseAgent):
                 context={"status": self.state.status.value},
             )
 
+        if self.job_session is not None:
+            if self.tool_dispatcher is None:
+                raise AgentError("job execution requires a capability dispatcher")
+            if ("run_tests" in self.tools.names
+                    and getattr(self.tools.get("run_tests"), "managed_test_execution", False)
+                    is not True):
+                raise AgentError("job sessions require managed synchronous test execution")
+            self._consume_job_completions()
+            if self.job_session.has_unknown:
+                raise AgentError("job execution outcome unknown; stop model requests")
         self._check_pre_request_budgets()
         # 累计 Token 是多轮请求之和；在真正越限前把收敛要求放进下一次请求。
         self._append_budget_guidance_if_needed()
@@ -597,7 +671,20 @@ class MinimalAgent(BaseAgent):
             raise
 
         self._add_usage(response.usage)
-        if self.state.turn_number > 1 and response.message.tool_calls:
+        if self.job_session is not None and response.message.tool_calls:
+            normalized = tuple(call.model_copy(update={
+                "id": "job-call-" + hashlib.sha256(
+                    f"{self._task_id}:{self.state.step_count}:{response.message.id}:{call.id}".encode()
+                ).hexdigest()[:32],
+            }) for call in response.message.tool_calls)
+            response = response.model_copy(update={"message": response.message.model_copy(update={
+                "tool_calls": normalized,
+                "metadata": {**response.message.metadata, "runtime_call_id_version": 1,
+                             "provider_call_ids": {saved.id: original.id for saved, original in
+                                                   zip(normalized, response.message.tool_calls,
+                                                       strict=True)}},
+            })})
+        elif self.state.turn_number > 1 and response.message.tool_calls:
             # Provider IDs can restart in a new process; historical calls remain globally unique.
             calls = tuple(
                 call.model_copy(
@@ -640,6 +727,17 @@ class MinimalAgent(BaseAgent):
             raise budget_error
 
         if not response.message.tool_calls:
+            self._consume_job_completions()
+            if self.job_session is not None and self.job_session.has_unknown:
+                raise AgentError("job execution outcome unknown; stop completion")
+            if self.job_session is not None and self.job_session.active:
+                self._append_message(Message(
+                    role=MessageRole.USER,
+                    content=("A test job is still active. Query it or request cancellation "
+                             "before finishing."),
+                    metadata={"kind": "active_job_finish_denied"},
+                ))
+                return
             if getattr(self, "validation_targets", ()) and not self._finish_through_validation_gate(
                 response.message.content or ""
             ):
@@ -735,6 +833,8 @@ class MinimalAgent(BaseAgent):
                     call, invocation=invocation,
                     on_process_started=(record_test_start if invocation is not None else None),
                 )
+                if self.job_session is not None:
+                    self.state.test_runs = self.job_session.test_runs
                 if invocation is not None and not invocation.tracks_process_start:
                     record_test_start()
             except AgentLimitExceeded as exc:
@@ -786,6 +886,7 @@ class MinimalAgent(BaseAgent):
                     )
                 )
 
+        self._consume_job_completions()
         # 提示只能在本轮全部 tool result 写回后追加，否则会违反消息配对协议。
         for message, metadata in pending_skill_messages:
             self._append_message(message)
@@ -1091,6 +1192,8 @@ class MinimalAgent(BaseAgent):
             call, origin="validation_gate", emit_call=False,
             invocation=invocation, on_process_started=record_start,
         )
+        if self.job_session is not None:
+            self.state.test_runs = self.job_session.test_runs
         if not process_started and not invocation.tracks_process_start:
             record_start()
         result = result.model_copy(
@@ -1119,6 +1222,8 @@ class MinimalAgent(BaseAgent):
         decision = self._capability_decision(call, origin or CallerOrigin.MODEL)
         if decision is not None and not decision.allowed:
             return self._capability_denial_result(call, decision)
+        if self.job_session is not None and self.job_session.active:
+            self._successful_tool_cache.clear()
         started = time.monotonic()
         signature = self._tool_signature(call)
 
@@ -1430,6 +1535,16 @@ class MinimalAgent(BaseAgent):
         signature: str,
     ) -> None:
         """记录影响失败恢复和正常收尾的少量确定性事实。"""
+        if call.name == "start_test_job" and result.success:
+            self._successful_tool_cache.clear()
+            self._fresh_target_reads.clear()
+            self._tests_passed = False
+            self._diff_nonempty = False
+            self.state.validation_status = "unverified"
+            if self._last_test_evidence is not None:
+                self._last_test_evidence["valid"] = False
+                self._last_test_evidence["invalidated_by"] = "new_test_job_started"
+            return
         if call.name == ReservedToolName.READ_FILE.value and result.success:
             output = result.output if isinstance(result.output, dict) else {}
             requested_path = call.arguments.get("path")
@@ -1832,6 +1947,7 @@ class MinimalAgent(BaseAgent):
             if (
                 result.tool_name not in {"get_task_state", "update_task_state"}
                 and self.task_state_source_identity is not None
+                and not (self.job_session is not None and self.job_session.active)
             ):
                 try:
                     source_sha256 = self.task_state_source_identity()
@@ -1999,6 +2115,17 @@ class MinimalAgent(BaseAgent):
 
     def _finish(self, status: AgentStatus, reason: str) -> None:
         """以统一顺序写入最终状态和任务结束事件。"""
+        if self.job_session is not None:
+            try:
+                clean = self.job_session.shutdown()
+                self._consume_job_completions()
+            except Exception as exc:
+                clean = False
+                self._emit_error(AgentError("job finalization could not be confirmed", context={
+                    "error_type": type(exc).__name__,
+                }))
+            if not clean and status is AgentStatus.COMPLETED:
+                status, reason = AgentStatus.INTERRUPTED, "job_cleanup_unconfirmed"
         self.state.status = status
         self.state.stop_reason = reason
         self.state.finished_at = datetime.now(UTC)
@@ -2013,6 +2140,68 @@ class MinimalAgent(BaseAgent):
             self.checkpoint_callback(self)
         self._emit_state()
         self._emit(TraceEventType.TASK_FINISHED, {"state": self.state.model_dump(mode="json")})
+
+    def _consume_job_completions(self) -> None:
+        """Project trusted receipts only after all call/result pairs have closed."""
+        jobs = self.job_session
+        if jobs is None or self.history.pending_tool_call_ids:
+            return
+        self.state.test_runs = jobs.test_runs
+        if jobs.active:
+            return
+        changed = False
+        for completion in jobs.completions():
+            record, result = completion.record, completion.result
+            job_id = record.identity.job_id
+            if result.call_id != record.identity.call_id or result.tool_name != "run_tests":
+                raise AgentError("job result execution identity mismatch")
+            if job_id in self._consumed_job_outcomes:
+                if self._consumed_job_outcomes[job_id] != record.outcome_sha256:
+                    raise AgentError("job outcome identity changed after consumption")
+                continue
+            if not committed_job_ticket(
+                tuple(message.model_dump(mode="json") for message in self.history.snapshot()),
+                call_id=record.identity.call_id, job_id=job_id,
+                invocation_sha256=record.identity.invocation_sha256,
+            ):
+                raise AgentError("job result does not reference a committed start ticket")
+            digest = hashlib.sha256(json.dumps(result.model_dump(mode="json"),
+                                              ensure_ascii=False, sort_keys=True,
+                                              separators=(",", ":")).encode()).hexdigest()
+            if digest != record.outcome_sha256:
+                raise AgentError("job result digest differs from committed receipt")
+            call = ToolCall(id=result.call_id, name="run_tests")
+            self._record_tool_outcome(call, result, self._tool_signature(call))
+            details = result.output if isinstance(result.output, dict) else {}
+            receipt = Message(
+                role=MessageRole.USER,
+                content=json.dumps({"job": record.model_dump(mode="json"),
+                                    "test_status": details.get("test_status"),
+                                    "artifact_refs": details.get("artifact_refs", [])},
+                                   ensure_ascii=False),
+                metadata={"kind": "job_completion", "job_id": job_id,
+                          "job_outcome_sha256": digest,
+                          "source_call_id": record.identity.call_id,
+                          "trust_level": "untrusted_observation_data"},
+            )
+            self._append_message(receipt)
+            if self.task_state_session is not None:
+                self.task_state_session.add_reference(TaskReference(
+                    kind="job", reference_id=job_id, sha256=digest,
+                    source_message_id=receipt.id, source_call_id=record.identity.call_id,
+                ))
+            self._consumed_job_outcomes[job_id] = digest
+            changed = True
+        if changed or (self._last_test_evidence and self._last_test_evidence.get("valid")):
+            source = jobs.source_state()
+            self._diff_nonempty = source.nonempty_diff
+            if self.task_state_session is not None:
+                self.task_state_session.set_source_identity(source.product_diff_sha256)
+            self.verify_test_source(source.product_diff_sha256)
+            self.state.validation_status = (
+                "verified" if self._tests_passed and self._diff_nonempty else "unverified")
+        if changed:
+            self._append_task_fact()
 
     def _emit_state(self) -> None:
         """记录当前完整 Agent 状态。"""

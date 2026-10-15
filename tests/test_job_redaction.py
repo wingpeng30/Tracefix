@@ -71,3 +71,40 @@ def test_quota_cut_in_configured_secret_cannot_expose_its_unfinished_prefix():
     redactor = StreamingRedactor(secret_values=("value-that-is-private",))
     result = redactor.feed(b"message\nvalue-that-") + redactor.finish()
     assert "message" in result and "value-that-" not in result
+
+
+@pytest.mark.parametrize("secrets,payload", [
+    (("password",), b"password=unknown-credential\n"),
+    (("aba",), b"ababa"),
+])
+def test_overlapping_sensitive_spans_are_redacted_without_rewriting_pattern_labels(
+    secrets, payload,
+):
+    redactor = StreamingRedactor(secret_values=secrets)
+    result = redactor.feed(payload) + redactor.finish()
+    assert "unknown-credential" not in result and "ab" not in result
+    assert "[REDACTED]" in result
+
+
+def test_long_unfinished_credential_header_does_not_expose_next_record_value():
+    redactor = StreamingRedactor()
+    result = redactor.feed(b"password=" + b" " * 20000 + b"\n")
+    result += redactor.feed(b"short-secret\npublic\n") + redactor.finish()
+    assert "short-secret" not in result and "public" in result
+
+
+def test_public_long_line_middle_is_available_while_its_uncertain_tail_is_withheld():
+    redactor = StreamingRedactor()
+    result = redactor.feed(b"x" * 50000 + b"MIDDLE-PUBLIC" + b"y" * 50000)
+    assert "MIDDLE-PUBLIC" in result and not redactor.incomplete
+    result += redactor.finish()
+    assert result == "x" * 50000 + "MIDDLE-PUBLIC" + "y" * 50000
+
+
+def test_later_unclosed_private_key_is_not_committed_after_a_closed_key():
+    redactor = StreamingRedactor()
+    result = redactor.feed(b"-----BEGIN PRIVATE KEY-----\none\n-----END PRIVATE KEY-----\n"
+                           b"-----BEGIN PRIVATE KEY-----\n")
+    result += redactor.feed(b"later-private-material\n")
+    result += redactor.finish()
+    assert "later-private-material" not in result and "one" not in result

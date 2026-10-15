@@ -17,6 +17,9 @@ from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from tracefix.jobs.domain import JobRecord
+from tracefix.jobs.references import committed_job_ticket
+
 TASK_STATE_SCHEMA_VERSION = 1
 MAX_TASK_STATE_BYTES = 256 * 1024
 MAX_TASK_STATE_SUMMARY_BYTES = 8 * 1024
@@ -95,7 +98,7 @@ class TaskObservation(BaseModel):
 class TaskReference(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    kind: Literal["memory", "skill", "artifact"]
+    kind: Literal["memory", "skill", "artifact", "job"]
     reference_id: str = Field(min_length=1, max_length=256)
     sha256: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
     source_message_id: str = Field(min_length=1, max_length=200)
@@ -351,18 +354,8 @@ class TaskStateReducer:
     ) -> TaskState:
         if any(item.observation_id == observation.observation_id for item in state.observations):
             raise TaskStateError("task state observation already exists")
-        observations = state.observations
+        observations = TaskStateReducer._source_observations(state, observation.source_sha256)
         current_source = state.current_source_sha256
-        if observation.source_sha256 is not None and current_source is not None:
-            if observation.source_sha256 != current_source:
-                observations = tuple(
-                    item.model_copy(update={"validity": ObservationValidity.STALE})
-                    if item.source_sha256 is not None
-                    and item.source_sha256 != observation.source_sha256
-                    and item.validity is ObservationValidity.VALID
-                    else item
-                    for item in observations
-                )
         validity = (
             ObservationValidity.VALID
             if observation.source_sha256 is not None
@@ -377,6 +370,41 @@ class TaskStateReducer:
             }
         )
         return _bounded(updated)
+
+    @staticmethod
+    def _source_observations(state: TaskState, source_sha256: str | None):
+        if source_sha256 is None or state.current_source_sha256 in {None, source_sha256}:
+            return state.observations
+        return tuple(item.model_copy(update={"validity": ObservationValidity.STALE})
+                     if item.source_sha256 is not None and item.source_sha256 != source_sha256
+                     and item.validity is ObservationValidity.VALID else item
+                     for item in state.observations)
+
+    @staticmethod
+    def set_source_identity(state: TaskState, source_sha256: str) -> TaskState:
+        if (not isinstance(source_sha256, str)
+                or re.fullmatch(r"[a-f0-9]{64}", source_sha256) is None):
+            raise TaskStateError("invalid task source identity")
+        if state.current_source_sha256 == source_sha256:
+            return state
+        return _bounded(state.model_copy(update={
+            "current_source_sha256": source_sha256,
+            "observations": TaskStateReducer._source_observations(state, source_sha256),
+            "revision": state.revision + 1,
+        }))
+
+    @staticmethod
+    def suspend_source_evidence(state: TaskState) -> TaskState:
+        observations = tuple(
+            item.model_copy(update={"validity": ObservationValidity.HISTORICAL})
+            if item.source_sha256 is not None and item.validity is ObservationValidity.VALID
+            else item for item in state.observations)
+        if state.current_source_sha256 is None and observations == state.observations:
+            return state
+        return _bounded(state.model_copy(update={
+            "current_source_sha256": None, "observations": observations,
+            "revision": state.revision + 1,
+        }))
 
     @staticmethod
     def add_reference(state: TaskState, reference: TaskReference) -> TaskState:
@@ -559,7 +587,9 @@ class TaskStateSession:
             artifact_ids=artifact_ids,
         )
         with self._lock:
-            updated = TaskStateReducer.add_observation(self._state, observation)
+            before = (TaskStateReducer.suspend_source_evidence(self._state)
+                      if tool_name == "start_test_job" and success else self._state)
+            updated = TaskStateReducer.add_observation(before, observation)
             for artifact_id in artifact_ids:
                 updated = TaskStateReducer.add_reference(
                     updated,
@@ -571,6 +601,14 @@ class TaskStateSession:
                         source_call_id=call_id,
                     ),
                 )
+            TaskStateRenderer.render(updated)
+            self._state = updated
+            return updated
+
+    def set_source_identity(self, source_sha256: str) -> TaskState:
+        """Mirror an already verified host snapshot, without inventing a tool observation."""
+        with self._lock:
+            updated = TaskStateReducer.set_source_identity(self._state, source_sha256)
             TaskStateRenderer.render(updated)
             self._state = updated
             return updated
@@ -605,6 +643,7 @@ class TaskStateSession:
         *,
         trusted_receipts: Mapping[str, Mapping[str, object]] | None = None,
         artifact_ids: set[str] | frozenset[str] | None = None,
+        job_records: Mapping[str, JobRecord] | None = None,
     ) -> TaskState:
         try:
             checkpoint = TaskStateCheckpoint.model_validate(raw)
@@ -686,6 +725,28 @@ class TaskStateSession:
                 or reference.reference_id not in artifact_ids
             ):
                 raise TaskStateError("checkpoint artifact reference is not in the committed run")
+            if reference.kind == "job":
+                record = (job_records.get(reference.reference_id)
+                          if job_records is not None else None)
+                try:
+                    receipt = json.loads(message.get("content") or "null")
+                except (TypeError, ValueError):
+                    receipt = None
+                if (record is None or reference.sha256 is None
+                        or record.outcome_sha256 != reference.sha256
+                        or message.get("role") != "user"
+                        or metadata.get("kind") != "job_completion"
+                        or metadata.get("job_id") != reference.reference_id
+                        or metadata.get("job_outcome_sha256") != reference.sha256
+                        or metadata.get("source_call_id") != reference.source_call_id
+                        or reference.source_call_id != record.identity.call_id
+                        or not isinstance(receipt, dict)
+                        or receipt.get("job") != record.model_dump(mode="json")
+                        or not committed_job_ticket(
+                            normalized_history, call_id=record.identity.call_id,
+                            job_id=record.identity.job_id,
+                            invocation_sha256=record.identity.invocation_sha256)):
+                    raise TaskStateError("checkpoint job reference is not in the committed run")
         if self._acceptance_criteria != checkpoint.state.acceptance_criteria:
             raise TaskStateError("checkpoint acceptance criteria differ from the run configuration")
         _bounded(checkpoint.state)

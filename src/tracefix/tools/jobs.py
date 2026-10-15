@@ -7,11 +7,13 @@ import hashlib
 import json
 from typing import Literal, Protocol
 
-from pydantic import BaseModel, ConfigDict, Field, StrictFloat, StrictInt, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, StrictInt, ValidationError
 
 from tracefix.artifacts import MAX_ARTIFACT_BYTES, ArtifactError
 from tracefix.exceptions import ToolError
 from tracefix.jobs.domain import JobError, JobRecord
+from tracefix.jobs.requests import StartTestJobArguments as _StartArgs
+from tracefix.jobs.requests import normalize_job_start
 from tracefix.messages import ToolCall
 from tracefix.tools.base import BaseTool, ToolRegistry, ToolResult, ToolSpec
 
@@ -24,13 +26,6 @@ class JobAccess(Protocol):
     def result(self, job_id: str) -> ToolResult | None: ...
     def cancel(self, job_id: str) -> JobRecord: ...
     def read(self, job_id: str, *, stream: str, offset: int, limit: int) -> dict: ...
-
-
-class _StartArgs(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    command: str = Field(default="pytest -q", max_length=8192)
-    timeout_seconds: StrictFloat | None = Field(default=None, gt=0, le=600)
 
 
 class _JobArgs(BaseModel):
@@ -90,6 +85,8 @@ _TOOLS = {
                    "that its entire process tree has stopped; query status for confirmation."),
 }
 
+JOB_TOOL_NAMES = tuple(_TOOLS)
+
 
 class _JobTool(BaseTool):
     def __init__(self, name: str, service: JobAccess) -> None:
@@ -108,8 +105,7 @@ class _JobTool(BaseTool):
                 raise JobError("job_tool_name_mismatch")
             args = self.args_type.model_validate(call.arguments)
             if isinstance(args, _StartArgs):
-                record = self.service.start(ToolCall(
-                    id=call.id, name="run_tests", arguments=args.model_dump(exclude_none=True)))
+                record = self.service.start(normalize_job_start(call))
                 record.require_owner(self.service.run_id)
                 output = {"job": record.model_dump(mode="json")}
             else:
@@ -120,6 +116,7 @@ class _JobTool(BaseTool):
                     page = self.service.read(args.job_id, stream=args.stream,
                                              offset=offset, limit=args.limit)
                     output = {**page, "job_id": args.job_id,
+                              "start_cursor": _cursor(record, args.stream, offset),
                               "cursor": _cursor(record, args.stream, page["next_offset"]),
                               "evidence_role": "historical_job_output_only"}
                 else:
@@ -142,3 +139,35 @@ def register_job_tools(registry: ToolRegistry, service: JobAccess) -> None:
     """Explicit runtime assembly only; the default tool registry remains unchanged."""
     for name in _TOOLS:
         registry.register(_JobTool(name, service))
+
+
+class ManagedTestAccess(Protocol):
+    def run_synchronously(self, call: ToolCall) -> ToolResult: ...
+
+
+class PreparedTestTool(Protocol):
+    @property
+    def spec(self) -> ToolSpec: ...
+
+    def prepare(self, call: ToolCall) -> tuple[list[str], float]: ...
+
+
+class ManagedRunTestsTool(BaseTool):
+    """Specific pytest adapter; the worker never reads a shared start-callback field."""
+
+    managed_test_execution = True
+
+    def __init__(self, delegate: PreparedTestTool, service: ManagedTestAccess) -> None:
+        if delegate.spec.name != "run_tests":
+            raise ValueError("managed test adapter requires the prepared pytest tool")
+        self.delegate, self.service = delegate, service
+
+    @property
+    def spec(self) -> ToolSpec:
+        return self.delegate.spec.model_copy(deep=True)
+
+    def prepare(self, call: ToolCall) -> tuple[list[str], float]:
+        return self.delegate.prepare(call)
+
+    def execute(self, call: ToolCall) -> ToolResult:
+        return self.service.run_synchronously(call)

@@ -236,7 +236,7 @@ class ArtifactStore:
         self.redaction_policy_sha256 = _sha(
             _canonical(
                 {
-                    "version": (_REDACTION_VERSION + "+stream-v1"
+                    "version": (_REDACTION_VERSION + "+stream-v2"
                                 if streaming_enabled else _REDACTION_VERSION),
                     "configured_values": "redact-non-empty-values-v1",
                 }
