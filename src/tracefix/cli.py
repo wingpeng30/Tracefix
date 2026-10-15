@@ -258,6 +258,12 @@ def build_parser() -> argparse.ArgumentParser:
     continue_parser = subparsers.add_parser("continue", help="向连续会话追加一轮消息")
     continue_parser.add_argument("--run", type=Path, required=True)
     continue_parser.add_argument("--message", required=True)
+    continue_parser.add_argument(
+        "--supersedes",
+        action="append",
+        default=None,
+        help="明确替代一个 active TaskState 用户需求 ID；仅在 foundations 启用时可用",
+    )
     context_parser = subparsers.add_parser("context", help="检查或主动压缩已保存的上下文")
     context_parser.add_argument("operation", choices=("inspect", "compact"))
     context_parser.add_argument("--run", type=Path, required=True)
@@ -1204,7 +1210,11 @@ def main(argv: list[str] | None = None) -> int:
                     print(f"原因: {reason}")
             return 0 if inspection["resumable"] or inspection.get("continuable") else 2
         if args.command == "continue":
-            result = TraceFixRunner().continue_turn(args.run, args.message)
+            result = TraceFixRunner().continue_turn(
+                args.run,
+                args.message,
+                supersedes=tuple(args.supersedes or ()),
+            )
             _print_run_result(result)
             return 0 if result.status is AgentStatus.COMPLETED else 2
         if args.command == "context":
@@ -1658,8 +1668,7 @@ def main(argv: list[str] | None = None) -> int:
                     ),
                     "docker_image_id": settings["docker_image_id"],
                     "docker_recovery_enabled": settings["docker_recovery_enabled"] or False,
-                    "harness_foundations_enabled": settings["harness_foundations_enabled"]
-                    or False,
+                    "harness_foundations_enabled": settings["harness_foundations_enabled"] or False,
                     "memory_enabled": settings["memory_enabled"] or False,
                     "memory_dir": settings["memory_dir"],
                     "conversation_enabled": args.command == "chat"

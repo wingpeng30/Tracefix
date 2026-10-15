@@ -104,7 +104,12 @@ def validate_artifact_archive(
         except (OSError, ValueError) as exc:
             raise CheckpointError("Docker artifact archive failed content validation") from exc
     for field in (
-        "manifest_sha256", "artifact_count", "storage_bytes", "queries", "returned_chars"
+        "manifest_sha256",
+        "artifact_count",
+        "artifact_ids",
+        "storage_bytes",
+        "queries",
+        "returned_chars",
     ):
         if imported.get(field) != receipt.get(field):
             raise CheckpointError("Docker artifact receipt disagrees with archive contents")

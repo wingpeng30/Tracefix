@@ -23,6 +23,8 @@ class ReservedToolName(StrEnum):
     GET_GIT_DIFF = "get_git_diff"
     READ_TOOL_ARTIFACT = "read_tool_artifact"
     SEARCH_TOOL_ARTIFACT = "search_tool_artifact"
+    GET_TASK_STATE = "get_task_state"
+    UPDATE_TASK_STATE = "update_task_state"
 
 
 RESERVED_TOOL_NAMES = frozenset(member.value for member in ReservedToolName)

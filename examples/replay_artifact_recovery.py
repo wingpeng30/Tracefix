@@ -63,15 +63,18 @@ class ArtifactReplayClient:
 
         tests = [item for item in results if item.get("tool_name") == "run_tests"]
         searches = [
-            item for item in results
+            item
+            for item in results
             if item.get("tool_name") == "search_tool_artifact" and item.get("success")
         ]
         reads = [
-            item for item in results
+            item
+            for item in results
             if item.get("tool_name") == "read_tool_artifact" and item.get("success")
         ]
         patches = [
-            item for item in results
+            item
+            for item in results
             if item.get("tool_name") == "apply_patch" and item.get("success")
         ]
         diffs = [item for item in results if item.get("tool_name") == "get_git_diff"]
@@ -103,36 +106,38 @@ class ArtifactReplayClient:
         elif not diffs:
             call = ("get_git_diff", {"context_lines": 3})
 
-        tool_calls = [] if call is None else [
-            {
-                "id": f"artifact-replay-{uuid4().hex}",
-                "type": "function",
-                "function": {"name": call[0], "arguments": json.dumps(call[1])},
-            }
-        ]
+        tool_calls = (
+            []
+            if call is None
+            else [
+                {
+                    "id": f"artifact-replay-{uuid4().hex}",
+                    "type": "function",
+                    "function": {"name": call[0], "arguments": json.dumps(call[1])},
+                }
+            ]
+        )
         return {
             "model": "offline/artifact-recovery",
             "usage": {"prompt_tokens": 100, "completion_tokens": 10, "total_tokens": 110},
-            "choices": [{
-                "message": {
-                    "role": "assistant",
-                    "content": "artifact recovery replay complete" if call is None else None,
-                    "tool_calls": tool_calls,
-                },
-                "finish_reason": "stop" if call is None else "tool_calls",
-            }],
+            "choices": [
+                {
+                    "message": {
+                        "role": "assistant",
+                        "content": "artifact recovery replay complete" if call is None else None,
+                        "tool_calls": tool_calls,
+                    },
+                    "finish_reason": "stop" if call is None else "tool_calls",
+                }
+            ],
         }
 
 
 def _source(root: Path) -> Path:
     repo = root / "source"
     repo.mkdir()
-    (repo / ".gitignore").write_text(
-        ".pytest_cache/\n__pycache__/\n", encoding="utf-8"
-    )
-    (repo / "widget.py").write_text(
-        "def next_page(page):\n    return page\n", encoding="utf-8"
-    )
+    (repo / ".gitignore").write_text(".pytest_cache/\n__pycache__/\n", encoding="utf-8")
+    (repo / "widget.py").write_text("def next_page(page):\n    return page\n", encoding="utf-8")
     tests = repo / "tests"
     tests.mkdir()
     (tests / "test_widget.py").write_text(
@@ -145,8 +150,16 @@ def _source(root: Path) -> Path:
     subprocess.run(["git", "init", "-q"], cwd=repo, check=True, capture_output=True)
     subprocess.run(["git", "add", "--all"], cwd=repo, check=True, capture_output=True)
     subprocess.run(
-        ["git", "-c", "user.name=Replay", "-c", "user.email=replay@example.invalid",
-         "commit", "-qm", "fixture"],
+        [
+            "git",
+            "-c",
+            "user.name=Replay",
+            "-c",
+            "user.email=replay@example.invalid",
+            "commit",
+            "-qm",
+            "fixture",
+        ],
         cwd=repo,
         check=True,
         capture_output=True,
@@ -215,8 +228,9 @@ def _child(phase: str, output: Path, repo: Path, image_id: str, run_root: Path |
     }
 
 
-def _invoke_child(phase: str, output: Path, repo: Path, image_id: str,
-                  run_root: Path | None = None) -> dict:
+def _invoke_child(
+    phase: str, output: Path, repo: Path, image_id: str, run_root: Path | None = None
+) -> dict:
     command = [
         sys.executable,
         str(Path(__file__).resolve()),
@@ -264,8 +278,28 @@ def _parent(output: Path, image_id: str) -> dict:
         or receipt.get("artifact_count") != 1
         or receipt.get("queries") != 1
         or receipt.get("run_id") != run_root.name
+        or len(receipt.get("artifact_ids", [])) != 1
     ):
         raise AssertionError("checkpoint did not bind the searched artifact and quota")
+    checkpoint = json.loads((run_root / "checkpoint.json").read_text(encoding="utf-8"))
+    task_checkpoint = checkpoint.get("payload", {}).get("agent", {}).get("task_state")
+    if not isinstance(task_checkpoint, dict):
+        raise AssertionError("paused Docker checkpoint did not persist the canonical TaskState")
+    paused_task_state = task_checkpoint.get("state", {})
+    active_requirements = [
+        item.get("text")
+        for item in paused_task_state.get("requirements", [])
+        if item.get("status") == "active"
+    ]
+    artifact_references = {
+        item.get("reference_id")
+        for item in paused_task_state.get("references", [])
+        if item.get("kind") == "artifact"
+    }
+    if active_requirements != [
+        "Fix pagination and retain the failed test log across ordinary Docker recovery"
+    ] or artifact_references != set(receipt["artifact_ids"]):
+        raise AssertionError("paused Docker TaskState lost its direct requirement or artifact ref")
     old_container = paused["container_id"]
     inspect = subprocess.run(["docker", "inspect", old_container], capture_output=True)
     if inspect.returncode == 0:
@@ -278,8 +312,33 @@ def _parent(output: Path, image_id: str) -> dict:
     verification = verify_patch(result_path.parent)
     if verification.get("passed") is not True:
         raise AssertionError("independent artifact replay patch verification failed")
-    records = [json.loads(path.read_text(encoding="utf-8"))
-               for path in sorted((run_root / "docker-checkpoints").glob("*.json"))]
+    resumed_checkpoint = json.loads((run_root / "checkpoint.json").read_text(encoding="utf-8"))
+    resumed_task_state = (
+        resumed_checkpoint.get("payload", {})
+        .get("agent", {})
+        .get("task_state", {})
+        .get("state", {})
+    )
+    resumed_artifact_references = {
+        item.get("reference_id")
+        for item in resumed_task_state.get("references", [])
+        if item.get("kind") == "artifact"
+    }
+    if (
+        resumed_task_state.get("revision", -1) < paused_task_state.get("revision", 0)
+        or resumed_artifact_references != artifact_references
+        or [
+            item.get("text")
+            for item in resumed_task_state.get("requirements", [])
+            if item.get("status") == "active"
+        ]
+        != active_requirements
+    ):
+        raise AssertionError("new Docker process did not restore the committed TaskState")
+    records = [
+        json.loads(path.read_text(encoding="utf-8"))
+        for path in sorted((run_root / "docker-checkpoints").glob("*.json"))
+    ]
     if not any(
         item.get("sequence", 0) > paused["sequence"]
         and item.get("container_id") != old_container
@@ -287,9 +346,10 @@ def _parent(output: Path, image_id: str) -> dict:
         for item in records
     ):
         raise AssertionError("recovered container did not restore and advance artifact query quota")
-    events = [json.loads(line) for line in (run_root / "trajectory.jsonl").read_text(
-        encoding="utf-8"
-    ).splitlines()]
+    events = [
+        json.loads(line)
+        for line in (run_root / "trajectory.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
     read_results = [
         event.get("payload", {}).get("result", {})
         for event in events
@@ -319,6 +379,8 @@ def _parent(output: Path, image_id: str) -> dict:
         "second_process": resumed,
         "artifact_id": read_results[0]["output"]["artifact_id"],
         "artifact_queries_at_pause": receipt["queries"],
+        "task_state_revision_at_pause": paused_task_state["revision"],
+        "task_state_revision_after_resume": resumed_task_state["revision"],
         "patch_verification": verification,
         "run_root": str(run_root),
         "all_containers_removed": True,

@@ -35,8 +35,17 @@ def test_resume_after_completed_tool_batch(tmp_path: Path, monkeypatch) -> None:
     )
     _git(source, "init", "-q")
     _git(source, "add", "--all")
-    _git(source, "-c", "user.name=Test", "-c", "user.email=test@example.invalid",
-         "commit", "-qm", "fixture")
+    _git(
+        source,
+        "-c",
+        "user.name=Test",
+        "-c",
+        "user.email=test@example.invalid",
+        "commit",
+        "-qm",
+        "fixture",
+    )
+
     class RecordingClient(ReplayClient):
         def __init__(self) -> None:
             super().__init__()
@@ -60,12 +69,20 @@ def test_resume_after_completed_tool_batch(tmp_path: Path, monkeypatch) -> None:
         return saved
 
     monkeypatch.setattr(CheckpointStore, "save", interrupt_after_save)
-    first = runner.run(RunConfig(
-        repo=source, task="修复分页测试", model_name="offline/replay",
-        output_dir=tmp_path / "runs", env_file=None,
-        test_python_executable=Path(sys.executable), execution_backend="local",
-        test_target="tests/test_widget.py", source_import="widget",
-    ))
+    first = runner.run(
+        RunConfig(
+            repo=source,
+            task="修复分页测试",
+            model_name="offline/replay",
+            output_dir=tmp_path / "runs",
+            env_file=None,
+            test_python_executable=Path(sys.executable),
+            execution_backend="local",
+            harness_foundations_enabled=True,
+            test_target="tests/test_widget.py",
+            source_import="widget",
+        )
+    )
     assert first.status.value == "interrupted"
     run_dir = Path(first.result_path).parent
     assert TraceFixRunner.inspect(run_dir)["resumable"] is True
@@ -75,8 +92,11 @@ def test_resume_after_completed_tool_batch(tmp_path: Path, monkeypatch) -> None:
         envelope = json.loads(saved_checkpoint)
         change(envelope["payload"])
         canonical = json.dumps(
-            envelope["payload"], ensure_ascii=False, sort_keys=True,
-            separators=(",", ":"), allow_nan=False,
+            envelope["payload"],
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
         ).encode("utf-8")
         envelope["payload_sha256"] = hashlib.sha256(canonical).hexdigest()
         (run_dir / "checkpoint.json").write_text(json.dumps(envelope), encoding="utf-8")
@@ -100,8 +120,7 @@ def test_resume_after_completed_tool_batch(tmp_path: Path, monkeypatch) -> None:
     original = checkout_file.read_bytes()
     checkout_file.write_bytes(original + b"\n# changed externally\n")
     assert any(
-        "checkout patch changed" in reason
-        for reason in TraceFixRunner.inspect(run_dir)["reasons"]
+        "checkout patch changed" in reason for reason in TraceFixRunner.inspect(run_dir)["reasons"]
     )
     checkout_file.write_bytes(original)
     trace_path = run_dir / "trajectory.jsonl"
@@ -125,11 +144,17 @@ def test_resume_after_completed_tool_batch(tmp_path: Path, monkeypatch) -> None:
     assert second.step_count == 6
     assert second.test_runs == 2
     assert client.calls == 6
+    final_checkpoint = json.loads((run_dir / "checkpoint.json").read_text(encoding="utf-8"))
+    task_state = final_checkpoint["payload"]["agent"]["task_state"]["state"]
+    assert [item["text"] for item in task_state["requirements"] if item["status"] == "active"] == [
+        "修复分页测试"
+    ]
+    assert task_state["observations"]
+    assert any(reference["kind"] == "artifact" for reference in task_state["references"])
     facts = [
         json.loads(str(message.get("content")))["fact"]
         for message in client.requests[-1]["messages"]
-        if message.get("role") == "user"
-        and "TraceFix tool evidence" in str(message.get("content"))
+        if message.get("role") == "user" and "TraceFix tool evidence" in str(message.get("content"))
     ]
     assert any(fact["latest_test"]["valid"] is True for fact in facts)
     assert "return page + 1" in Path(second.diff_path).read_text(encoding="utf-8")
@@ -176,8 +201,12 @@ def test_resume_after_completed_tool_batch(tmp_path: Path, monkeypatch) -> None:
     with pytest.raises(ValueError, match="补丁为空或"):
         verify_patch(run_dir)
     patch_path.write_bytes(saved_patch)
-    assert subprocess.run(["git", "status", "--porcelain"], cwd=source,
-                          capture_output=True, text=True, check=True).stdout == ""
+    assert (
+        subprocess.run(
+            ["git", "status", "--porcelain"], cwd=source, capture_output=True, text=True, check=True
+        ).stdout
+        == ""
+    )
     assert TraceFixRunner.inspect(run_dir)["resumable"] is False
 
 
@@ -194,14 +223,26 @@ def test_passing_pytest_that_modifies_source_is_not_verified(tmp_path: Path) -> 
     )
     _git(repo, "init", "-q")
     _git(repo, "add", "--all")
-    _git(repo, "-c", "user.name=Test", "-c", "user.email=test@example.invalid",
-         "commit", "-qm", "fixture")
-    tool = RunTestsTool(
-        repo, python_executable=sys.executable, evidence_dir=tmp_path / "evidence",
+    _git(
+        repo,
+        "-c",
+        "user.name=Test",
+        "-c",
+        "user.email=test@example.invalid",
+        "commit",
+        "-qm",
+        "fixture",
     )
-    result = tool.execute(ToolCall(
-        id="mutate-test", name="run_tests", arguments={"command": "pytest -q test_mutate.py"}
-    ))
+    tool = RunTestsTool(
+        repo,
+        python_executable=sys.executable,
+        evidence_dir=tmp_path / "evidence",
+    )
+    result = tool.execute(
+        ToolCall(
+            id="mutate-test", name="run_tests", arguments={"command": "pytest -q test_mutate.py"}
+        )
+    )
     assert result.success is False
     assert result.output["returncode"] == 0
     assert result.output["test_status"] == "invalid_test_run"

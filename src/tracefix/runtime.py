@@ -286,6 +286,38 @@ def _artifact_store_for_run(
     )
 
 
+def _task_state_session_for_run(config: RunConfig):
+    """Create the optional canonical TaskState with criteria frozen from run config."""
+    if not config.harness_foundations_enabled:
+        return None
+    from tracefix.task_state import TaskAcceptanceCriterion, TaskStateSession
+
+    targets = tuple(
+        target
+        for target in (config.test_target, *config.regression_targets)
+        if isinstance(target, str) and target
+    )
+    criteria = tuple(
+        TaskAcceptanceCriterion(
+            criterion_id=f"run-config-{index}-{hashlib.sha256(target.encode()).hexdigest()[:12]}",
+            source="run_config",
+            text=f"Validation target: {target}",
+        )
+        for index, target in enumerate(targets, start=1)
+    )
+    return TaskStateSession(criteria)
+
+
+def _register_task_state_tools(tools, task_state_session) -> None:
+    """Register host-only state tools without adding them to a remote executor."""
+    if task_state_session is None:
+        return
+    from tracefix.tools.task_state import GetTaskStateTool, UpdateTaskStateTool
+
+    tools.register(GetTaskStateTool(task_state_session))
+    tools.register(UpdateTaskStateTool(task_state_session))
+
+
 class RunResult(BaseModel):
     """一次隔离 Agent 运行的状态、费用、补丁和产物索引。"""
 
@@ -397,10 +429,10 @@ class TraceFixRunner:
     @staticmethod
     def _verify_recovery_memory(
         root: Path, config: RunConfig, agent_payload: dict[str, Any]
-    ) -> None:
-        """Validate pinned recall and host receipts before a recovery request can be sent."""
-        if not config.memory_enabled:
-            return
+    ) -> dict[str, dict[str, Any]]:
+        """Validate host receipts and any pinned memory before a recovery request."""
+        if not config.memory_enabled and not config.harness_foundations_enabled:
+            return {}
         from tracefix.memory_domain import TrustedUserInputReceipt, validate_user_input_receipt
 
         history = agent_payload.get("history")
@@ -449,7 +481,9 @@ class TraceFixRunner:
             except (OSError, ValueError, TypeError) as exc:
                 raise CheckpointError("trusted user input provenance is invalid") from exc
         else:
-            raise CheckpointError("memory recovery is missing trusted user input receipts")
+            raise CheckpointError("recovery is missing trusted user input receipts")
+        if not config.memory_enabled:
+            return verified
         from tracefix.memory import canonical
         from tracefix.memory_domain import RecallBundle
         from tracefix.memory_recall import render_recall_bundle
@@ -483,6 +517,7 @@ class TraceFixRunner:
                 raise CheckpointError("fixed memory recall differs from the committed request")
         elif matching:
             raise CheckpointError("empty memory recall bundle has a history message")
+        return verified
 
     def _attach_memory(
         self,
@@ -783,9 +818,7 @@ class TraceFixRunner:
                     or (workspace / ".tracefix-test-tmp").is_symlink()
                 ):
                     reasons.append("test temporary directory changed")
-                artifact_store = _artifact_store_for_run(
-                    config, root.name, root, workspace
-                )
+                artifact_store = _artifact_store_for_run(config, root.name, root, workspace)
                 if config.harness_foundations_enabled:
                     try:
                         artifact_store.verify_checkpoint_identity(
@@ -808,6 +841,7 @@ class TraceFixRunner:
                     test_pythonpath_entries=config.test_pythonpath_entries,
                     test_environment_variables=config.test_environment_variables,
                 )
+                _register_task_state_tools(registry, _task_state_session_for_run(config))
                 tool_sha = hashlib.sha256(
                     json.dumps(
                         [spec.model_dump(mode="json") for spec in registry.specs()],
@@ -1187,13 +1221,21 @@ class TraceFixRunner:
 
         return count
 
-    def continue_turn(self, run_dir: Path, message: str) -> RunResult:
+    def continue_turn(
+        self, run_dir: Path, message: str, *, supersedes: tuple[str, ...] = ()
+    ) -> RunResult:
         """Append an explicit user instruction at a committed continuous-session boundary."""
         if not message.strip():
             raise CheckpointError("message cannot be empty")
-        return self._continue_existing(run_dir, message=message)
+        return self._continue_existing(run_dir, message=message, supersedes=supersedes)
 
-    def _continue_existing(self, run_dir: Path, *, message: str | None = None) -> RunResult:
+    def _continue_existing(
+        self,
+        run_dir: Path,
+        *,
+        message: str | None = None,
+        supersedes: tuple[str, ...] = (),
+    ) -> RunResult:
         """Continue a validated local session in its original checkout."""
         root = run_dir.expanduser().resolve()
         manifest_path = root / "session.json"
@@ -1208,11 +1250,17 @@ class TraceFixRunner:
                 )
             manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
             config = _saved_run_config(manifest["config"])
+            if supersedes and not config.harness_foundations_enabled:
+                raise CheckpointError("supersedes requires TaskState to be enabled")
             if config.execution_backend != "local":
-                return self._resume_docker_locked(root, manifest, config, message=message)
+                return self._resume_docker_locked(
+                    root, manifest, config, message=message, supersedes=supersedes
+                )
             store = CheckpointStore(root, manifest["identity"])
             snapshot = store.load()
-            self._verify_recovery_memory(root, config, snapshot.payload.get("agent", {}))
+            trusted_user_receipts = self._verify_recovery_memory(
+                root, config, snapshot.payload.get("agent", {})
+            )
             user_input_receipt = None
             if message is not None:
                 from tracefix.memory_domain import issue_user_input_receipt
@@ -1244,6 +1292,7 @@ class TraceFixRunner:
                 else None
             )
             artifact_store = _artifact_store_for_run(config, root.name, root, workspace)
+            task_state_session = _task_state_session_for_run(config)
             if config.harness_foundations_enabled:
                 try:
                     artifact_store.verify_checkpoint_identity(
@@ -1267,6 +1316,7 @@ class TraceFixRunner:
                 pytest_config=None,
                 test_environment_variables=config.test_environment_variables,
             )
+            _register_task_state_tools(tools, task_state_session)
             mcp_manager = None
             if config.mcp_serena_image_id is not None:
                 mcp_manager = SerenaMCP(workspace, root, config.mcp_serena_image_id)
@@ -1322,6 +1372,11 @@ class TraceFixRunner:
                     repository_map=repo_map.text if repo_map else None,
                     repository_candidates=repo_map.candidate_files if repo_map else (),
                 )
+                agent.task_state_session = task_state_session
+                if task_state_session is not None:
+                    agent.task_state_source_identity = lambda: hashlib.sha256(
+                        self._collect_diff(workspace, protected_dirs)[0].encode("utf-8")
+                    ).hexdigest()
 
                 if config.regression_targets:
                     baseline_path = root / "validation-baseline.json"
@@ -1364,6 +1419,7 @@ class TraceFixRunner:
                     if artifact_store is not None:
                         payload["artifact_store"] = artifact_store.checkpoint_identity()
                     store.save(payload, sequence=sequence)
+
                 agent.checkpoint_callback = save_checkpoint
                 agent.persist_terminal_checkpoint = config.conversation_enabled
                 self._attach_memory(agent, config, root, workspace, protected_dirs)
@@ -1372,6 +1428,13 @@ class TraceFixRunner:
                         snapshot.payload["agent"],
                         message=message,
                         user_input_receipt=user_input_receipt,
+                        trusted_user_receipts=trusted_user_receipts,
+                        artifact_ids=(
+                            {ref.artifact_id for ref in artifact_store.refs()}
+                            if artifact_store is not None
+                            else set()
+                        ),
+                        supersedes=supersedes,
                     )
                 except KeyboardInterrupt:
                     state = agent.state
@@ -1447,12 +1510,20 @@ class TraceFixRunner:
             return result
 
     def _resume_docker_locked(
-        self, root: Path, manifest: dict, config: RunConfig, *, message: str | None = None
+        self,
+        root: Path,
+        manifest: dict,
+        config: RunConfig,
+        *,
+        message: str | None = None,
+        supersedes: tuple[str, ...] = (),
     ) -> RunResult:
         """Rebuild an inspected ordinary workspace while retaining cumulative Agent state."""
         store = CheckpointStore(root, manifest["identity"])
         saved = store.load()
-        self._verify_recovery_memory(root, config, saved.payload.get("agent", {}))
+        trusted_user_receipts = self._verify_recovery_memory(
+            root, config, saved.payload.get("agent", {})
+        )
         user_input_receipt = None
         if message is not None:
             from tracefix.memory_domain import issue_user_input_receipt
@@ -1488,6 +1559,8 @@ class TraceFixRunner:
                 source_import_probe=config.source_import,
                 skills_root=self._skills_root(config, root),
             )
+            task_state_session = _task_state_session_for_run(config)
+            _register_task_state_tools(tools, task_state_session)
             backend.workspace_preparation["test_target"] = config.test_target
             backend.remove_previous_container(saved.payload["docker_snapshot"])
             load_environment_file(config.env_file)
@@ -1517,6 +1590,13 @@ class TraceFixRunner:
                     repository_map=repo_map.text if repo_map else None,
                     repository_candidates=repo_map.candidate_files if repo_map else (),
                 )
+                agent.task_state_session = task_state_session
+                if task_state_session is not None:
+                    agent.task_state_source_identity = lambda: hashlib.sha256(
+                        backend.session.call("get_git_diff", {"context_lines": 3})
+                        .output["diff"]
+                        .encode("utf-8")
+                    ).hexdigest()
 
                 def checkpoint(active: MinimalAgent) -> None:
                     nonlocal sequence
@@ -1550,6 +1630,13 @@ class TraceFixRunner:
                         saved.payload["agent"],
                         message=message,
                         user_input_receipt=user_input_receipt,
+                        trusted_user_receipts=trusted_user_receipts,
+                        artifact_ids=set(
+                            saved.payload["docker_snapshot"]
+                            .get("artifact_receipt", {})
+                            .get("artifact_ids", [])
+                        ),
+                        supersedes=supersedes,
                     )
                 except KeyboardInterrupt:
                     state = agent.state
@@ -1917,9 +2004,7 @@ class TraceFixRunner:
 
             if tools is None:
                 assert workspace is not None
-                artifact_store = _artifact_store_for_run(
-                    config, run_id, run_dir, workspace
-                )
+                artifact_store = _artifact_store_for_run(config, run_id, run_dir, workspace)
                 tools = create_default_tool_registry(
                     workspace,
                     evidence_dir=run_dir / "test-evidence",
@@ -1938,6 +2023,8 @@ class TraceFixRunner:
                     ),
                     test_environment_variables=config.test_environment_variables,
                 )
+            task_state_session = _task_state_session_for_run(config)
+            _register_task_state_tools(tools, task_state_session)
             if config.mcp_serena_image_id is not None:
                 assert workspace is not None
                 mcp_manager = SerenaMCP(workspace, run_dir, config.mcp_serena_image_id)
@@ -1975,6 +2062,27 @@ class TraceFixRunner:
                 repository_map=repository_map.text if repository_map else None,
                 repository_candidates=(repository_map.candidate_files if repository_map else ()),
             )
+            agent.task_state_session = task_state_session
+            if task_state_session is not None:
+                if config.execution_backend == "local":
+                    assert workspace is not None
+                    agent.task_state_source_identity = lambda: hashlib.sha256(
+                        self._collect_diff(workspace, internal_artifacts)[0].encode("utf-8")
+                    ).hexdigest()
+                elif docker_backend is not None:
+
+                    def docker_task_state_source_identity() -> str | None:
+                        result = docker_backend.session.call("get_git_diff", {"context_lines": 3})
+                        if not result.success or not isinstance(result.output, dict):
+                            return None
+                        diff = result.output.get("diff")
+                        return (
+                            hashlib.sha256(diff.encode("utf-8")).hexdigest()
+                            if isinstance(diff, str)
+                            else None
+                        )
+
+                    agent.task_state_source_identity = docker_task_state_source_identity
             agent.initial_user_receipt = initial_user_receipt
             initial_context: list[Message] = []
             if memory_bundle is not None and memory_bundle.items:
@@ -2036,7 +2144,15 @@ class TraceFixRunner:
                     "config_sha256": config_identity_sha256(config),
                     "image_id": config.docker_image_id,
                     "implementation_sha256": self._implementation_sha256(),
-                    "tool_sha256": tool_identity(tools.specs()),
+                    # TaskState adapters are host-only and are excluded from the
+                    # executor identity negotiated by the ordinary bridge.
+                    "tool_sha256": tool_identity(
+                        tuple(
+                            spec
+                            for spec in tools.specs()
+                            if spec.name not in {"get_task_state", "update_task_state"}
+                        )
+                    ),
                     "repo_map_sha256": hashlib.sha256(
                         (repository_map.text if repository_map else "").encode("utf-8")
                     ).hexdigest(),
@@ -2138,9 +2254,7 @@ class TraceFixRunner:
                     active.verify_test_source(current_sha)
                     trace_bytes = trace_path.read_bytes()
                     skill_tool = (
-                        tools.get("load_skill")
-                        if config.agent_config.skills_enabled
-                        else None
+                        tools.get("load_skill") if config.agent_config.skills_enabled else None
                     )
                     sequence += 1
                     payload = {
@@ -2154,6 +2268,7 @@ class TraceFixRunner:
                     if artifact_store is not None:
                         payload["artifact_store"] = artifact_store.checkpoint_identity()
                     store.save(payload, sequence=sequence)
+
                 agent.checkpoint_callback = save_checkpoint
                 agent.persist_terminal_checkpoint = config.conversation_enabled
             if workspace is not None:

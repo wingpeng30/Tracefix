@@ -16,7 +16,7 @@ from typing import Any, BinaryIO
 
 from tracefix.checkpoint import CheckpointError
 
-MAX_SNAPSHOT_BYTES = 1024 ** 3
+MAX_SNAPSHOT_BYTES = 1024**3
 _PROTECTED = {".git", ".tracefix-build-tmp", ".tracefix-test-tmp"}
 _CACHES = {"__pycache__", ".pytest_cache"}
 
@@ -33,11 +33,17 @@ def _reject_linked_root(root: Path) -> None:
 def safe_name(name: str) -> bool:
     parts = PurePosixPath(name).parts
     windows = PureWindowsPath(name)
-    return (bool(parts) and not name.startswith("/") and "\\" not in name
-            and not windows.drive and not windows.root and ".." not in parts
-            and not any(ord(char) < 32 for char in name)
-            and not any(part.casefold() in _PROTECTED for part in parts)
-            and str(PurePosixPath(name)) == name)
+    return (
+        bool(parts)
+        and not name.startswith("/")
+        and "\\" not in name
+        and not windows.drive
+        and not windows.root
+        and ".." not in parts
+        and not any(ord(char) < 32 for char in name)
+        and not any(part.casefold() in _PROTECTED for part in parts)
+        and str(PurePosixPath(name)) == name
+    )
 
 
 def _paths(root: Path, tracked: set[str] | None = None) -> list[Path]:
@@ -51,9 +57,15 @@ def _paths(root: Path, tracked: set[str] | None = None) -> list[Path]:
 
     for directory, directories, files in os.walk(root, followlinks=False):
         parent = Path(directory)
-        directories[:] = sorted(name for name in directories
-                                 if name.casefold() not in _PROTECTED
-                                 and product((parent / name).relative_to(root).as_posix()))
+        directories[:] = sorted(
+            name
+            for name in directories
+            if name.casefold() not in _PROTECTED
+            and product((parent / name).relative_to(root).as_posix())
+        )
+        # A linked Git worktree stores its .git indirection as a regular file,
+        # so pruning only directories would resolve that pointer outside root.
+        files[:] = [name for name in files if name.casefold() not in _PROTECTED]
         for name in sorted([*directories, *files]):
             path = parent / name
             relative = path.relative_to(root).as_posix()
@@ -94,16 +106,22 @@ class _HashReader:
         return data
 
 
-def export_workspace(root: Path, stream: BinaryIO, *, maximum: int = MAX_SNAPSHOT_BYTES
-                     ) -> dict[str, Any]:
+def export_workspace(
+    root: Path, stream: BinaryIO, *, maximum: int = MAX_SNAPSHOT_BYTES
+) -> dict[str, Any]:
     """Stream one complete snapshot without duplicating its bytes in container tmpfs."""
     _reject_linked_root(root)
     root = root.resolve(strict=True)
-    tracked = subprocess.run(["git", "ls-files", "-z"], cwd=root, check=True,
-                             capture_output=True).stdout.decode("utf-8").split("\0")
+    tracked = (
+        subprocess.run(["git", "ls-files", "-z"], cwd=root, check=True, capture_output=True)
+        .stdout.decode("utf-8")
+        .split("\0")
+    )
     paths = _paths(root, set(tracked))
-    if sum(path.lstat().st_size for path in paths if path.is_file()
-           and not path.is_symlink()) > maximum:
+    if (
+        sum(path.lstat().st_size for path in paths if path.is_file() and not path.is_symlink())
+        > maximum
+    ):
         raise CheckpointError("workspace snapshot exceeds the 1 GiB limit")
     writer = _LimitedWriter(stream, maximum)
     records = []
@@ -137,33 +155,50 @@ def export_workspace(root: Path, stream: BinaryIO, *, maximum: int = MAX_SNAPSHO
                     record.update(type="file", size=item.size, sha256=reader.hash.hexdigest())
                 after = path.lstat()
                 if (after.st_size, after.st_mtime_ns, after.st_mode) != (
-                    before.st_size, before.st_mtime_ns, before.st_mode,
+                    before.st_size,
+                    before.st_mtime_ns,
+                    before.st_mode,
                 ):
                     raise CheckpointError("workspace changed during snapshot")
             else:
                 raise CheckpointError("snapshot contains an unsupported product file type")
             records.append(record)
-    deleted = sorted(name for name in tracked if name and not (root / name).exists()
-                     and not (root / name).is_symlink())
+    deleted = sorted(
+        name
+        for name in tracked
+        if name and not (root / name).exists() and not (root / name).is_symlink()
+    )
     if any(not safe_name(name) for name in deleted):
         raise CheckpointError("deleted product path is unsafe")
-    return {"schema_version": 1, "archive_sha256": writer.hash.hexdigest(),
-            "archive_bytes": writer.size, "files": records, "deleted": deleted}
+    return {
+        "schema_version": 1,
+        "archive_sha256": writer.hash.hexdigest(),
+        "archive_bytes": writer.size,
+        "files": records,
+        "deleted": deleted,
+    }
 
 
-def validate_archive(path: Path, metadata: dict[str, Any], *,
-                     maximum: int = MAX_SNAPSHOT_BYTES) -> list[tarfile.TarInfo]:
+def validate_archive(
+    path: Path, metadata: dict[str, Any], *, maximum: int = MAX_SNAPSHOT_BYTES
+) -> list[tarfile.TarInfo]:
     """Validate every member and its content before any restoration mutation."""
-    if (metadata.get("schema_version") != 1 or not isinstance(metadata.get("files"), list)
-            or not isinstance(metadata.get("deleted"), list) or path.is_symlink()
-            or path.stat().st_size > maximum or path.stat().st_size != metadata["archive_bytes"]):
+    if (
+        metadata.get("schema_version") != 1
+        or not isinstance(metadata.get("files"), list)
+        or not isinstance(metadata.get("deleted"), list)
+        or path.is_symlink()
+        or path.stat().st_size > maximum
+        or path.stat().st_size != metadata["archive_bytes"]
+    ):
         raise CheckpointError("invalid workspace snapshot envelope or size")
     with path.open("rb") as source:
         if hashlib.file_digest(source, "sha256").hexdigest() != metadata["archive_sha256"]:
             raise CheckpointError("workspace snapshot archive identity changed")
     records = {row["path"]: row for row in metadata["files"]}
-    if (len(records) != len(metadata["files"])
-            or any(not safe_name(name) for name in [*records, *metadata["deleted"]])):
+    if len(records) != len(metadata["files"]) or any(
+        not safe_name(name) for name in [*records, *metadata["deleted"]]
+    ):
         raise CheckpointError("invalid or duplicate snapshot product path")
     links = {name for name, row in records.items() if row.get("type") == "symlink"}
     with tarfile.open(path, "r:") as archive:
@@ -179,8 +214,10 @@ def validate_archive(path: Path, metadata: dict[str, Any], *,
                 raise CheckpointError("snapshot member permissions or size changed")
             if row["type"] == "file" and item.isfile():
                 source = archive.extractfile(item)
-                if (source is None or hashlib.file_digest(source, "sha256").hexdigest()
-                        != row["sha256"]):
+                if (
+                    source is None
+                    or hashlib.file_digest(source, "sha256").hexdigest() != row["sha256"]
+                ):
                     raise CheckpointError("snapshot product content changed")
             elif row["type"] == "directory" and item.isdir():
                 pass
@@ -192,8 +229,12 @@ def validate_archive(path: Path, metadata: dict[str, Any], *,
                     depth += -1 if part == ".." else 0 if part == "." else 1
                     if depth < 0:
                         raise CheckpointError("snapshot link escaped the workspace")
-                if (item.linkname != target or PurePosixPath(target).is_absolute()
-                        or PureWindowsPath(target).drive or "\\" in target):
+                if (
+                    item.linkname != target
+                    or PurePosixPath(target).is_absolute()
+                    or PureWindowsPath(target).drive
+                    or "\\" in target
+                ):
                     raise CheckpointError("snapshot symbolic link identity is unsafe")
             else:
                 raise CheckpointError("unsupported snapshot member type")
@@ -231,8 +272,9 @@ def _clear_products(root: Path) -> Path:
     return root
 
 
-def restore_workspace(root: Path, archive_path: Path, metadata: dict[str, Any], *,
-                      materialize_links: bool = True) -> None:
+def restore_workspace(
+    root: Path, archive_path: Path, metadata: dict[str, Any], *, materialize_links: bool = True
+) -> None:
     """Replace only validated product paths; preserve Git and rebuild tool temp state elsewhere."""
     members = validate_archive(archive_path, metadata)
     root = _clear_products(root)
@@ -260,12 +302,13 @@ def restore_workspace(root: Path, archive_path: Path, metadata: dict[str, Any], 
 
 def restore_stream(root: Path, stream: BinaryIO, metadata: dict[str, Any]) -> None:
     """Restore a host-validated stream in a disposable new container, then verify all bytes."""
-    if (metadata.get("schema_version") != 1
-            or not 0 <= metadata["archive_bytes"] <= MAX_SNAPSHOT_BYTES):
+    if (
+        metadata.get("schema_version") != 1
+        or not 0 <= metadata["archive_bytes"] <= MAX_SNAPSHOT_BYTES
+    ):
         raise CheckpointError("invalid streamed snapshot envelope")
     records = {row["path"]: row for row in metadata["files"]}
-    if (len(records) != len(metadata["files"])
-            or any(not safe_name(name) for name in records)):
+    if len(records) != len(metadata["files"]) or any(not safe_name(name) for name in records):
         raise CheckpointError("invalid streamed snapshot product paths")
     root = _clear_products(root)
     reader = _HashReader(stream, MAX_SNAPSHOT_BYTES)
@@ -276,8 +319,7 @@ def restore_stream(root: Path, stream: BinaryIO, metadata: dict[str, Any]) -> No
             if item.name in seen or item.name not in records:
                 raise CheckpointError("unexpected streamed snapshot member")
             row = records[item.name]
-            if (item.mode != row["mode"] or item.size != row["size"]
-                    or not 0 <= item.mode <= 0o777):
+            if item.mode != row["mode"] or item.size != row["size"] or not 0 <= item.mode <= 0o777:
                 raise CheckpointError("streamed snapshot permissions or size changed")
             target = root / item.name
             if not target.parent.resolve().is_relative_to(root):
@@ -308,8 +350,11 @@ def restore_stream(root: Path, stream: BinaryIO, metadata: dict[str, Any]) -> No
             seen.add(item.name)
     while reader.read(1024 * 1024):
         pass
-    if (seen != set(records) or reader.size != metadata["archive_bytes"]
-            or reader.hash.hexdigest() != metadata["archive_sha256"]):
+    if (
+        seen != set(records)
+        or reader.size != metadata["archive_bytes"]
+        or reader.hash.hexdigest() != metadata["archive_sha256"]
+    ):
         raise CheckpointError("streamed snapshot identity changed")
     for directory, mode in reversed(directories):
         os.chmod(directory, mode)
@@ -329,13 +374,15 @@ def main() -> int:
     elif args.operation == "restore-stream":
         if args.metadata is None:
             parser.error("restore-stream requires metadata")
-        restore_stream(args.workspace, sys.stdin.buffer,
-                       json.loads(args.metadata.read_text(encoding="utf-8")))
+        restore_stream(
+            args.workspace, sys.stdin.buffer, json.loads(args.metadata.read_text(encoding="utf-8"))
+        )
     else:
         if args.archive is None or args.metadata is None:
             parser.error("restore requires archive and metadata")
-        restore_workspace(args.workspace, args.archive,
-                          json.loads(args.metadata.read_text(encoding="utf-8")))
+        restore_workspace(
+            args.workspace, args.archive, json.loads(args.metadata.read_text(encoding="utf-8"))
+        )
     return 0
 
 

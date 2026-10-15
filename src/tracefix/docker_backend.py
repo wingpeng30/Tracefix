@@ -100,15 +100,18 @@ def _make_trusted_executor_bundle(
             archive_files["request-test/test-key.pem"] = private_key.read_bytes()
 
     hashes = {
-        name: hashlib.sha256(data).hexdigest()
-        for name, data in sorted(archive_files.items())
+        name: hashlib.sha256(data).hexdigest() for name, data in sorted(archive_files.items())
     }
     canonical = json.dumps(hashes, sort_keys=True, separators=(",", ":")).encode("utf-8")
     bundle_sha256 = hashlib.sha256(canonical).hexdigest()
     manifest = json.dumps(
-        {"security_policy_version": SECURITY_POLICY_VERSION,
-         "bundle_sha256": bundle_sha256, "files": hashes},
-        sort_keys=True, separators=(",", ":"),
+        {
+            "security_policy_version": SECURITY_POLICY_VERSION,
+            "bundle_sha256": bundle_sha256,
+            "files": hashes,
+        },
+        sort_keys=True,
+        separators=(",", ":"),
     ).encode("utf-8")
     archive_files["runtime/executor-manifest.json"] = manifest
     output = io.BytesIO()
@@ -120,6 +123,8 @@ def _make_trusted_executor_bundle(
             member.mtime = 0
             archive.addfile(member, io.BytesIO(data))
     return output.getvalue(), bundle_sha256, tls_certificate_sha256
+
+
 _MAX_FRAME = 64 * 1024 * 1024
 
 
@@ -250,10 +255,7 @@ class _BridgeSession:
         if skills_enabled:
             declared = (
                 set(
-                    load_specs[0]
-                    .input_schema.get("properties", {})
-                    .get("name", {})
-                    .get("enum", [])
+                    load_specs[0].input_schema.get("properties", {}).get("name", {}).get("enum", [])
                 )
                 if len(load_specs) == 1
                 else set()
@@ -417,7 +419,9 @@ class _BridgeSession:
 
 class _RemoteTool(BaseTool):
     def __init__(
-        self, spec: ToolSpec, backend: DockerToolBackend,
+        self,
+        spec: ToolSpec,
+        backend: DockerToolBackend,
         skill_catalog: tuple[SkillCatalogEntry, ...] = (),
     ) -> None:
         self._spec = spec
@@ -558,9 +562,12 @@ class DockerToolBackend:
                         "frozen Docker input hash mismatch", context={"path": relative}
                     )
         if baseline_archive is not None:
-            if (self.profile != "ordinary" or baseline_archive.is_symlink()
-                    or not baseline_archive.resolve().is_relative_to(self.run_dir.resolve())
-                    or not baseline_archive.is_file()):
+            if (
+                self.profile != "ordinary"
+                or baseline_archive.is_symlink()
+                or not baseline_archive.resolve().is_relative_to(self.run_dir.resolve())
+                or not baseline_archive.is_file()
+            ):
                 raise WorkspaceError("invalid saved Docker source baseline")
             source = baseline_archive
         else:
@@ -612,12 +619,22 @@ class DockerToolBackend:
                 "2g" if self.profile == "ordinary" else "6g",
                 *(
                     [
-                        "--cpus", "1", "--read-only", "--user", "10001:10001",
-                        "--tmpfs", "/tmp:rw,nosuid,size=512m,uid=10001,gid=10001",
-                        "--tmpfs", "/input:rw,nosuid,size=256m,uid=10001,gid=10001",
-                        "--tmpfs", "/work:rw,nosuid,size=1g,uid=10001,gid=10001",
-                        "--tmpfs", "/opt/tracefix:rw,nosuid,size=128m,uid=0,gid=0,mode=0755",
-                    ] if self.profile == "ordinary" else []
+                        "--cpus",
+                        "1",
+                        "--read-only",
+                        "--user",
+                        "10001:10001",
+                        "--tmpfs",
+                        "/tmp:rw,nosuid,size=512m,uid=10001,gid=10001",
+                        "--tmpfs",
+                        "/input:rw,nosuid,size=256m,uid=10001,gid=10001",
+                        "--tmpfs",
+                        "/work:rw,nosuid,size=1g,uid=10001,gid=10001",
+                        "--tmpfs",
+                        "/opt/tracefix:rw,nosuid,size=128m,uid=0,gid=0,mode=0755",
+                    ]
+                    if self.profile == "ordinary"
+                    else []
                 ),
                 "--env",
                 "HTTP_PROXY=",
@@ -660,16 +677,27 @@ class DockerToolBackend:
                     [self.docker, "inspect", "--format", "{{json .Mounts}}", self.container_id]
                 ).stdout.decode("utf-8", "strict")
             )
-            host_config = json.loads(
-                _run(
-                    [self.docker, "inspect", "--format", "{{json .HostConfig}}", self.container_id]
-                ).stdout.decode("utf-8", "strict")
-            ) if self.profile == "ordinary" else None
+            host_config = (
+                json.loads(
+                    _run(
+                        [
+                            self.docker,
+                            "inspect",
+                            "--format",
+                            "{{json .HostConfig}}",
+                            self.container_id,
+                        ]
+                    ).stdout.decode("utf-8", "strict")
+                )
+                if self.profile == "ordinary"
+                else None
+            )
             container_user = (
-                _run(
-                    [self.docker, "inspect", "--format", "{{.Config.User}}", self.container_id]
-                ).stdout.decode("utf-8", "strict").strip()
-                if self.profile == "ordinary" else None
+                _run([self.docker, "inspect", "--format", "{{.Config.User}}", self.container_id])
+                .stdout.decode("utf-8", "strict")
+                .strip()
+                if self.profile == "ordinary"
+                else None
             )
         except (UnicodeDecodeError, json.JSONDecodeError) as exc:
             raise WorkspaceError(
@@ -704,11 +732,17 @@ class DockerToolBackend:
         _run([self.docker, "start", self.container_name])
         container_interpreter: dict[str, str] | None = None
         if self.profile == "ordinary":
-            probe_result = _run([
-                self.docker, "exec", self.container_name, self.python,
-                "-c", "import json,platform,pytest; print(json.dumps({"
-                "'python':platform.python_version(),'pytest':pytest.__version__}))",
-            ])
+            probe_result = _run(
+                [
+                    self.docker,
+                    "exec",
+                    self.container_name,
+                    self.python,
+                    "-c",
+                    "import json,platform,pytest; print(json.dumps({"
+                    "'python':platform.python_version(),'pytest':pytest.__version__}))",
+                ]
+            )
             container_interpreter = json.loads(probe_result.stdout.decode("utf-8"))
         _run(
             [
@@ -727,9 +761,7 @@ class DockerToolBackend:
         self._copy_file_into(source, "/input/source.tar")
         package_root = Path(__file__).resolve().parent
         if self.profile == "ordinary":
-            environment = validate_project_environment(
-                self.recipe.get("environment_variables", {})
-            )
+            environment = validate_project_environment(self.recipe.get("environment_variables", {}))
             bundle, self.executor_bundle_sha256, tls_certificate_sha256 = (
                 _make_trusted_executor_bundle(
                     package_root,
@@ -743,26 +775,50 @@ class DockerToolBackend:
         else:
             _run([self.docker, "exec", self.container_name, "mkdir", "-p", "/opt/tracefix/src"])
             _run(
-                [self.docker, "cp", str(package_root),
-                 f"{self.container_name}:/opt/tracefix/src/tracefix"]
+                [
+                    self.docker,
+                    "cp",
+                    str(package_root),
+                    f"{self.container_name}:/opt/tracefix/src/tracefix",
+                ]
             )
             tls_certificate_sha256 = None
             if self.recipe.get("test_pythonpath_entries"):
-                _run([self.docker, "exec", self.container_name, "mkdir", "-p",
-                      "/opt/tracefix/request-test"])
+                _run(
+                    [
+                        self.docker,
+                        "exec",
+                        self.container_name,
+                        "mkdir",
+                        "-p",
+                        "/opt/tracefix/request-test",
+                    ]
+                )
                 for name in ("service.py", "sitecustomize.py"):
                     source_path = tracefix_root / "docker" / "requests-test-tls" / name
                     if source_path.is_file():
-                        _run([self.docker, "cp", str(source_path),
-                              f"{self.container_name}:/opt/tracefix/request-test/{name}"])
+                        _run(
+                            [
+                                self.docker,
+                                "cp",
+                                str(source_path),
+                                f"{self.container_name}:/opt/tracefix/request-test/{name}",
+                            ]
+                        )
                 with tempfile.TemporaryDirectory(prefix="tracefix-tls-") as tls_directory:
                     certificate = Path(tls_directory) / "test-ca.pem"
                     private_key = Path(tls_directory) / "test-key.pem"
                     write_test_tls_material(certificate, private_key)
                     tls_certificate_sha256 = hashlib.sha256(certificate.read_bytes()).hexdigest()
                     for path in (certificate, private_key):
-                        _run([self.docker, "cp", str(path),
-                              f"{self.container_name}:/opt/tracefix/request-test/{path.name}"])
+                        _run(
+                            [
+                                self.docker,
+                                "cp",
+                                str(path),
+                                f"{self.container_name}:/opt/tracefix/request-test/{path.name}",
+                            ]
+                        )
         sentinel = self.run_dir / "agent-only-sentinel.txt"
         sentinel.write_text(self.run_id, encoding="utf-8")
         _run(
@@ -790,9 +846,7 @@ class DockerToolBackend:
             ]
         )
         _run([self.docker, "exec", self.container_name, "mkdir", "/work/agent/.tracefix-build-tmp"])
-        self._copy_file_into(
-            sentinel, "/work/agent/.tracefix-build-tmp/agent-only-sentinel"
-        )
+        self._copy_file_into(sentinel, "/work/agent/.tracefix-build-tmp/agent-only-sentinel")
         _run(
             [
                 self.docker,
@@ -851,8 +905,16 @@ class DockerToolBackend:
                 raise WorkspaceError("Docker recovery requires the ordinary profile")
             # Private Git exclusions align generated caches with the snapshot product contract.
             # Tracked files remain visible to Git and are retained by the snapshot codec.
-            _run([self.docker, "exec", self.container_name, "sh", "-c",
-                  "printf '\\n__pycache__/\\n.pytest_cache/\\n' >> /work/agent/.git/info/exclude"])
+            _run(
+                [
+                    self.docker,
+                    "exec",
+                    self.container_name,
+                    "sh",
+                    "-c",
+                    "printf '\\n__pycache__/\\n.pytest_cache/\\n' >> /work/agent/.git/info/exclude",
+                ]
+            )
         for template in self.recipe.get("build_commands", []):
             command = [self.python if arg == "{python}" else arg for arg in template]
             started = time.monotonic()
@@ -999,35 +1061,39 @@ class DockerToolBackend:
             # Ordinary Skills were included in the root-owned trusted-executor bundle.
         command = [self.docker, "exec", "-i", self.container_name, "env"]
         if self.profile == "ordinary":
-            command.extend([
-                "-i",
-                "PATH=/usr/local/bin:/usr/bin:/bin",
-                "HOME=/tmp",
-                "PYTHONDONTWRITEBYTECODE=1",
-                "PYTHONPATH=/opt/tracefix/src",
-            ])
+            command.extend(
+                [
+                    "-i",
+                    "PATH=/usr/local/bin:/usr/bin:/bin",
+                    "HOME=/tmp",
+                    "PYTHONDONTWRITEBYTECODE=1",
+                    "PYTHONPATH=/opt/tracefix/src",
+                ]
+            )
             python_flags = ["-P", "-s"]
         else:
             command.append("PYTHONPATH=/opt/tracefix/src")
             python_flags = []
-        command.extend([
-            self.python,
-            *python_flags,
-            "-m",
-            "tracefix.agent_bridge",
-            "--workspace",
-            "/work/agent",
-            "--evidence",
-            "/work/evidence",
-            "--python",
-            self.python,
-            "--timeout",
-            str(self.timeout_seconds),
-            "--run-id",
-            self.run_id,
-            "--environment-json",
-            environment_path,
-        ])
+        command.extend(
+            [
+                self.python,
+                *python_flags,
+                "-m",
+                "tracefix.agent_bridge",
+                "--workspace",
+                "/work/agent",
+                "--evidence",
+                "/work/evidence",
+                "--python",
+                self.python,
+                "--timeout",
+                str(self.timeout_seconds),
+                "--run-id",
+                self.run_id,
+                "--environment-json",
+                environment_path,
+            ]
+        )
         if self.recipe.get("pytest_config"):
             command.extend(["--pytest-config", self.recipe["pytest_config"]])
         for path in self.recipe.get("test_pythonpath_entries", []):
@@ -1060,7 +1126,9 @@ class DockerToolBackend:
                 ]
             )
         self.session = _BridgeSession(
-            command, self.timeout_seconds + 60, self.run_dir / "tool-events.jsonl",
+            command,
+            self.timeout_seconds + 60,
+            self.run_dir / "tool-events.jsonl",
             skills_enabled=skills_enabled,
             artifacts_enabled=artifacts_enabled,
         )
@@ -1096,12 +1164,15 @@ class DockerToolBackend:
                 "nano_cpus": host_config.get("NanoCpus"),
                 "read_only_root": host_config.get("ReadonlyRootfs"),
                 "tmpfs": host_config.get("Tmpfs"),
-            } if host_config else None,
+            }
+            if host_config
+            else None,
             "source_commit": source_commit,
             "source_version_tag": self.source_tag,
             "agent_only_sentinel_sha256": hashlib.sha256(sentinel.read_bytes()).hexdigest(),
             "recipe_fingerprint": self._recipe_fingerprint()
-            if self.profile != "ordinary" else None,
+            if self.profile != "ordinary"
+            else None,
             "test_target": self.recipe.get("test_target"),
             "build_steps": steps,
             "source_import_probe": probe_data,
@@ -1117,18 +1188,38 @@ class DockerToolBackend:
     def remove_previous_container(self, snapshot: dict[str, Any]) -> None:
         """Remove an abandoned container only after checking its exact owned identity."""
         previous = snapshot.get("container_id")
-        if (not isinstance(previous, str) or re.fullmatch(r"[0-9a-f]{64}", previous) is None
-                or previous == self.container_id):
+        if (
+            not isinstance(previous, str)
+            or re.fullmatch(r"[0-9a-f]{64}", previous) is None
+            or previous == self.container_id
+        ):
             raise WorkspaceError("invalid previous Docker container identity")
-        found = _run([self.docker, "ps", "-a", "--no-trunc", "--filter", f"id={previous}",
-                      "--format", "{{.ID}}"])
+        found = _run(
+            [
+                self.docker,
+                "ps",
+                "-a",
+                "--no-trunc",
+                "--filter",
+                f"id={previous}",
+                "--format",
+                "{{.ID}}",
+            ]
+        )
         identifiers = found.stdout.decode("utf-8").splitlines()
         if not identifiers:
             return
         if identifiers != [previous]:
             raise WorkspaceError("previous Docker container identity is ambiguous")
-        owned = _run([self.docker, "inspect", "--format",
-                      '{{index .Config.Labels "tracefix.run_id"}}', previous])
+        owned = _run(
+            [
+                self.docker,
+                "inspect",
+                "--format",
+                '{{index .Config.Labels "tracefix.run_id"}}',
+                previous,
+            ]
+        )
         if owned.stdout.decode("utf-8").strip() != self.run_id:
             raise WorkspaceError("previous Docker container ownership changed; removal refused")
         _run([self.docker, "rm", "-f", previous])
@@ -1210,47 +1301,67 @@ class DockerToolBackend:
                 artifact_record = {
                     "artifacts_enabled": True,
                     "run_id": self.run_id,
-                    "artifact_archive": artifact_archive_path.relative_to(
-                        self.run_dir
-                    ).as_posix(),
+                    "artifact_archive": artifact_archive_path.relative_to(self.run_dir).as_posix(),
                     "artifact_archive_bytes": artifact_archive_path.stat().st_size,
                     "artifact_archive_sha256": artifact_archive_sha256,
                     "artifact_receipt": receipt,
                 }
             with temporary.open("xb") as output:
                 result = subprocess.run(
-                    [self.docker, "exec", self.container_name, "env",
-                     "PYTHONPATH=/opt/tracefix/src", self.python, "-m",
-                     "tracefix.workspace_snapshot", "export", "--workspace", "/work/agent"],
-                    stdout=output, stderr=subprocess.PIPE, timeout=self.timeout_seconds + 120,
+                    [
+                        self.docker,
+                        "exec",
+                        self.container_name,
+                        "env",
+                        "PYTHONPATH=/opt/tracefix/src",
+                        self.python,
+                        "-m",
+                        "tracefix.workspace_snapshot",
+                        "export",
+                        "--workspace",
+                        "/work/agent",
+                    ],
+                    stdout=output,
+                    stderr=subprocess.PIPE,
+                    timeout=self.timeout_seconds + 120,
                     check=False,
                 )
                 output.flush()
                 os.fsync(output.fileno())
             if result.returncode:
-                raise WorkspaceError("Docker product snapshot failed", context={
-                    "stderr": result.stderr.decode("utf-8", "replace")[-2000:],
-                })
+                raise WorkspaceError(
+                    "Docker product snapshot failed",
+                    context={
+                        "stderr": result.stderr.decode("utf-8", "replace")[-2000:],
+                    },
+                )
             metadata = json.loads(result.stderr.decode("utf-8"))
             validate_archive(temporary, metadata)
             os.replace(temporary, archive_path)
             self.export_evidence()
             journal = (self.run_dir / "tool-events.jsonl").read_bytes()
             record = {
-                "schema_version": 1, "sequence": sequence, "batch_id": identity,
+                "schema_version": 1,
+                "sequence": sequence,
+                "batch_id": identity,
                 "archive": archive_path.relative_to(self.run_dir).as_posix(),
                 "metadata": metadata,
-                "bridge_state": state.output, "bridge_state_sha256": digest(state.output),
-                "journal_size": len(journal), "journal_sha256": hashlib.sha256(journal).hexdigest(),
+                "bridge_state": state.output,
+                "bridge_state_sha256": digest(state.output),
+                "journal_size": len(journal),
+                "journal_sha256": hashlib.sha256(journal).hexdigest(),
                 "baseline_sha256": hashlib.sha256(
                     (self.run_dir / "agent-base.tar").read_bytes(),
                 ).hexdigest(),
-                "image_id": self.image_id, "container_id": self.container_id,
+                "image_id": self.image_id,
+                "container_id": self.container_id,
                 "interpreter": self.workspace_preparation["container_interpreter"],
                 "tool_sha256": tool_identity(self.session.tools),
-                "test_evidence": {path.name: hashlib.sha256(path.read_bytes()).hexdigest()
-                                  for path in (self.run_dir / "test-evidence").iterdir()
-                                  if path.is_file()},
+                "test_evidence": {
+                    path.name: hashlib.sha256(path.read_bytes()).hexdigest()
+                    for path in (self.run_dir / "test-evidence").iterdir()
+                    if path.is_file()
+                },
                 **artifact_record,
             }
             if self.artifacts_enabled:
@@ -1286,18 +1397,35 @@ class DockerToolBackend:
         # Streaming stdin avoids a second 1 GiB host buffer and preserves container tmpfs space.
         with path.open("rb") as source:
             restored = subprocess.run(
-                [self.docker, "exec", "-i", self.container_name, "env",
-                 "PYTHONPATH=/opt/tracefix/src", self.python, "-m",
-                 "tracefix.workspace_snapshot", "restore-stream", "--workspace", "/work/agent",
-                 "--metadata", "/input/restore-metadata.json"], stdin=source, capture_output=True,
-                timeout=self.timeout_seconds + 120, check=False,
+                [
+                    self.docker,
+                    "exec",
+                    "-i",
+                    self.container_name,
+                    "env",
+                    "PYTHONPATH=/opt/tracefix/src",
+                    self.python,
+                    "-m",
+                    "tracefix.workspace_snapshot",
+                    "restore-stream",
+                    "--workspace",
+                    "/work/agent",
+                    "--metadata",
+                    "/input/restore-metadata.json",
+                ],
+                stdin=source,
+                capture_output=True,
+                timeout=self.timeout_seconds + 120,
+                check=False,
             )
         if restored.returncode:
-            raise WorkspaceError("could not restore Docker recovery archive", context={
-                "stderr": restored.stderr.decode("utf-8", "replace")[-2000:],
-            })
-        _run([self.docker, "exec", self.container_name, "rm", "-f",
-              "/input/restore-metadata.json"])
+            raise WorkspaceError(
+                "could not restore Docker recovery archive",
+                context={
+                    "stderr": restored.stderr.decode("utf-8", "replace")[-2000:],
+                },
+            )
+        _run([self.docker, "exec", self.container_name, "rm", "-f", "/input/restore-metadata.json"])
         if self.artifacts_enabled:
             if self.artifact_environment_path is None:
                 raise WorkspaceError("artifact restore environment identity is unavailable")
@@ -1346,7 +1474,11 @@ class DockerToolBackend:
             except (UnicodeDecodeError, json.JSONDecodeError) as exc:
                 raise WorkspaceError("Docker artifact restore receipt is invalid") from exc
             for field in (
-                "manifest_sha256", "artifact_count", "storage_bytes", "queries",
+                "manifest_sha256",
+                "artifact_count",
+                "artifact_ids",
+                "storage_bytes",
+                "queries",
                 "returned_chars",
             ):
                 if imported.get(field) != receipt.get(field):
@@ -1411,9 +1543,17 @@ class DockerToolBackend:
     def _copy_file_into(self, source: Path, destination: str) -> None:
         if self.profile == "ordinary":
             _run(
-                [self.docker, "exec", "-i", self.container_name,
-                 "sh", "-c", f"cat > {destination}"],
-                input_data=source.read_bytes(), timeout=120,
+                [
+                    self.docker,
+                    "exec",
+                    "-i",
+                    self.container_name,
+                    "sh",
+                    "-c",
+                    f"cat > {destination}",
+                ],
+                input_data=source.read_bytes(),
+                timeout=120,
             )
         else:
             _run([self.docker, "cp", str(source), f"{self.container_name}:{destination}"])
@@ -1421,18 +1561,33 @@ class DockerToolBackend:
     def _install_trusted_executor(self, bundle: bytes, expected_sha256: str) -> None:
         """Install the trusted bridge as root before any task code is executed."""
         root = [self.docker, "exec", "--user", "0:0", self.container_name]
-        _run([*root, "mkdir", "-p", "/opt/tracefix/src", "/opt/tracefix/runtime",
-              "/opt/tracefix/request-test"])
         _run(
-            [*root[:-1], "-i", self.container_name, "tar", "-xf", "-",
-             "--no-same-owner", "-C", "/opt/tracefix"],
+            [
+                *root,
+                "mkdir",
+                "-p",
+                "/opt/tracefix/src",
+                "/opt/tracefix/runtime",
+                "/opt/tracefix/request-test",
+            ]
+        )
+        _run(
+            [
+                *root[:-1],
+                "-i",
+                self.container_name,
+                "tar",
+                "-xf",
+                "-",
+                "--no-same-owner",
+                "-C",
+                "/opt/tracefix",
+            ],
             input_data=bundle,
             timeout=120,
         )
-        _run([*root, "find", "/opt/tracefix", "-type", "f", "-exec", "chmod",
-              "0444", "{}", "+"])
-        _run([*root, "find", "/opt/tracefix", "-type", "d", "-exec", "chmod",
-              "0555", "{}", "+"])
+        _run([*root, "find", "/opt/tracefix", "-type", "f", "-exec", "chmod", "0444", "{}", "+"])
+        _run([*root, "find", "/opt/tracefix", "-type", "d", "-exec", "chmod", "0555", "{}", "+"])
         verify = (
             "import hashlib,json,pathlib,stat,sys; "
             "root=pathlib.Path('/opt/tracefix'); "
