@@ -8,6 +8,7 @@ import os
 import queue
 import signal
 import subprocess
+import sys
 import threading
 import time
 from abc import ABC, abstractmethod
@@ -52,8 +53,17 @@ class ProcessTreeScope(ABC):
         gate = Path(__file__).with_name("_bootstrap.py").resolve(strict=True)
         gate_released = False
         try:
+            # A Windows venv launcher can spawn its real interpreter before Job assignment.
+            # Run this stdlib-only gate with the host's base interpreter; the configured
+            # test interpreter is launched by the gate only after scope membership is set.
+            gate_python = getattr(sys, "_base_executable", None)
+            if not isinstance(gate_python, str) or not Path(gate_python).is_absolute():
+                raise JobError("process_scope_trusted_interpreter_unavailable")
+            gate_python = Path(gate_python).resolve(strict=True)
+            if not gate_python.is_file():
+                raise JobError("process_scope_trusted_interpreter_unavailable")
             self.process = subprocess.Popen(
-                [argv[0], "-I", "-S", str(gate)], cwd=gate.parent, env=dict(env),
+                [str(gate_python), "-I", "-S", str(gate)], cwd=gate.parent, env=dict(env),
                 stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                 shell=False, start_new_session=os.name != "nt",
                 creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0,

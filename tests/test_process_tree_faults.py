@@ -169,6 +169,7 @@ def test_gate_failure_distinguishes_proven_no_start_from_missing_ack(
         scope.start(argv, cwd=tmp_path, env={})
     assert error.value.process_started is started and error.value.tree_exit_confirmed
     assert calls[0][0][1:3] == ["-I", "-S"] and calls[0][1]["shell"] is False
+    assert Path(calls[0][0][0]) == Path(sys._base_executable).resolve()
     if fault in {"oversize", "attach"}:
         assert not payload.getvalue()
     with pytest.raises(JobError, match="already_dispatched"):
@@ -185,3 +186,21 @@ def test_invalid_scope_launch_does_not_create_even_the_trusted_gate(
     monkeypatch.setattr(process_tree.subprocess, "Popen", forbidden)
     with pytest.raises(JobError, match="invalid_launch"):
         ContractScope().start(argv, cwd=tmp_path, env={}, startup_timeout=timeout)
+
+
+@pytest.mark.parametrize("interpreter", ["missing", "relative", "directory", "not_found"])
+def test_unavailable_host_interpreter_never_falls_back_to_project_python(
+    tmp_path, monkeypatch, interpreter,
+):
+    def forbidden(*args, **kwargs):
+        raise AssertionError("unverified interpreter reached process creation")
+
+    value = {"missing": None, "relative": "python.exe", "directory": str(tmp_path),
+             "not_found": str(tmp_path / "missing.exe")}[interpreter]
+    monkeypatch.setattr(sys, "_base_executable", value)
+    monkeypatch.setattr(process_tree.subprocess, "Popen", forbidden)
+    scope = ContractScope()
+    with pytest.raises(ProcessStartError) as failure:
+        scope.start([str(tmp_path / "project-python.exe")], cwd=tmp_path, env={})
+    assert failure.value.process_started is False and failure.value.tree_exit_confirmed
+    assert scope._closed and scope.process is None

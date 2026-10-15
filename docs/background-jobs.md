@@ -3,7 +3,8 @@
 当前候选已接通本地 Runner/API/CLI 的后台 pytest、增量读取、取消和安全暂停恢复。
 **G5 尚未完成工程验收。** 候选已接通ordinary Docker正式Runner/inspect/resume、基线产物交接和根预算。
 本地真实回放通过取消/自然完成、新进程恢复、最小3次baseline/finalgate及逃离组后代中止整个容器；
-完整双版本>=90%门和正式入口安装包/CI验证尚未通过，使用边界以当前状态和G5记录为准。
+5398a7b的CI167正式入口wheel/editable已通过，但双版本综合覆盖率89.80%左右未过90%。
+之后又修复Windows venv启动器归属竞态；该新实现仍需重新验收，使用边界以当前状态和G5记录为准。
 
 ## 本地启用
 
@@ -55,7 +56,8 @@ background_jobs_enabled=True)`。实际运行的模型及其预算仍由原配�
 Windows 用例会建立并清理自己的临时仓库与子进程；其他平台保留实际 skip 原因。
 这里覆盖正式本地 Runner 的暂停/新进程恢复、共享基线/最终门及真实宿主硬崩溃。
 其中 Serena 组合只验证静态目录身份，明确使用 transport 替身，不是实际 MCP 调用。
-独立 wheel/editable 和完整 Docker 后台组合入口尚未交付。
+ordinary独立wheel/editable正式入口已在CI167通过，底部给出真实Docker复现脚本。
+此结果归属5398a7b，不能替之后的进程归属修复关闭完整阶段门。
 实际计数、源码身份和限制见[G5进度](tasks/2026-10-16-g5-progress.md)。
 
 ## ordinary Docker候选组合

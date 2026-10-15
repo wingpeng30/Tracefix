@@ -145,6 +145,52 @@ def test_windows_gate_does_not_execute_site_extensions_before_assignment(tmp_pat
 
 
 @pytest.mark.skipif(os.name != "nt", reason="Windows Job Object API")
+def test_windows_venv_target_is_owned_even_when_assignment_is_delayed(tmp_path):
+    environment = tmp_path / "venv"
+    venv.EnvBuilder(with_pip=False).create(environment)
+
+    class DelayedAssignment(WindowsJobScope):
+        def _attach(self, process):
+            # A venv redirector may create its interpreter before its parent is assigned.
+            time.sleep(0.3)
+            super()._attach(process)
+
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel.OpenProcess.argtypes = [ctypes.c_uint32, ctypes.c_int, ctypes.c_uint32]
+    kernel.OpenProcess.restype = ctypes.c_void_p
+    kernel.IsProcessInJob.argtypes = [ctypes.c_void_p, ctypes.c_void_p,
+                                     ctypes.POINTER(ctypes.c_int)]
+    kernel.IsProcessInJob.restype = ctypes.c_int
+    kernel.WaitForSingleObject.argtypes = [ctypes.c_void_p, ctypes.c_uint32]
+    kernel.WaitForSingleObject.restype = ctypes.c_uint32
+    kernel.TerminateProcess.argtypes = [ctypes.c_void_p, ctypes.c_uint32]
+    kernel.CloseHandle.argtypes = [ctypes.c_void_p]
+    scope, handle = DelayedAssignment(), None
+    try:
+        process = scope.start(
+            [str(environment / "Scripts/python.exe"), "-c",
+             "import os,time; print(os.getpid(),flush=True); time.sleep(60)"],
+            cwd=tmp_path, env=minimal_subprocess_environment())
+        pid = int(process.stdout.readline())
+        handle = kernel.OpenProcess(0x100000 | 0x1000 | 1, False, pid)
+        assert handle
+        owned = ctypes.c_int()
+        assert kernel.IsProcessInJob(handle, scope._job, ctypes.byref(owned))
+        assert owned.value, "test interpreter escaped the Job through a venv redirector"
+        scope.terminate_tree()
+        assert scope.wait_empty(timeout=3)
+        assert kernel.WaitForSingleObject(handle, 3000) == 0
+        process.communicate(timeout=3)
+    finally:
+        # Keep the negative regression safe when run against the old implementation.
+        if handle:
+            kernel.TerminateProcess(handle, 1)
+            kernel.WaitForSingleObject(handle, 3000)
+            kernel.CloseHandle(handle)
+        assert scope.close()
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows Job Object API")
 def test_windows_cancellation_stops_child_and_grandchild_in_new_process_groups(tmp_path):
     scope = WindowsJobScope()
     grandchild = "import time; time.sleep(60)"
