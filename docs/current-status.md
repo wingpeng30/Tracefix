@@ -3,6 +3,16 @@
 更新日期：2026-10-16（Asia/Shanghai）。这是新会话的固定状态入口；日期化交接、路线图条目与实验报告
 保留当时事实，不自动成为今天的任务。先读本页，再按用户当前请求读取对应源码和证据。
 
+## 2026-10-16 G5—G8 已进入实施：先修复起点
+
+用户已批准[分阶段计划](tasks/2026-10-16-harness-runtime-implementation.md)。实施分支`codex/harness-runtime`，
+工作树`D:/Tracefix/runs/harness-foundations-worktree`，起点bb43e31；原工作区源码不混入。
+实际核对发现G4保存提交2dfd759的[CI #157](https://github.com/wingpeng30/Tracefix/actions/runs/38768213294)失败：
+双Python完整工程步骤通过，公开资格脚本漏dispatcher；ordinary组合在切换目录后用错Docker构建相对路径。
+基础Docker及Serena通过。当前先复现修复这两项，G5—G8均未开始，不借原本地验收关闭起点门。
+原始日志在候选`runs/harness-runtime-start/`，没有供应商调用。
+下方“下一步仅规划”及旧上传限制保留历史归属，以本条和最新用户要求为准。
+
 ## 2026-10-16 GitHub 保存完成
 
 用户已重新授权上传。当前原工作区快照0830b52与G0—G4候选源码快照2dfd759均已推送并核验，

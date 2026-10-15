@@ -1,5 +1,9 @@
 # TraceFix 开发历程与代码说明
 
+## 2026-10-16 G5—G8 起点核验及CI157缺陷复现
+
+读取真实CI157日志：两版工程步骤成功，资格入口漏传dispatcher，ordinary构建在RUNNER_TEMP查找相对docker目录失败。新增真实小仓库定向测试先重现两项TypeError；修复只限起点脚本/CI及对应测试，G5功能尚未开始。日志和源码清单保存在候选runs/harness-runtime-start，模型调用0。 计划及阶段状态见[实施清单](tasks/2026-10-16-harness-runtime-implementation.md)。
+
 ## 2026-10-16 用户授权保存当前项目至 GitHub
 
 先核对两个工作区与远端历史，限定27/71文件清单并扫描凭据，排除原始runs和临时目录。

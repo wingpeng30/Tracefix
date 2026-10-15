@@ -6,7 +6,7 @@ on:
                'codex/docker-recovery', 'codex/memory-dialogue-integration',
                'codex/agent-model-comparison', 'codex/bc-350k-tokenizer',
                'codex/abc-holdout-capability', 'codex/bc-holdout-180s', 'codex/ac-30-180s',
-               'codex/harness-foundations']
+               'codex/harness-foundations', 'codex/harness-runtime']
   pull_request:
   workflow_dispatch:
 
@@ -311,7 +311,7 @@ jobs:
           python -m pip install --no-deps --no-build-isolation -e .
       - name: Build isolated Serena image and record immutable ID
         run: |
-          docker build --pull=true -f docker/serena-mcp.Dockerfile -t tracefix-serena-mcp:${{ github.sha }} .
+          docker build --pull=true -f "$GITHUB_WORKSPACE/docker/serena-mcp.Dockerfile" -t tracefix-serena-mcp:${{ github.sha }} "$GITHUB_WORKSPACE"
           docker image inspect --format '{{.Id}}' tracefix-serena-mcp:${{ github.sha }} > "$RUNNER_TEMP/tracefix-serena-image-id.txt"
       - name: Replay a full Agent repair with real MCP symbol queries
         run: |
@@ -373,7 +373,7 @@ jobs:
           python -c 'import json,sys; d=json.load(open(sys.argv[1])); assert d["accepted"] and d["provider_calls"] == 0 and d["independent_test_counts"]["passed"] == 3' "$RUNNER_TEMP/ordinary-integration-wheel-summary.json"
           python "$GITHUB_WORKSPACE/examples/replay_artifact_recovery.py" --image-id "$image_id" --output "$RUNNER_TEMP/ordinary-artifact-recovery" > "$RUNNER_TEMP/ordinary-artifact-recovery-summary.json"
           python -c 'import json,sys; d=json.load(open(sys.argv[1])); assert d["passed"] and d["provider_calls"] == 0 and d["synthetic_model_requests"] > 0 and d["all_containers_removed"] and d["artifact_queries_at_pause"] == 1' "$RUNNER_TEMP/ordinary-artifact-recovery-summary.json"
-          docker build --pull=true -f docker/serena-mcp.Dockerfile -t tracefix-serena-mcp:${{ github.sha }} .
+          docker build --pull=true -f "$GITHUB_WORKSPACE/docker/serena-mcp.Dockerfile" -t tracefix-serena-mcp:${{ github.sha }} "$GITHUB_WORKSPACE"
           serena_image_id="$(docker image inspect --format '{{.Id}}' tracefix-serena-mcp:${{ github.sha }})"
           printf '%s\n' "$serena_image_id" > "$RUNNER_TEMP/ordinary-serena-image-id.txt"
           python "$GITHUB_WORKSPACE/examples/replay_artifact_recovery.py" --image-id "$image_id" --mcp-image-id "$serena_image_id" --composite --output "$RUNNER_TEMP/ordinary-artifact-recovery-composite" > "$RUNNER_TEMP/ordinary-artifact-recovery-composite-summary.json"

@@ -14,6 +14,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from tracefix import AgentConfig, RunConfig, ToolCall, TraceFixRunner
+from tracefix.capabilities import CallerOrigin, independent_validation_dispatcher
 from tracefix.models.litellm_adapter import LiteLLMAdapter
 from tracefix.onboarding import export_patch, verify_patch
 from tracefix.provenance import inspect_test_environment
@@ -179,15 +180,17 @@ def assert_failure_evidence(test: dict) -> None:
             raise ValueError("expected assertion failure contains a non-assertion exception")
 
 
-def apply_product(workspace: Path, product_patch: str, allowed_paths: set[str]) -> dict:
+def apply_product(workspace: Path, product_patch: str, allowed_paths: set[str], dispatcher) -> dict:
     from tracefix.tools.builtin import ApplyPatchTool
 
-    result = ApplyPatchTool(workspace).execute(
+    result = dispatcher.invoke(
+        ApplyPatchTool(workspace),
         ToolCall(
             id="qualification-product-patch",
             name="apply_patch",
             arguments={"patch": product_patch},
-        )
+        ),
+        CallerOrigin.INDEPENDENT_VALIDATION,
     )
     if not result.success:
         raise ValueError(f"product patch rejected: {result.error}")
@@ -213,10 +216,12 @@ def run_case(
         task="Qualification only",
         output_dir=directory / "runs",
         env_file=None,
+        execution_backend="local",
         test_target=manifest["task_target"],
         source_import=manifest["source_import"],
         test_python_executable=python,
     )
+    dispatcher = independent_validation_dispatcher(config.execution_profile)
     preparation = TraceFixRunner._prepare_workspace(config, workspace, directory)
     record = {
         "preparation": preparation,
@@ -231,7 +236,7 @@ def run_case(
             paths = {p["path"] for p in manifest.get("products", [])}
             if not paths:
                 paths = {manifest["product_path"]}
-            record["patch_application"] = apply_product(workspace, product_patch, paths)
+            record["patch_application"] = apply_product(workspace, product_patch, paths, dispatcher)
         record["source_before"] = source_state(workspace)
         targets = [manifest["task_target"], *manifest["regression_targets"]]
         tool = RunTestsTool(
@@ -243,7 +248,7 @@ def run_case(
         for index, (target, wanted) in enumerate(zip(targets, expected, strict=True)):
             _target_path(workspace, target)
             evidence = directory / f"test-{index}"
-            test = _test(tool, target, evidence)
+            test = _test(tool, target, evidence, dispatcher)
             evidence.mkdir(parents=True, exist_ok=True)
             write_json(evidence / "result.json", test)
             for channel in ("stdout", "stderr"):

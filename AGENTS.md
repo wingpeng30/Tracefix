@@ -4,6 +4,11 @@
 [`docs/roadmap.md`](docs/roadmap.md)、[`docs/development-history.md`](docs/development-history.md)
 开头及当前状态引用的报告。不要以文件名日期、包版本号或旧交接末尾决定当前进度。
 
+## G5—G8实施入口
+
+最新用户已批准实施G5—G8，不再仅规划。先读取current-status中的CI157起点核验；起点通过前不进入G5。
+原工作区源码与候选分开，实施分支codex/harness-runtime；下方旧状态按日期保留。
+
 ## 2026-10-16 当前入口补充
 
 用户本轮已授权保存项目：原工作区0830b52、G0—G4候选2dfd759均已推送至各自分支。

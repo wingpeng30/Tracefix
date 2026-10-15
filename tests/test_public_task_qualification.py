@@ -2,18 +2,59 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import subprocess
 import sys
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
+from tracefix.capabilities import CallerOrigin, ToolDispatcher
 from tracefix.models.litellm_adapter import LiteLLMAdapter
 
 SCRIPT = Path(__file__).resolve().parents[1] / "scripts/qualify_public_task.py"
 spec = importlib.util.spec_from_file_location("qualify_public_task", SCRIPT)
 qualification = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(qualification)
+
+
+@pytest.mark.parametrize("patched", [False, True])
+def test_case_runs_real_tests_and_patch_through_independent_policy(tmp_path, monkeypatch, patched):
+    source = tmp_path / "source"
+    source.mkdir()
+    (source / "widget.py").write_text("VALUE = 1\n", encoding="utf-8")
+    (source / "tests").mkdir()
+    for name in ("test_task.py", "test_regression.py"):
+        (source / "tests" / name).write_text(
+            "from widget import VALUE\ndef test_value():\n    assert VALUE > 0\n",
+            encoding="utf-8",
+        )
+    for args in (
+        ["init", "-q"], ["add", "."],
+        ["-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "-qm", "seed"],
+    ):
+        subprocess.run(["git", *args], cwd=source, check=True, capture_output=True)
+    calls = []
+    original = ToolDispatcher.invoke
+
+    def invoke(dispatcher, tool, call, origin):
+        calls.append((call.name, origin))
+        return original(dispatcher, tool, call, origin)
+
+    monkeypatch.setattr(ToolDispatcher, "invoke", invoke)
+    manifest = {
+        "task_target": "tests/test_task.py", "source_import": "widget",
+        "regression_targets": ["tests/test_regression.py"], "product_path": "widget.py",
+        "target_counts": {"tests/test_task.py": 1, "tests/test_regression.py": 1},
+    }
+    patch = "--- a/widget.py\n+++ b/widget.py\n@@ -1 +1 @@\n-VALUE = 1\n+VALUE = 2\n"
+    result = qualification.run_case(
+        source, tmp_path / "evidence", manifest, Path(sys.executable),
+        patch if patched else None, ("passed", "passed"),
+    )
+    assert result["passed"]
+    expected = (["apply_patch"] if patched else []) + ["run_tests", "run_tests"]
+    assert calls == [(name, CallerOrigin.INDEPENDENT_VALIDATION) for name in expected]
 
 
 def test_frozen_task_identity_and_preparation_scope():
@@ -195,7 +236,10 @@ def test_product_patch_cannot_qualify_by_modifying_tests(tmp_path, monkeypatch):
         ),
     )
     with pytest.raises(ValueError, match="outside declared"):
-        qualification.apply_product(tmp_path, "mock patch", {"product.py"})
+        qualification.apply_product(
+            tmp_path, "mock patch", {"product.py"},
+            qualification.independent_validation_dispatcher("workspace_write"),
+        )
 
 
 def test_package_unrecorded_file_is_rejected(tmp_path):
