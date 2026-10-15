@@ -1,5 +1,9 @@
 # TraceFix 开发历程与代码说明
 
+## 2026-10-16 G5.3跨平台与G5.4增量采集
+
+Linux cgroup CI38782058006实际8通过/5 Windows平台skip；本机Windows对应实测通过，Docker逃离组拒绝假清理并删除容器。新增持久raw/view、流式脱敏和共享配额预留，seal不复制/不重复计费。两版产物及采集各132通过，真实Docker增量中段/取消通过。仅定向子步骤通过，G5完整门未关闭，预算/bridge/恢复未接通。详见[G5实施记录](tasks/2026-10-16-g5-progress.md)。
+
 ## 2026-10-16 G5.1—G5.3 实现与定向验证
 
 抽出不可变作业/测试模型和共用判定，新增Windows Job Object/Linux cgroup/Docker域控制及可信启动门。两版domain/scope定向各31通过、2平台skip；完整阶段工程门尚未执行。 详见[G5实施记录](tasks/2026-10-16-g5-progress.md)。
