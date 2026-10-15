@@ -1,12 +1,14 @@
 # TraceFix
 
+2026-10-16 已将原工作区与G0—G4候选分别保存到GitHub；分支、验收边界与后续入口见[保存记录](docs/maintenance/2026-10-16-github-save.md)。
+
 新会话与项目进度先看[当前状态](docs/current-status.md)，这是固定交接入口。最新同题30题A/B/上下文修复后C
 主成功为11/30、11/30、19/30，详见[ABC报告](docs/experiments/2026-10-11-abc-full30-comparison.md)。
 该实验之后工作区已实现统一LLM网关及长驻tokenizer worker，定向离线验证通过；实际提速和完整发布门槛仍待验证。
 旧实验、日期化交接和旧wheel不代表当前源码全部状态。
 
 本地harness候选已完成G0—G3 CI及G4本地验收，包含记忆、工具产物、任务状态、能力策略与Docker/Serena组合。
-候选代码与本目录源码分开保存，最新结果和使用入口见[环境与验收记录](runs/harness-foundations-worktree/docs/tasks/2026-10-15-g4-environment-acceptance.md)；本轮未上传或触发CI。
+候选代码与本目录源码分开保存，最新结果和使用入口见[环境与验收记录](runs/harness-foundations-worktree/docs/tasks/2026-10-15-g4-environment-acceptance.md)；现已按用户授权保存到GitHub。
 
 普通 Python 仓库的任务检查与恢复说明见 [docs/recovery.md](docs/recovery.md)。
 

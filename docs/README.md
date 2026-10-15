@@ -8,6 +8,7 @@
 
 ## 新任务交接入口
 
+- [2026-10-16 GitHub保存记录](maintenance/2026-10-16-github-save.md)：原工作区与G4候选的远端提交、保存范围、验证边界与下一阶段入口。
 - [`current-status.md`](current-status.md)：当前代码身份、最新结果、验证边界与下一任务起点。
 - [G4候选环境与本地验收](../runs/harness-foundations-worktree/docs/tasks/2026-10-15-g4-environment-acceptance.md)：环境补齐、真实Docker/Serena组合、双Python工程结果及本地使用入口；候选源码尚未合入本目录。
 - [`security.md`](security.md)：普通任务、文件工具、子进程、Docker 和提示注入的基础安全约定。
