@@ -1,5 +1,17 @@
 # TraceFix 开发历程与代码说明
 
+## 2026-10-16 G5 CI168夹具不匹配修复
+
+CI168/17a0e53两版各2019项，3失败/0错误/2平台skip；覆盖率27404/30438与27401/30438均过90%。
+原始JUnit确认3项bridge装配夹具因缺Git初始提交而失败；本机位于父仓库内造成定向假阳性，CI仓库外正确拒绝。
+仅修夹具：创建自己的Git初始提交，show-toplevel必须等于workspace；系统临时目录先核验不在任何Git内，
+再双Python各3通过（g5-assembly-outside-311/312.log）。不改产品校验、不删失败用例、不降门槛。
+Linux专用工作流增加进程故障/namespace/bridge契约及对应触发路径；旧范围仍保留，新完整结果待核验。
+CI168实际Docker/ordinary正式wheel-editable/Serena和Linux原范围通过，只绑定17a0e53。
+已核验工程3.12 artifact12015995278 / 36d6c50259307900aebce56f094b9dfb07ba63fcdd70cfeb806565ec63652955，
+ordinary artifact12015097029 / da481d5ef6525fd15b7295a946526f87066abcff85e9eb5dada80507edeb8725。
+全部原始日志、校验ZIP及有限提取数据保存在候选runs/harness-runtime-start，供应商调用0。G5不关闭，G6—G8未开始。
+
 ## 2026-10-16 G5 Windows启动器归属竞态
 
 固定5398a7b的CI167测试两版各1990项/零失败错误/2平台skip；覆盖率27323/30427和27320/30427，未过90%。

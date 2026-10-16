@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import subprocess
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
@@ -41,6 +42,13 @@ def test_bridge_refuses_unsafe_preflight_or_policy_before_any_test_launch(
     workspace, evidence = tmp_path / "workspace", tmp_path / "evidence"
     workspace.mkdir()
     evidence.mkdir()
+    for args in (("init", "-q"),
+                 ("-c", "user.name=TraceFix Test", "-c", "user.email=test@example.invalid",
+                  "commit", "--allow-empty", "-qm", "isolated bridge fixture")):
+        subprocess.run(["git", *args], cwd=workspace, check=True, capture_output=True)
+    actual_root = subprocess.check_output(
+        ["git", "rev-parse", "--show-toplevel"], cwd=workspace, text=True).strip()
+    assert workspace.samefile(actual_root), "fixture must not borrow an ancestor repository"
     artifacts = ArtifactStore(evidence / "artifacts", run_id="root-run", streaming_enabled=True)
     tools = create_default_tool_registry(workspace, evidence_dir=evidence)
     policy = CapabilityPolicy(CapabilityCatalog.for_tool_names(

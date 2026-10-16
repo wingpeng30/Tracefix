@@ -7,6 +7,9 @@ on:
       - 'src/tracefix/jobs/**'
       - 'src/tracefix/artifacts.py'
       - 'tests/test_process_tree_scope.py'
+      - 'tests/test_process_tree_faults.py'
+      - 'tests/test_job_process_namespace_contract.py'
+      - 'tests/test_job_bridge_assembly_contract.py'
       - 'tests/test_live_process_capture.py'
       - 'tests/test_live_artifact_store.py'
       - 'tests/test_job_redaction.py'
@@ -60,6 +63,9 @@ jobs:
           os.execv(sys.argv[3], [sys.argv[3], '-m', 'pytest',
                    'tests/test_process_tree_scope.py', 'tests/test_live_process_capture.py',
                    'tests/test_live_artifact_store.py', 'tests/test_job_redaction.py',
+                   'tests/test_process_tree_faults.py',
+                   'tests/test_job_process_namespace_contract.py',
+                   'tests/test_job_bridge_assembly_contract.py',
                    '-v', '-o', 'addopts=',
                    '--junitxml=scope-results.xml'])
           PY
