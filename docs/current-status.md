@@ -1,5 +1,22 @@
 # TraceFix 当前状态
 
+## 2026-10-16 G6阶段门关闭，下一步G7
+
+G6实现a5683b3826e06675656b078a324233090934dc53 / CI170全部成功；双Windows各2469通过/3 Linux平台skip，0失败/错误。
+精确行分支综合覆盖率30228/33450=90.3677130044843%、30225/33450=90.35874439461884%，原范围Ruff/编译/diff、仓库外editable/wheel和所有Docker/MCP门均通过。
+同提交Linux518通过/9 Windows平台skip；原始JUnit逐项互补已核对，未解释skip为0。六类官方ZIP已校验SHA256归档。
+ordinary规则组合的两种安装方式均实测两进程/两容器恢复、旧游标、补丁前后Serena及真实pytest，供应商调用0。
+证据、代码/镜像/产物身份及限制见[G6验收](tasks/2026-10-16-g6-acceptance.md)，用法见[仓库规则](repository-rules.md)。
+后续文档提交只记录上述已验收实现，不宣称新HEAD重跑完整门；未合并、未发布。按原计划下一步G7.1 Skills契约，G8未开始。
+
+## 2026-10-16 G6候选a5683b3已推送，CI170运行中
+
+实现提交a5683b3826e06675656b078a324233090934dc53，tree 3631bd3e16b140d0301f7cefe5ea8135494fb307，专用codex/harness-runtime分支；74个源码/测试/CI/文档文件，不含runs或旧临时目录。
+[CI170](https://github.com/wingpeng30/Tracefix/actions/runs/38852551739)的基础Docker、Serena和ordinary组合均已成功；双Python全量工程仍运行，尚无覆盖率/阶段关闭结论。
+[Linux同提交补证](https://github.com/wingpeng30/Tracefix/actions/runs/38852551729)实际518通过/9 Windows专属skip，0失败/错误；已下载官方SHA256核验ZIP及JUnit，等待Windows结果逐项互补。
+工作区338文件清单a8e25d1e06c046f9235bf570115f089ab5db29b68437d30d345fc254ed43c3c4，清单/原始产物位于候选runs/harness-runtime-start/ci170-*。
+继续读完整CI、精确覆盖率和安装包组合；G6未关闭，G7—G8未开始，不合并、不发布。
+
 ## 2026-10-16 G6安装包/真实容器回放通过，待最终CI
 
 提交前格式门已修两处空白，新wheel为1d957418a59997ec1d028647e40fcd058d7a922bfe09b52c49036bd0a54626b2；下方9f2b6103回放归属此前构建，当前提交最终门仍以新CI为准。

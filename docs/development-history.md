@@ -1,5 +1,23 @@
 # TraceFix 开发历程与代码说明
 
+## 2026-10-16 G6阶段验收关闭
+
+实现a5683b3826e06675656b078a324233090934dc53/tree3631bd3e16b140d0301f7cefe5ea8135494fb307，CI170五job及同提交Linux38852551729全部成功。
+Windows3.11.9/3.12.10各2469 passed/0 failed/error/3平台skip；原始行分支精确综合30228/33450=90.3677130044843%、30225/33450=90.35874439461884%。
+原范围Ruff/编译/diff与仓库外editable/wheel、原公开资格及所有Docker/MCP门通过；新增ordinary规则组合两种安装方式均10步/1测试、旧2游标保留、error=null、0供应商调用。
+Linux527条JUnit实际518通过/9 Windows skip；双Win三个skip均在Linux通过，Linux九项均在双Win通过，ci170-platform-complement-proof.json无未解释项。
+已下载六类官方ZIP并核验SHA256，保存六job解码日志及原始Coverage/JUnit；代码清单/镜像/产物身份见G6验收，原始证据ci170-*在忽略目录。
+此前主动中止本机全量及旧wheel/格式前回放保持历史归属，不借它们证明当前提交；未合并或发布。先保存阶段文档，再进入G7.1，G8未开始。
+
+## 2026-10-16 G6候选保存及CI170
+
+候选a5683b3826e06675656b078a324233090934dc53/tree3631bd3e16b140d0301f7cefe5ea8135494fb307，74文件7920新增/265删除行，已推至codex/harness-runtime。
+只保存获准源码/测试/工作流/文档，不包括runs、凭据或旧tracefix-test-evidence目录；原工作区源码不混入。
+CI170/38852551739运行中：基础Docker、Serena成功，双Windows全量与ordinary未完成；同提交Linux38852551729成功，527条JUnit实际518通过/9 Windows skip，无失败/错误。
+Linux artifact12025527719/ZIP SHA256 772dbe193789a155059791ab39ff9ac1c3a080c9da012287e40d1ead229545fa已核验；下载临时票据用后删除，不写签名URL进文档。
+338文件清单SHA256 a8e25d1e06c046f9235bf570115f089ab5db29b68437d30d345fc254ed43c3c4，原始/平台产物ci170-*在忽略证据目录。
+G6完整覆盖率/安装包组合和平台互补待读取，未关闭G6，未进入G7—G8；文档后续变动不能替新HEAD宣称完整验收。
+
 ## 2026-10-16 G6报告/夹具修复及安装方式验收
 
 恢复成功error不再继承旧KeyboardInterrupt，历史result仍归档；新装配夹具各自建Git并核对根，产品校验未放宽。

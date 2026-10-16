@@ -1,5 +1,16 @@
 # TraceFix 路线图
 
+## 2026-10-16 G6关闭，进入G7.1
+
+a5683b3 / CI170完整门全部成功：双Windows各2469通过、精确覆盖率90.3677%/90.3587%；Linux518通过，平台skip逐项互补。
+两安装方式和真实ordinary/Serena规则恢复组合通过，证据归档见[G6验收](tasks/2026-10-16-g6-acceptance.md)。
+下一阶段严格从G7.1版本化SkillContract开始；再按原步骤推进多MCP及显式目录转换。G8尚未开始。
+
+## 2026-10-16 G6候选CI170运行中
+
+a5683b3已保存推送；基础Docker、Serena及Linux518项同提交通过，Windows全量/覆盖率和ordinary仍运行。
+完整门及平台互补归档后才关闭G6，再进入G7—G8；详见固定状态。
+
 ## 2026-10-16 G6准备最终候选CI
 
 修复报告/独立Git夹具；Linux446规则契约、双版仓库外editable/wheel回放、当前wheel真实ordinary+Serena及独立补丁验证通过。
