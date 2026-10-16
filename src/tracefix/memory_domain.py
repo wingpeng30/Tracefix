@@ -12,6 +12,8 @@ from typing import Any, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from tracefix.source_view import SourceView as SourceView
+
 
 class FrozenDict(dict):
     """JSON-serializable mapping that rejects mutation at every nested level."""
@@ -217,12 +219,6 @@ class RecallBundle(BaseModel):
 
 class RepositoryIdentityResolver(Protocol):
     def resolve(self, repository: object) -> RepositoryIdentity: ...
-
-
-class SourceView(Protocol):
-    """Read-only access to approved regular source files under one repository root."""
-
-    def read_bytes(self, relative_path: str) -> bytes | None: ...
 
 
 class SourceSnapshotProvider(Protocol):

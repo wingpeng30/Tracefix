@@ -129,6 +129,7 @@ def main() -> int:
     parser.add_argument("--repo-map-config")
     parser.add_argument("--skills-enabled", action="store_true")
     parser.add_argument("--artifacts-enabled", action="store_true")
+    parser.add_argument("--repository-rules-enabled", action="store_true")
     parser.add_argument("--artifact-root", type=Path)
     parser.add_argument("--skill-limits-json")
     parser.add_argument("--skills-root", type=Path)
@@ -193,6 +194,8 @@ def main() -> int:
         ),
     )
     capability_names = _tool_names(tools)
+    if args.repository_rules_enabled:
+        capability_names += ("repository_rules_read",)
     if job_context is not None:
         from tracefix.jobs.constants import JOB_CONTROL_CAPABILITIES
 
@@ -224,6 +227,7 @@ def main() -> int:
                 item.model_dump(mode="json") for item in dispatcher.policy.catalog.descriptors
             ],
             **({"job_protocol_version": 1} if job_context is not None else {}),
+            **({"repository_rules_protocol_version": 1} if args.repository_rules_enabled else {}),
         }
         if policy_config != expected_policy_config:
             raise ValueError("executor capability policy bundle does not match tool catalog")
@@ -252,6 +256,12 @@ def main() -> int:
         "skill_catalog": [entry.model_dump(mode="json") for entry in tools.skill_catalog],
         "repo_map": repo_map,
     }
+    rule_ports = None
+    if args.repository_rules_enabled:
+        from tracefix.repository_rules.runtime import workspace_rule_ports
+
+        rule_ports = workspace_rule_ports(args.workspace, protected_dirs=tuple(sorted(protected)))
+        hello["repository_rules_protocol_version"] = 1
     if artifact_store is not None:
         hello["artifact_protocol"] = {
             "version": 1,
@@ -270,7 +280,8 @@ def main() -> int:
     sys.stdout.flush()
     primary = None
     try:
-        return serve_requests(tools, dispatcher, protected, args.workspace, job_controller)
+        return serve_requests(tools, dispatcher, protected, args.workspace, job_controller,
+                              rule_ports=rule_ports)
     except BaseException as exc:
         primary = exc
         raise
@@ -317,13 +328,25 @@ def _execute_job_control(controller, call: ToolCall):
 
 
 def serve_requests(tools, dispatcher, protected: set[str], workspace: Path,
-                   job_controller=None) -> int:
+                   job_controller=None, *, rule_ports=None) -> int:
     """A worker returns tickets; only this main loop writes one paired RPC result."""
     for line in sys.stdin:
         call = None
         try:
             call = ToolCall.model_validate_json(line)
-            if call.name in {"__recovery_state__", "__restore_state__"}:
+            if call.name == "__repository_rules__" and rule_ports is not None:
+                from tracefix.repository_rules.protocol import execute_rule_port
+                from tracefix.tools import ToolResult
+
+                decision = dispatcher.authorize("repository_rules_read",
+                                                CallerOrigin.HOST_LIFECYCLE)
+                if not decision.allowed:
+                    raise ValueError("repository rule control denied: " + decision.reason_code)
+                output = execute_rule_port(call.arguments, selector=rule_ports.selector,
+                                           metadata=rule_ports.metadata, source=rule_ports.source)
+                result = ToolResult(call_id=call.id, tool_name=call.name, success=True,
+                                    output=output)
+            elif call.name in {"__recovery_state__", "__restore_state__"}:
                 from tracefix.tools import ToolResult
 
                 if job_controller is not None and (

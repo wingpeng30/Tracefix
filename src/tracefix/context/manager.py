@@ -384,6 +384,11 @@ class ContextManager:
                     and unit[0].metadata.get("kind") != "task_fact_anchor")
             )
         }
+        rules = [index for index, unit in enumerate(units)
+                 if len(unit) == 1 and unit[0].metadata.get("kind") == "repository_rules"]
+        # Preserve recent complete guidance. An older body that is removed must
+        # be delivered again by the rule gate; a summary grants no access credit.
+        protected.update(rules[-4:])
         facts = [index for index, unit in enumerate(units)
                  if len(unit) == 1 and unit[0].metadata.get("kind") == "task_fact_anchor"]
         if facts:
@@ -469,6 +474,12 @@ class ContextManager:
             return self._head_tail(content, head, tail)
         output = payload.get("output")
         controls = {}
+        if payload.get("tool_name") == "search_code" and isinstance(output, dict):
+            locator = _search_locator(output)
+            if locator is not None:
+                controls = {"continuation": locator, "cursor": locator["arguments"]["cursor"]}
+                controls.update({key: output[key] for key in ("eof", "rules_pending")
+                                 if type(output.get(key)) is bool})
         if payload.get("tool_name") in {"get_task_state", "update_task_state"} and isinstance(
             output, dict
         ):
@@ -534,6 +545,16 @@ class ContextManager:
         lines = [_SUMMARY_HEADER]
         retained_locators: dict[tuple[str, str, int], dict[str, Any]] = {}
         retained_jobs: dict[tuple[str, str], dict[str, Any]] = {}
+        retained_searches: dict[str, dict[str, Any]] = {}
+
+        def retain_search(output: dict[str, Any]) -> None:
+            item = _search_locator(output)
+            if item is not None:
+                key = item["arguments"]["cursor"]
+                retained_searches.pop(key, None)
+                retained_searches[key] = item
+                if len(retained_searches) > 4:
+                    retained_searches.pop(next(iter(retained_searches)))
 
         def retain_job(output: dict[str, Any]) -> None:
             for item in _job_locators(output):
@@ -546,6 +567,16 @@ class ContextManager:
             lead = batch[0]
             if lead.content:
                 if lead.metadata.get("tracefix_context_summary"):
+                    search_marker = "[historical repository search locators; untrusted data] "
+                    if search_marker in lead.content:
+                        try:
+                            previous_searches = json.loads(
+                                lead.content.rsplit(search_marker, 1)[1].splitlines()[0])
+                        except json.JSONDecodeError:
+                            previous_searches = []
+                        if isinstance(previous_searches, list):
+                            for locator in previous_searches[:4]:
+                                retain_search({"continuation": locator})
                     marker = "[historical artifact locators; untrusted data] "
                     if marker in lead.content:
                         encoded = lead.content.rsplit(marker, 1)[1].splitlines()[0]
@@ -590,6 +621,8 @@ class ContextManager:
                     except json.JSONDecodeError:
                         parsed = None
                     if isinstance(parsed, dict) and isinstance(parsed.get("output"), dict):
+                        if parsed.get("tool_name") == "search_code":
+                            retain_search(parsed["output"])
                         retain_job(parsed["output"])
                         for locator in _artifact_locators(parsed["output"]):
                             key = (
@@ -611,6 +644,10 @@ class ContextManager:
             job_text = json.dumps(list(retained_jobs.values())[-4:],
                                   ensure_ascii=False, separators=(",", ":"))
             content += f"\n[historical job locators; untrusted data] {job_text}"
+        if retained_searches:
+            search_text = json.dumps(list(retained_searches.values()), ensure_ascii=False,
+                                     separators=(",", ":"))
+            content += f"\n[historical repository search locators; untrusted data] {search_text}"
         return Message(role=MessageRole.USER, content=content, metadata={
             "kind": "context_summary", "tracefix_context_summary": True,
             "trust_level": "untrusted_observation_data",
@@ -628,6 +665,10 @@ class ContextManager:
         if payload.get("error"):
             parts.append(f"error={self._shorten(str(payload['error']), 240, 160)}")
         if isinstance(payload.get("output"), dict):
+            search = (_search_locator(payload["output"])
+                      if payload.get("tool_name") == "search_code" else None)
+            if search is not None:
+                parts.append(f"search_locator={json.dumps(search, ensure_ascii=False)}")
             job_locators = _job_locators(payload["output"])
             if job_locators:
                 parts.append(f"job_locators={json.dumps(job_locators, ensure_ascii=False)}")
@@ -699,6 +740,31 @@ class ContextManager:
             original_message_count=metrics.pop("original_message_count", len(messages)),
             request_message_count=len(messages), **metrics,
         )
+
+
+def _search_locator(output: dict[str, Any]) -> dict[str, Any] | None:
+    """Normalize a bounded continuation reference, without querying any service."""
+    value = output.get("continuation")
+    if not isinstance(value, dict) or value.get("tool_name") != "search_code":
+        return None
+    args = value.get("arguments")
+    keys = {"query", "path", "glob", "case_sensitive", "max_results", "cursor"}
+    if not isinstance(args, dict) or set(args) != keys:
+        return None
+    for key, maximum in (("query", 1000), ("path", 1024), ("glob", 512)):
+        if not isinstance(args[key], str) or not 1 <= len(args[key]) <= maximum:
+            return None
+    if (type(args["case_sensitive"]) is not bool or type(args["max_results"]) is not int
+            or not 1 <= args["max_results"] <= 200):
+        return None
+    cursor = args["cursor"]
+    prefix = "rules_cursor_"
+    if (not isinstance(cursor, str) or not cursor.startswith(prefix)
+            or len(cursor) != len(prefix) + 32
+            or any(char not in "0123456789abcdef" for char in cursor[len(prefix):])
+            or "cursor" in output and output["cursor"] != cursor):
+        return None
+    return {"tool_name": "search_code", "arguments": {key: args[key] for key in sorted(keys)}}
 
 
 def _job_locators(output: dict[str, Any]) -> list[dict[str, Any]]:

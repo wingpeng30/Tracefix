@@ -22,6 +22,7 @@ class FeatureConfiguration(Protocol):
     docker_recovery_enabled: bool
     harness_foundations_enabled: bool
     background_jobs_enabled: bool
+    repository_rules_enabled: bool
     job_cgroup_root: Path | None
     memory_enabled: bool
     conversation_enabled: bool
@@ -53,6 +54,7 @@ def resolve_features(config: FeatureConfiguration) -> ResolvedFeatures:
     docker = config.execution_backend == "docker"
     ordinary = docker and config.docker_profile == "ordinary"
     jobs = bool(getattr(config, "background_jobs_enabled", False))
+    rules = bool(getattr(config, "repository_rules_enabled", False))
     cgroup = getattr(config, "job_cgroup_root", None)
 
     def require(condition: bool, reason: str, message: str) -> None:
@@ -64,6 +66,9 @@ def resolve_features(config: FeatureConfiguration) -> ResolvedFeatures:
 
     require(not jobs or config.harness_foundations_enabled, "jobs_foundations_required",
             "background jobs require harness foundations")
+    require(not rules or not docker or ordinary and config.docker_recovery_enabled,
+            "rules_ordinary_recovery_required",
+            "Docker repository rules require ordinary recovery")
     require(cgroup is None or jobs and not docker, "jobs_delegation_backend_invalid",
             "a delegated cgroup belongs only to enabled local background jobs")
     require(not jobs or not docker or ordinary and config.docker_recovery_enabled,
@@ -115,6 +120,7 @@ def resolve_features(config: FeatureConfiguration) -> ResolvedFeatures:
         ("memory", config.memory_enabled), ("dialogue", config.conversation_enabled),
         ("foundations", config.harness_foundations_enabled),
         ("background_jobs", jobs),
+        ("repository_rules", rules),
         ("skills", config.agent_config.skills_enabled),
         ("serena", config.mcp_serena_image_id is not None),
         ("regression", bool(config.regression_targets)),

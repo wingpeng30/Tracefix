@@ -115,8 +115,11 @@ class BaseTool(ABC):
 class ToolRegistry:
     """按稳定名称保存工具实例，并拒绝重复注册。"""
 
-    def __init__(self, tools: Iterable[BaseTool] = ()) -> None:
+    def __init__(self, tools: Iterable[BaseTool] = (), *,
+                 executor_specs: tuple[ToolSpec, ...] | None = None) -> None:
         self._tools: dict[str, BaseTool] = {}
+        self._executor_specs = (tuple(spec.model_copy(deep=True) for spec in executor_specs)
+                                if executor_specs is not None else None)
         for tool in tools:
             self.register(tool)
 
@@ -149,6 +152,12 @@ class ToolRegistry:
 
     def specs(self) -> tuple[ToolSpec, ...]:
         return tuple(tool.spec.model_copy(deep=True) for tool in self._tools.values())
+
+    @property
+    def executor_specs(self) -> tuple[ToolSpec, ...] | None:
+        """Optional fixed remote directory, distinct from host model adapters."""
+        return (tuple(spec.model_copy(deep=True) for spec in self._executor_specs)
+                if self._executor_specs is not None else None)
 
     @property
     def skill_catalog(self) -> tuple[SkillCatalogEntry, ...]:

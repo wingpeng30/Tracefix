@@ -257,6 +257,7 @@ def test_restored_runner_retains_actual_tool_history_tests_and_cumulative_usage(
     monkeypatch.setattr(CheckpointStore, "save", original_save)
     completed = runner.resume(root)
     assert completed.status == "completed" and completed.agent_validation_status == "verified"
+    assert completed.error is None
     assert completed.step_count == (7 if memory else 6)
     assert completed.input_tokens == 100 * completed.step_count
     assert len(set(closed)) == 2

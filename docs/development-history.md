@@ -1,5 +1,121 @@
 # TraceFix 开发历程与代码说明
 
+## 2026-10-16 G6报告/夹具修复及安装方式验收
+
+恢复成功error不再继承旧KeyboardInterrupt，历史result仍归档；新装配夹具各自建Git并核对根，产品校验未放宽。
+相关34项、仓库外双版各17项通过；Linuxv2规则446通过/2平台skip，291文件清单b84ce62e099be893b53b54024812c098acc9a515d2a90199dd6ac5f1f4d0c1c7。
+新wheel SHA256 9f2b6103873194290824caf413d4826547e1420879014dc92b0b3c6d12b8524e，双版全新wheel和原editable均在仓库外完成两宿主恢复+补丁+pytest，0供应商调用。
+独立311 wheel安装MCP改用已有Windows锁（先误用Linux锁被哈希模式拒绝，无锁改动）；实际SDK1.28.1，当前wheel普通Docker+Serena10步/1测试/旧2游标保留、error=null，第三新容器补丁验证通过。
+结果D:/Tracefix/runs/g66-docker-serena-wheel-v3/result.json及根independent-validation.json；额外Git输出/超时/失败及目录隔离18项通过。
+两版本机旧身份全量主动中止，原始accepted=false、无完整coverage/JUnit，不能记全量通过；核验自建树清理，未确认回执子PID40860随后已不存在。
+原范围及新增332项Ruff/编译通过，CI新增两安装方式规则回放及Linux补证，原门不变；候选仍待提交/新完整CI，G6未关闭/G7—G8未开始。
+
+## 2026-10-16 G6真实Docker恢复身份修复与回放
+
+v1恢复在模型调用前因容器tool identity混入宿主分页schema而拒绝；改用固定executor_specs，保留拒绝而不放宽校验，定向67通过。
+冻结v2清单16fb88b48982ebf2fe9dae6c926bcfed0b3b4faabe91233ca2fae20234984b84，真实ordinary+Serena两宿主进程/两任务容器完成10步/1pytest，旧2游标保留、0供应商调用。
+补丁前后Serena返回不同且经快照核对的正文；第三个独立容器重新应用补丁验证1目标通过，自有三容器已不存在且无Serena残留，历史容器未处理。
+结果D:/Tracefix/runs/g66-docker-serena-v2/result.json及根运行independent-validation.json；结果仍残留旧暂停error，待修正。
+双版720定向通过/8 skip先于后续身份修复；当前全量工程仍运行。Linux冻结291文件441通过/5新夹具失败/2平台skip：新装配夹具未建Git，在Windows借上级仓库误过，应修夹具不放宽运行时。
+G6完整门/coverage/wheel/新CI未完成，G7—G8未开始；源码、原始日志及失败归属见G6记录。
+
+## 2026-10-16 G6公共装配及本地新进程
+
+新增默认关闭repository_rules_enabled/--repository-rules，沿用统一feature resolver；ordinary要求recovery且不回退local。
+有界Git metadata只用固定名字plumbing保留删除路径；宿主canonical规则/搜索状态不复制到Docker，内部只读控制由独立不可模型调用的能力授权。
+执行器policy bundle、hello及快照绑定规则模式/协议；宿主分页搜索schema与容器原执行器目录分开计算身份。
+开启规则时跳过启动Repo Map正文，恢复保留固定规则版本、游标与TaskState引用；关闭保留原运行入口及配置旧hash兼容。
+本地两独立宿主进程回放v2实际8步/1次pytest/0供应商调用，2个游标保留，D:/Tracefix/runs/g66-local-process-v2/result.json。
+v1回放补丁EOF hunk夹具不适用，脚本重复已知失败至32步/0测试；已修夹具和脚本非pending立即失败，未放宽产品保护，原始失败保留。
+Git/路径双版各62通过；原运行范围161通过；公开组件3.11共190通过；真实Python bridge协商及公开入口12通过，相关Ruff已通过。
+188文件冻结清单406dc0b912cec8150f19bab3683b71e5bd831754e085ecf12b8ae2f40dd5f7c8；真实ordinary+Serena回放和双版回归仍待结果。
+没有新G6 CI/覆盖率/wheel/阶段关闭结论，G7—G8未开始，候选源码未提交；详见G6记录。
+
+## 2026-10-16 G6.6 canonical状态与核心恢复
+
+新增规则/游标state codec，完整正文/范围/来源快照/文档版本与历史消息核验，rule消息每个绑定保存实际selection快照及hash；观察digest仅是记账，不授予资格。
+宿主请求收据绑定最终投影、完整历史前缀、工具目录及响应ID，覆盖模型自带同名metadata；仅收到对应响应确认，已知用量先结算，发送前规则拒绝不标未知消费。
+规则状态16MiB、组合18MiB，原消息128/8MiB上限保持；游标256KiB、128项，逐项匹配已提交调用/继续参数/宿主state fingerprint，跨run/改quota/损坏不恢复。
+RuleAccessGate先准备两个组件、全部验证后同步发布；根checkpoint仅一份规则组合，默认关闭时不添加字段，有/无功能状态不一致拒绝。
+Agent支持批次暂停后全新对象恢复并保留步骤和cursor；正常预算闭合批次也先封存待送规则，未确认请求/未闭合状态不生成安全checkpoint。
+TaskState新增rule引用，只接受已验证规则状态中的消息ID，不复制正文或伪造用户要求；pending页摘要明确暂停，不声称搜索完成。
+最新双版247通过，g66-core311/312.log；原阶段基础范围未重跑成新工程门。尚未做真实新宿主进程/ordinary新容器或公共入口验收。
+首轮收据tuple不能直接进入JsonValue，改显式JSON数组；删除回放的等值断言移到新观察前，保留状态可变语义；相关Ruff已通过。
+继续公共CLI/TOML/Python及后端装配、实际恢复和G6完整门；源码仍为a0bc565基础上的未提交候选修改，G7—G8未开始，供应商调用0。
+
+## 2026-10-16 G6源码MCP来源与作用域资格
+
+Serena参数合同抽到mcp_contracts，三项原ToolSpec精确hash与G5一致；model来源映射必须显式配对输出门，MCP不能列为非源码豁免。
+McpSourceGate解析固定官方分组格式，拒绝重复JSON键/NaN、无来源/缩略文本及过深/过多结果；最多128来源、16000字符，源码片段核对单文件1,000,000字节。
+SnapshotMcpRuleGuard仅从已批准快照枚举路径；规则未送达时整份text为空，确认后核对正文范围及引用指定零基行号，错误详情未经来源验证不交付。
+真实SDK1.28.1/Python3.11.16/固定镜像bbcdf8388446回放5次MCP查询、4次脚本请求、0测试/供应商调用；根/嵌套延期、三工具交付、临时资源清理通过。
+结果D:/Tracefix/runs/g65mcp-f23fca26/result.json，SHA256 fc4a6d6c46a7d450b17b6a181b79fb003c416068697cea2c03268f7882d41280。
+第一次真实回放因Serena的...前缀、零基行及虚拟EOF空行被误拒，保留ec0a49d5失败结果，诊断后按实际格式修复且校验更严格。
+新代码修复前双版547通过/8 skip；受影响范围修复后双版98通过/3 skip（g65-mcp-fixed311/312.log）；冻结150文件Linux364通过/2 skip（g65-mcp-linux-v2.log）。
+冻结清单58d77a1b01bc41cf72b12427fba77c947d533982447a45e8c0dc2e1f764a5a81；实测正向回放先于空overview路径拒绝/金样断言加入，不能把该清单说成全部真实回放身份。
+进入恢复前新增可见规则文档版本/失效投影：更新一次适用整作用域，未访问过的路径也不会继续信任已删除规则，回退旧版本需新通知。
+新作用域契约两版107通过；该后续delivery改动不借上述冻结快照。原范围Ruff此前通过，待恢复/公共装配后统一G6完整工程门；无新CI，G7—G8未开始。
+
+## 2026-10-16 G6逐候选搜索与压缩引用
+
+抽出BoundedWorkspaceReader供规则和搜索共用无跟随/有界/读前后身份校验；RuleSourceView仍只允许AGENTS及固定配置/Markdown。
+新增PagedRepositorySearch/RepositorySearchTool（尚未公共装配）：literal查询、逐候选先规则后正文、首次新scope暂停，已安全匹配可返回，模型只提交opaque cursor。
+cursor绑定run/完整query/候选顺序及已访问规则版本，文件中段绑定内容hash；跨run、篡改/变化、损坏规则拒绝，额度128游标不因分页重置。
+新搜索schema限query1000字符/path1024/glob512；正文1,000,000字节、命中行500字符、页max_results<=200，越界或大文件跳过不声称完整。
+只在规则开启路径禁用search成功缓存，避免pending页/游标绕过逐文件检查，关闭时原schema/缓存行为保持。
+ContextManager只消费消息/引用，保护最近4份完整规则；二次裁剪和再次摘要保留最近4条有界继续参数，未读存储/规则库。
+真实ContextManager两次跨阈值压缩验证游标可追溯、旧规则丢失资格及重新送达完整正文，历史内容未改写。
+双Python3.11.16/3.12.5最新兼容范围各492 passed/8 skip，g65-search311/312.log；新冻结144文件Linux305 passed/2 Windows专属skip，g65-linux-native.log。
+清单g65-linux-source-manifest.json，SHA256 d07e68dbfa9e5bed46f1a6ec8785c0f9ecc01872f3a6a25a00ac8c9c303e6e25；原工程范围Ruff通过，固定镜像/只读非root/无网络容器。
+Serena固定镜像bbcdf8388446内官方三方法已静态核对；直接导入触发默认/.serena缓存在只读根失败，改AST读代码，不安装/提权写镜像。
+源码MCP来源门、恢复/公共装配和G6完整工程门尚未完成，不借旧CI；G7—G8未开始，无供应商调用。
+
+## 2026-10-16 G6安全元数据枚举及实际请求送达
+
+WorkspaceAccessPaths只枚举元数据，拒绝链接/特殊文件/保护域，默认测试展开目录及配置/conftest，Diff保守包含工作文件和可信index路径（含删除）。
+目录前后身份/时间及文件名清单双核验，文件/目录/单目录条目均有界；已发现并补上Windows快速新增时目录时间戳不足的故障契约。
+元数据组件两版235通过/8 skip；Linux冻结135文件241通过/2 Windows专属skip，g63-linux-v2-native.log，
+清单SHA256 9ca937c3dae78803eae7fc1f91909b24216a5c004c64e39f4612a05e236396e2。
+RuleDeliveryLedger固定完整规则消息，仅批次闭合发布、对应实际上下文请求返回才确认；记录最终上下文投影hash及message/version，不冒称供应商wire hash。
+Agent对待发送视图签发一次性ticket，失败/预算拒绝不确认；压缩移除正文失去可见性，规则改变/删除要求新的完整正文或失效通知。
+真实Agent零供应商回放验证同批延期、下一请求重试、请求后变更、inspect权限不被正文扩大；历史正文不改写。
+每条送达消息256KiB、最多128记录/8MiB；待送达和整次选择缓存各8MiB，目标5000项，超限明确拒绝且不部分发布。
+最新双Python兼容范围各447 passed/8解释skip，g64-request311/312.log，含原工具、记忆、Agent、上下文、能力和发送前预算；Ruff通过。
+新送达代码还未做全量工程或Docker公开组合，不借G6.3 Linux冻结快照或G5 CI；继续G6.5搜索逐候选分页/MCP，再接恢复及公共装配，G7—G8未开始。
+
+## 2026-10-16 G6访问规划及Agent前置规则门
+
+新增纯ToolAccessPlanner，覆盖read/search/patch/diff/同步和后台pytest；补丁新旧/移动/新增/删除路径纯词法提取。
+抽出共用参数模型和pytest命令解析，固定五项G5参数schema哈希作兼容契约；领域模块不依赖具体工具或Runner。
+RuleAccessGate通过选择、元数据与送达小接口工作，未知工具拒绝；Agent在缓存/prepare/测试计次前执行门，静态权限优先。
+真实Agent零供应商用例验证同批读→补丁、缓存及prepare不能绕过pending；尚未接实际送达或公共运行开关。
+原生回归发现Python3.12 Windows lstat ctime为创建时间而fstat不同；跨API比较使用身份/大小/mtime/出生时间，
+同API和同FD前后继续校验完整ctime，新增原生100次覆盖写及ctime单独漂移拒绝契约。
+两版各323 passed/5解释skip，g63-gated311/312.log；Linux冻结133项源码224 passed/2 Windows专属skip，g63-linux-native.log。
+清单g63-linux-source-manifest.json，SHA256 3e06cda1ae02db4cdd32624b77ac1261a056464490e0cf65a0a73fe942bd4186。
+首次无TEMP覆盖导致沙箱临时目录不可写及原生链接夹具被拒；修正执行环境后3.12发现上述真实ctime问题，修复后重验全部范围。
+Ruff通过；安全元数据适配器、送达、分页/恢复和G6完整门仍待完成。源码基于a0bc565未提交改动，不借旧CI；供应商调用0。
+
+## 2026-10-16 G6.2安全来源与选择契约
+
+新增受限RuleSourceView、确定性RepositoryRules选择、完整来源重验；共享SourceView中性端口并保留memory_domain导出兼容。
+打开前检查相对路径、根/父身份、symlink/junction/hardlink/特殊文件和上限；FD/最终路径/父目录复核拒绝读取竞态或增长。
+配置版本及字段严格校验，未匹配正文不读，缺失/损坏/超限不截断或降级；完整选择绑定来源缺失和版本。
+两版各165 passed/5解释skip，g62-hardened311/312.log；Linux只读冻结v2快照137 passed/1 Windows junction skip，
+g62-linux-v2-native.log。Windows junction实际通过，4 symlink与FIFO由Linux补证；Ruff通过。
+冻结127项清单SHA256 d75c4a4664004c4b9e6341a6876c8c4c87f9bccf5d43f4c731dc9c8a047c05d9，
+固定镜像247102ff7b31的自动清理自有容器，network none/非root/资源限制，不挂live源码或凭据。
+首轮大参数pytest ID触发Windows环境变量长度上限，改显式短ID后重验，不删大参数或改产品规则上限。
+尚无G6完整门/公共入口；继续G6.3访问规划，无供应商调用，G7—G8未开始。
+
+## 2026-10-16 G6.1规则纯模型与格式
+
+以G5文档a0bc565为起点，新增repository_rules独立纯模块：不可变规则/选择DTO、来源缺失观察、
+确定性内容版本、固定作用域/声明顺序、有界glob和路径拒绝规则；16KiB正文/32KiB集合/16份上限不截断。
+规则字段不能声明origin/网络/权限，嵌套复制模型重验；正文中文和emoji按UTF-8字节计限。
+两版最终各87 passed，g61-final311/312.log；Ruff通过。尚未接工具或公共开关，未完成G6工程门。
+G6.2接安全SourceView与选择器；原始定向日志在候选忽略目录，供应商调用0，G7—G8未开始。
+
 ## 2026-10-16 G5阶段验收关闭
 
 实现c02c79dc65eb62f7723fe0a8082ff1407788c493，tree ef2f5c3801d8b4a16aea5ff7a6244051b8434921，810个跟踪文件；

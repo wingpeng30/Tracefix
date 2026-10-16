@@ -87,6 +87,8 @@ jobs:
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
             python -m tracefix.reproduction --scenario continuous-dialogue --output (Join-Path $smokeRoot "continuous-dialogue")
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            python (Join-Path $env:GITHUB_WORKSPACE "examples/replay_repository_rules.py") --output (Join-Path $smokeRoot "repository-rules")
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           } finally { Pop-Location }
 
       - name: Qualify frozen public windowed task without model calls
@@ -163,6 +165,8 @@ jobs:
             & (Join-Path $wheelEnv "Scripts/tracefix.exe") export --run $ordinaryRun --output (Join-Path $ordinary "export.patch")
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
             & $wheelPython (Join-Path $env:GITHUB_WORKSPACE "examples/replay_resume.py") --output (Join-Path $wheelSmoke "recovery")
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            & $wheelPython (Join-Path $env:GITHUB_WORKSPACE "examples/replay_repository_rules.py") --output (Join-Path $wheelSmoke "repository-rules")
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
             $markdownSource = Join-Path $env:RUNNER_TEMP "tracefix-markdown-upstream"
             git clone --quiet --no-checkout https://github.com/Python-Markdown/markdown.git $markdownSource
@@ -380,7 +384,11 @@ jobs:
           printf '%s\n' "$serena_image_id" > "$RUNNER_TEMP/ordinary-serena-image-id.txt"
           python "$GITHUB_WORKSPACE/examples/replay_artifact_recovery.py" --image-id "$image_id" --mcp-image-id "$serena_image_id" --composite --output "$RUNNER_TEMP/ordinary-artifact-recovery-composite" > "$RUNNER_TEMP/ordinary-artifact-recovery-composite-summary.json"
           python -c 'import json,sys; d=json.load(open(sys.argv[1])); assert d["passed"] and d["provider_calls"] == 0 and d["synthetic_model_requests"] > 0 and d["all_containers_removed"] and d["composite"] and d["serena_queries"] == 2 and d["validation_gate_status"] == "passed"' "$RUNNER_TEMP/ordinary-artifact-recovery-composite-summary.json"
+          python "$GITHUB_WORKSPACE/examples/replay_repository_rules.py" --backend docker --image-id "$image_id" --mcp-image-id "$serena_image_id" --output "$RUNNER_TEMP/ordinary-rules-wheel" > "$RUNNER_TEMP/ordinary-rules-wheel-summary.json"
+          python -c 'import json,sys; d=json.load(open(sys.argv[1])); assert d["provider_calls"] == 0 and d["resumed"]["status"] == "completed" and d["resumed"]["error"] is None' "$RUNNER_TEMP/ordinary-rules-wheel-summary.json"
           python -m pip install --no-deps --no-build-isolation -e "$GITHUB_WORKSPACE"
+          python "$GITHUB_WORKSPACE/examples/replay_repository_rules.py" --backend docker --image-id "$image_id" --mcp-image-id "$serena_image_id" --output "$RUNNER_TEMP/ordinary-rules-editable" > "$RUNNER_TEMP/ordinary-rules-editable-summary.json"
+          python -c 'import json,sys; d=json.load(open(sys.argv[1])); assert d["provider_calls"] == 0 and d["resumed"]["status"] == "completed" and d["resumed"]["error"] is None' "$RUNNER_TEMP/ordinary-rules-editable-summary.json"
           python "$GITHUB_WORKSPACE/examples/replay_artifact_recovery.py" --image-id "$image_id" --mcp-image-id "$serena_image_id" --composite --output "$RUNNER_TEMP/ordinary-composite-editable" > "$RUNNER_TEMP/ordinary-composite-editable-summary.json"
           python -c 'import json,sys; d=json.load(open(sys.argv[1])); assert d["passed"] and d["provider_calls"] == 0 and d["all_containers_removed"] and d["composite"] and d["serena_queries"] == 2 and d["validation_gate_status"] == "passed"' "$RUNNER_TEMP/ordinary-composite-editable-summary.json"
           tracefix-reproduce --scenario memory-dialogue-integration --backend docker --image-id "$image_id" --output "$RUNNER_TEMP/ordinary-integration-editable" > "$RUNNER_TEMP/ordinary-integration-editable-summary.json"
@@ -411,6 +419,8 @@ jobs:
             ${{ runner.temp }}/ordinary-artifact-recovery/**
             ${{ runner.temp }}/ordinary-artifact-recovery-composite/**
             ${{ runner.temp }}/ordinary-composite-editable/**
+            ${{ runner.temp }}/ordinary-rules-wheel/**
+            ${{ runner.temp }}/ordinary-rules-editable/**
             ${{ runner.temp }}/ordinary-serena-image-id.txt
             ${{ runner.temp }}/ordinary-failures/ordinary-timeout-disconnect/tool-events.jsonl
             ${{ runner.temp }}/ordinary-failures/ordinary-import-error/docker-run-state.json

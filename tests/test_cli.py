@@ -33,6 +33,7 @@ def test_run_reads_toml_and_passes_ordinary_fields(tmp_path, monkeypatch, capsys
         'test_target = "tests/test_sample.py"\nsource_import = "sample"\n'
         'output_dir = "saved"\ncontext_agent_tool_enabled = true\n'
         "harness_foundations_enabled = true\ndocker_recovery = true\n"
+        "repository_rules_enabled = true\n"
         'execution_profile = "inspect"\n',
         encoding="utf-8",
     )
@@ -51,6 +52,7 @@ def test_run_reads_toml_and_passes_ordinary_fields(tmp_path, monkeypatch, capsys
     assert seen[0].output_dir == tmp_path / "saved"
     assert seen[0].agent_config.context.agent_tool_enabled is True
     assert seen[0].harness_foundations_enabled is True
+    assert seen[0].repository_rules_enabled is True
     assert seen[0].execution_profile.value == "inspect"
     assert "报告命令" in capsys.readouterr().out
 
@@ -78,12 +80,14 @@ def test_run_cli_flag_enables_harness_foundations(tmp_path, monkeypatch, capsys)
                 "local",
                 "--harness-foundations",
                 "--background-jobs",
+                "--repository-rules",
             ]
         )
         == 0
     )
     assert seen[0].harness_foundations_enabled is True
     assert seen[0].background_jobs_enabled is True
+    assert seen[0].repository_rules_enabled is True
     capsys.readouterr()
 
 

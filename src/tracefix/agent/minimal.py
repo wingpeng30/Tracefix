@@ -36,6 +36,8 @@ from tracefix.jobs.ports import AgentJobSession
 from tracefix.jobs.references import committed_job_ticket
 from tracefix.messages import Message, MessageRole, ToolCall
 from tracefix.models.base import LLMResponse, TokenUsage
+from tracefix.repository_rules.errors import RuleError
+from tracefix.repository_rules.gate import ToolRuleGuard
 from tracefix.task_state import TaskReference, TaskStateError, TaskStateRenderer, TaskStateSession
 from tracefix.tools.base import ReservedToolName, ToolResult, ToolSpec
 from tracefix.tools.invocation import PreparedInvocation
@@ -52,6 +54,7 @@ class MinimalAgent(BaseAgent):
     task_state_source_identity: Callable[[], str | None] | None = None
     tool_dispatcher: ToolDispatcher | None = None
     job_session: AgentJobSession | None = None
+    rule_access_gate: ToolRuleGuard | None = None
 
     _RECOVERY_FIELDS = (
         "_failed_apply_calls",
@@ -105,6 +108,12 @@ class MinimalAgent(BaseAgent):
             payload["task_state"] = self.task_state_session.checkpoint(self.history.snapshot())
         if self.job_session is not None:
             payload["jobs"] = {"schema_version": 1, "consumed": dict(self._consumed_job_outcomes)}
+        if self.rule_access_gate is not None:
+            try:
+                payload["repository_rules"] = self.rule_access_gate.checkpoint(
+                    self.history.snapshot(), self._request_tool_specs())
+            except RuleError as exc:
+                raise AgentError(f"repository rules checkpoint refused: {exc.reason_code}") from exc
         return payload
 
     def verify_test_source(self, source_sha256: str) -> None:
@@ -147,6 +156,17 @@ class MinimalAgent(BaseAgent):
         self._context_session_state = ContextSessionState.model_validate(
             memory["_context_session_state"]
         )
+        if self.rule_access_gate is None:
+            if "repository_rules" in payload:
+                raise AgentError("checkpoint contains disabled repository rules")
+        else:
+            if "repository_rules" not in payload:
+                raise AgentError("checkpoint is missing repository rules")
+            try:
+                self.rule_access_gate.restore(payload["repository_rules"], self.history.snapshot(),
+                                              self._request_tool_specs())
+            except RuleError as exc:
+                raise AgentError(f"repository rules restore refused: {exc.reason_code}") from exc
         self._repo_map_candidate_reads = set(memory["_repo_map_candidate_reads"])
         self._budget_guidance_sent = set(memory["_budget_guidance_sent"])
         self._successful_tool_cache = {}
@@ -220,6 +240,8 @@ class MinimalAgent(BaseAgent):
                     job_records=({item.record.identity.job_id: item.record
                                   for item in self.job_session.completions()}
                                  if self.job_session is not None else None),
+                    rule_message_ids=(self.rule_access_gate.registered_message_ids
+                                      if self.rule_access_gate is not None else None),
                 )
             except TaskStateError as exc:
                 raise AgentError(f"checkpoint TaskState is invalid: {exc}") from exc
@@ -640,6 +662,9 @@ class MinimalAgent(BaseAgent):
             },
         )
 
+        rules_ticket = (self.rule_access_gate.prepare_request(
+            context_view.messages, tool_specs, history_prefix=full_history)
+            if self.rule_access_gate is not None else None)
         try:
             # 压缩仅影响供应商请求；self.history 仍保留完整审计轨迹。
             model_started = time.perf_counter()
@@ -649,6 +674,8 @@ class MinimalAgent(BaseAgent):
         except PreRequestBudgetExceeded:
             # This adapter contract guarantees no new supplier consumption;
             # keep previous known/unknown accounting without fabricating usage.
+            if self.rule_access_gate is not None and rules_ticket is not None:
+                self.rule_access_gate.reject_unsent_request(rules_ticket)
             raise
         except LLMResponseFormatError as exc:
             # 响应解析失败也可能已经产生费用；尽量从异常上下文追回 usage。
@@ -673,6 +700,13 @@ class MinimalAgent(BaseAgent):
             raise
 
         self._add_usage(response.usage)
+        if self.rule_access_gate is not None:
+            assert rules_ticket is not None
+            self.rule_access_gate.confirm_response(rules_ticket, response.message.id)
+            response = response.model_copy(update={"message": response.message.model_copy(update={
+                "metadata": {**response.message.metadata,
+                             "repository_rules_request": rules_ticket.as_metadata()},
+            })})
         if self.job_session is not None and response.message.tool_calls:
             normalized = tuple(call.model_copy(update={
                 "id": "job-call-" + hashlib.sha256(
@@ -780,6 +814,10 @@ class MinimalAgent(BaseAgent):
                     result = self._execute_tool(call)
                     self._append_tool_result(result)
                     continue
+                rule_result = self._rule_access_result(call, CallerOrigin.MODEL)
+                if rule_result is not None:
+                    self._append_tool_result(rule_result)
+                    continue
                 if call.name == ReservedToolName.RUN_TESTS.value:
                     tool = self.tools.get(call.name)
                     try:
@@ -842,6 +880,7 @@ class MinimalAgent(BaseAgent):
             except AgentLimitExceeded as exc:
                 # 消息历史要求每个 tool call 都有结果，因此为未执行调用补齐失败消息。
                 self._append_skipped_results(response.message.tool_calls[index:], exc)
+                self._flush_rule_messages()
                 if task_fact_changed:
                     self._append_task_fact()
                 raise
@@ -911,6 +950,7 @@ class MinimalAgent(BaseAgent):
                 TraceEventType.SKILL_ACTIVATED,
                 {**metadata, "content": message.content},
             )
+        self._flush_rule_messages()
         self._append_patch_recovery_reminder_if_needed()
         self._append_no_effect_patch_guidance_if_needed()
         self._append_exploration_guidance_if_needed()
@@ -919,6 +959,17 @@ class MinimalAgent(BaseAgent):
         if task_fact_changed:
             self._append_task_fact()
         self._check_time_budget()
+
+    def _flush_rule_messages(self) -> None:
+        if self.rule_access_gate is not None:
+            for rule_message in self.rule_access_gate.close_batch(self.history.snapshot()):
+                self._append_message(rule_message)
+                if self.task_state_session is not None:
+                    self.task_state_session.add_reference(TaskReference(
+                        kind="rule", reference_id=rule_message.id,
+                        sha256=str(rule_message.metadata["content_sha256"]),
+                        source_message_id=rule_message.id,
+                    ))
 
     def _request_tool_specs(self) -> tuple[ToolSpec, ...]:
         """Expose an Agent-only compaction control without changing tool identity."""
@@ -1207,6 +1258,24 @@ class MinimalAgent(BaseAgent):
         self._check_time_budget()
         return result
 
+    def _rule_access_result(self, call: ToolCall, origin: str) -> ToolResult | None:
+        """Check guidance before caches, test preparation and execution counters."""
+        if self.rule_access_gate is None or origin != CallerOrigin.MODEL:
+            return None
+        try:
+            decision = self.rule_access_gate.check(call)
+        except RuleError as exc:
+            return ToolResult(call_id=call.id, tool_name=call.name, success=False,
+                              error=exc.reason_code,
+                              metadata={"rules_blocked": True, "reason_code": exc.reason_code})
+        if decision.allowed:
+            return None
+        return ToolResult(call_id=call.id, tool_name=call.name, success=False,
+                          error=decision.reason_code,
+                          output={"pending": [{"path": path, "selection_sha256": sha}
+                                              for path, sha in decision.pending]},
+                          metadata={"rules_blocked": True, "reason_code": decision.reason_code})
+
     def _execute_tool(
         self, call: ToolCall, *, origin: str | None = None, emit_call: bool = True,
         invocation: PreparedInvocation | None = None,
@@ -1224,6 +1293,9 @@ class MinimalAgent(BaseAgent):
         decision = self._capability_decision(call, origin or CallerOrigin.MODEL)
         if decision is not None and not decision.allowed:
             return self._capability_denial_result(call, decision)
+        rule_result = self._rule_access_result(call, origin or CallerOrigin.MODEL)
+        if rule_result is not None:
+            return rule_result
         if self.job_session is not None and self.job_session.active:
             self._successful_tool_cache.clear()
         started = time.monotonic()
@@ -1290,6 +1362,8 @@ class MinimalAgent(BaseAgent):
         # 完整历史中，避免再次扫描仓库并把同一大段内容重复送入后续上下文。
         if (
             self._feature_enabled(self.config.read_cache_enabled)
+            and not (self.rule_access_gate is not None
+                     and call.name == ReservedToolName.SEARCH_CODE.value)
             and call.name
             in {
                 ReservedToolName.SEARCH_CODE.value,
@@ -1432,6 +1506,8 @@ class MinimalAgent(BaseAgent):
         self._record_tool_outcome(call, result, signature)
         if (
             self._feature_enabled(self.config.read_cache_enabled)
+            and not (self.rule_access_gate is not None
+                     and call.name == ReservedToolName.SEARCH_CODE.value)
             and result.success
             and call.name
             in {

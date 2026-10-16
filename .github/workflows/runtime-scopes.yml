@@ -5,6 +5,13 @@ on:
     branches: ['codex/harness-runtime']
     paths:
       - 'src/tracefix/jobs/**'
+      - 'src/tracefix/repository_rules/**'
+      - 'src/tracefix/source_view.py'
+      - 'src/tracefix/tools/repository_search.py'
+      - 'src/tracefix/mcp_contracts.py'
+      - 'src/tracefix/mcp_serena.py'
+      - 'src/tracefix/runtime.py'
+      - 'tests/test_repository_rules_*.py'
       - 'src/tracefix/artifacts.py'
       - 'tests/test_process_tree_scope.py'
       - 'tests/test_process_tree_faults.py'
@@ -66,6 +73,7 @@ jobs:
                    'tests/test_process_tree_faults.py',
                    'tests/test_job_process_namespace_contract.py',
                    'tests/test_job_bridge_assembly_contract.py',
+                   *sorted(str(path) for path in Path('tests').glob('test_repository_rules_*.py')),
                    '-v', '-o', 'addopts=',
                    '--junitxml=scope-results.xml'])
           PY

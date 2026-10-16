@@ -124,6 +124,9 @@ def config_identity_sha256(
     )
     exclude = {"regression_targets"} if legacy_empty_targets else set()
     if manifest_config is not None:
+        if ("repository_rules_enabled" not in manifest_config
+                and not config.repository_rules_enabled):
+            exclude.add("repository_rules_enabled")
         exclude.update(
             name
             for name in (
@@ -167,6 +170,7 @@ class RunConfig(BaseModel):
     docker_recovery_enabled: bool = False
     harness_foundations_enabled: bool = False
     background_jobs_enabled: bool = False
+    repository_rules_enabled: bool = False
     job_cgroup_root: Path | None = None
     execution_profile: ExecutionProfile = ExecutionProfile.WORKSPACE_WRITE
     mcp_serena_image_id: str | None = None
@@ -293,6 +297,30 @@ def _register_task_state_tools(tools, task_state_session) -> None:
     tools.register(UpdateTaskStateTool(task_state_session))
 
 
+def _assemble_repository_rules(config: RunConfig, tools, *, run_id: str,
+                               workspace: Path | None, protected_dirs=(), backend=None,
+                               mcp_manager=None):
+    if not config.repository_rules_enabled:
+        return tools, None
+    from tracefix.repository_rules.runtime import assemble_local_rules, assemble_rules
+
+    pytest_config = config.environment_recipe.pytest_config if config.environment_recipe else None
+    if config.execution_backend == "local":
+        if workspace is None:
+            raise WorkspaceError("repository rules require the approved local workspace")
+        runtime = assemble_local_rules(tools, root=workspace, run_id=run_id,
+            protected_dirs=tuple(sorted(protected_dirs)), pytest_config=pytest_config,
+            mcp=mcp_manager)
+    else:
+        if backend is None:
+            raise WorkspaceError("repository rules require a negotiated Docker executor")
+        ports = backend.repository_rule_ports()
+        runtime = assemble_rules(tools, run_id=run_id, selector=ports, metadata=ports, source=ports,
+            case_sensitive=True, pytest_config=pytest_config, mcp=mcp_manager,
+            executor_specs=tuple(backend.session.tools))
+    return runtime.tools, runtime.gate
+
+
 def _assemble_local_jobs(config: RunConfig, tools, artifacts: ArtifactStore, *,
                          run_id: str, run_dir: Path, workspace: Path,
                          collect_diff: Callable[[], tuple[str, tuple[str, ...]]],
@@ -308,6 +336,8 @@ def _assemble_local_jobs(config: RunConfig, tools, artifacts: ArtifactStore, *,
                               nonempty_diff=bool(patch.strip()))
 
     extra = list(_HOST_CAPABILITY_NAMES)
+    if config.repository_rules_enabled and config.execution_backend == "docker":
+        extra.append("repository_rules_read")
     if config.agent_config.context.enabled and config.agent_config.context.agent_tool_enabled:
         extra.append("compact_context")
     return LocalJobRuntime(
@@ -346,6 +376,8 @@ def _bind_remote_jobs(config: RunConfig, job_runtime, tools, backend: DockerTool
                               nonempty_diff=bool(patch.strip()))
 
     extra = list(_HOST_CAPABILITY_NAMES)
+    if config.repository_rules_enabled:
+        extra.append("repository_rules_read")
     if config.agent_config.context.enabled and config.agent_config.context.agent_tool_enabled:
         extra.append("compact_context")
     job_runtime.bind(tools=tools, channel=backend.session,
@@ -441,12 +473,21 @@ class TraceFixRunner:
         )
 
     @staticmethod
+    def _agent_tool_specs(config: RunConfig, tools):
+        specs = tools.specs()
+        if config.agent_config.context.enabled and config.agent_config.context.agent_tool_enabled:
+            return (*specs, MinimalAgent.compact_context_tool_spec())
+        return specs
+
+    @staticmethod
     def _capability_dispatcher(config: RunConfig, tools: Any) -> ToolDispatcher:
         """Freeze the runtime tool set and policy before the first model request."""
         names = list(tools.names)
         if config.agent_config.context.enabled and config.agent_config.context.agent_tool_enabled:
             names.append("compact_context")
         names.extend(_HOST_CAPABILITY_NAMES)
+        if config.repository_rules_enabled and config.execution_backend == "docker":
+            names.append("repository_rules_read")
         if config.background_jobs_enabled and config.execution_backend == "docker":
             from tracefix.jobs.constants import JOB_CONTROL_CAPABILITIES
 
@@ -473,6 +514,8 @@ class TraceFixRunner:
         if config.agent_config.context.enabled and config.agent_config.context.agent_tool_enabled:
             names.append("compact_context")
         names.extend(_HOST_CAPABILITY_NAMES)
+        if config.repository_rules_enabled and config.execution_backend == "docker":
+            names.append("repository_rules_read")
         if config.background_jobs_enabled and config.execution_backend == "docker":
             from tracefix.jobs.constants import JOB_CONTROL_CAPABILITIES
 
@@ -498,6 +541,14 @@ class TraceFixRunner:
             for name in by_name
             if descriptor_by_name[name]["execution_location"] not in {"host", "mcp"}
         )
+        executor_by_name = by_name
+        if config.repository_rules_enabled and config.execution_backend == "docker":
+            executor_specs = getattr(tools, "executor_specs", None)
+            if executor_specs is None:
+                raise RunConfigurationError("repository rules omitted the fixed executor catalog")
+            executor_by_name = {spec.name: spec.model_dump(mode="json") for spec in executor_specs}
+            if set(executor_by_name) != set(executor_names):
+                raise RunConfigurationError("repository rule executor directory changed")
 
         def digest(value: object) -> str:
             canonical = json.dumps(
@@ -512,7 +563,7 @@ class TraceFixRunner:
             "host_control_catalog_sha256": host_policy.catalog.sha256,
             "executor_tool_catalog_sha256": digest(
                 {
-                    "tools": [by_name[name] for name in executor_names],
+                    "tools": [executor_by_name[name] for name in executor_names],
                     "capabilities": [descriptor_by_name[name] for name in executor_names],
                 }
             ),
@@ -524,6 +575,22 @@ class TraceFixRunner:
             ),
             "provider_tool_spec_sha256": digest([spec.model_dump(mode="json") for spec in specs]),
         }
+
+    @staticmethod
+    def _executor_tool_identity(config: RunConfig, tools, dispatcher: ToolDispatcher) -> str:
+        from tracefix.docker_recovery import tool_identity
+
+        if config.repository_rules_enabled and config.execution_backend == "docker":
+            specs = tools.executor_specs
+            if specs is None:
+                raise RunConfigurationError("repository rules omitted the fixed executor catalog")
+        else:
+            specs = tuple(spec for spec in tools.specs() if (
+                dispatcher.policy.catalog.get(spec.name) is not None
+                and dispatcher.policy.catalog.get(spec.name).execution_location
+                not in {"host", "mcp"}
+            ))
+        return tool_identity(specs)
 
     @staticmethod
     def _capability_identity_matches(expected: dict[str, str], recorded: dict[str, Any]) -> bool:
@@ -975,9 +1042,11 @@ class TraceFixRunner:
                     test_environment_variables=config.test_environment_variables,
                 )
                 _register_task_state_tools(registry, _task_state_session_for_run(config))
+                rule_mcp_manager = None
                 if config.mcp_serena_image_id is not None:
                     # Metadata only: inspecting a checkpoint must not start MCP or Docker.
-                    for tool in SerenaMCP(workspace, root, config.mcp_serena_image_id).tools():
+                    rule_mcp_manager = SerenaMCP(workspace, root, config.mcp_serena_image_id)
+                    for tool in rule_mcp_manager.tools():
                         registry.register(tool)
                 if config.background_jobs_enabled:
                     from tracefix.jobs.checkpoints import JobCheckpointCoordinator
@@ -992,6 +1061,14 @@ class TraceFixRunner:
                         value=snapshot.payload.get("job_state"))
                 elif "job_state" in snapshot.payload:
                     reasons.append("checkpoint contains disabled job state")
+                registry, rule_gate = _assemble_repository_rules(
+                    config, registry, run_id=root.name, workspace=workspace,
+                    protected_dirs=protected, mcp_manager=rule_mcp_manager)
+                if rule_gate is not None:
+                    rule_gate.restore(saved_agent.get("repository_rules"), history.snapshot(),
+                                      cls._agent_tool_specs(config, registry))
+                elif "repository_rules" in saved_agent:
+                    reasons.append("checkpoint contains disabled repository rule state")
                 tool_sha = hashlib.sha256(
                     json.dumps(
                         [spec.model_dump(mode="json") for spec in registry.specs()],
@@ -1488,6 +1565,9 @@ class TraceFixRunner:
                 resources.callback(job_runtime.close)
                 job_runtime.checkpoints.verify_saved(snapshot.payload.get("job_state"))
                 tools = job_runtime.tools
+            tools, rule_gate = _assemble_repository_rules(
+                config, tools, run_id=root.name, workspace=workspace,
+                protected_dirs=protected_dirs, mcp_manager=mcp_manager)
             tool_hash = hashlib.sha256(
                 json.dumps(
                     [spec.model_dump(mode="json") for spec in tools.specs()],
@@ -1546,6 +1626,7 @@ class TraceFixRunner:
                     repository_candidates=repo_map.candidate_files if repo_map else (),
                 )
                 agent.tool_dispatcher = capability_dispatcher
+                agent.rule_access_gate = rule_gate
                 if job_runtime is not None:
                     agent.job_session = job_runtime.session
                 agent.task_state_session = task_state_session
@@ -1760,6 +1841,7 @@ class TraceFixRunner:
                 skills_snapshot=skills_snapshot,
                 execution_profile=config.execution_profile,
                 **({"job_settings": job_runtime.settings} if job_runtime is not None else {}),
+                **({"repository_rules_enabled": True} if config.repository_rules_enabled else {}),
             )
             task_state_session = _task_state_session_for_run(config)
             _register_task_state_tools(tools, task_state_session)
@@ -1774,6 +1856,9 @@ class TraceFixRunner:
             if job_runtime is not None:
                 tools = _bind_remote_jobs(config, job_runtime, tools, backend)
                 job_runtime.checkpoints.verify_saved(saved.payload.get("job_state"))
+            tools, rule_gate = _assemble_repository_rules(
+                config, tools, run_id=root.name, workspace=None, backend=backend,
+                mcp_manager=mcp_manager)
             capability_dispatcher = (job_runtime.dispatcher if job_runtime is not None
                                      else self._capability_dispatcher(config, tools))
             self._bind_host_capability_policy(capability_dispatcher, mcp_manager)
@@ -1811,6 +1896,7 @@ class TraceFixRunner:
                     repository_candidates=repo_map.candidate_files if repo_map else (),
                 )
                 agent.tool_dispatcher = capability_dispatcher
+                agent.rule_access_gate = rule_gate
                 if job_runtime is not None:
                     agent.job_session = job_runtime.session
                 agent.task_state_session = task_state_session
@@ -1876,6 +1962,7 @@ class TraceFixRunner:
                 agent.persist_terminal_checkpoint = True
                 agent.persist_resume_checkpoint = True
                 self._attach_docker_memory(agent, config, root, backend)
+                resume_error = None
                 try:
                     state = agent.resume(
                         saved.payload["agent"],
@@ -1889,8 +1976,9 @@ class TraceFixRunner:
                         ),
                         supersedes=supersedes,
                     )
-                except KeyboardInterrupt:
+                except KeyboardInterrupt as exc:
                     state = agent.state
+                    resume_error = self._serialize_error(exc)
                 finally:
                     close_llm = getattr(agent.llm, "close", None)
                     if close_llm is not None:
@@ -1934,6 +2022,7 @@ class TraceFixRunner:
                 )
             }
             updates.update(
+                error=resume_error,
                 agent_validation_status=state.validation_status,
                 changed_files=diff.output["changed_files"],
                 patch_sha256=hashlib.sha256(diff_path.read_bytes()).hexdigest(),
@@ -2267,11 +2356,13 @@ class TraceFixRunner:
                 )
                 if job_runtime is not None:
                     docker_prepare_options["job_settings"] = job_runtime.settings
+                if config.repository_rules_enabled:
+                    docker_prepare_options["repository_rules_enabled"] = True
                 tools = docker_backend.prepare(
                     source_commit,
                     source,
                     Path(__file__).resolve().parents[2],
-                    repo_map_task=config.task,
+                    repo_map_task=None if config.repository_rules_enabled else config.task,
                     repo_map_config=config.agent_config.repo_map,
                     skills_enabled=config.agent_config.skills_enabled,
                     skill_limits=config.agent_config.skill_limits,
@@ -2311,7 +2402,8 @@ class TraceFixRunner:
                 )
             )
 
-            if config.agent_config.repo_map.enabled and config.execution_backend == "local":
+            if (config.agent_config.repo_map.enabled and config.execution_backend == "local"
+                    and not config.repository_rules_enabled):
                 # 索引失败不应被静默吞掉：它会导致模型少看到本应稳定提供的定位信息。
                 # 但 AST 解析失败的单个文件由 RepositoryIndexer 自己作为 skipped 记录。
                 index_started = time.monotonic()
@@ -2382,6 +2474,9 @@ class TraceFixRunner:
                         workspace=workspace,
                         collect_diff=lambda: self._collect_diff(workspace, internal_artifacts))
                     tools = job_runtime.tools
+            tools, rule_gate = _assemble_repository_rules(
+                config, tools, run_id=run_id, workspace=workspace,
+                protected_dirs=internal_artifacts, backend=docker_backend, mcp_manager=mcp_manager)
             capability_dispatcher = (job_runtime.dispatcher if job_runtime is not None
                                      else self._capability_dispatcher(config, tools))
             self._bind_host_capability_policy(capability_dispatcher, mcp_manager)
@@ -2426,6 +2521,7 @@ class TraceFixRunner:
                 repository_candidates=(repository_map.candidate_files if repository_map else ()),
             )
             agent.tool_dispatcher = capability_dispatcher
+            agent.rule_access_gate = rule_gate
             if job_runtime is not None:
                 agent.job_session = job_runtime.session
             agent.task_state_session = task_state_session
@@ -2518,8 +2614,6 @@ class TraceFixRunner:
 
                     agent.validation_source_identity = docker_checkout_identity
             if config.execution_backend == "docker" and config.docker_profile == "ordinary":
-                from tracefix.docker_recovery import tool_identity
-
                 docker_identity = {
                     "source_commit": source_commit,
                     "config_sha256": config_identity_sha256(config),
@@ -2528,19 +2622,8 @@ class TraceFixRunner:
                     **self._capability_identity(config, tools, capability_dispatcher),
                     # TaskState adapters are host-only and are excluded from the
                     # executor identity negotiated by the ordinary bridge.
-                    "tool_sha256": tool_identity(
-                        tuple(
-                            spec
-                            for spec in tools.specs()
-                            if (
-                                capability_dispatcher.policy.catalog.get(spec.name) is not None
-                                and capability_dispatcher.policy.catalog.get(
-                                    spec.name
-                                ).execution_location
-                                not in {"host", "mcp"}
-                            )
-                        )
-                    ),
+                    "tool_sha256": self._executor_tool_identity(
+                        config, tools, capability_dispatcher),
                     "executor_capability_catalog_sha256": (
                         docker_backend.session.capability_catalog_sha256
                     ),

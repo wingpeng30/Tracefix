@@ -211,6 +211,7 @@ class _BridgeSession:
         execution_profile: ExecutionProfile = ExecutionProfile.WORKSPACE_WRITE,
         executor_policy_config_sha256: str | None = None,
         job_protocol: dict[str, Any] | None = None,
+        repository_rules_enabled: bool = False,
     ) -> None:
         expected_jobs = None
         if job_protocol is not None:
@@ -279,10 +280,12 @@ class _BridgeSession:
             from tracefix.jobs.constants import JOB_CONTROL_CAPABILITIES
 
             raw_names = tuple(spec.name for spec in specs)
-            if any(name in JOB_CONTROL_CAPABILITIES or name.startswith("__") for name in raw_names):
+            if any(name in {*JOB_CONTROL_CAPABILITIES, "repository_rules_read"}
+                   or name.startswith("__") for name in raw_names):
                 raise CapabilityError("executor directory contains private controls")
             capability_catalog = CapabilityCatalog.for_tool_names((
-                *raw_names, *(JOB_CONTROL_CAPABILITIES if expected_jobs is not None else ())))
+                *raw_names, *(JOB_CONTROL_CAPABILITIES if expected_jobs is not None else ()),
+                *(("repository_rules_read",) if repository_rules_enabled else ())))
             if any(capability_catalog.get(name).execution_location in {"host", "mcp"}
                    for name in raw_names):
                 raise CapabilityError("executor directory contains host or MCP tools")
@@ -316,6 +319,13 @@ class _BridgeSession:
                 raise WorkspaceError("Docker job protocol negotiation failed") from exc
         self.job_protocol = (expected_jobs.model_dump(mode="json")
                              if expected_jobs is not None else None)
+        actual_rules = handshake.get("repository_rules_protocol_version")
+        rules_match = (type(actual_rules) is int and actual_rules == 1
+                       if repository_rules_enabled else actual_rules is None)
+        if not rules_match:
+            self.close(force=True)
+            raise WorkspaceError("Docker repository rules protocol negotiation failed")
+        self.repository_rules_enabled = repository_rules_enabled
         artifact_protocol = handshake.get("artifact_protocol")
         expected_artifact_protocol = {
             "version": 1,
@@ -350,6 +360,7 @@ class _BridgeSession:
         )
         self.tools = specs
         self.execution_profile = capability_policy.profile
+        self.capability_policy = capability_policy
         self.capability_catalog_sha256 = capability_catalog.sha256
         self.capability_policy_sha256 = capability_policy.sha256
         self.executor_policy_config_sha256 = executor_policy_config_sha256
@@ -593,6 +604,7 @@ class DockerToolBackend:
         self.artifact_environment_path: str | None = None
         self.skills_bundle_sha256 = EMPTY_SKILL_BUNDLE_SHA256
         self.background_jobs_enabled = False
+        self.repository_rules_enabled = False
         self.job_settings: JobWorkerSettings | None = None
         self.job_context = None
         self.job_protocol: dict[str, Any] | None = None
@@ -613,6 +625,22 @@ class DockerToolBackend:
         if not decision.allowed:
             raise WorkspaceError("Docker source export denied",
                                  context={"reason_code": decision.reason_code})
+
+    def repository_rule_ports(self):
+        from tracefix.repository_rules.protocol import RemoteRulePorts
+
+        if not self.repository_rules_enabled or self.session is None:
+            raise WorkspaceError("repository rules were not negotiated for this executor")
+
+        def authorize():
+            dispatcher = ToolDispatcher(self.session.capability_policy,
+                                        execution_guard=self._job_execution_guard)
+            decision = dispatcher.authorize("repository_rules_read", CallerOrigin.HOST_LIFECYCLE)
+            if not decision.allowed:
+                raise WorkspaceError("Docker repository rule control denied",
+                                     context={"reason_code": decision.reason_code})
+
+        return RemoteRulePorts(self.session, authorize)
 
     def prepare(
         self,
@@ -635,8 +663,12 @@ class DockerToolBackend:
         skills_snapshot: SkillBundleSnapshot | None = None,
         job_settings: JobWorkerSettings | None = None,
         artifact_seed: JobArtifactSeed | None = None,
+        repository_rules_enabled: bool = False,
     ) -> ToolRegistry:
         self.artifacts_enabled = artifacts_enabled
+        self.repository_rules_enabled = repository_rules_enabled
+        if repository_rules_enabled and (self.profile != "ordinary" or not recovery_enabled):
+            raise WorkspaceError("Docker repository rules require ordinary recovery")
         self.background_jobs_enabled = job_settings is not None
         if artifact_seed is not None and (not self.background_jobs_enabled
                                           or recovery_snapshot is not None):
@@ -908,6 +940,7 @@ class DockerToolBackend:
                 artifacts_enabled=artifacts_enabled,
                 skills_enabled=skills_enabled,
                 **({"jobs_enabled": True} if self.background_jobs_enabled else {}),
+                repository_rules_enabled=self.repository_rules_enabled,
             )
             self.executor_policy_config_sha256 = hashlib.sha256(
                 json.dumps(
@@ -1293,6 +1326,8 @@ class DockerToolBackend:
             )
         if self.background_jobs_enabled:
             command.extend(["--jobs-context-file", "/opt/tracefix/runtime/job-context.json"])
+        if self.repository_rules_enabled:
+            command.append("--repository-rules-enabled")
         self.session = _BridgeSession(
             command,
             self.timeout_seconds + 60,
@@ -1302,6 +1337,7 @@ class DockerToolBackend:
             execution_profile=self.execution_profile,
             executor_policy_config_sha256=self.executor_policy_config_sha256,
             **({"job_protocol": self.job_protocol} if self.background_jobs_enabled else {}),
+            **({"repository_rules_enabled": True} if self.repository_rules_enabled else {}),
         )
         if self.session.run_id != self.run_id:
             raise WorkspaceError("Docker bridge run identity mismatch")
@@ -1554,6 +1590,8 @@ class DockerToolBackend:
                 "capability_policy_sha256": self.session.capability_policy_sha256,
                 "executor_policy_config_sha256": self.executor_policy_config_sha256,
                 "host_control_policy_sha256": self._host_control_policy.sha256,
+                **({"repository_rules_protocol_version": 1}
+                   if getattr(self, "repository_rules_enabled", False) else {}),
                 "host_control_catalog_sha256": self._host_control_policy.catalog.sha256,
                 "checkpoint_commit_decision": decision.model_dump(mode="json"),
                 "test_evidence": {
@@ -1626,6 +1664,12 @@ class DockerToolBackend:
                 raise WorkspaceError("Docker job recovery logical identity changed")
         elif "job_protocol" in snapshot:
             raise WorkspaceError("Docker job recovery requires its original execution mode")
+        rules_version = snapshot.get("repository_rules_protocol_version")
+        rules_enabled = getattr(self, "repository_rules_enabled", False)
+        rules_match = (type(rules_version) is int and rules_version == 1
+                       if rules_enabled else rules_version is None)
+        if not rules_match:
+            raise WorkspaceError("Docker rule recovery requires its original protocol and mode")
 
         decision = self._control_decision(
             "checkpoint_restore", CallerOrigin.RECOVERY

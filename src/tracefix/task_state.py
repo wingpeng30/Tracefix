@@ -98,7 +98,7 @@ class TaskObservation(BaseModel):
 class TaskReference(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    kind: Literal["memory", "skill", "artifact", "job"]
+    kind: Literal["memory", "skill", "artifact", "job", "rule"]
     reference_id: str = Field(min_length=1, max_length=256)
     sha256: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
     source_message_id: str = Field(min_length=1, max_length=200)
@@ -558,7 +558,9 @@ class TaskStateSession:
             summary = "apply_patch succeeded" if success else "apply_patch failed"
         elif tool_name in {"read_file", "search_code", "get_git_diff"}:
             kind = "source_observation"
-            summary = f"{tool_name} returned {'success' if success else 'failure'}"
+            summary = (f"{tool_name} paused: repository rules pending"
+                       if output_map.get("rules_pending") is True else
+                       f"{tool_name} returned {'success' if success else 'failure'}")
         elif tool_name in {"read_tool_artifact", "search_tool_artifact"}:
             kind = "artifact_lookup"
             summary = f"{tool_name} returned {'success' if success else 'failure'}"
@@ -644,6 +646,7 @@ class TaskStateSession:
         trusted_receipts: Mapping[str, Mapping[str, object]] | None = None,
         artifact_ids: set[str] | frozenset[str] | None = None,
         job_records: Mapping[str, JobRecord] | None = None,
+        rule_message_ids: set[str] | frozenset[str] | None = None,
     ) -> TaskState:
         try:
             checkpoint = TaskStateCheckpoint.model_validate(raw)
@@ -714,6 +717,14 @@ class TaskStateSession:
                 or metadata.get("skill_name") != reference.reference_id
             ):
                 raise TaskStateError("checkpoint skill reference is not in the committed history")
+            if reference.kind == "rule" and (
+                message.get("role") != "user"
+                or metadata.get("kind") != "repository_rules"
+                or reference.reference_id != reference.source_message_id
+                or reference.sha256 is None or metadata.get("content_sha256") != reference.sha256
+                or rule_message_ids is None or reference.reference_id not in rule_message_ids
+            ):
+                raise TaskStateError("checkpoint rule reference is not in the committed rule state")
             if reference.kind == "artifact" and (
                 message.get("role") != "tool"
                 or message.get("tool_call_id") != reference.source_call_id

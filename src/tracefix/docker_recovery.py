@@ -123,10 +123,15 @@ def validate_artifact_archive(
 
 
 def validate_batch(root: Path, snapshot: dict, *, sequence: int, image_id: str,
-                   jobs_enabled: bool = False) -> None:
+                   jobs_enabled: bool = False, repository_rules_enabled: bool = False) -> None:
     """Verify all batch bindings without starting a container or constructing a model."""
     if snapshot.get("schema_version") != 1 or snapshot.get("sequence") != sequence:
         raise CheckpointError("Docker checkpoint batch sequence changed")
+    rules_version = snapshot.get("repository_rules_protocol_version")
+    rules_match = (type(rules_version) is int and rules_version == 1
+                   if repository_rules_enabled else rules_version is None)
+    if not rules_match:
+        raise CheckpointError("Docker batch repository rules protocol changed")
     batch = snapshot.get("batch_id")
     if (
         not isinstance(batch, str)
@@ -284,6 +289,7 @@ def inspect_session(
         artifacts_enabled=config.harness_foundations_enabled,
         skills_enabled=config.agent_config.skills_enabled,
         **({"jobs_enabled": True} if config.background_jobs_enabled else {}),
+        repository_rules_enabled=config.repository_rules_enabled,
     )
     expected_executor_policy_sha256 = hashlib.sha256(
         json.dumps(
@@ -339,7 +345,8 @@ def inspect_session(
     ):
         raise CheckpointError("Docker batch capability identity disagrees with session")
     validate_batch(root, snapshot, sequence=checkpoint.sequence, image_id=config.docker_image_id,
-                   **({"jobs_enabled": True} if config.background_jobs_enabled else {}))
+                   **({"jobs_enabled": True} if config.background_jobs_enabled else {}),
+                   repository_rules_enabled=config.repository_rules_enabled)
     skills_snapshot = None
     if config.skills_root is not None:
         from tracefix.skill_snapshot import read_skill_snapshot
@@ -462,6 +469,8 @@ def inspect_session(
             from tracefix.jobs.constants import JOB_CONTROL_CAPABILITIES
 
             executor_names.extend(JOB_CONTROL_CAPABILITIES)
+        if config.repository_rules_enabled:
+            executor_names.append("repository_rules_read")
         executor_catalog = CapabilityCatalog.for_tool_names(executor_names)
         executor_policy = CapabilityPolicy(executor_catalog, config.execution_profile)
     except ValueError:
@@ -483,6 +492,23 @@ def inspect_session(
     history = MessageHistory(Message.model_validate(row) for row in payload["agent"]["history"])
     if history.pending_tool_call_ids:
         reasons.append("checkpoint message history has pending calls")
+    if config.repository_rules_enabled:
+        from tracefix.context import ContextSessionState
+        from tracefix.repository_rules.domain import digest as rules_digest
+        from tracefix.repository_rules.runtime_state import validate_runtime_checkpoint
+
+        context_state = ContextSessionState.model_validate(
+            payload["agent"]["memory"]["_context_session_state"])
+        rule_specs = context_state.tool_specs or ()
+        # Before the first request there is no receipt or captured tool directory.
+        if rule_specs and rules_digest([spec.model_dump(mode="json") for spec in rule_specs]) != (
+            identity["provider_tool_spec_sha256"]
+        ):
+            raise CheckpointError("repository rule request tool identity changed")
+        validate_runtime_checkpoint(payload["agent"].get("repository_rules"), history.snapshot(),
+                                    rule_specs, run_id=root.name)
+    elif "repository_rules" in payload["agent"]:
+        reasons.append("checkpoint contains disabled repository rule state")
     runtime_memory = payload["agent"]["memory"]
     if not isinstance(runtime_memory, dict) or any(
         name not in runtime_memory for name in MinimalAgent._RECOVERY_FIELDS

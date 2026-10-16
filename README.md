@@ -8,6 +8,7 @@
 旧实验、日期化交接和旧wheel不代表当前源码全部状态。
 
 普通 Python 仓库的任务检查与恢复说明见 [docs/recovery.md](docs/recovery.md)。
+G6分层规则候选已接入默认关闭的`--repository-rules`，用法及限制见[仓库规则说明](docs/repository-rules.md)；当前验收进度见固定状态入口，G6尚未关闭，G7—G8未开始。
 G5后台作业已通过双Python及真实Docker/Serena阶段验收，支持长测试查询、日志分页、取消和安全恢复，默认关闭。
 用法见[后台作业说明](docs/background-jobs.md)，实现c02c79d的证据见[G5验收](docs/tasks/2026-10-16-g5-acceptance.md)；下一步G6规则，G7—G8未开始。
 候选分支 `codex/harness-foundations` 增加了有类型、按 checkout 源码适用性召回的仓库知识记忆；

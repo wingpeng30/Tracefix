@@ -25,29 +25,10 @@ from tracefix.capabilities import (
     ToolDispatcher,
 )
 from tracefix.exceptions import RunConfigurationError
+from tracefix.mcp_contracts import _METHODS, _PROPERTIES, SourceOutputGuard, validate_serena_call
 from tracefix.messages import ToolCall
 from tracefix.source_snapshot import SourceSnapshotProvider, WorkspaceSourceSnapshotProvider
 from tracefix.tools.base import BaseTool, ToolResult, ToolSpec
-
-_METHODS = {
-    "mcp_serena_symbols": ("get_symbols_overview", ("relative_path",)),
-    "mcp_serena_find_symbol": ("find_symbol", ("name_path_pattern",)),
-    "mcp_serena_references": ("find_referencing_symbols", ("name_path", "relative_path")),
-}
-_PROPERTIES: dict[str, dict[str, dict[str, object]]] = {
-    "mcp_serena_symbols": {
-        "relative_path": {"type": "string"}, "depth": {"type": "integer"},
-    },
-    "mcp_serena_find_symbol": {
-        "name_path_pattern": {"type": "string"},
-        "relative_path": {"type": "string"},
-        "include_body": {"type": "boolean"},
-        "depth": {"type": "integer"},
-    },
-    "mcp_serena_references": {
-        "name_path": {"type": "string"}, "relative_path": {"type": "string"},
-    },
-}
 
 
 class MCPPrerequisiteError(RunConfigurationError, RuntimeError):
@@ -78,6 +59,11 @@ class SerenaMCP:
         self.max_output_chars = max_output_chars
         self._active: set[str] = set()
         self._capability_dispatcher: ToolDispatcher | None = None
+        self._source_result_guard: SourceOutputGuard | None = None
+
+    def bind_source_result_guard(self, guard: SourceOutputGuard) -> None:
+        """Bind the host-owned output gate before this session is made available."""
+        self._source_result_guard = guard
 
     def bind_capability_dispatcher(self, dispatcher: ToolDispatcher) -> None:
         """Use the session's frozen capability policy for host source exports."""
@@ -158,6 +144,9 @@ class SerenaMCP:
         return identity.sha256, decision.policy_sha256
 
     def call(self, method: str, arguments: dict[str, Any], call_id: str) -> dict[str, Any]:
+        if (self._source_result_guard is not None
+                and method not in {value[0] for value in _METHODS.values()}):
+            raise RuntimeError("Serena MCP method is not permitted")
         safe_id = hashlib.sha256(call_id.encode()).hexdigest()[:12]
         run_tag = hashlib.sha256(str(self.run_dir).encode()).hexdigest()[:12]
         name = f"tracefix-mcp-{run_tag}-{safe_id}"
@@ -169,13 +158,33 @@ class SerenaMCP:
             # short-lived read-only bind source created with mkdtemp mode 0700.
             snapshot.chmod(0o755)
             self._active.add(name)
+            guarded_output = None
             try:
                 bounded = {**arguments, "max_answer_chars": self.max_output_chars * 2}
-                response = asyncio.run(self._call_async(name, snapshot, method, bounded))
+                try:
+                    response = asyncio.run(self._call_async(name, snapshot, method, bounded))
+                except Exception as exc:
+                    if self._source_result_guard is not None:
+                        raise RuntimeError(
+                            "Serena MCP transport failed; unverified detail withheld"
+                        ) from exc
+                    raise
             finally:
                 cleaned = self._remove_container(name)
             if not cleaned:
                 raise RuntimeError(f"Serena MCP container cleanup failed: {name}")
+            if self._source_result_guard is not None:
+                if response.isError:
+                    raise RuntimeError("Serena MCP query failed; unverified detail withheld")
+                text = _content_text(response)
+                if len(text) > self.max_output_chars:
+                    raise RuntimeError("Serena MCP output exceeds rule verification limit")
+                guarded_output = self._source_result_guard.filter(
+                    method, arguments, text, snapshot, source_hash)
+        if guarded_output is not None:
+            return {**guarded_output, "source_sha256": source_hash,
+                    "source_export_policy_sha256": source_policy_sha256,
+                    "service": "serena/1.7.0"}
         if response.isError:
             detail = _content_text(response)[: self.max_output_chars]
             raise RuntimeError("Serena MCP service rejected the query (untrusted data): " + detail)
@@ -245,29 +254,8 @@ class _SerenaTool(BaseTool):
     def execute(self, call: ToolCall) -> ToolResult:
         started = time.monotonic()
         try:
-            if call.name != self._name:
-                raise ValueError("MCP tool name mismatch")
-            method, required = _METHODS[self._name]
-            if set(call.arguments) - set(_PROPERTIES[self._name]):
-                raise ValueError("unknown Serena MCP argument")
-            if set(required) - set(call.arguments):
-                raise ValueError("missing required Serena MCP argument")
-            for key, value in call.arguments.items():
-                expected = _PROPERTIES[self._name][key]["type"]
-                if (expected == "string" and not isinstance(value, str)) or (
-                    expected == "boolean" and not isinstance(value, bool)
-                ) or (
-                    expected == "integer"
-                    and (not isinstance(value, int) or isinstance(value, bool))
-                ):
-                    raise ValueError(f"invalid Serena MCP argument: {key}")
-                if isinstance(value, str) and (len(value) > 500 or "\x00" in value):
-                    raise ValueError(f"Serena MCP argument too long: {key}")
-                if key == "relative_path" and value:
-                    path = Path(value)
-                    if path.is_absolute() or ".." in path.parts or "\\" in value:
-                        raise ValueError("Serena MCP path must remain within snapshot")
-            output = self.manager.call(method, dict(call.arguments), call.id)
+            method, arguments = validate_serena_call(call, self._name)
+            output = self.manager.call(method, arguments, call.id)
             return ToolResult(
                 call_id=call.id, tool_name=self._name, success=True, output=output,
                 metadata={"backend": "mcp", "service": "serena/1.7.0"},

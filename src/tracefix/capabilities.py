@@ -195,6 +195,15 @@ _register(
     location="host",
     model_callable=False,
 )
+_register(
+    "repository_rules_read",
+    "repository_rules.read",
+    "workspace",
+    "read",
+    idempotent=True,
+    location="container",
+    model_callable=False,
+)
 
 _HOST_CONTROL_CAPABILITY_NAMES = (
     "checkpoint_commit",
@@ -250,6 +259,11 @@ class CapabilityPolicy:
         self._job_controls_enabled = bool(controls)
         if self._job_controls_enabled:
             self.VERSION = "tracefix-capability-policy-v4-jobs"
+        self._rule_controls_enabled = catalog.get("repository_rules_read") is not None
+        if self._rule_controls_enabled:
+            self.VERSION = ("tracefix-capability-policy-v5-jobs-rules"
+                            if self._job_controls_enabled
+                            else "tracefix-capability-policy-v5-rules")
         policy_identity = json.dumps(
             {
                 "version": self.VERSION,
@@ -259,7 +273,9 @@ class CapabilityPolicy:
                 "model_origins": ["model"],
                 "validation_gate_tools": ["run_tests", "validation_baseline"],
                 "recovery_tools": ["checkpoint_restore"],
-                "host_lifecycle_tools": ["checkpoint_commit", "source_snapshot_export"],
+                "host_lifecycle_tools": ["checkpoint_commit", "source_snapshot_export",
+                                         *(["repository_rules_read"]
+                                           if self._rule_controls_enabled else [])],
                 "independent_validation_tools": ["apply_patch", "get_git_diff", "run_tests"],
                 **({"job_coordinator_tools": [*JOB_CONTROL_CAPABILITIES, "run_tests"]}
                    if self._job_controls_enabled else {}),
@@ -296,7 +312,7 @@ class CapabilityPolicy:
         elif trusted_origin is CallerOrigin.RECOVERY and tool_name != "checkpoint_restore":
             allowed, reason = False, "origin_not_allowed"
         elif trusted_origin is CallerOrigin.HOST_LIFECYCLE and tool_name not in {
-            "checkpoint_commit", "source_snapshot_export"
+            "checkpoint_commit", "source_snapshot_export", "repository_rules_read"
         }:
             allowed, reason = False, "origin_not_allowed"
         elif trusted_origin is CallerOrigin.INDEPENDENT_VALIDATION and tool_name not in {
@@ -386,6 +402,7 @@ def executor_policy_document(
     artifacts_enabled: bool,
     skills_enabled: bool,
     jobs_enabled: bool = False,
+    repository_rules_enabled: bool = False,
 ) -> dict[str, object]:
     """Build the exact ordinary-container policy file from frozen feature flags."""
     names = ["search_code", "read_file", "apply_patch", "run_tests", "get_git_diff"]
@@ -395,6 +412,8 @@ def executor_policy_document(
         names.append("load_skill")
     if jobs_enabled:
         names.extend(JOB_CONTROL_CAPABILITIES)
+    if repository_rules_enabled:
+        names.append("repository_rules_read")
     catalog = CapabilityCatalog.for_tool_names(names)
     policy = CapabilityPolicy(catalog, ExecutionProfile(profile))
     return {
@@ -405,4 +424,5 @@ def executor_policy_document(
         "capability_policy_sha256": policy.sha256,
         "capabilities": [item.model_dump(mode="json") for item in catalog.descriptors],
         **({"job_protocol_version": 1} if jobs_enabled else {}),
+        **({"repository_rules_protocol_version": 1} if repository_rules_enabled else {}),
     }

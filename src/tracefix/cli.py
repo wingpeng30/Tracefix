@@ -169,6 +169,8 @@ def _add_shared_options(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--skills-max-bytes", type=int, help="单个技能正文 UTF-8 字节上限")
     parser.add_argument("--background-jobs", action="store_true", default=None,
                         help="启用受管后台pytest作业（需要harness foundations）")
+    parser.add_argument("--repository-rules", action="store_true", default=None,
+                        help="启用分层AGENTS.md及路径规则；Docker需要ordinary recovery")
     parser.add_argument("--job-cgroup-root", type=Path,
                         help="Linux本地后台作业的已委派cgroup v2目录；不会自动提权或配置宿主")
     parser.add_argument("--skills-max-reference-bytes", type=int, help="单份参考文本字节上限")
@@ -1000,6 +1002,7 @@ def _ordinary_settings(args: argparse.Namespace) -> dict[str, Any]:
             "docker_recovery",
             "harness_foundations_enabled",
             "background_jobs_enabled",
+            "repository_rules_enabled",
             "job_cgroup_root",
             "mcp_serena_image_id",
             "execution_backend",
@@ -1100,6 +1103,8 @@ def _ordinary_settings(args: argparse.Namespace) -> dict[str, Any]:
         ),
         "background_jobs_enabled": choose(
             "background_jobs_enabled", getattr(args, "background_jobs", None)),
+        "repository_rules_enabled": choose(
+            "repository_rules_enabled", getattr(args, "repository_rules", None)),
         "job_cgroup_root": path_value("job_cgroup_root", getattr(args, "job_cgroup_root", None)),
         "mcp_serena_image_id": choose(
             "mcp_serena_image_id",
@@ -1148,6 +1153,7 @@ def _ordinary_settings(args: argparse.Namespace) -> dict[str, Any]:
                 "docker_recovery",
                 "harness_foundations_enabled",
                 "background_jobs_enabled",
+                "repository_rules_enabled",
                 "job_cgroup_root",
                 "mcp_serena_image_id",
                 "execution_backend",
@@ -1697,6 +1703,7 @@ def main(argv: list[str] | None = None) -> int:
                     "docker_recovery_enabled": settings["docker_recovery_enabled"] or False,
                     "harness_foundations_enabled": settings["harness_foundations_enabled"] or False,
                     "background_jobs_enabled": settings["background_jobs_enabled"] or False,
+                    "repository_rules_enabled": settings["repository_rules_enabled"] or False,
                     "job_cgroup_root": settings["job_cgroup_root"],
                     "memory_enabled": settings["memory_enabled"] or False,
                     "memory_dir": settings["memory_dir"],
