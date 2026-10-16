@@ -1,10 +1,10 @@
-# 后台测试作业（G5 候选开发中）
+# 后台测试作业（G5 已验收候选）
 
-当前候选已接通本地 Runner/API/CLI 的后台 pytest、增量读取、取消和安全暂停恢复。
-**G5 尚未完成工程验收。** 候选已接通ordinary Docker正式Runner/inspect/resume、基线产物交接和根预算。
-本地真实回放通过取消/自然完成、新进程恢复、最小3次baseline/finalgate及逃离组后代中止整个容器；
-5398a7b的CI167正式入口wheel/editable已通过，但双版本综合覆盖率89.80%左右未过90%。
-之后又修复Windows venv启动器归属竞态；该新实现仍需重新验收，使用边界以当前状态和G5记录为准。
+G5已通过c02c79d / CI169的双Python完整门及真实Docker/Serena验收，功能默认关闭。
+本地和ordinary支持后台pytest、增量读取、取消、安全暂停恢复及共享baseline/final测试计次。
+两版各2017通过/2平台skip，精确综合覆盖率90.1143%/90.1045%；平台跳过均有同提交补证。
+源码、镜像、原始产物与失败归属见[G5验收记录](tasks/2026-10-16-g5-acceptance.md)。
+后续文档HEAD不能冒称已重做工程验收；未合并main或发布。
 
 ## 本地启用
 
@@ -56,8 +56,7 @@ background_jobs_enabled=True)`。实际运行的模型及其预算仍由原配�
 Windows 用例会建立并清理自己的临时仓库与子进程；其他平台保留实际 skip 原因。
 这里覆盖正式本地 Runner 的暂停/新进程恢复、共享基线/最终门及真实宿主硬崩溃。
 其中 Serena 组合只验证静态目录身份，明确使用 transport 替身，不是实际 MCP 调用。
-ordinary独立wheel/editable正式入口已在CI167通过，底部给出真实Docker复现脚本。
-此结果归属5398a7b，不能替之后的进程归属修复关闭完整阶段门。
+ordinary独立wheel/editable正式入口已在CI169 / c02c79d通过，底部给出真实Docker复现脚本。
 实际计数、源码身份和限制见[G5进度](tasks/2026-10-16-g5-progress.md)。
 
 ## ordinary Docker候选组合
